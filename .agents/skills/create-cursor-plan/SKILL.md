@@ -1,6 +1,6 @@
 ---
 name: create-cursor-plan
-description: Create an execution plan and concise handoff prompt for Cursor. Use when the user asks Codex to make, draft, update, or generate a plan/prompt for Cursor or another coding agent to implement repository work, especially phased implementation work that must preserve architecture guardrails, Cursor rules/skills, scope boundaries, non-goals, and unresolved OpenQuestions.
+description: Create an execution plan and concise handoff prompt for Cursor. Use when the user asks Codex to make, draft, update, or generate a plan/prompt for Cursor or another coding agent to implement repository work, especially phased implementation work that must preserve architecture guardrails, Cursor rules/skills, scope boundaries, non-goals, testing criteria, automated test requirements, and unresolved OpenQuestions.
 ---
 
 # Create Cursor Plan
@@ -26,6 +26,7 @@ Every Cursor execution plan must include these sections, using clearer project-s
 - Cursor Rules And Skills
 - Architecture Guardrails
 - Implementation Plan
+- Testing Criteria
 - Validation
 - Risks Or Recovery Notes
 - OpenQuestions
@@ -82,6 +83,22 @@ Separate `Non-Goals` from `Out of Scope`:
 
 Call out phase boundaries explicitly when the request is part of a multi-phase plan.
 
+## Testing Requirements
+
+Always include `Testing Criteria` as a separate plan section. It must state what evidence should prove the implementation is correct.
+
+Require automated tests when the planned work changes behavior, public APIs, CLI behavior, configuration loading, persistence, data access, subprocess execution, parsing, validation, error handling, security checks, or recovery logic.
+
+When automated tests are required, the plan must specify:
+
+- test level: unit, integration, end-to-end, contract, or regression
+- expected test files or fixture areas when discoverable
+- relevant edge cases and failure paths
+- fake or stub strategy for external CLIs, network calls, model calls, credentials, and timeouts
+- commands Cursor should run when tooling is available
+
+When automated tests are not appropriate, the plan must say why and provide manual validation steps. Do not leave test creation implicit.
+
 ## Prompt Shape
 
 The Cursor prompt must be much shorter than the plan. It should:
@@ -90,6 +107,7 @@ The Cursor prompt must be much shorter than the plan. It should:
 - tell Cursor to follow listed rules and skills
 - preserve architecture guardrails
 - tell Cursor not to assume and to stop on OpenQuestions before dependent work
+- tell Cursor to follow the testing criteria and add/update automated tests when the plan requires them
 - name the highest-risk boundaries in one short paragraph
 - include validation command expectations only when they are essential
 
@@ -98,7 +116,7 @@ Do not duplicate the plan in the prompt.
 Preferred prompt template:
 
 ```text
-Please implement the plan in <plan-path>. Follow the Cursor rules and skills listed in the plan, keep the architecture guardrails intact, avoid assumptions, and stop to resolve any OpenQuestions before making dependent changes.
+Please implement the plan in <plan-path>. Follow the Cursor rules and skills listed in the plan, keep the architecture guardrails intact, follow the testing criteria, add/update automated tests where required, avoid assumptions, and stop to resolve any OpenQuestions before making dependent changes.
 
 Pay special attention to <2-5 highest-risk guardrails or boundaries>.
 ```
