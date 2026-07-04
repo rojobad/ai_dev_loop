@@ -60,6 +60,8 @@ def test_start_happy_path_writes_artifacts(prepared_run, fake_clis) -> None:
     assert (iteration / "final.txt").is_file()
     assert (run_path / "git" / "status" / "01-before-cursor.txt").is_file()
     assert (run_path / "git" / "status" / "01-after-cursor.txt").is_file()
+    assert (run_path / "git" / "diffs" / "01.patch").is_file()
+    assert state.result and "Git staging is complete" in state.result
 
     agent_log = fake_clis["agent_log"].read_text(encoding="utf-8")
     assert "Implement the sample plan exactly as written." in agent_log
@@ -209,7 +211,8 @@ def test_cli_start_output_reports_phase_boundary(prepared_run, fake_clis) -> Non
     result = runner.invoke(app, ["start", prepared_run["run_id"]])
     assert result.exit_code == 0
     combined = result.stdout + result.stderr
-    assert "Git staging" in combined
+    assert "Git staging is complete" in combined
+    assert "Codex review" in combined
     assert "not implemented yet" in combined
 
 

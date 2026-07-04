@@ -2,24 +2,35 @@
 
 Deterministic local orchestrator for Codex/Cursor development loops.
 
-Phase 2 adds a real `ai_dev_loop start <run-id>` command that runs start preflight, acquires run/repository locks, probes local Git/Cursor/Codex CLIs, creates or reuses one Cursor chat, executes the prepared prompt headlessly, and persists Cursor/Git artifacts under XDG state.
+Phase 3 adds Git staging after a successful Cursor turn. A real `ai_dev_loop start <run-id>` now runs start preflight, acquires run/repository locks, probes local Git/Cursor/Codex CLIs, creates or reuses one Cursor chat, executes the prepared prompt headlessly, stages repository changes with `git add -A` when `stage_mode: all`, and persists staged diff artifacts under XDG state.
 
-The full automated loop is **still incomplete**: Git staging, Codex review, correction turns, `resume`, and `abort` are not implemented yet.
+The full automated loop is **still incomplete**: Codex review, correction turns, `resume`, and `abort` are not implemented yet.
 
-## What Phase 2 Implements
+## What Phase 3 Implements
 
-- Real `ai_dev_loop start <run-id>` for prepared runs
-- Start preflight: branch/HEAD, plan/prompt hashes, worktree baseline, timeouts, Codex session ID
-- Run lock and repository-worktree lock before mutation
-- Local CLI probes for `git`, `agent`, and `codex` (auth + Cursor model availability)
-- Cursor chat creation via `agent create-chat` with immediate persistence to `state.json` and `cursor/chat.json`
+- Git staging after a successful Cursor implementation turn
+- Post-Cursor safety checks before staging:
+  - reject pre-existing staged changes;
+  - re-verify repository plan hash;
+  - reject tracked prompt-source modifications.
+- `git add -A` for `stage_mode: all` only
+- Staged diff artifacts:
+  - `git/status/01-before-staging.txt` and `git/status/01-after-staging.txt`
+  - `git/diffs/01.stat`, `git/diffs/01.name-only.txt`, and `git/diffs/01.patch`
+- Durable `state.iterations` metadata for the initial implementation turn (Cursor + Git paths, no fake Codex review data)
+- Successful runs remain in `staging` status with an explicit Phase 3 boundary message
+- A successful real `start` may leave changes **staged** in the target repository
+
+## What Phase 2 Still Provides
+
+- Real `ai_dev_loop start <run-id>` preflight, locks, CLI probes, and Cursor execution
+- Cursor chat creation via `agent create-chat` with immediate persistence
 - Cursor headless execution with process-group timeout handling and durable artifacts:
   - `cursor/iterations/01/events.jsonl`
   - `cursor/iterations/01/stderr.txt`
   - `cursor/iterations/01/final.txt` (when detected)
   - `cursor/iterations/01/metadata.json`
   - `git/status/01-before-cursor.txt` and `git/status/01-after-cursor.txt`
-- Successful Cursor turns transition the run to `staging` with an explicit Phase 2 boundary message
 
 ## What Phase 1 Still Provides
 
@@ -36,7 +47,6 @@ The full automated loop is **still incomplete**: Git staging, Codex review, corr
 
 ## What Is Still Pending
 
-- Git staging after Cursor turns
 - Codex review execution and correction turns
 - `resume` recovery semantics and `abort` child-process termination
 - Global Codex skill and SessionStart hook installation
@@ -151,7 +161,7 @@ JSON output includes:
 ai_dev_loop start <run-id>
 ```
 
-On success, the run moves to `staging` and the CLI reports that Git staging and Codex review are still pending later phases. A real `start` may modify files in the target repository; nothing is staged automatically in Phase 2.
+On success, the run moves to `staging` and the CLI reports that Git staging is complete while Codex review remains pending. A real `start` may modify and **stage** files in the target repository.
 
 Inspect results:
 
@@ -177,7 +187,8 @@ $XDG_STATE_HOME/ai_dev_loop/runs/<project-slug>/<run-id>/
 │   ├── chat.json
 │   └── iterations/
 ├── git/
-│   └── status/
+│   ├── status/
+│   └── diffs/
 └── logs/
 ```
 
@@ -219,10 +230,11 @@ uv run ai_dev_loop --help
 
 - `prepare` rejects empty stdin and unrelated dirty worktrees when `require_clean_worktree: true`
 - `start` re-validates branch, HEAD, plan/prompt hashes, and worktree baseline before invoking Cursor
+- After Cursor, `start` re-validates plan hash and prompt-source safety before `git add -A`
 - Repository file inputs must resolve inside the repository root; symlink escapes are rejected
 - Subprocesses use direct argument arrays (`shell=False` is never used)
-- Prompts, session IDs, and agent output files are written with user-only permissions
-- The orchestrator does not commit, push, tag, reset, clean, stash, or stage repository changes in Phase 2
+- Prompts, session IDs, staged patches, and agent output files are written with user-only permissions
+- The orchestrator stages changes with `git add -A` for `stage_mode: all` but does not commit, push, tag, reset, clean, stash, or unstage
 
 ## License
 

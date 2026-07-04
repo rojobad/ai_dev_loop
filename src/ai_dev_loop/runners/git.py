@@ -8,6 +8,7 @@ from pathlib import Path
 
 from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.process import ProcessResult, require_success, run_process
+from ai_dev_loop.state import sha256_file
 
 
 @dataclass(frozen=True)
@@ -217,3 +218,138 @@ def copy_file_atomic(source: Path, destination: Path) -> None:
     temp = destination.with_suffix(destination.suffix + ".tmp")
     temp.write_bytes(data)
     os.replace(temp, destination)
+
+
+def git_status_porcelain(repo_root: Path) -> str:
+    return require_success(
+        _git(["status", "--porcelain=v2", "--untracked-files=all"], cwd=repo_root),
+        context="git status",
+    )
+
+
+def git_diff_cached_name_only(repo_root: Path) -> str:
+    return require_success(
+        _git(["diff", "--cached", "--name-only"], cwd=repo_root),
+        context="git diff --cached --name-only",
+    )
+
+
+def git_diff_cached_stat(repo_root: Path) -> str:
+    return require_success(
+        _git(["diff", "--cached", "--stat"], cwd=repo_root),
+        context="git diff --cached --stat",
+    )
+
+
+def git_diff_cached_patch(repo_root: Path) -> str:
+    return require_success(
+        _git(["diff", "--cached"], cwd=repo_root),
+        context="git diff --cached",
+    )
+
+
+def git_add_all(repo_root: Path) -> ProcessResult:
+    return _git(["add", "-A"], cwd=repo_root)
+
+
+def staged_paths_from_name_only(output: str) -> tuple[str, ...]:
+    return tuple(line.strip() for line in output.splitlines() if line.strip())
+
+
+def paths_with_index_changes(status: str) -> set[str]:
+    """Return repository-relative paths with staged (index) changes."""
+    paths: set[str] = set()
+    for line in status.splitlines():
+        if not line:
+            continue
+        if line.startswith("1 "):
+            parts = line.split(" ", 2)
+            if len(parts) < 2:
+                continue
+            xy = parts[1]
+            if len(xy) >= 1 and xy[0] != ".":
+                path = _extract_status_path(line)
+                if path:
+                    paths.add(path)
+            continue
+        if line.startswith("2 "):
+            parts = line.split(" ", 2)
+            if len(parts) < 2:
+                continue
+            xy = parts[1]
+            if len(xy) >= 1 and xy[0] != ".":
+                path = _extract_status_path(line)
+                if path:
+                    paths.add(path)
+            continue
+        if line.startswith("u "):
+            path = _extract_status_path(line)
+            if path:
+                paths.add(path)
+    return paths
+
+
+def paths_with_worktree_changes(status: str) -> set[str]:
+    """Return repository-relative paths appearing in porcelain v2 status."""
+    paths: set[str] = set()
+    for line in status.splitlines():
+        path = _extract_status_path(line)
+        if path:
+            paths.add(path)
+    return paths
+
+
+def validate_stage_mode(stage_mode: str) -> None:
+    if stage_mode != "all":
+        raise ValidationError(
+            f"unsupported stage_mode for Phase 3: {stage_mode!r}; only 'all' is implemented"
+        )
+
+
+def validate_no_preexisting_staged_paths(staged_paths: tuple[str, ...]) -> None:
+    if staged_paths:
+        joined = ", ".join(sorted(staged_paths))
+        raise ValidationError(
+            f"pre-existing staged changes detected before orchestrator staging: {joined}"
+        )
+
+
+def validate_plan_hash_unchanged(repo_root: Path, plan_repo_path: str, expected_hash: str) -> None:
+    plan_file = repo_root / plan_repo_path
+    if not plan_file.is_file():
+        raise ValidationError(f"repository plan file missing: {plan_repo_path}")
+    if sha256_file(plan_file) != expected_hash:
+        raise ValidationError("repository plan file hash does not match prepared state")
+
+
+def validate_prompt_source_unchanged(
+    status: str,
+    prompt_repo_path: str,
+    *,
+    repo_root: Path,
+    prompt_source_path: Path,
+) -> None:
+    if not is_git_tracked(prompt_source_path, repo_root):
+        return
+    changed_paths = paths_with_worktree_changes(status)
+    if prompt_repo_path in changed_paths:
+        raise ValidationError(
+            f"prompt source file has tracked changes and cannot be staged: {prompt_repo_path}"
+        )
+
+
+def validate_staged_paths_safe(
+    staged_paths: tuple[str, ...],
+    *,
+    plan_repo_path: str,
+    prompt_repo_path: str,
+    plan_hash: str,
+    repo_root: Path,
+) -> None:
+    if not staged_paths:
+        raise ValidationError("no staged changes after git add -A")
+
+    if prompt_repo_path in staged_paths:
+        raise ValidationError(f"prompt source file must not be staged: {prompt_repo_path}")
+
+    validate_plan_hash_unchanged(repo_root, plan_repo_path, plan_hash)

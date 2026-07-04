@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from ai_dev_loop.run_discovery import load_run
-from ai_dev_loop.state import shorten_session_id
+from ai_dev_loop.runners.staging import staging_complete
+from ai_dev_loop.state import RunState, shorten_session_id
 
 
 def render_status(run_id: str, *, output: str = "text") -> str:
     run_path, state = load_run(run_id)
+    next_action = _next_action(state, run_path)
     if output == "json":
         payload = {
             "schema_version": 1,
@@ -26,7 +29,7 @@ def render_status(run_id: str, *, output: str = "text") -> str:
             "last_error": state.last_error,
             "result": state.result,
             "run_directory": str(run_path),
-            "next_safe_action": _next_action(state.status.value),
+            "next_safe_action": next_action,
         }
         return json.dumps(payload, indent=2) + "\n"
 
@@ -41,7 +44,7 @@ def render_status(run_id: str, *, output: str = "text") -> str:
         f"Cursor chat: {state.cursor.chat_id or '(not created)'}",
         f"Codex session: {shorten_session_id(state.codex.session_id)}",
         f"Run directory: {run_path}",
-        f"Next safe action: {_next_action(state.status.value)}",
+        f"Next safe action: {next_action}",
     ]
     if state.last_error:
         lines.append(f"Last error: {state.last_error}")
@@ -50,13 +53,19 @@ def render_status(run_id: str, *, output: str = "text") -> str:
     return "\n".join(lines) + "\n"
 
 
-def _next_action(status: str) -> str:
+def _next_action(state: RunState, run_path: Path) -> str:
+    status = state.status.value
     if status == "prepared":
         return "Exit Codex TUI, then run ai_dev_loop start <run-id>."
     if status == "staging":
+        if staging_complete(state, run_path):
+            return (
+                "Git staging is complete. Codex review and completion are not implemented yet. "
+                "Inspect git/diffs/ artifacts."
+            )
         return (
-            "Cursor execution is complete. Git staging, Codex review, and completion "
-            "are not implemented yet. Inspect cursor/iterations/ artifacts."
+            "Cursor execution finished but Git staging is incomplete. "
+            "Inspect git/status/ and cursor/iterations/ artifacts."
         )
     if status in {"running_cursor", "validating"}:
         return "Wait for start to finish or inspect logs if the run appears stuck."

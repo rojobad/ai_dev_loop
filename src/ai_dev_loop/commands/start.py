@@ -26,6 +26,7 @@ from ai_dev_loop.runners.probes import (
     require_probe_success,
     run_start_probes,
 )
+from ai_dev_loop.runners.staging import PHASE_3_BOUNDARY_MESSAGE, run_git_staging
 from ai_dev_loop.state import (
     RunState,
     RunStatus,
@@ -35,10 +36,6 @@ from ai_dev_loop.state import (
     save_run_state,
 )
 
-PHASE_2_BOUNDARY_MESSAGE = (
-    "Cursor execution is complete. Git staging, Codex review, corrections, "
-    "and completion are not implemented yet."
-)
 CODEX_TUI_WARNING = "Important: exit the active Codex TUI before continuing with start."
 
 
@@ -48,6 +45,7 @@ class StartResult:
     status: str
     chat_id: str
     iteration_dir: str
+    staged_diff_path: str
     boundary_message: str
 
 
@@ -111,6 +109,7 @@ def start_run(run_id: str) -> StartResult:
         iteration = "01"
         iteration_dir = run_directory / "cursor" / "iterations" / iteration
         iteration_dir.mkdir(parents=True, exist_ok=True)
+        cursor_started_at = datetime.now(tz=UTC)
 
         before_status_path = run_directory / "git" / "status" / f"{iteration}-before-cursor.txt"
         after_status_path = run_directory / "git" / "status" / f"{iteration}-after-cursor.txt"
@@ -170,17 +169,40 @@ def start_run(run_id: str) -> StartResult:
             raise AiDevLoopError(f"Cursor execution failed: {detail}")
 
         begin_staging(state)
-        state.result = PHASE_2_BOUNDARY_MESSAGE
-        state.last_error = None
         save_run_state(run_directory, state)
         append_run_log(run_directory, "Cursor execution complete; status=staging")
+
+        try:
+            staging = run_git_staging(
+                state,
+                run_directory,
+                iteration=iteration,
+                cursor_started_at=cursor_started_at,
+                cursor_exit_code=execution.process.returncode,
+            )
+        except ValidationError as exc:
+            _fail_run(run_directory, state, str(exc))
+            raise AiDevLoopError(str(exc), exit_code=exc.exit_code) from exc
+        except AiDevLoopError as exc:
+            _fail_run(run_directory, state, str(exc))
+            raise
+        except OSError as exc:
+            message = f"Git staging artifact capture failed: {exc}"
+            _fail_run(run_directory, state, message)
+            raise AiDevLoopError(message) from exc
+
+        state.result = PHASE_3_BOUNDARY_MESSAGE
+        state.last_error = None
+        save_run_state(run_directory, state)
+        append_run_log(run_directory, "Git staging complete; Phase 3 boundary reached")
 
     return StartResult(
         run_id=run_id,
         status=RunStatus.STAGING.value,
         chat_id=chat_id,
         iteration_dir=f"cursor/iterations/{iteration}",
-        boundary_message=PHASE_2_BOUNDARY_MESSAGE,
+        staged_diff_path=staging.artifacts.patch_path,
+        boundary_message=PHASE_3_BOUNDARY_MESSAGE,
     )
 
 
@@ -208,5 +230,6 @@ def render_start_output(result: StartResult) -> str:
         f"Status: {result.status}\n"
         f"Cursor chat: {result.chat_id}\n"
         f"Artifacts: {result.iteration_dir}\n"
+        f"Staged diff: {result.staged_diff_path}\n"
         f"{result.boundary_message}\n"
     )

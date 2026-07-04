@@ -146,6 +146,32 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
             if mode == "unparseable":
                 print("not-json")
                 sys.exit(0)
+            modify_mode = os.environ.get("FAKE_AGENT_MODIFY_MODE", "tracked")
+            if modify_mode != "none" and "--workspace" in args:
+                workspace = args[args.index("--workspace") + 1]
+                if modify_mode == "tracked":
+                    target = os.path.join(workspace, "ai_dev_loop.yaml")
+                    with open(target, "a", encoding="utf-8") as handle:
+                        handle.write("\\n# modified by fake agent\\n")
+                elif modify_mode == "untracked":
+                    target = os.path.join(workspace, "new_feature.txt")
+                    with open(target, "w", encoding="utf-8") as handle:
+                        handle.write("new feature\\n")
+                elif modify_mode == "stage_self":
+                    import subprocess
+
+                    target = os.path.join(workspace, "staged_by_agent.txt")
+                    with open(target, "w", encoding="utf-8") as handle:
+                        handle.write("staged by agent\\n")
+                    subprocess.run(["git", "add", "staged_by_agent.txt"], cwd=workspace, check=False)
+                elif modify_mode == "modify_prompt":
+                    target = os.path.join(workspace, "docs/plans/prompt_sample-plan.txt")
+                    with open(target, "a", encoding="utf-8") as handle:
+                        handle.write("\\nmodified prompt\\n")
+                elif modify_mode == "modify_plan":
+                    target = os.path.join(workspace, "docs/plans/sample-plan.md")
+                    with open(target, "w", encoding="utf-8") as handle:
+                        handle.write("# modified plan\\n")
             prompt = args[-1]
             print(json.dumps({{"type": "result", "result": f"done: {{prompt[:32]}}"}}))
             sys.exit(0)

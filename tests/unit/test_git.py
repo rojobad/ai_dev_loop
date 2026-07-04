@@ -12,10 +12,20 @@ from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.runners.git import (
     _extract_status_path,
     discover_repository,
+    git_diff_cached_name_only,
     is_path_within,
+    paths_with_index_changes,
+    paths_with_worktree_changes,
     resolve_repo_relative_path,
+    staged_paths_from_name_only,
     validate_clean_worktree,
+    validate_no_preexisting_staged_paths,
+    validate_plan_hash_unchanged,
+    validate_prompt_source_unchanged,
+    validate_stage_mode,
+    validate_staged_paths_safe,
 )
+from ai_dev_loop.state import sha256_file
 
 
 def test_extract_porcelain_v2_tracked_change_path() -> None:
@@ -183,3 +193,104 @@ def test_allow_ignored_dirty_prompt(git_repo: Path) -> None:
         repo_root=git_repo,
         require_clean=True,
     )
+
+
+def test_validate_stage_mode_rejects_unknown() -> None:
+    with pytest.raises(ValidationError, match="unsupported stage_mode"):
+        validate_stage_mode("partial")
+
+
+def test_validate_no_preexisting_staged_paths() -> None:
+    with pytest.raises(ValidationError, match="pre-existing staged"):
+        validate_no_preexisting_staged_paths(("dirty.txt",))
+
+
+def test_paths_with_index_changes_detects_staged(git_repo: Path) -> None:
+    dirty = git_repo / "staged.txt"
+    dirty.write_text("x", encoding="utf-8")
+    subprocess.run(["git", "add", "staged.txt"], cwd=git_repo, check=True)
+    status = subprocess.run(
+        ["git", "status", "--porcelain=v2", "--untracked-files=all"],
+        cwd=git_repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert "staged.txt" in paths_with_index_changes(status)
+
+
+def test_paths_with_worktree_changes_includes_untracked(git_repo: Path) -> None:
+    (git_repo / "new.txt").write_text("x", encoding="utf-8")
+    status = subprocess.run(
+        ["git", "status", "--porcelain=v2", "--untracked-files=all"],
+        cwd=git_repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert "new.txt" in paths_with_worktree_changes(status)
+
+
+def test_staged_paths_from_name_only() -> None:
+    assert staged_paths_from_name_only("a.txt\nb.txt\n") == ("a.txt", "b.txt")
+
+
+def test_validate_prompt_source_unchanged_rejects_tracked_modification(git_repo: Path) -> None:
+    prompt = git_repo / "docs/plans/prompt_sample-plan.txt"
+    prompt.write_text("changed prompt\n", encoding="utf-8")
+    status = subprocess.run(
+        ["git", "status", "--porcelain=v2", "--untracked-files=all"],
+        cwd=git_repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    with pytest.raises(ValidationError, match="prompt source"):
+        validate_prompt_source_unchanged(
+            status,
+            "docs/plans/prompt_sample-plan.txt",
+            repo_root=git_repo,
+            prompt_source_path=prompt,
+        )
+
+
+def test_validate_staged_paths_safe_rejects_empty() -> None:
+    with pytest.raises(ValidationError, match="no staged changes"):
+        validate_staged_paths_safe(
+            (),
+            plan_repo_path="docs/plans/sample-plan.md",
+            prompt_repo_path="docs/plans/prompt_sample-plan.txt",
+            plan_hash="a" * 64,
+            repo_root=Path("/tmp/unused"),
+        )
+
+
+def test_validate_staged_paths_safe_rejects_prompt_in_index(git_repo: Path) -> None:
+    prompt = git_repo / "docs/plans/prompt_sample-plan.txt"
+    prompt.write_text("changed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "docs/plans/prompt_sample-plan.txt"], cwd=git_repo, check=True)
+    with pytest.raises(ValidationError, match="must not be staged"):
+        validate_staged_paths_safe(
+            ("docs/plans/prompt_sample-plan.txt",),
+            plan_repo_path="docs/plans/sample-plan.md",
+            prompt_repo_path="docs/plans/prompt_sample-plan.txt",
+            plan_hash=sha256_file(git_repo / "docs/plans/sample-plan.md"),
+            repo_root=git_repo,
+        )
+
+
+def test_validate_plan_hash_unchanged(git_repo: Path) -> None:
+    plan = git_repo / "docs/plans/sample-plan.md"
+    expected = sha256_file(plan)
+    validate_plan_hash_unchanged(git_repo, "docs/plans/sample-plan.md", expected)
+    plan.write_text("# changed\n", encoding="utf-8")
+    with pytest.raises(ValidationError, match="plan file hash"):
+        validate_plan_hash_unchanged(git_repo, "docs/plans/sample-plan.md", expected)
+
+
+def test_git_diff_cached_name_only(git_repo: Path) -> None:
+    target = git_repo / "ai_dev_loop.yaml"
+    target.write_text(target.read_text(encoding="utf-8") + "\n# edit\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=git_repo, check=True)
+    names = git_diff_cached_name_only(git_repo)
+    assert "ai_dev_loop.yaml" in names
