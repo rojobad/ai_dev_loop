@@ -1,0 +1,32 @@
+Implement Phase 1 of `ai_dev_loop`: package foundation plus a real `prepare` command.
+
+Read these files first:
+
+- `plan-2-build-ai-dev-loop-orchestrator.md`
+- `phase-0-findings.md`
+- `.cursor/rules/ai-dev-loop-governance.mdc`
+- `plans/phase-1-foundation-and-prepare.md`
+
+Use the master plan as the source of truth, and use the Phase 1 plan to limit scope. The repo is under WSL; do not modify system Python. Build a standard Python 3.11+ package and recommend `uv` for development/install, but do not install global tooling without explicit approval.
+
+Implement:
+
+- `pyproject.toml`, MIT `LICENSE`, package layout under `src/ai_dev_loop`, tests, schemas, and `scripts/development-install.sh`.
+- CLI entry point `ai_dev_loop` with the full command tree required by the master plan.
+- Fully working `prepare`, `config validate`, and basic read-only run inspection commands where practical.
+- XDG config/state/cache paths, secure permissions, typed config/state models, atomic writes, SHA-256 hashes, Git discovery/safety checks, and prompt/config/plan snapshots.
+- Static JSON schemas, including `codex-review-result-v1.json`.
+- Tests for the Phase 1 acceptance criteria in `plans/phase-1-foundation-and-prepare.md`.
+- README documentation for the implemented slice only.
+
+Important constraints:
+
+- Follow `.cursor/rules/ai-dev-loop-governance.mdc` throughout the implementation.
+- Do not implement the Cursor/Codex execution loop yet.
+- Do not stage, commit, push, tag, reset, clean, or stash.
+- Do not delete or alter unrelated existing files, including `plan-2-build-ai-dev-loop-orchestrator.md:Zone.Identifier`.
+- Never use `shell=True`; pass subprocess arguments as arrays.
+- Do not invoke real Cursor or Codex model activity in tests.
+- If validation tooling is unavailable, report exactly what could not be run.
+
+Target outcome: `ai_dev_loop prepare` can safely create a durable prepared run from stdin prompt content, with all artifacts stored under XDG state outside the target repository, and `ai_dev_loop --help` exposes the required future command surface.

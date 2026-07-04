@@ -1,0 +1,67 @@
+---
+description: "Project-wide governance guardrails for implementing ai_dev_loop phases. Apply whenever editing this repository, especially when executing a phase plan."
+globs:
+alwaysApply: true
+---
+
+# ai_dev_loop Governance
+
+This repository builds `ai_dev_loop`, a deterministic local orchestrator for Codex/Cursor development loops. The master contract is `plan-2-build-ai-dev-loop-orchestrator.md`; phase handoff files in `plans/` narrow scope but do not override the master contract unless explicitly stated by the user.
+
+## Required Context
+
+Before implementing a phase, read:
+
+- `plan-2-build-ai-dev-loop-orchestrator.md`
+- `phase-0-findings.md`
+- the active phase plan under `plans/`
+- the active Cursor prompt under `plans/`
+
+If these files conflict, prefer the most specific active phase plan for scope and the master plan for architecture and safety. If a conflict would change safety behavior, stop and report it.
+
+## Scope Discipline
+
+- Implement only the active phase.
+- Do not silently start later-phase work.
+- Keep placeholder commands honest: if a feature is not implemented, say so clearly and return a non-zero exit code.
+- Do not claim the full Cursor/Codex automated loop works until it is implemented and tested.
+
+## Non-Negotiable Guardrails
+
+- Do not stage, commit, push, tag, reset, clean, stash, or otherwise rewrite Git state.
+- Do not remove unrelated user files or metadata artifacts, including `plan-2-build-ai-dev-loop-orchestrator.md:Zone.Identifier`.
+- Do not modify, replace, or depend on system Python. Use a standard Python 3.11+ package and document `uv` as the preferred local workflow.
+- Do not use cloud workers or remote implementation agents.
+- Do not invoke real Cursor or Codex model activity in automated tests.
+- Do not store API keys, tokens, authentication files, or full process environments.
+- Do not write orchestrator state inside target repositories.
+
+## Architecture Rules
+
+- Keep `ai_dev_loop` naming consistent for package, executable, XDG paths, schemas, docs, and environment variables.
+- Preserve separation between CLI presentation, config, paths, state persistence, process execution, Git safety, Codex integration, Cursor integration, and integration installation.
+- Store durable state under XDG paths:
+  - config: `$XDG_CONFIG_HOME/ai_dev_loop` or `~/.config/ai_dev_loop`
+  - state: `$XDG_STATE_HOME/ai_dev_loop` or `~/.local/state/ai_dev_loop`
+  - cache: `$XDG_CACHE_HOME/ai_dev_loop` or `~/.cache/ai_dev_loop`
+- Use user-only permissions where supported: directories `0700`; prompt/session/agent-output files `0600`.
+- Use typed models and versioned schemas for config, state, and review results.
+- Use atomic writes for state and manifest files.
+- Treat agent output as untrusted data.
+
+## Subprocess And Git Rules
+
+- Never use `shell=True`.
+- Pass subprocess arguments as arrays.
+- Capture stdout and stderr separately.
+- Set explicit working directories.
+- Apply timeouts where process helpers expose them.
+- Redact known secret patterns from logs.
+- Use Git with direct argument arrays only.
+- Never execute text emitted by agents.
+
+## Phase 1 Specifics
+
+For Phase 1, implement package foundation and a real `prepare` command only. Do not implement Cursor chat execution, Codex review execution, staging after Cursor turns, the bounded `start` loop, global Codex skill installation, or SessionStart hook installation.
+
+`prepare` must read the exact Cursor prompt from stdin, validate repository/config inputs, snapshot plan/prompt/config, hash artifacts with SHA-256, write run state outside the target repository, and return a start command without starting the loop.
