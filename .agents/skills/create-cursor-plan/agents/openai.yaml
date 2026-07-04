@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Cursor Plan"
+  short_description: "Plan and prompt Cursor implementation work"
+  default_prompt: "Use $create-cursor-plan to create a Cursor execution plan and concise handoff prompt."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Staged Changes"
+  short_description: "Review staged code changes consistently"
+  default_prompt: "Use $review-staged-changes to review the currently staged changes."
