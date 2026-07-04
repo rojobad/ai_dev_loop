@@ -6,11 +6,17 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
+import textwrap
 from collections.abc import Iterator
+from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+
+from ai_dev_loop.commands.prepare import PrepareOptions, prepare_run
 
 FIXTURE_REPO = Path(__file__).resolve().parent / "fixtures" / "sample_repo"
 
@@ -85,3 +91,107 @@ def git_repo(tmp_path: Path) -> Path:
 
 def _git(cwd: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+
+
+def _write_executable(path: Path, content: str) -> None:
+    path.write_text(content, encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+@pytest.fixture
+def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    agent_log = tmp_path / "agent.log"
+    codex_log = tmp_path / "codex.log"
+
+    agent_script = textwrap.dedent(
+        f"""\
+        #!{sys.executable}
+        import json
+        import os
+        import sys
+        import time
+
+        args = sys.argv[1:]
+        log_path = {repr(str(agent_log))}
+
+        def log(message):
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(message + "\\n")
+
+        if not args:
+            sys.exit(1)
+        if args[0] == "create-chat":
+            chat_id = os.environ.get("FAKE_AGENT_CHAT_ID", "019abc00-1111-2222-3333-444444444444")
+            print(chat_id)
+            sys.exit(0)
+        if args[0] == "status":
+            auth = os.environ.get("FAKE_AGENT_AUTH", "true")
+            print(json.dumps({{"authenticated": auth == "true"}}))
+            sys.exit(0 if auth == "true" else 1)
+        if args[0] == "models":
+            model = os.environ.get("FAKE_AGENT_MODELS", "composer-2.5-fast")
+            print(model)
+            sys.exit(0)
+        if "-p" in args:
+            log("ARGS:" + repr(args))
+            mode = os.environ.get("FAKE_AGENT_RUN_MODE", "success")
+            if mode == "sleep":
+                time.sleep(float(os.environ.get("FAKE_AGENT_SLEEP_SECONDS", "5")))
+                sys.exit(0)
+            if mode == "fail":
+                print("agent failed", file=sys.stderr)
+                sys.exit(2)
+            if mode == "unparseable":
+                print("not-json")
+                sys.exit(0)
+            prompt = args[-1]
+            print(json.dumps({{"type": "result", "result": f"done: {{prompt[:32]}}"}}))
+            sys.exit(0)
+        sys.exit(1)
+        """
+    )
+    codex_script = textwrap.dedent(
+        f"""\
+        #!{sys.executable}
+        import os
+        import sys
+
+        args = sys.argv[1:]
+        if len(args) >= 2 and args[0] == "login" and args[1] == "status":
+            auth = os.environ.get("FAKE_CODEX_AUTH", "true")
+            if auth == "true":
+                print("Logged in to Codex")
+                sys.exit(0)
+            print("Not logged in", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(1)
+        """
+    )
+    _write_executable(bin_dir / "agent", agent_script)
+    _write_executable(bin_dir / "codex", codex_script)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    return {
+        "bin_dir": bin_dir,
+        "agent_log": agent_log,
+        "codex_log": codex_log,
+    }
+
+
+@pytest.fixture
+def prepared_run(git_repo: Path, isolated_xdg, fake_clis) -> dict[str, object]:
+    prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
+    with patch("sys.stdin", StringIO(prompt)):
+        result = prepare_run(
+            PrepareOptions(
+                repo_path=git_repo,
+                plan_path=Path("docs/plans/sample-plan.md"),
+                prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
+                codex_session_id="019abc00-0000-0000-0000-000000000000",
+            )
+        )
+    from ai_dev_loop.paths import run_dir
+
+    run_path = run_dir("fixture-project", result.run_id)
+    return {"run_id": result.run_id, "run_path": run_path, "repo": git_repo}

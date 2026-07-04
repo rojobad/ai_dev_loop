@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -63,3 +64,12 @@ def set_sensitive_file_mode(path: Path) -> None:
 
 def schema_path(name: str) -> Path:
     return Path(__file__).resolve().parent / "schemas" / name
+
+
+def repository_locks_dir() -> Path:
+    return state_dir() / "repository-locks"
+
+
+def repository_lock_path(repo_root: Path) -> Path:
+    digest = hashlib.sha256(str(repo_root.resolve()).encode("utf-8")).hexdigest()
+    return repository_locks_dir() / f"{digest}.lock"

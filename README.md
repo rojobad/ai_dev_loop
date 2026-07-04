@@ -2,12 +2,28 @@
 
 Deterministic local orchestrator for Codex/Cursor development loops.
 
-Phase 1 provides the package foundation, configuration validation, durable XDG-backed run state, and a real `prepare` command. The automated Cursor/Codex loop (`start`, staging, review, resume) is **not implemented yet**.
+Phase 2 adds a real `ai_dev_loop start <run-id>` command that runs start preflight, acquires run/repository locks, probes local Git/Cursor/Codex CLIs, creates or reuses one Cursor chat, executes the prepared prompt headlessly, and persists Cursor/Git artifacts under XDG state.
 
-## What Phase 1 Implements
+The full automated loop is **still incomplete**: Git staging, Codex review, correction turns, `resume`, and `abort` are not implemented yet.
+
+## What Phase 2 Implements
+
+- Real `ai_dev_loop start <run-id>` for prepared runs
+- Start preflight: branch/HEAD, plan/prompt hashes, worktree baseline, timeouts, Codex session ID
+- Run lock and repository-worktree lock before mutation
+- Local CLI probes for `git`, `agent`, and `codex` (auth + Cursor model availability)
+- Cursor chat creation via `agent create-chat` with immediate persistence to `state.json` and `cursor/chat.json`
+- Cursor headless execution with process-group timeout handling and durable artifacts:
+  - `cursor/iterations/01/events.jsonl`
+  - `cursor/iterations/01/stderr.txt`
+  - `cursor/iterations/01/final.txt` (when detected)
+  - `cursor/iterations/01/metadata.json`
+  - `git/status/01-before-cursor.txt` and `git/status/01-after-cursor.txt`
+- Successful Cursor turns transition the run to `staging` with an explicit Phase 2 boundary message
+
+## What Phase 1 Still Provides
 
 - Installable Python 3.11+ package with console entry point `ai_dev_loop`
-- Full CLI command tree with help for future commands
 - Real `ai_dev_loop prepare` that reads the exact Cursor prompt from stdin
 - `ai_dev_loop config validate`
 - Read-only inspection: `status`, `list`, `inspect`, `logs`
@@ -20,11 +36,11 @@ Phase 1 provides the package foundation, configuration validation, durable XDG-b
 
 ## What Is Still Pending
 
-- `start`, `resume`, and the full stage-review-fix loop
-- Cursor chat creation/execution and Codex review execution
+- Git staging after Cursor turns
+- Codex review execution and correction turns
+- `resume` recovery semantics and `abort` child-process termination
 - Global Codex skill and SessionStart hook installation
 - `integrations install` / `uninstall`
-- `abort` process termination and lock-based concurrency for active loops
 
 ## Recommended Setup (WSL)
 
@@ -114,16 +130,6 @@ ai_dev_loop prepare \
   --output json < docs/plans/prompt_my-plan.txt
 ```
 
-Or:
-
-```bash
-cat docs/plans/prompt_my-plan.txt | ai_dev_loop prepare \
-  --repo-path /path/to/repo \
-  --plan-path docs/plans/my-plan.md \
-  --prompt-source-path docs/plans/prompt_my-plan.txt \
-  --codex-session-id "<exact-session-id>"
-```
-
 JSON output includes:
 
 ```json
@@ -137,7 +143,23 @@ JSON output includes:
 }
 ```
 
-**Important:** exit the active Codex TUI before running `start`. In Phase 1, `start` is present but not yet implemented.
+**Important:** exit the active Codex TUI before running `start`.
+
+## Start A Prepared Run
+
+```bash
+ai_dev_loop start <run-id>
+```
+
+On success, the run moves to `staging` and the CLI reports that Git staging and Codex review are still pending later phases. A real `start` may modify files in the target repository; nothing is staged automatically in Phase 2.
+
+Inspect results:
+
+```bash
+ai_dev_loop status <run-id>
+ai_dev_loop inspect <run-id>
+ai_dev_loop logs <run-id>
+```
 
 ## State Storage
 
@@ -151,8 +173,18 @@ $XDG_STATE_HOME/ai_dev_loop/runs/<project-slug>/<run-id>/
 ├── manifest.json
 ├── plan/
 ├── prompts/
+├── cursor/
+│   ├── chat.json
+│   └── iterations/
 ├── git/
+│   └── status/
 └── logs/
+```
+
+Repository locks live under:
+
+```text
+$XDG_STATE_HOME/ai_dev_loop/repository-locks/
 ```
 
 Fallback when XDG variables are unset:
@@ -175,7 +207,7 @@ ai_dev_loop logs <run-id>
 ## Development Validation
 
 ```bash
-uv run python -m pytest
+uv run python -m pytest -q -s
 uv run python -m ruff check .
 uv run python -m ruff format --check .
 uv run python -m mypy src
@@ -186,10 +218,11 @@ uv run ai_dev_loop --help
 ## Safety Model
 
 - `prepare` rejects empty stdin and unrelated dirty worktrees when `require_clean_worktree: true`
+- `start` re-validates branch, HEAD, plan/prompt hashes, and worktree baseline before invoking Cursor
 - Repository file inputs must resolve inside the repository root; symlink escapes are rejected
 - Subprocesses use direct argument arrays (`shell=False` is never used)
 - Prompts, session IDs, and agent output files are written with user-only permissions
-- The orchestrator does not commit, push, tag, reset, clean, or stash repository changes
+- The orchestrator does not commit, push, tag, reset, clean, stash, or stage repository changes in Phase 2
 
 ## License
 

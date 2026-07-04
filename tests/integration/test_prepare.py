@@ -38,10 +38,11 @@ def test_cli_help() -> None:
         assert command in result.stdout
 
 
-def test_start_not_implemented() -> None:
-    result = runner.invoke(app, ["start", "demo-run"])
+def test_start_not_implemented_for_resume_and_abort() -> None:
+    result = runner.invoke(app, ["resume", "demo-run"])
     assert result.exit_code == 3
-    assert "not implemented" in result.stdout.lower() or "not implemented" in result.stderr.lower()
+    result = runner.invoke(app, ["abort", "demo-run"])
+    assert result.exit_code == 3
 
 
 def test_config_validate(git_repo: Path, isolated_xdg) -> None:

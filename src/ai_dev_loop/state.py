@@ -257,3 +257,20 @@ def shorten_session_id(session_id: str) -> str:
     if len(session_id) <= 12:
         return session_id
     return f"{session_id[:8]}…{session_id[-4:]}"
+
+
+def save_run_state(run_directory: Path, state: RunState) -> None:
+    state.updated_at = utc_now()
+    atomic_write_json(
+        run_directory / "state.json",
+        serialize_run_state(state),
+        sensitive=True,
+    )
+
+
+def append_run_log(run_directory: Path, message: str) -> None:
+    log_path = run_directory / "logs" / "ai_dev_loop.log"
+    timestamp = utc_now().isoformat()
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(f"{timestamp} {message}\n")
+    set_sensitive_file_mode(log_path)

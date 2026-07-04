@@ -1,0 +1,5 @@
+Please implement the plan in `plans/phase-2-start-preflight-and-cursor-runner.md`. Follow `.cursor/rules/ai-dev-loop-governance.mdc`, `.cursor/rules/ai-dev-loop-orchestrator-contracts.mdc`, and the repo-local skills listed in the plan, keep the architecture guardrails intact, follow the testing criteria, add/update automated tests where required, avoid assumptions, and stop to resolve any OpenQuestions before making dependent changes.
+
+Pay special attention to the Phase 2 boundary: implement start preflight, locks, Cursor chat creation, Cursor headless execution, durable Cursor artifacts, and status/checkpoint updates, but do not implement Git staging, Codex review execution, correction turns, integrations install/uninstall, commits, pushes, resets, cleans, stashes, or real model activity in tests.
+
+Use `uv` for validation. Expected commands are `uv run python -m ruff format --check .`, `uv run python -m ruff check .`, `uv run python -m mypy src`, `uv run python -m pytest -q -s`, `uv run python -m build`, and `uv run ai_dev_loop --help`. Use fake `agent` and `codex` executables in tests.

@@ -30,3 +30,7 @@ class ValidationError(AiDevLoopError):
 
 class NotImplementedCommandError(AiDevLoopError):
     exit_code = EXIT_NOT_IMPLEMENTED
+
+
+class LockError(AiDevLoopError):
+    exit_code = EXIT_GENERAL_ERROR

@@ -24,6 +24,7 @@ def render_status(run_id: str, *, output: str = "text") -> str:
             "cursor_chat_id": state.cursor.chat_id,
             "codex_session_id": state.codex.session_id,
             "last_error": state.last_error,
+            "result": state.result,
             "run_directory": str(run_path),
             "next_safe_action": _next_action(state.status.value),
         }
@@ -44,10 +45,23 @@ def render_status(run_id: str, *, output: str = "text") -> str:
     ]
     if state.last_error:
         lines.append(f"Last error: {state.last_error}")
+    if state.result:
+        lines.append(f"Result: {state.result}")
     return "\n".join(lines) + "\n"
 
 
 def _next_action(status: str) -> str:
     if status == "prepared":
-        return "Exit Codex TUI, then run ai_dev_loop start <run-id> (not implemented in Phase 1)."
+        return "Exit Codex TUI, then run ai_dev_loop start <run-id>."
+    if status == "staging":
+        return (
+            "Cursor execution is complete. Git staging, Codex review, and completion "
+            "are not implemented yet. Inspect cursor/iterations/ artifacts."
+        )
+    if status in {"running_cursor", "validating"}:
+        return "Wait for start to finish or inspect logs if the run appears stuck."
+    if status == "interrupted":
+        return "ai_dev_loop resume is not implemented yet. Inspect artifacts manually."
+    if status == "failed":
+        return "Inspect last_error and cursor artifacts before preparing a new run."
     return "Inspect artifacts or wait for a later-phase recovery command."
