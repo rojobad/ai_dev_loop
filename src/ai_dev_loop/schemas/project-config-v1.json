@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ai_dev_loop project configuration v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "project", "cursor", "codex", "workflow", "prompt"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        }
+      }
+    },
+    "cursor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "model",
+        "output_format",
+        "force",
+        "trust_workspace",
+        "sandbox"
+      ],
+      "properties": {
+        "command": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "output_format": {
+          "type": "string",
+          "enum": ["stream-json", "json", "text"]
+        },
+        "force": { "type": "boolean" },
+        "trust_workspace": { "type": "boolean" },
+        "sandbox": {
+          "type": "string",
+          "enum": ["enabled", "disabled"]
+        }
+      }
+    },
+    "codex": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "review_model", "review_skill", "sandbox"],
+      "properties": {
+        "command": { "type": "string", "minLength": 1 },
+        "review_model": { "type": "string", "minLength": 1 },
+        "review_skill": { "type": "string", "minLength": 1 },
+        "sandbox": {
+          "type": "string",
+          "enum": ["read-only", "workspace-write", "danger-full-access"]
+        }
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_review_iterations",
+        "require_clean_worktree",
+        "stage_mode",
+        "cursor_timeout_minutes",
+        "codex_timeout_minutes"
+      ],
+      "properties": {
+        "max_review_iterations": { "type": "integer", "minimum": 1 },
+        "require_clean_worktree": { "type": "boolean" },
+        "stage_mode": { "type": "string", "enum": ["all"] },
+        "cursor_timeout_minutes": { "type": "integer", "minimum": 1 },
+        "codex_timeout_minutes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "prompt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["directory", "filename_template"],
+      "properties": {
+        "directory": { "type": "string", "minLength": 1 },
+        "filename_template": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

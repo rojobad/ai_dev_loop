@@ -1,0 +1,55 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ai_dev_loop"
+version = "0.1.0"
+description = "Deterministic local orchestrator for Codex/Cursor development loops"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "ai_dev_loop contributors" }]
+dependencies = [
+    "platformdirs>=4.0",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "typer>=0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.0",
+    "mypy>=1.8",
+    "pytest>=8.0",
+    "ruff>=0.4",
+    "types-PyYAML>=6.0",
+]
+
+[project.scripts]
+ai_dev_loop = "ai_dev_loop.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ai_dev_loop"]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["src/ai_dev_loop", "tests", "scripts", "README.md", "LICENSE"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["ai_dev_loop"]
+mypy_path = "src"

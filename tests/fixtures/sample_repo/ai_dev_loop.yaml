@@ -1,0 +1,29 @@
+version: 1
+
+project:
+  name: fixture-project
+
+cursor:
+  command: agent
+  model: composer-2.5-fast
+  output_format: stream-json
+  force: true
+  trust_workspace: true
+  sandbox: disabled
+
+codex:
+  command: codex
+  review_model: o4-mini
+  review_skill: review-staged-cursor-execution
+  sandbox: workspace-write
+
+workflow:
+  max_review_iterations: 3
+  require_clean_worktree: true
+  stage_mode: all
+  cursor_timeout_minutes: 90
+  codex_timeout_minutes: 90
+
+prompt:
+  directory: docs/plans
+  filename_template: prompt_{plan_stem}.txt

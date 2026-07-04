@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ai_dev_loop run state v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "project",
+    "status",
+    "created_at",
+    "updated_at",
+    "repository",
+    "plan",
+    "prompt",
+    "codex",
+    "cursor",
+    "workflow",
+    "iterations",
+    "result",
+    "last_error"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 }
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "prepared",
+        "validating",
+        "running_cursor",
+        "staging",
+        "reviewing",
+        "waiting_for_cursor_fix",
+        "completed",
+        "completed_with_residual_risk",
+        "max_iterations_reached",
+        "interrupted",
+        "failed",
+        "aborted"
+      ]
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "git_common_dir",
+        "git_dir",
+        "branch",
+        "initial_head",
+        "baseline_status_path"
+      ],
+      "properties": {
+        "root": { "type": "string", "minLength": 1 },
+        "git_common_dir": { "type": "string", "minLength": 1 },
+        "git_dir": { "type": "string", "minLength": 1 },
+        "branch": { "type": "string", "minLength": 1 },
+        "initial_head": { "type": "string", "minLength": 1 },
+        "baseline_status_path": { "type": "string", "minLength": 1 }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository_path", "snapshot_path", "sha256"],
+      "properties": {
+        "repository_path": { "type": "string", "minLength": 1 },
+        "snapshot_path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "prompt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_repository_path", "snapshot_path", "sha256"],
+      "properties": {
+        "source_repository_path": { "type": "string", "minLength": 1 },
+        "snapshot_path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "codex": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "session_id",
+        "session_model",
+        "review_model",
+        "review_skill",
+        "sandbox"
+      ],
+      "properties": {
+        "command": { "type": "string", "minLength": 1 },
+        "session_id": { "type": "string", "minLength": 1 },
+        "session_model": { "type": ["string", "null"] },
+        "review_model": { "type": "string", "minLength": 1 },
+        "review_skill": { "type": "string", "minLength": 1 },
+        "sandbox": { "type": "string", "minLength": 1 }
+      }
+    },
+    "cursor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "model",
+        "output_format",
+        "force",
+        "trust_workspace",
+        "sandbox",
+        "chat_id"
+      ],
+      "properties": {
+        "command": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "output_format": { "type": "string", "minLength": 1 },
+        "force": { "type": "boolean" },
+        "trust_workspace": { "type": "boolean" },
+        "sandbox": { "type": "string", "minLength": 1 },
+        "chat_id": { "type": ["string", "null"] }
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_review_iterations",
+        "current_review_iteration",
+        "stage_mode",
+        "cursor_timeout_minutes",
+        "codex_timeout_minutes"
+      ],
+      "properties": {
+        "max_review_iterations": { "type": "integer", "minimum": 1 },
+        "current_review_iteration": { "type": "integer", "minimum": 0 },
+        "stage_mode": { "type": "string", "minLength": 1 },
+        "cursor_timeout_minutes": { "type": "integer", "minimum": 1 },
+        "codex_timeout_minutes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "iterations": { "type": "array" },
+    "result": { "type": ["string", "null"] },
+    "last_error": { "type": ["string", "null"] }
+  }
+}

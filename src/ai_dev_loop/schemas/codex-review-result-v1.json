@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ai_dev_loop Codex review result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "has_actionable_findings",
+    "findings_count",
+    "highest_severity",
+    "review_markdown",
+    "cursor_fix_prompt",
+    "tests_status",
+    "summary"
+  ],
+  "properties": {
+    "has_actionable_findings": {
+      "type": "boolean"
+    },
+    "findings_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "highest_severity": {
+      "type": ["string", "null"],
+      "enum": ["P0", "P1", "P2", "P3", null]
+    },
+    "review_markdown": {
+      "type": "string",
+      "minLength": 1
+    },
+    "cursor_fix_prompt": {
+      "type": ["string", "null"]
+    },
+    "tests_status": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed",
+        "skipped_findings_present",
+        "blocked_environment",
+        "not_applicable"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}
