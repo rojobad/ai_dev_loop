@@ -1,0 +1,5 @@
+Please implement the plan in `plans/phase-3-git-staging-runner.md`. Follow `.cursor/rules/ai-dev-loop-governance.mdc`, `.cursor/rules/ai-dev-loop-orchestrator-contracts.mdc`, `.cursor/rules/ai-dev-loop-state-and-schema-contracts.mdc`, and the repo-local skills listed in the plan, keep the architecture guardrails intact, follow the testing criteria, add/update automated tests where required, avoid assumptions, and stop to resolve any OpenQuestions before making dependent changes.
+
+Pay special attention to the Phase 3 boundary: implement Git staging after a successful Cursor turn, staged diff artifacts, safety checks, state/status/docs updates, and tests, but do not implement Codex review execution, correction turns, full resume/abort behavior, integrations install/uninstall, commits, pushes, resets, cleans, stashes, or real model activity in tests.
+
+Use `uv` for validation. Expected commands are `uv run python -m ruff format --check .`, `uv run python -m ruff check .`, `uv run python -m mypy src`, `uv run python -m pytest -q -s`, `uv run python -m build`, and `uv run ai_dev_loop --help`. Use fake `agent` and `codex` executables in tests.

@@ -6,12 +6,13 @@ alwaysApply: true
 
 # ai_dev_loop Orchestrator Contracts
 
-These contracts preserve the product's safety model across implementation phases. They apply in addition to `ai-dev-loop-governance.mdc`.
+These contracts preserve the product's safety model across implementation phases. They apply in addition to `ai-dev-loop-governance.mdc` and `ai-dev-loop-state-and-schema-contracts.mdc`.
 
 ## Source Of Truth
 
 - `plan-2-build-ai-dev-loop-orchestrator.md` is the master architecture contract.
 - The active `plans/phase-*.md` file narrows scope for the current implementation phase.
+- `.cursor/rules/ai-dev-loop-state-and-schema-contracts.mdc` is the detailed contract for persisted state, schemas, manifests, checkpoints, and recovery compatibility.
 - `state.json`, `manifest.json`, snapshots, logs, and per-iteration artifacts are the durable local audit trail.
 - The orchestrator transports exact prompts and validated decisions. It must not invent architecture, reinterpret findings, or replace Codex or Cursor reasoning.
 
@@ -23,8 +24,11 @@ These contracts preserve the product's safety model across implementation phases
 - Write state, manifests, configs, checkpoints, and schemas atomically.
 - Use user-only permissions where supported: directories `0700`; prompt/session/agent-output files `0600`.
 - Keep schemas versioned and typed models aligned with persisted JSON.
+- Any persisted shape change must update the typed model, JSON schema, artifact writer/reader, and tests in the same phase unless the active plan explicitly defers that persisted field.
+- Treat `iterations` as a recovery and audit contract. Do not add ad hoc keys, fake later-phase data, or unversioned nested structures without documenting and testing the shape.
 - Do not mutate run status outside the explicit state machine.
 - Preserve enough artifacts to recover manually after crashes, timeouts, or interrupted writes.
+- Phase boundary state must distinguish completed checkpoints from future work. Do not set statuses, results, or iteration fields that imply an unimplemented later phase ran.
 
 ## Git Contracts
 
@@ -34,6 +38,7 @@ These contracts preserve the product's safety model across implementation phases
 - Never commit, tag, push, reset, clean, stash, or unstage user work.
 - Use direct Git argument arrays with explicit working directories.
 - Fail safely on ambiguous status, symlink escapes, unrelated dirty work, or baseline drift.
+- Staged diff artifacts are part of the audit trail. Capture them durably before any review phase consumes them.
 
 ## Locking Contracts
 
@@ -80,4 +85,5 @@ These contracts preserve the product's safety model across implementation phases
 - A phase may make a command partially real only when the active plan says so.
 - A partially real command must stop with a clear next-action message at the phase boundary.
 - Documentation and CLI output must describe actual behavior, not future behavior.
+- Boundary messages and `status` next actions must be updated in the same phase that changes the checkpoint behavior.
 - If a safety-critical decision is missing from the plan, stop and add an `OpenQuestions` item instead of implementing an assumption.

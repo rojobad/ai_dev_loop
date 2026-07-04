@@ -1,0 +1,66 @@
+---
+description: "State, schema, manifest, and checkpoint contracts for ai_dev_loop. Apply whenever editing persisted models, schemas, run artifacts, status transitions, recovery behavior, or tests that assert them."
+globs:
+alwaysApply: true
+---
+
+# ai_dev_loop State And Schema Contracts
+
+These contracts protect the local audit trail and recovery model. They apply in addition to `ai-dev-loop-governance.mdc` and `ai-dev-loop-orchestrator-contracts.mdc`.
+
+## Persisted State Is A Public Contract
+
+- Treat `state.json`, `manifest.json`, `effective-config.yaml`, `source-config.yaml`, snapshots, logs, and per-iteration artifacts as durable product contracts, not incidental implementation details.
+- Keep Pydantic models, JSON schemas, artifact writers, artifact readers, tests, and documentation aligned whenever a persisted shape changes.
+- Do not add persisted fields just because they are convenient for the current function. Each persisted field must support auditability, recovery, compatibility, or clear user inspection.
+- Do not store absolute XDG run paths inside target repositories or target-repository files.
+- Do not store authentication tokens, API keys, full process environments, or copied Codex transcript contents.
+
+## Schema Discipline
+
+- Versioned schemas live under `src/ai_dev_loop/schemas/` and must describe the persisted contract accepted by the application.
+- Any non-trivial change to `RunState`, project config, or Codex review result shape must update the relevant schema in the same change.
+- Schema changes require tests that would fail if the model and schema drift apart.
+- Prefer explicit typed models or dataclasses over unstructured dictionaries for new persisted structures.
+- If compatibility or migration is needed, add an explicit migration/read strategy. Do not silently reinterpret old state.
+
+## State Machine Discipline
+
+- Mutate `RunStatus` only through named transition helpers or equivalent centralized functions.
+- Update `ALLOWED_STATUS_TRANSITIONS` and tests whenever a phase introduces a real new transition.
+- Do not use terminal states to mean "temporarily paused".
+- Do not set a status that implies a later phase has run. For example, do not set `reviewing` before Codex review execution exists.
+- Keep `result`, `last_error`, and status-specific next actions consistent with the actual completed checkpoint.
+
+## Iteration Contract
+
+- `iterations` is the durable bridge between Cursor turns, Git staging, Codex reviews, and future resume behavior.
+- Each iteration entry must use stable keys that match the master plan where possible: `number`, `kind`, `started_at`, `completed_at`, `cursor`, `git`, `codex`, and `review`.
+- Omit later-phase sections until that phase actually writes real data. Do not create fake `codex` or `review` data before Codex review execution exists.
+- Store artifact paths relative to the run directory.
+- Do not overwrite a completed agent turn merely to make state easier to read. Later `resume` must infer the next safe action from durable checkpoints.
+
+## Artifact And Manifest Discipline
+
+- Write state, manifests, configs, checkpoint metadata, and schemas atomically.
+- Use sensitive file permissions for prompts, session IDs, agent output, review content, staged patches, and other proprietary context where supported.
+- Every artifact needed for recovery or audit should either be listed in `manifest.json`, recorded in `state.json`, or be discoverable by a documented deterministic path.
+- Full patches and agent outputs may contain proprietary code context. Do not print them by default in human CLI output.
+- Preserve raw agent output after redaction even when parsing fails.
+
+## Recovery Compatibility
+
+- Design each checkpoint so `resume` can later answer one question: what is the next safe action that does not change agent identity or repeat completed work?
+- Persist Cursor chat IDs immediately after creation and reuse them after recoverable failures.
+- Persist staged diff artifacts before any Codex review consumes them.
+- Persist Codex review results and correction prompts exactly as returned once review is implemented.
+- On ambiguous or partially written state, fail safely and preserve diagnostics rather than guessing.
+
+## Testing Requirements
+
+- Add or update tests for every persisted shape change.
+- Test allowed and rejected status transitions.
+- Test schema/model alignment for changed models.
+- Test recovery-relevant checkpoints using fake CLIs and temporary repositories.
+- Test that sensitive artifacts are not world-readable on chmod-capable filesystems.
+- Test that human output does not print full prompts, full patches, auth payloads, or full process environments by default.
