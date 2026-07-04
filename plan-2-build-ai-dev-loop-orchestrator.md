@@ -566,11 +566,14 @@ with this structure:
 │   ├── status/
 │   └── diffs/
 ├── logs/
-│   └── ai_dev_loop.log
+│   ├── ai_dev_loop.log
+│   └── events.jsonl
 └── locks/
 ```
 
 The internal prompt file name may be normalized to `cursor-initial.txt`; retain the original source filename and path in metadata.
+
+`logs/ai_dev_loop.log` is the human-readable text log. `logs/events.jsonl` is the append-only structured orchestrator event log used for debugging, recovery, and tests.
 
 ### Snapshots and Hashes
 
@@ -832,6 +835,15 @@ Capture:
 - final result text;
 - timeout state.
 
+Always persist the Cursor turn artifacts under `cursor/iterations/<nn>/`, including:
+
+- `events.jsonl` with raw Cursor `stream-json` output;
+- `stderr.txt`;
+- `metadata.json` with redacted arguments, exit code, elapsed time, timeout state, and parse status;
+- `final.txt`.
+
+Create `final.txt` for every Cursor turn. If no final result text can be extracted, write an empty file or a short explicit extraction placeholder and record the parse status in `metadata.json`; do not omit the artifact solely because parsing did not find a final message.
+
 Use `start_new_session` or equivalent process-group handling so timeout and abort can terminate the complete child process tree.
 
 ### Cursor Corrections
@@ -857,6 +869,8 @@ Parse enough to detect:
 - completion.
 
 Store the raw JSONL even when parsing fails.
+
+Store enough parsed metadata to distinguish a clean completion, a Cursor-reported error event, and malformed JSONL. Preserve raw output for diagnosis even when the parser cannot understand it.
 
 Never execute text emitted by Cursor.
 
@@ -965,6 +979,9 @@ Build a deterministic wrapper prompt that tells the resumed Codex session:
 - use the plan snapshot and repository plan path;
 - consider the original Cursor prompt;
 - consider the latest Cursor final response;
+- include the original Cursor prompt content and latest Cursor final response content directly in the review instruction payload, not only as XDG artifact paths;
+- include artifact paths for auditability, but do not require the resumed Codex process to read files from the XDG state directory;
+- explicitly state when the latest Cursor final response could not be extracted;
 - follow the review skill's read-only rule;
 - run tests only according to the review skill;
 - produce the review report in the skill's required Markdown format;
@@ -1038,12 +1055,20 @@ Add cross-field application validation:
 - `cursor_fix_prompt` is null when no findings exist.
 - `review_markdown` follows the project review skill's expected headings as far as can be validated without coupling to one project.
 
+The orchestrator must decide the loop outcome from the schema-validated structured JSON fields, not by parsing Markdown. `review_markdown` is the human review report and may be checked for broad heading compatibility, but it is not the source of truth for findings extraction, iteration decisions, or correction prompt forwarding.
+
 Store:
 
 - raw JSONL events;
 - final structured JSON;
 - extracted Markdown report;
 - exact Cursor correction prompt.
+
+### Review Skill Compatibility
+
+Project review skills may continue to define the human Markdown review format. For `ai_dev_loop`, they must also allow the final Codex answer to be returned as schema-constrained JSON, with the Markdown report placed in `review_markdown`.
+
+If a repository review skill currently requires "Markdown only" or otherwise forbids structured output, update that project skill before enabling automated review. The generic `ai_dev_loop` wrapper must not fall back to scraping findings from Markdown when structured output is invalid.
 
 ### Same Codex Session Generates the Fix Prompt
 
@@ -1145,6 +1170,23 @@ ai_dev_loop logs <run-id> --component cursor
 ai_dev_loop logs <run-id> --component codex
 ```
 
+`ai_dev_loop logs <run-id>` should default to the human-readable `logs/ai_dev_loop.log`. Component logs may render the relevant artifact tree, including Cursor and Codex JSONL streams.
+
+Maintain `logs/events.jsonl` as a structured append-only event stream. Each event must include at least:
+
+- `schema_version`;
+- UTC timestamp;
+- level;
+- component;
+- event name;
+- run ID;
+- status when known;
+- iteration when known;
+- artifact path when relevant;
+- redacted detail fields.
+
+Do not include full prompts, authentication payloads, full process environments, or unredacted secrets in structured log detail fields. `--follow` should stream the human log by default and support component logs where practical.
+
 ### `inspect`
 
 Show artifact paths and optionally render:
@@ -1198,7 +1240,8 @@ All state writes must be atomic:
 Maintain:
 
 - `state.json`;
-- an append-only event log;
+- an append-only structured event log at `logs/events.jsonl`;
+- a human-readable text log at `logs/ai_dev_loop.log`;
 - enough checkpoints to recover after termination.
 
 Do not write partially valid JSON.
@@ -1290,6 +1333,7 @@ Cover:
 - Codex review cross-field validation;
 - Cursor JSONL parsing;
 - Codex JSONL parsing;
+- structured orchestrator event logging;
 - redaction;
 - hook input/output;
 - hook JSON merge and uninstall.
@@ -1317,8 +1361,10 @@ Simulate:
 11. existing Cursor chat reused after failure;
 12. same Codex session ID used for every review;
 13. same Cursor chat ID used for every implementation and fix;
-14. hook installation with existing unrelated hooks;
-15. uninstall preserving unrelated hooks.
+14. latest Cursor final response content passed into the first Codex review prompt;
+15. structured JSON, not Markdown parsing, drives review decisions and fix prompts;
+16. hook installation with existing unrelated hooks;
+17. uninstall preserving unrelated hooks.
 
 ### End-to-End Local Acceptance Test
 
@@ -1354,8 +1400,10 @@ The README must include:
 - complete loop behavior;
 - state directory structure;
 - status/resume/abort usage;
+- logs, structured event logs, and debugging artifacts;
 - safety model;
 - timeout behavior;
+- review skill compatibility with schema-constrained Codex output;
 - troubleshooting;
 - uninstall;
 - privacy and cleanup.
@@ -1383,6 +1431,8 @@ Include an exact user workflow:
 - The orchestrator never regenerates the initial prompt.
 - The orchestrator never authors the correction prompt.
 - The correction prompt comes from the resumed original Codex session.
+- The orchestrator never extracts findings by scraping Markdown review text.
+- The Codex structured JSON result is the source of truth for review decisions.
 - The target repo never knows the XDG state path.
 - The target repo never contains `state.json`, session logs, or agent output.
 - The loop never commits, tags, or pushes.
