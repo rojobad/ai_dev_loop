@@ -39,6 +39,9 @@ def test_atomic_write_json(tmp_path: Path) -> None:
 
 def test_status_transitions() -> None:
     transition_status(RunStatus.PREPARED, RunStatus.VALIDATING)
+    transition_status(RunStatus.STAGING, RunStatus.REVIEWING)
+    transition_status(RunStatus.REVIEWING, RunStatus.COMPLETED)
+    transition_status(RunStatus.REVIEWING, RunStatus.WAITING_FOR_CURSOR_FIX)
     try:
         transition_status(RunStatus.PREPARED, RunStatus.COMPLETED)
     except ValueError:

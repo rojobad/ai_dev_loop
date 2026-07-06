@@ -43,8 +43,28 @@ def render_inspect(run_id: str, *, output: str = "text", show_prompts: bool = Fa
         f"  snapshot_path: {state.prompt.snapshot_path}",
         f"  sha256: {state.prompt.sha256}",
         "",
-        "Artifacts:",
     ]
+    if state.iterations:
+        lines.append("Iterations:")
+        for entry in state.iterations:
+            number = entry.get("number")
+            kind = entry.get("kind")
+            lines.append(f"  - number: {number}, kind: {kind}")
+            review = entry.get("review")
+            if isinstance(review, dict):
+                lines.append(
+                    "    review: "
+                    f"findings={review.get('has_actionable_findings')}, "
+                    f"count={review.get('findings_count')}, "
+                    f"tests={review.get('tests_status')}"
+                )
+            codex = entry.get("codex")
+            if isinstance(codex, dict):
+                report_path = codex.get("report_path")
+                if isinstance(report_path, str):
+                    lines.append(f"    codex report: {report_path}")
+        lines.append("")
+    lines.append("Artifacts:")
     for path in artifact_paths:
         lines.append(f"  - {path}")
     if show_prompts:

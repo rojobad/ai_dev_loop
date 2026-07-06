@@ -12,6 +12,51 @@ from ai_dev_loop.paths import SENSITIVE_FILE_MODE
 from ai_dev_loop.process import run_process_streaming
 
 
+def test_process_streaming_accepts_stdin_text(tmp_path: Path) -> None:
+    script = tmp_path / "read_stdin.py"
+    script.write_text(
+        "import sys\nprint(sys.stdin.read().strip())\n",
+        encoding="utf-8",
+    )
+    result = run_process_streaming(
+        [sys.executable, str(script)],
+        stdin_text="hello from stdin",
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip() == "hello from stdin"
+
+
+def test_process_streaming_times_out_while_writing_stdin(tmp_path: Path) -> None:
+    script = tmp_path / "sleep_without_read.py"
+    script.write_text("import time\ntime.sleep(30)\n", encoding="utf-8")
+    large_prompt = "x" * 131_072
+
+    start = time.monotonic()
+    result = run_process_streaming(
+        [sys.executable, str(script)],
+        stdin_text=large_prompt,
+        timeout=0.5,
+    )
+    elapsed = time.monotonic() - start
+
+    assert result.timed_out is True
+    assert elapsed < 5.0
+
+
+def test_process_streaming_timeout_does_not_duplicate_output(tmp_path: Path) -> None:
+    script = tmp_path / "print_then_sleep.py"
+    script.write_text(
+        "import sys, time\nprint('before', flush=True)\ntime.sleep(30)\n",
+        encoding="utf-8",
+    )
+    result = run_process_streaming(
+        [sys.executable, str(script)],
+        timeout=0.5,
+    )
+    assert result.timed_out is True
+    assert result.stdout == "before\n"
+
+
 def test_sensitive_capture_files_are_restrictive_while_process_runs(
     permission_test_root: Path,
     tmp_path: Path,

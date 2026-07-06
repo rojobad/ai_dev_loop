@@ -181,10 +181,18 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
     codex_script = textwrap.dedent(
         f"""\
         #!{sys.executable}
+        import json
         import os
         import sys
+        import time
 
         args = sys.argv[1:]
+        log_path = {repr(str(codex_log))}
+
+        def log(message):
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(message + "\\n")
+
         if len(args) >= 2 and args[0] == "login" and args[1] == "status":
             auth = os.environ.get("FAKE_CODEX_AUTH", "true")
             if auth == "true":
@@ -192,6 +200,63 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                 sys.exit(0)
             print("Not logged in", file=sys.stderr)
             sys.exit(1)
+
+        if len(args) >= 3 and args[0] == "exec" and args[1] == "--cd":
+            log("ARGS:" + repr(args))
+            stdin_prompt = sys.stdin.read()
+            log("STDIN:" + stdin_prompt)
+            mode = os.environ.get("FAKE_CODEX_REVIEW_MODE", "no_findings")
+            if mode == "sleep":
+                time.sleep(float(os.environ.get("FAKE_CODEX_SLEEP_SECONDS", "5")))
+                sys.exit(0)
+            if mode == "fail":
+                print("codex review failed", file=sys.stderr)
+                sys.exit(2)
+            output_last_message = None
+            if "--output-last-message" in args:
+                output_last_message = args[args.index("--output-last-message") + 1]
+            if mode == "invalid_json":
+                if output_last_message:
+                    with open(output_last_message, "w", encoding="utf-8") as handle:
+                        handle.write("not-json")
+                print(json.dumps({{"type": "message", "content": "invalid"}}))
+                sys.exit(0)
+            if mode == "findings":
+                result = {{
+                    "has_actionable_findings": True,
+                    "findings_count": 1,
+                    "highest_severity": "P1",
+                    "review_markdown": "# Review\\n\\nFound issue.",
+                    "cursor_fix_prompt": "Fix the sample issue in ai_dev_loop.yaml.",
+                    "tests_status": "skipped_findings_present",
+                    "summary": "One actionable finding.",
+                }}
+            elif mode == "blocked_environment":
+                result = {{
+                    "has_actionable_findings": False,
+                    "findings_count": 0,
+                    "highest_severity": None,
+                    "review_markdown": "# Review\\n\\nNo issues, tests blocked.",
+                    "cursor_fix_prompt": None,
+                    "tests_status": "blocked_environment",
+                    "summary": "No findings; environment blocked tests.",
+                }}
+            else:
+                result = {{
+                    "has_actionable_findings": False,
+                    "findings_count": 0,
+                    "highest_severity": None,
+                    "review_markdown": "# Review\\n\\nNo issues found.",
+                    "cursor_fix_prompt": None,
+                    "tests_status": "passed",
+                    "summary": "No actionable findings.",
+                }}
+            if output_last_message:
+                with open(output_last_message, "w", encoding="utf-8") as handle:
+                    json.dump(result, handle)
+            print(json.dumps({{"type": "message", "content": "review complete"}}))
+            sys.exit(0)
+
         sys.exit(1)
         """
     )

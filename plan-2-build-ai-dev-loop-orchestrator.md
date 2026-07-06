@@ -1070,6 +1070,8 @@ Project review skills may continue to define the human Markdown review format. F
 
 If a repository review skill currently requires "Markdown only" or otherwise forbids structured output, update that project skill before enabling automated review. The generic `ai_dev_loop` wrapper must not fall back to scraping findings from Markdown when structured output is invalid.
 
+Do not confuse review skills used to develop the `ai_dev_loop` orchestrator repository with review skills configured by target repositories. This repository may have a local skill such as `.agents/skills/review-staged-changes` for reviewing staged changes to `ai_dev_loop` itself. Automated runs must ignore that local implementation-review skill unless the current target repository explicitly configures it. During an automated review, `ai_dev_loop` must use the exact `codex.review_skill` value from the prepared target repository configuration, commonly a target-repository skill such as `review-staged-cursor-execution`, and invoke it as `$<review-skill>` in the resumed original Codex session. The existence or absence of similarly named skills in the `ai_dev_loop` source repository must not affect target-run validation or review invocation.
+
 ### Same Codex Session Generates the Fix Prompt
 
 This is mandatory.

@@ -112,6 +112,32 @@ def begin_staging(state: RunState) -> None:
     state.status = RunStatus.STAGING
 
 
+def begin_reviewing(state: RunState) -> None:
+    transition_status(state.status, RunStatus.REVIEWING)
+    state.status = RunStatus.REVIEWING
+
+
+def mark_completed(state: RunState, message: str) -> None:
+    transition_status(state.status, RunStatus.COMPLETED)
+    state.status = RunStatus.COMPLETED
+    state.result = message
+    state.last_error = None
+
+
+def mark_completed_with_residual_risk(state: RunState, message: str) -> None:
+    transition_status(state.status, RunStatus.COMPLETED_WITH_RESIDUAL_RISK)
+    state.status = RunStatus.COMPLETED_WITH_RESIDUAL_RISK
+    state.result = message
+    state.last_error = None
+
+
+def mark_waiting_for_cursor_fix(state: RunState, message: str) -> None:
+    transition_status(state.status, RunStatus.WAITING_FOR_CURSOR_FIX)
+    state.status = RunStatus.WAITING_FOR_CURSOR_FIX
+    state.result = message
+    state.last_error = None
+
+
 def mark_failed(state: RunState, message: str) -> None:
     if state.status in {RunStatus.FAILED, RunStatus.ABORTED}:
         state.last_error = message

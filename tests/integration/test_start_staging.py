@@ -13,7 +13,7 @@ from ai_dev_loop.cli import app
 from ai_dev_loop.commands.start import start_run
 from ai_dev_loop.errors import AiDevLoopError
 from ai_dev_loop.paths import SENSITIVE_FILE_MODE
-from ai_dev_loop.runners.staging import PHASE_3_BOUNDARY_MESSAGE
+from ai_dev_loop.runners.codex import PHASE_4_NO_FINDINGS_MESSAGE
 from ai_dev_loop.state import RunStatus, load_run_state
 
 runner = CliRunner()
@@ -25,17 +25,18 @@ def test_start_stages_tracked_modifications(prepared_run, fake_clis, monkeypatch
     repo = prepared_run["repo"]
 
     result = start_run(prepared_run["run_id"])
-    assert result.status == "staging"
+    assert result.status == "completed"
     assert result.staged_diff_path == "git/diffs/01.patch"
 
     state = load_run_state(run_path / "state.json")
-    assert state.status == RunStatus.STAGING
-    assert state.result == PHASE_3_BOUNDARY_MESSAGE
+    assert state.status == RunStatus.COMPLETED
+    assert state.result == PHASE_4_NO_FINDINGS_MESSAGE
     assert len(state.iterations) == 1
     iteration = state.iterations[0]
     assert iteration["kind"] == "initial_implementation"
     assert iteration["git"]["staged_diff_path"] == "git/diffs/01.patch"
-    assert "codex" not in iteration
+    assert "codex" in iteration
+    assert "review" in iteration
 
     for rel in (
         "git/status/01-before-staging.txt",
@@ -43,6 +44,7 @@ def test_start_stages_tracked_modifications(prepared_run, fake_clis, monkeypatch
         "git/diffs/01.stat",
         "git/diffs/01.name-only.txt",
         "git/diffs/01.patch",
+        "codex/reviews/01.json",
     ):
         assert (run_path / rel).is_file()
 
@@ -59,7 +61,7 @@ def test_start_stages_tracked_modifications(prepared_run, fake_clis, monkeypatch
 def test_start_stages_untracked_files(prepared_run, fake_clis, monkeypatch) -> None:
     monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "untracked")
     result = start_run(prepared_run["run_id"])
-    assert result.status == "staging"
+    assert result.status == "completed"
     name_only = (prepared_run["run_path"] / "git/diffs/01.name-only.txt").read_text(
         encoding="utf-8"
     )
@@ -187,22 +189,22 @@ def test_start_fails_when_no_staged_changes(prepared_run, fake_clis, monkeypatch
     assert state.status == RunStatus.FAILED
 
 
-def test_status_reports_phase3_boundary(prepared_run, fake_clis) -> None:
+def test_status_reports_completed_after_review(prepared_run, fake_clis, monkeypatch) -> None:
+    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
     start_run(prepared_run["run_id"])
     result = runner.invoke(app, ["status", prepared_run["run_id"]])
     assert result.exit_code == 0
-    assert "Git staging is complete" in result.stdout
-    assert "Codex review" in result.stdout
-    assert "not implemented yet" in result.stdout
+    assert "no actionable findings" in result.stdout.lower()
 
 
-def test_cli_start_output_reports_phase3_boundary(prepared_run, fake_clis) -> None:
+def test_cli_start_output_reports_phase4_result(prepared_run, fake_clis, monkeypatch) -> None:
+    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
     result = runner.invoke(app, ["start", prepared_run["run_id"]])
     assert result.exit_code == 0
     combined = result.stdout + result.stderr
     assert "Staged diff: git/diffs/01.patch" in combined
-    assert "Git staging is complete" in combined
-    assert "Codex review" in combined
+    assert "Status: completed" in combined
+    assert "no actionable findings" in combined.lower()
 
 
 def test_staged_patch_uses_sensitive_permissions(

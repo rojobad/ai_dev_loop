@@ -87,6 +87,7 @@ def run_process_streaming(
     cwd: str | None = None,
     timeout: float | None = None,
     env: dict[str, str] | None = None,
+    stdin_text: str | None = None,
     stdout_path: Path | None = None,
     stderr_path: Path | None = None,
     sensitive: bool = False,
@@ -108,6 +109,7 @@ def run_process_streaming(
             list(args),
             cwd=cwd,
             env=env,
+            stdin=subprocess.PIPE if stdin_text is not None else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -126,31 +128,21 @@ def run_process_streaming(
     try:
         assert proc.stdout is not None
         assert proc.stderr is not None
-        if timeout is None:
+        try:
+            if timeout is None:
+                stdout_data, stderr_data = proc.communicate(input=stdin_text)
+            else:
+                stdout_data, stderr_data = proc.communicate(input=stdin_text, timeout=timeout)
+            stdout_chunks.append(stdout_data)
+            stderr_chunks.append(stderr_data)
+            returncode = proc.returncode if proc.returncode is not None else 0
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            _terminate_process_group(proc)
             stdout_data, stderr_data = proc.communicate()
             stdout_chunks.append(stdout_data)
             stderr_chunks.append(stderr_data)
-            returncode = proc.wait()
-        else:
-            deadline = start + timeout
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    timed_out = True
-                    _terminate_process_group(proc)
-                    stdout_data, stderr_data = proc.communicate()
-                    stdout_chunks.append(stdout_data)
-                    stderr_chunks.append(stderr_data)
-                    returncode = proc.returncode if proc.returncode is not None else 124
-                    break
-                try:
-                    stdout_data, stderr_data = proc.communicate(timeout=min(0.2, remaining))
-                    stdout_chunks.append(stdout_data)
-                    stderr_chunks.append(stderr_data)
-                    returncode = proc.wait()
-                    break
-                except subprocess.TimeoutExpired:
-                    continue
+            returncode = proc.returncode if proc.returncode is not None else 124
     finally:
         stdout_text = "".join(stdout_chunks)
         stderr_text = "".join(stderr_chunks)

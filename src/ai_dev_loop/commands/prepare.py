@@ -9,6 +9,7 @@ from pathlib import Path
 
 from ai_dev_loop.config import ConfigOverrides, resolve_effective_config
 from ai_dev_loop.errors import UsageError, ValidationError
+from ai_dev_loop.event_log import append_orchestrator_event
 from ai_dev_loop.paths import ensure_app_dirs, ensure_dir, run_dir, set_sensitive_file_mode
 from ai_dev_loop.runners.git import (
     GitRepositoryInfo,
@@ -270,6 +271,14 @@ def prepare_run(options: PrepareOptions) -> PrepareResult:
         log_path,
         f"{now.isoformat()} prepare completed for run {run_id}\n",
         sensitive=True,
+    )
+    append_orchestrator_event(
+        destination,
+        run_id=run_id,
+        component="orchestrator",
+        event="prepare_completed",
+        status=RunStatus.PREPARED.value,
+        detail={"project": effective.project.name},
     )
     set_sensitive_file_mode(destination / "state.json")
 

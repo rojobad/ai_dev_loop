@@ -28,6 +28,8 @@ PHASE_3_BOUNDARY_MESSAGE = (
     "Git staging is complete. Codex review, corrections, and completion are not implemented yet."
 )
 
+# Retained for historical references in tests/docs; Phase 4 start continues past staging.
+
 
 @dataclass(frozen=True)
 class GitStagingArtifacts:

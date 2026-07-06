@@ -46,11 +46,11 @@ def test_start_happy_path_writes_artifacts(prepared_run, fake_clis) -> None:
     run_path = prepared_run["run_path"]
 
     result = start_run(run_id)
-    assert result.status == "staging"
+    assert result.status == "completed"
     assert result.chat_id == "019abc00-1111-2222-3333-444444444444"
 
     state = load_run_state(run_path / "state.json")
-    assert state.status == RunStatus.STAGING
+    assert state.status == RunStatus.COMPLETED
     assert state.cursor.chat_id == result.chat_id
     assert (run_path / "cursor" / "chat.json").is_file()
     iteration = run_path / "cursor" / "iterations" / "01"
@@ -61,7 +61,8 @@ def test_start_happy_path_writes_artifacts(prepared_run, fake_clis) -> None:
     assert (run_path / "git" / "status" / "01-before-cursor.txt").is_file()
     assert (run_path / "git" / "status" / "01-after-cursor.txt").is_file()
     assert (run_path / "git" / "diffs" / "01.patch").is_file()
-    assert state.result and "Git staging is complete" in state.result
+    assert (run_path / "codex" / "reviews" / "01.json").is_file()
+    assert state.result and "no actionable findings" in state.result.lower()
 
     agent_log = fake_clis["agent_log"].read_text(encoding="utf-8")
     assert "Implement the sample plan exactly as written." in agent_log
@@ -207,13 +208,13 @@ def test_start_does_not_mutate_run_when_lock_unavailable(prepared_run, fake_clis
         locks.release()
 
 
-def test_cli_start_output_reports_phase_boundary(prepared_run, fake_clis) -> None:
+def test_cli_start_output_reports_phase4_result(prepared_run, fake_clis) -> None:
     result = runner.invoke(app, ["start", prepared_run["run_id"]])
     assert result.exit_code == 0
     combined = result.stdout + result.stderr
-    assert "Git staging is complete" in combined
+    assert "Status: completed" in combined
+    assert "no actionable findings" in combined.lower()
     assert "Codex review" in combined
-    assert "not implemented yet" in combined
 
 
 def test_cli_start_prints_codex_warning_before_success_output(prepared_run, fake_clis) -> None:

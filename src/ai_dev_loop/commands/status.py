@@ -60,17 +60,34 @@ def _next_action(state: RunState, run_path: Path) -> str:
     if status == "staging":
         if staging_complete(state, run_path):
             return (
-                "Git staging is complete. Codex review and completion are not implemented yet. "
-                "Inspect git/diffs/ artifacts."
+                "Git staging is complete but Codex review did not finish. "
+                "Inspect git/diffs/ and logs/events.jsonl."
             )
         return (
             "Cursor execution finished but Git staging is incomplete. "
             "Inspect git/status/ and cursor/iterations/ artifacts."
+        )
+    if status == "reviewing":
+        return "Wait for start to finish or inspect logs if the run appears stuck."
+    if status == "waiting_for_cursor_fix":
+        return (
+            "Codex review found actionable findings. Cursor correction execution is not "
+            "implemented yet. Inspect prompts/fixes/ and codex/reviews/ artifacts."
+        )
+    if status == "completed":
+        return (
+            "Run completed with no actionable findings. Changes remain staged in the "
+            "target repository."
+        )
+    if status == "completed_with_residual_risk":
+        return (
+            "Run completed with residual risk. Inspect codex/reviews/ and repository state "
+            "before committing."
         )
     if status in {"running_cursor", "validating"}:
         return "Wait for start to finish or inspect logs if the run appears stuck."
     if status == "interrupted":
         return "ai_dev_loop resume is not implemented yet. Inspect artifacts manually."
     if status == "failed":
-        return "Inspect last_error and cursor artifacts before preparing a new run."
+        return "Inspect last_error, codex/, and cursor artifacts before preparing a new run."
     return "Inspect artifacts or wait for a later-phase recovery command."

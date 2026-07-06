@@ -1,0 +1,132 @@
+---
+description: "Codex review contracts for ai_dev_loop review execution, structured review results, event logs, review artifacts, and phase boundaries. Apply whenever editing Codex review runner code, review prompts, schemas, state, logs, docs, or tests."
+globs:
+alwaysApply: true
+---
+
+# ai_dev_loop Codex Review Contracts
+
+These contracts protect the automated review boundary of `ai_dev_loop`. They apply in addition to `ai-dev-loop-governance.mdc`, `ai-dev-loop-orchestrator-contracts.mdc`, and `ai-dev-loop-state-and-schema-contracts.mdc`.
+
+## Reviewer Identity
+
+- Codex is the architect, context owner, prompt author, and reviewer.
+- Every automated review must resume the exact original Codex session ID from prepared run state.
+- Use `state.codex.session_id` exactly. Do not infer, shorten, rewrite, search for, or guess a session ID.
+- Never use `--last`.
+- Never use a plain new `codex exec` session for the final review.
+- Never use subagents as the final reviewer.
+- The same resumed Codex session must author any `cursor_fix_prompt`.
+- The orchestrator must only validate, store, and later forward the returned `cursor_fix_prompt`; it must not generate or rewrite it.
+
+## Command Shape
+
+- Use the locally probed Codex CLI option order unless an explicit later probe proves otherwise.
+- Root `codex exec` options such as `--cd` and `--sandbox` must appear before `resume`.
+- Resume-specific options such as `--model`, `--json`, `--output-schema`, and `--output-last-message` must appear after `resume`.
+- The command shape should remain equivalent to:
+
+```text
+codex exec
+--cd
+<repo-root>
+--sandbox
+<codex-sandbox>
+resume
+--model
+<review-model>
+--json
+--output-schema
+<codex-review-result-v1.json>
+--output-last-message
+<codex/reviews/NN.json>
+<session-id>
+-
+```
+
+- Supply the review instruction on stdin.
+- Do not shell-interpolate paths, prompts, session IDs, findings, or agent output.
+- Capture stdout and stderr separately.
+- Preserve raw Codex JSONL events even when parsing or validation fails.
+- Apply configured Codex timeouts and terminate the full child process group on timeout.
+
+## Review Skill Source
+
+- The review skill used by automated runs is the exact `codex.review_skill` from the prepared target repository configuration.
+- Invoke the configured skill in the review wrapper prompt as `$<review-skill>`.
+- Do not validate target-repository review skill names by inspecting this repository's `.agents/skills` directory.
+- Do not confuse this repository's local `.agents/skills/review-staged-changes` skill with target-repository review skills.
+- Target repositories commonly configure a compatible skill such as `review-staged-cursor-execution`.
+- If the configured target review skill forbids structured output or requires Markdown-only responses, fail safely or document the incompatibility. Do not scrape Markdown as a fallback.
+
+## Review Prompt Contract
+
+- The review wrapper prompt must be deterministic.
+- It must state that this is an automated review turn for the existing approved plan.
+- It must tell Codex to review the current staged changes only.
+- It must reference the repository plan path and the plan snapshot path.
+- It must include the original Cursor prompt content directly in the review instruction payload.
+- It must include the latest Cursor final response content directly when available.
+- It must explicitly state when the latest Cursor final response could not be extracted.
+- It should include artifact paths for auditability, but must not require Codex to read files from the XDG state directory.
+- It must tell Codex to follow the configured review skill's read-only discipline.
+- It must require a final response conforming to `codex-review-result-v1.json`.
+- It must require a complete English `cursor_fix_prompt` when actionable findings exist.
+- It must require `cursor_fix_prompt: null` when there are no actionable findings.
+- The wrapper must not summarize, rewrite, or reinterpret findings itself.
+
+## Structured Result Contract
+
+- The schema-constrained JSON result is the source of truth for review decisions.
+- Markdown in `review_markdown` is the human review report, not the machine decision source.
+- Do not parse Markdown to decide:
+  - whether findings exist;
+  - findings count;
+  - highest severity;
+  - tests status;
+  - whether to forward a fix prompt.
+- Validate the JSON schema and application cross-field rules together.
+- Findings require:
+  - `has_actionable_findings: true`;
+  - `findings_count > 0`;
+  - non-null `highest_severity`;
+  - non-empty `cursor_fix_prompt`.
+- No findings require:
+  - `has_actionable_findings: false`;
+  - `findings_count == 0`;
+  - `highest_severity: null`;
+  - `cursor_fix_prompt: null`.
+- Invalid structured output must mark the run `failed` and preserve diagnostics.
+
+## Artifact And Privacy Contract
+
+- Store Codex artifacts under the run directory outside the target repository.
+- Use relative run-directory paths in `state.json`.
+- Treat Codex events, review JSON, Markdown reports, metadata, and fix prompts as sensitive.
+- Use user-only permissions where supported.
+- Do not store authentication tokens, API keys, full process environments, or copied Codex transcript contents.
+- Do not print full prompts, staged patches, review artifacts, fix prompts, or raw JSONL by default in human CLI output.
+- Structured event details must be redacted and must not contain full prompts, full patches, auth payloads, or obvious secrets.
+
+## State And Phase Boundary
+
+- Phase 4 may transition successful fresh runs through `staging -> reviewing`.
+- When there are no actionable findings, leave final repository changes staged and set a completion status.
+- Use `completed` when tests passed or were not applicable.
+- Use `completed_with_residual_risk` when tests failed, were environmentally blocked, or the structured result reports residual risk without actionable findings.
+- When actionable findings exist, set `waiting_for_cursor_fix`, persist the exact fix prompt, and stop.
+- Do not send a correction prompt to Cursor in Phase 4.
+- Do not create or imply a Cursor correction turn in `state.iterations`.
+- Do not set `max_iterations_reached` in Phase 4 unless this phase explicitly implements the required bounded correction loop.
+- Preserve enough artifacts and state for later `resume` work to continue without changing Codex session identity or Cursor chat identity.
+
+## Tests
+
+- Automated tests must use fake `codex` executables and must not invoke real Codex model activity.
+- Test the exact command shape and option order.
+- Test that the exact prepared session ID is used.
+- Test that `--last` is absent.
+- Test wrapper prompt content, including configured review skill, original Cursor prompt content, and latest Cursor final response handling.
+- Test no-finding, finding, invalid JSON, nonzero exit, and timeout paths.
+- Test that structured JSON, not Markdown, drives status and fix-prompt decisions.
+- Test that Codex artifacts and structured event logs are written without leaking full prompts or auth data into default output.
