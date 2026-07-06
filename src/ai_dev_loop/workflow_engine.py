@@ -7,11 +7,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ai_dev_loop.abort_control import is_abort_requested
 from ai_dev_loop.commands.start_preflight import (
     begin_reviewing,
     begin_running_cursor,
     begin_staging,
     begin_validating,
+    mark_aborted,
     mark_completed,
     mark_completed_with_residual_risk,
     mark_failed,
@@ -91,6 +93,70 @@ class WorkflowResult:
         if self.iteration_count <= 0:
             return "cursor/iterations/01"
         return f"cursor/iterations/{self.iteration_count:02d}"
+
+
+ABORT_RESULT_MESSAGE = (
+    "Run aborted by user request. Repository contents and staged changes were preserved."
+)
+
+
+class WorkflowAbortedError(Exception):
+    """Internal control flow when a run transitions to aborted."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+def _finalize_workflow_abort(run_directory: Path, state: RunState) -> str:
+    message = ABORT_RESULT_MESSAGE
+    mark_aborted(state, message)
+    save_run_state(run_directory, state)
+    append_run_log(run_directory, message)
+    append_orchestrator_event(
+        run_directory,
+        run_id=state.run_id,
+        component="orchestrator",
+        event="workflow_aborted",
+        status=state.status.value,
+        detail={"message": message},
+    )
+    return message
+
+
+def _workflow_aborted_result(
+    run_directory: Path,
+    state: RunState,
+    *,
+    chat_id: str,
+    latest_staged_diff: str | None = None,
+    latest_review_path: str | None = None,
+) -> WorkflowResult:
+    message = _finalize_workflow_abort(run_directory, state)
+    return WorkflowResult(
+        run_id=state.run_id,
+        status=RunStatus.ABORTED.value,
+        chat_id=chat_id,
+        iteration_count=max(max_iteration_number(state), state.workflow.current_review_iteration),
+        latest_staged_diff_path=latest_staged_diff or _latest_staged_diff(state),
+        latest_review_path=latest_review_path or _latest_review_path(state),
+        result_message=message,
+    )
+
+
+def _raise_if_abort_requested(run_directory: Path, state: RunState, *, chat_id: str) -> None:
+    if is_abort_requested(run_directory):
+        raise WorkflowAbortedError("abort requested")
+
+
+def _child_execution_aborted(
+    run_directory: Path,
+    *,
+    returncode: int,
+    timed_out: bool,
+) -> bool:
+    del returncode, timed_out
+    return is_abort_requested(run_directory)
 
 
 def _fail_run(
@@ -270,6 +336,13 @@ def _continue_workflow(run_directory: Path, state: RunState) -> WorkflowResult:
         restore_workflow_checkpoint(state, run_directory)
         save_run_state(run_directory, state)
 
+    if is_abort_requested(run_directory):
+        return _workflow_aborted_result(
+            run_directory,
+            state,
+            chat_id=state.cursor.chat_id or "",
+        )
+
     chat_id = _require_cursor_chat_or_fail(run_directory, state)
     latest_staged_diff: str | None = None
     latest_review_path: str | None = None
@@ -284,38 +357,50 @@ def _continue_workflow(run_directory: Path, state: RunState) -> WorkflowResult:
         detail={"max_review_iterations": state.workflow.max_review_iterations},
     )
 
-    while state.status not in TERMINAL_STATUSES:
-        action = plan_next_action(state, run_directory)
-        if action is None:
-            break
-
-        if action.kind == WorkflowActionKind.CURSOR:
-            result_message = _run_cursor_turn(
-                run_directory,
-                state,
-                chat_id=chat_id,
-                iteration_number=action.iteration_number,
-            )
-        elif action.kind == WorkflowActionKind.STAGING:
-            latest_staged_diff = _run_staging_pass(
-                run_directory,
-                state,
-                iteration_number=action.iteration_number,
-            )
-        elif action.kind == WorkflowActionKind.REVIEW:
-            latest_review_path, result_message = _run_review_pass(
-                run_directory,
-                state,
-                iteration_number=action.iteration_number,
-            )
-        elif action.kind == WorkflowActionKind.PROCESS_REVIEW:
-            latest_review_path, result_message, should_continue = _process_review_outcome(
-                run_directory,
-                state,
-                iteration_number=action.iteration_number,
-            )
-            if not should_continue:
+    try:
+        while state.status not in TERMINAL_STATUSES:
+            _raise_if_abort_requested(run_directory, state, chat_id=chat_id)
+            action = plan_next_action(state, run_directory)
+            if action is None:
                 break
+
+            if action.kind == WorkflowActionKind.CURSOR:
+                result_message = _run_cursor_turn(
+                    run_directory,
+                    state,
+                    chat_id=chat_id,
+                    iteration_number=action.iteration_number,
+                )
+            elif action.kind == WorkflowActionKind.STAGING:
+                latest_staged_diff = _run_staging_pass(
+                    run_directory,
+                    state,
+                    iteration_number=action.iteration_number,
+                )
+            elif action.kind == WorkflowActionKind.REVIEW:
+                latest_review_path, result_message = _run_review_pass(
+                    run_directory,
+                    state,
+                    iteration_number=action.iteration_number,
+                )
+            elif action.kind == WorkflowActionKind.PROCESS_REVIEW:
+                latest_review_path, result_message, should_continue = _process_review_outcome(
+                    run_directory,
+                    state,
+                    iteration_number=action.iteration_number,
+                )
+                if not should_continue:
+                    break
+
+            _raise_if_abort_requested(run_directory, state, chat_id=chat_id)
+    except WorkflowAbortedError:
+        return _workflow_aborted_result(
+            run_directory,
+            state,
+            chat_id=chat_id,
+            latest_staged_diff=latest_staged_diff,
+            latest_review_path=latest_review_path,
+        )
 
     return WorkflowResult(
         run_id=state.run_id,
@@ -429,6 +514,9 @@ def _run_cursor_turn(
             timeout_seconds=timeout_seconds,
             stdout_path=events_path,
             stderr_path=stderr_path,
+            run_directory=run_directory,
+            run_id=state.run_id,
+            iteration_number=iteration_number,
         )
         atomic_write_text(after_status_path, capture_git_status(state.repository.root) + "\n")
 
@@ -446,12 +534,23 @@ def _run_cursor_turn(
                 iteration_dir / "final.txt", execution.parse.final_text, sensitive=True
             )
     except AiDevLoopError as exc:
+        if is_abort_requested(run_directory):
+            raise WorkflowAbortedError(ABORT_RESULT_MESSAGE) from exc
         _fail_run(run_directory, state, str(exc), event_name="cursor_execution_failed")
         raise
     except OSError as exc:
         message = f"Cursor artifact capture failed: {exc}"
+        if is_abort_requested(run_directory):
+            raise WorkflowAbortedError(ABORT_RESULT_MESSAGE) from exc
         _fail_run(run_directory, state, message, event_name="cursor_artifact_failed")
         raise AiDevLoopError(message) from exc
+
+    if _child_execution_aborted(
+        run_directory,
+        returncode=execution.process.returncode,
+        timed_out=execution.process.timed_out,
+    ):
+        raise WorkflowAbortedError(ABORT_RESULT_MESSAGE)
 
     if execution.process.timed_out:
         mark_interrupted(state, "Cursor execution timed out")
@@ -493,6 +592,8 @@ def _run_cursor_turn(
         artifact_path=f"cursor/iterations/{iteration}/events.jsonl",
         detail={"exit_code": execution.process.returncode},
     )
+    if is_abort_requested(run_directory):
+        raise WorkflowAbortedError(ABORT_RESULT_MESSAGE)
     begin_staging(state)
     save_run_state(run_directory, state)
     return ""
@@ -555,6 +656,8 @@ def _run_staging_pass(
         _fail_run(run_directory, state, message, event_name="staging_artifact_failed")
         raise AiDevLoopError(message) from exc
 
+    if is_abort_requested(run_directory):
+        raise WorkflowAbortedError(ABORT_RESULT_MESSAGE)
     begin_reviewing(state)
     state.workflow.current_review_iteration = iteration_number
     save_run_state(run_directory, state)
@@ -606,6 +709,8 @@ def _run_review_pass(
     try:
         review_execution = run_codex_review(state, run_directory, iteration=iteration)
     except AiDevLoopError as exc:
+        if is_abort_requested(run_directory):
+            raise WorkflowAbortedError(ABORT_RESULT_MESSAGE) from exc
         if "timed out" in str(exc).lower():
             mark_interrupted(state, str(exc))
             save_run_state(run_directory, state)

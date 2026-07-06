@@ -16,6 +16,15 @@ from ai_dev_loop.paths import SENSITIVE_FILE_MODE, set_sensitive_file_mode
 
 
 @dataclass(frozen=True)
+class ActiveProcessRegistration:
+    run_directory: Path
+    run_id: str
+    component: str
+    iteration: int
+    argv_redacted: list[str]
+
+
+@dataclass(frozen=True)
 class ProcessResult:
     args: list[str]
     returncode: int
@@ -91,6 +100,7 @@ def run_process_streaming(
     stdout_path: Path | None = None,
     stderr_path: Path | None = None,
     sensitive: bool = False,
+    active_process: ActiveProcessRegistration | None = None,
 ) -> StreamingProcessResult:
     """Run a subprocess in its own process group with optional artifact capture."""
     start = time.monotonic()
@@ -123,8 +133,41 @@ def run_process_streaming(
             stderr_handle.close()
         raise AiDevLoopError(f"executable not found: {args[0]}") from exc
 
+    registration_recorded = False
+    if active_process is not None:
+        from ai_dev_loop.abort_control import register_active_process
+
+        try:
+            register_active_process(
+                active_process.run_directory,
+                run_id=active_process.run_id,
+                component=active_process.component,
+                iteration=active_process.iteration,
+                pid=proc.pid,
+                pgid=os.getpgid(proc.pid),
+                parent_pid=os.getpid(),
+                cwd=cwd or os.getcwd(),
+                argv_redacted=list(active_process.argv_redacted),
+            )
+            registration_recorded = True
+        except Exception as exc:
+            _terminate_process_group(proc)
+            try:
+                proc.communicate(timeout=1)
+            except subprocess.TimeoutExpired:
+                _terminate_process_group(proc)
+                proc.communicate(timeout=1)
+            if stdout_handle is not None:
+                stdout_handle.close()
+            if stderr_handle is not None:
+                stderr_handle.close()
+            raise AiDevLoopError(
+                "failed to register active child process metadata; child process group terminated"
+            ) from exc
+
     timed_out = False
     returncode = 1
+    clear_reason = "completed"
     try:
         assert proc.stdout is not None
         assert proc.stderr is not None
@@ -138,12 +181,19 @@ def run_process_streaming(
             returncode = proc.returncode if proc.returncode is not None else 0
         except subprocess.TimeoutExpired:
             timed_out = True
+            clear_reason = "timed_out"
             _terminate_process_group(proc)
             stdout_data, stderr_data = proc.communicate()
             stdout_chunks.append(stdout_data)
             stderr_chunks.append(stderr_data)
             returncode = proc.returncode if proc.returncode is not None else 124
     finally:
+        if active_process is not None and registration_recorded:
+            from ai_dev_loop.abort_control import is_abort_requested, mark_active_process_cleared
+
+            if is_abort_requested(active_process.run_directory):
+                clear_reason = "aborted"
+            mark_active_process_cleared(active_process.run_directory, reason=clear_reason)
         stdout_text = "".join(stdout_chunks)
         stderr_text = "".join(stderr_chunks)
         if stdout_handle is not None:

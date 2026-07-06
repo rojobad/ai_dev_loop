@@ -2,11 +2,21 @@
 
 Deterministic local orchestrator for Codex/Cursor development loops.
 
-Phase 5 implements the complete bounded stage-review-fix loop and real `resume`. A prepared run can now move through Cursor implementation, Git staging, Codex review, optional Cursor correction turns, and additional reviews until Codex reports no actionable findings, residual-risk completion applies, or `workflow.max_review_iterations` is reached.
+Phase 6 implements real `abort`. Phase 5's bounded stage-review-fix loop and `resume` remain unchanged.
 
-`ai_dev_loop resume <run-id>` continues from durable checkpoints such as `waiting_for_cursor_fix`, `staging`, `reviewing`, and `interrupted` without changing Cursor chat identity or Codex session identity.
+A prepared or active run can be cancelled with `ai_dev_loop abort <run-id>`. Abort requests termination of an active Cursor or Codex child process group when durable active-process metadata clearly ties the child to the selected run, persists an abort-request marker, marks the run `aborted`, and preserves repository contents, staged changes, and existing run artifacts.
 
-`abort` and global integrations install/uninstall are still not implemented.
+Global Codex integrations (`integrations install` / `uninstall`, SessionStart hook, global handoff skill) remain pending for Phase 7.
+
+## What Phase 6 Implements
+
+- Real `ai_dev_loop abort <run-id>` with process-group signaling for active Cursor/Codex children
+- Durable abort-request marker at `locks/abort-request.json`
+- Durable active-child metadata at `locks/active-process.json` while Cursor/Codex streaming subprocesses run
+- Workflow abort observation before and after each loop action in `start` and `resume`
+- User-aborted child processes end the run as `aborted`, not as generic failure or timeout
+- Conservative stale-process safety: abort does not signal unrelated process groups
+- `status`, `logs`, `inspect`, and README updates for abort diagnostics without sensitive leakage
 
 ## What Phase 5 Implements
 
@@ -15,34 +25,31 @@ Phase 5 implements the complete bounded stage-review-fix loop and real `resume`.
 - One Cursor chat per run, reused for every implementation and correction turn
 - One Codex session per run, resumed for every review
 - Exact forwarding of Codex-authored `cursor_fix_prompt` values from `prompts/fixes/NN.txt`
-- Multi-iteration artifacts:
-  - `cursor/iterations/01`, `02`, `03`, ...
-  - `git/diffs/NN.patch`, `git/status/NN-*`
-  - `codex/reviews/NN.json`, `codex/events/NN.jsonl`
-  - `prompts/fixes/NN.txt`
-- Correction-iteration Git safety:
-  - initial staging still rejects pre-existing staged paths
-  - correction turns require the current staged patch to match the previous orchestrator-recorded patch
-  - correction turns reject unstaged tracked changes and unexpected untracked files
-- Real `resume <run-id>` with conservative checkpoint planning and partial-attempt artifact preservation
-- Terminal outcomes:
-  - `completed`
-  - `completed_with_residual_risk`
-  - `max_iterations_reached`
-  - `waiting_for_cursor_fix` as a durable checkpoint between loop iterations or for manual resume
-
-## What Earlier Phases Still Provide
-
-- Phase 4 Codex review execution, structured result validation, and review artifacts
-- Phase 3 Git staging with `git add -A` for `stage_mode: all`
-- Phase 2 start preflight, locks, CLI probes, and Cursor execution
-- Phase 1 `prepare`, config validation, read-only inspection, XDG storage, and secure permissions
+- Real `resume <run-id>` with conservative checkpoint planning
 
 ## What Is Still Pending
 
-- `abort` child-process termination
 - Global Codex skill and SessionStart hook installation
 - `integrations install` / `uninstall`
+
+## Using Abort
+
+Request cancellation while a run is active or waiting at a non-terminal checkpoint:
+
+```bash
+ai_dev_loop abort <run-id>
+```
+
+Abort:
+
+- writes `locks/abort-request.json`
+- signals the active child process group when metadata is clearly tied to the run
+- marks the run `aborted` immediately when no workflow lock is held and no live child is running
+- otherwise leaves the abort request for the active `start`/`resume` workflow to observe
+
+Abort does **not** commit, push, reset, clean, stash, unstage, delete artifacts, or remove lock files.
+
+Repository contents and staged changes remain exactly as they were when abort was requested. Inspect `cursor/`, `codex/`, `git/`, and `logs/events.jsonl` for the audit trail. Terminal runs (`completed`, `failed`, `aborted`, etc.) refuse abort with a clear no-op message.
 
 ## Recommended Setup (WSL)
 

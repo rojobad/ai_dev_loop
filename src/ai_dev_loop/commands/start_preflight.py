@@ -166,6 +166,16 @@ def mark_interrupted(state: RunState, message: str) -> None:
     state.last_error = message
 
 
+def mark_aborted(state: RunState, message: str) -> None:
+    try:
+        transition_status(state.status, RunStatus.ABORTED)
+    except ValueError:
+        state.status = RunStatus.ABORTED
+    state.status = RunStatus.ABORTED
+    state.result = message
+    state.last_error = message
+
+
 TERMINAL_RESUME_STATUSES = frozenset(
     {
         RunStatus.COMPLETED,

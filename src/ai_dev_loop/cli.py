@@ -10,13 +10,13 @@ from typing import Annotated
 import typer
 
 from ai_dev_loop import __version__
+from ai_dev_loop.commands.abort import render_abort_output, run_abort
 from ai_dev_loop.commands.config_cmd import run_validate_config
 from ai_dev_loop.commands.doctor import render_doctor
 from ai_dev_loop.commands.inspect import render_inspect
 from ai_dev_loop.commands.integrations import raise_not_implemented, render_integrations_status
 from ai_dev_loop.commands.list_runs import render_list
 from ai_dev_loop.commands.logs import render_logs
-from ai_dev_loop.commands.placeholders import not_implemented
 from ai_dev_loop.commands.prepare import PrepareOptions, prepare_run, render_prepare_output
 from ai_dev_loop.commands.resume import render_resume_output, resume_run
 from ai_dev_loop.commands.start import CODEX_TUI_WARNING, render_start_output, start_run
@@ -257,7 +257,8 @@ def abort_command(
     """Abort an active run."""
 
     def run() -> None:
-        not_implemented("abort")
+        result = run_abort(run_id)
+        typer.echo(render_abort_output(result), nl=False)
 
     _handle(run)
 

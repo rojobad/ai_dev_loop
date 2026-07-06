@@ -9,7 +9,12 @@ from pathlib import Path
 from typing import Any
 
 from ai_dev_loop.errors import ValidationError
-from ai_dev_loop.process import StreamingProcessResult, run_process, run_process_streaming
+from ai_dev_loop.process import (
+    ActiveProcessRegistration,
+    StreamingProcessResult,
+    run_process,
+    run_process_streaming,
+)
 from ai_dev_loop.redaction import redact_text
 from ai_dev_loop.state import CursorState
 
@@ -94,8 +99,20 @@ def execute_prompt(
     timeout_seconds: float,
     stdout_path: Path,
     stderr_path: Path,
+    run_directory: Path | None = None,
+    run_id: str | None = None,
+    iteration_number: int | None = None,
 ) -> CursorExecutionResult:
     args = build_cursor_args(cursor, repo_root=repo_root, chat_id=chat_id, prompt=prompt)
+    active_process = None
+    if run_directory is not None and run_id is not None and iteration_number is not None:
+        active_process = ActiveProcessRegistration(
+            run_directory=run_directory,
+            run_id=run_id,
+            component="cursor",
+            iteration=iteration_number,
+            argv_redacted=redact_cursor_args(args),
+        )
     process = run_process_streaming(
         args,
         cwd=repo_root,
@@ -103,6 +120,7 @@ def execute_prompt(
         stdout_path=stdout_path,
         stderr_path=stderr_path,
         sensitive=True,
+        active_process=active_process,
     )
     parse = parse_stream_json(process.stdout)
     return CursorExecutionResult(

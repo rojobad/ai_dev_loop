@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ai_dev_loop.abort_control import abort_control_summary
 from ai_dev_loop.run_discovery import load_run
 from ai_dev_loop.runners.staging import staging_complete_for_iteration
 from ai_dev_loop.state import RunState, shorten_session_id
@@ -13,6 +14,7 @@ from ai_dev_loop.state import RunState, shorten_session_id
 def render_status(run_id: str, *, output: str = "text") -> str:
     run_path, state = load_run(run_id)
     next_action = _next_action(state, run_path)
+    control = abort_control_summary(run_path)
     if output == "json":
         payload = {
             "schema_version": 1,
@@ -31,6 +33,7 @@ def render_status(run_id: str, *, output: str = "text") -> str:
             "run_directory": str(run_path),
             "next_safe_action": next_action,
             "iteration_count": len(state.iterations),
+            "abort_control": control,
         }
         return json.dumps(payload, indent=2) + "\n"
 
@@ -48,6 +51,12 @@ def render_status(run_id: str, *, output: str = "text") -> str:
         f"Run directory: {run_path}",
         f"Next safe action: {next_action}",
     ]
+    if control["abort_requested"]:
+        lines.append("Abort request: pending")
+    if control["active_process_registered"]:
+        component = control.get("active_component", "unknown")
+        iteration = control.get("active_iteration", "?")
+        lines.append(f"Active child process: {component} iteration {iteration}")
     if state.last_error:
         lines.append(f"Last error: {state.last_error}")
     if state.result:
@@ -94,4 +103,9 @@ def _next_action(state: RunState, run_path: Path) -> str:
         return "Run ai_dev_loop resume <run-id> after inspecting cursor/ and codex/ artifacts."
     if status == "failed":
         return "Inspect last_error, codex/, and cursor artifacts before preparing a new run."
+    if status == "aborted":
+        return (
+            "Run was aborted. Inspect cursor/, codex/, and git/ artifacts. "
+            "Repository contents and staged changes were preserved."
+        )
     return "Inspect artifacts or wait for a later-phase recovery command."

@@ -10,10 +10,15 @@ from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
 
+from ai_dev_loop.abort_control import is_abort_requested
 from ai_dev_loop.errors import AiDevLoopError, ValidationError
 from ai_dev_loop.iterations import find_iteration, upsert_iteration
 from ai_dev_loop.paths import schema_path, set_sensitive_file_mode
-from ai_dev_loop.process import StreamingProcessResult, run_process_streaming
+from ai_dev_loop.process import (
+    ActiveProcessRegistration,
+    StreamingProcessResult,
+    run_process_streaming,
+)
 from ai_dev_loop.review_result import CodexReviewResult, completion_status_for_review
 from ai_dev_loop.state import CodexState, RunState, atomic_write_json, atomic_write_text
 
@@ -271,6 +276,7 @@ def run_codex_review(
         result_file=result_path,
     )
     timeout_seconds = state.workflow.codex_timeout_minutes * 60
+    iteration_number = int(iteration)
     process = run_process_streaming(
         args,
         cwd=repo_root,
@@ -279,6 +285,13 @@ def run_codex_review(
         stdout_path=events_path,
         stderr_path=stderr_path,
         sensitive=True,
+        active_process=ActiveProcessRegistration(
+            run_directory=run_directory,
+            run_id=state.run_id,
+            component="codex",
+            iteration=iteration_number,
+            argv_redacted=redact_codex_args(args),
+        ),
     )
 
     metadata_payload = {
@@ -291,6 +304,9 @@ def run_codex_review(
     }
     atomic_write_json(metadata_path, metadata_payload, sensitive=True)
     set_sensitive_file_mode(metadata_path)
+
+    if is_abort_requested(run_directory):
+        raise AiDevLoopError(f"Codex review aborted; inspect {events_rel} and {stderr_rel}")
 
     if process.timed_out:
         raise AiDevLoopError(_codex_timeout_message(events_path=events_rel, stderr_path=stderr_rel))

@@ -38,9 +38,10 @@ def test_cli_help() -> None:
         assert command in result.stdout
 
 
-def test_resume_not_implemented_for_abort_only() -> None:
-    result = runner.invoke(app, ["abort", "demo-run"])
-    assert result.exit_code == 3
+def test_abort_marks_non_terminal_run(prepared_run) -> None:
+    result = runner.invoke(app, ["abort", prepared_run["run_id"]])
+    assert result.exit_code == 0
+    assert "aborted" in result.stdout.lower()
 
 
 def test_config_validate(git_repo: Path, isolated_xdg) -> None:

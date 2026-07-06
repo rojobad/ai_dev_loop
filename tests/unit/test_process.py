@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import stat
+import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
+from unittest.mock import patch
 
+import pytest
+
+from ai_dev_loop.errors import AiDevLoopError
 from ai_dev_loop.paths import SENSITIVE_FILE_MODE
-from ai_dev_loop.process import run_process_streaming
+from ai_dev_loop.process import ActiveProcessRegistration, run_process_streaming
 
 
 def test_process_streaming_accepts_stdin_text(tmp_path: Path) -> None:
@@ -98,3 +103,44 @@ def test_sensitive_capture_files_are_restrictive_while_process_runs(
     assert stderr_path.is_file()
     assert stat.S_IMODE(stdout_path.stat().st_mode) == SENSITIVE_FILE_MODE
     assert stat.S_IMODE(stderr_path.stat().st_mode) == SENSITIVE_FILE_MODE
+
+
+def test_registration_failure_terminates_child(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    script = tmp_path / "sleeper.py"
+    script.write_text("import time\ntime.sleep(60)\n", encoding="utf-8")
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    tracked: dict[str, subprocess.Popen[str]] = {}
+    original_popen = subprocess.Popen
+
+    def track_popen(*args, **kwargs):
+        proc = original_popen(*args, **kwargs)
+        tracked["proc"] = proc
+        return proc
+
+    monkeypatch.setattr(subprocess, "Popen", track_popen)
+
+    def fail_register(*args, **kwargs):
+        raise OSError("registration failed")
+
+    with (
+        patch(
+            "ai_dev_loop.abort_control.register_active_process",
+            side_effect=fail_register,
+        ),
+        pytest.raises(AiDevLoopError, match="register active child process metadata"),
+    ):
+        run_process_streaming(
+                [sys.executable, str(script)],
+                active_process=ActiveProcessRegistration(
+                    run_directory=run_directory,
+                    run_id="demo-run",
+                    component="cursor",
+                    iteration=1,
+                argv_redacted=["agent", "<prompt-redacted>"],
+            ),
+        )
+
+    proc = tracked["proc"]
+    proc.wait(timeout=2)
+    assert proc.returncode is not None

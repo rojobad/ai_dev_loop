@@ -5,12 +5,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ai_dev_loop.abort_control import (
+    ABORT_REQUEST_REL_PATH,
+    ACTIVE_PROCESS_REL_PATH,
+    abort_control_summary,
+)
 from ai_dev_loop.run_discovery import load_run
 
 
 def render_inspect(run_id: str, *, output: str = "text", show_prompts: bool = False) -> str:
     run_path, state = load_run(run_id)
     artifact_paths = _collect_artifacts(run_path)
+    control = abort_control_summary(run_path)
     if output == "json":
         payload = {
             "schema_version": 1,
@@ -18,6 +24,11 @@ def render_inspect(run_id: str, *, output: str = "text", show_prompts: bool = Fa
             "status": state.status.value,
             "run_directory": str(run_path),
             "artifacts": artifact_paths,
+            "abort_control": control,
+            "abort_control_paths": [
+                str(ABORT_REQUEST_REL_PATH),
+                str(ACTIVE_PROCESS_REL_PATH),
+            ],
             "plan": state.plan.model_dump(),
             "prompt": state.prompt.model_dump(),
             "workflow": state.workflow.model_dump(),
@@ -64,6 +75,12 @@ def render_inspect(run_id: str, *, output: str = "text", show_prompts: bool = Fa
                 if isinstance(report_path, str):
                     lines.append(f"    codex report: {report_path}")
         lines.append("")
+    lines.append("Abort control:")
+    lines.append(f"  abort_request_path: {ABORT_REQUEST_REL_PATH}")
+    lines.append(f"  active_process_path: {ACTIVE_PROCESS_REL_PATH}")
+    lines.append(f"  abort_requested: {control['abort_requested']}")
+    lines.append(f"  active_process_registered: {control['active_process_registered']}")
+    lines.append("")
     lines.append("Artifacts:")
     for path in artifact_paths:
         lines.append(f"  - {path}")
