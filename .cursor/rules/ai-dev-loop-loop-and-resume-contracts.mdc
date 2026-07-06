@@ -1,0 +1,95 @@
+---
+description: "Loop and resume contracts for ai_dev_loop bounded review/fix iterations, correction staging, and idempotent recovery. Apply whenever editing start/resume, staging, Cursor/Codex runners, iteration state, logs, docs, or tests."
+globs:
+alwaysApply: true
+---
+
+# ai_dev_loop Loop And Resume Contracts
+
+These contracts protect the complete stage-review-fix loop and explicit resume behavior. They apply in addition to `ai-dev-loop-governance.mdc`, `ai-dev-loop-orchestrator-contracts.mdc`, `ai-dev-loop-state-and-schema-contracts.mdc`, and `ai-dev-loop-codex-review-contracts.mdc`.
+
+## Source Of Truth
+
+- `plan-2-build-ai-dev-loop-orchestrator.md` is the master architecture contract.
+- The active `plans/phase-*.md` file narrows the implementation scope for the current phase.
+- The structured Codex JSON result is the source of truth for loop decisions.
+- The orchestrator may validate, persist, and forward prompts and decisions. It must not invent architecture, reinterpret findings, scrape Markdown, or replace Codex/Cursor reasoning.
+
+## Bounded Loop Semantics
+
+- `workflow.max_review_iterations` counts Codex review passes, including the first review after the initial Cursor implementation.
+- Iteration `01` is the initial Cursor implementation and review `01`.
+- Iterations `02+` are Cursor correction turns and their corresponding reviews.
+- If review `NN` has no actionable findings, stop with `completed` or `completed_with_residual_risk` according to the structured `tests_status`.
+- If review `NN` has actionable findings and `NN < max_review_iterations`, persist `waiting_for_cursor_fix`, then continue with Cursor correction iteration `NN+1`.
+- If review `NN` has actionable findings and `NN >= max_review_iterations`, set `max_iterations_reached`, leave changes staged, preserve the latest review and fix prompt, and do not invoke Cursor again.
+
+## Cursor Identity And Fix Prompts
+
+- Create at most one Cursor chat per run.
+- Persist the chat ID immediately and reuse `state.cursor.chat_id` for every Cursor turn.
+- The initial Cursor prompt comes from `state.prompt.snapshot_path`.
+- Correction iteration `NN+1` must use the exact persisted `prompts/fixes/NN.txt`.
+- `cursor_fix_prompt` must come from the resumed Codex review result. Do not synthesize, rewrite, summarize, translate, or improve it.
+- Pass Cursor prompts as single positional arguments without shell interpolation.
+- Treat Cursor output as untrusted data and never execute it.
+
+## Codex Review Identity
+
+- Every review must resume the exact original `state.codex.session_id`.
+- Never use `--last`, guessed sessions, plain new `codex exec` review sessions, or subagents as final reviewers.
+- Invoke the configured target-repository review skill exactly as `$<state.codex.review_skill>` in the review prompt.
+- The same resumed Codex session must author every `cursor_fix_prompt`.
+- Decide loop outcomes only from schema-validated Codex JSON, never from Markdown.
+
+## Iteration And Artifact Contract
+
+- Store iteration artifact paths relative to the run directory.
+- Do not overwrite completed earlier iteration metadata when writing later iterations.
+- Each iteration entry should use stable keys where available: `number`, `kind`, `started_at`, `completed_at`, `cursor`, `git`, `codex`, and `review`.
+- Use `kind: initial_implementation` for iteration `01`.
+- Use `kind: cursor_correction` for correction iterations.
+- Cursor artifacts live under `cursor/iterations/NN/`.
+- Git status and staged diff artifacts use `git/status/NN-*` and `git/diffs/NN.*`.
+- Codex review artifacts use `codex/events/NN.*` and `codex/reviews/NN.*`.
+- Fix prompts use `prompts/fixes/NN.txt`, where `NN` is the review that produced the prompt.
+- Staged diff artifacts for each iteration represent the full current staged change set at that point.
+
+## Git And Staging Safety
+
+- The first staging pass must reject pre-existing staged changes.
+- Correction staging may begin with staged changes only when they exactly match the previous orchestrator-recorded staged patch.
+- Before a correction Cursor turn, reject changed staged patches, unstaged tracked changes, and untracked work that is not part of a clear orchestrator checkpoint.
+- Continue protecting the repository plan hash and prompt source path.
+- Continue rejecting staged prompt-source paths.
+- Do not commit, tag, push, reset, clean, stash, unstage, or otherwise rewrite Git state.
+- Fail safely on ambiguous repository state rather than guessing.
+
+## Resume Discipline
+
+- `resume <run-id>` must acquire the same run and repository locks before mutation.
+- `resume` must preserve Cursor chat identity and Codex session identity.
+- `resume` must not rerun completed agent turns when durable artifacts prove they completed.
+- `resume` may continue only from clear checkpoints such as `prepared`, `waiting_for_cursor_fix`, completed staging waiting for review, completed review waiting for outcome processing, or explicit interrupted states with enough artifacts to determine the next safe action.
+- If retrying an interrupted Cursor or Codex turn, preserve existing partial artifacts before writing new attempt artifacts.
+- If the next safe action is ambiguous, fail with a diagnostic and do not mutate the repository.
+- Terminal states remain terminal unless a future explicit phase defines a safe no-op behavior.
+
+## Privacy And Output
+
+- Do not print full prompts, fix prompts, staged patches, review Markdown, raw JSONL, full session IDs, auth payloads, full environments, or secret-like values in default CLI output.
+- Human-readable errors should point to sensitive artifacts instead of embedding raw Cursor or Codex output.
+- Structured event details must be redacted.
+- Raw agent artifacts remain local under XDG state with sensitive permissions where supported.
+
+## Tests
+
+- Use fake `agent` and fake `codex` executables in automated tests.
+- Do not invoke real model activity in tests.
+- Test same Cursor chat ID across implementation and fixes.
+- Test same Codex session ID across all reviews.
+- Test max-iteration exhaustion without an extra Cursor turn.
+- Test resume from `waiting_for_cursor_fix`.
+- Test resume does not rerun completed turns.
+- Test correction staging rejects drift in the previously recorded staged patch.
+- Test status, logs, and inspect output across multiple iterations without leaking sensitive content.
