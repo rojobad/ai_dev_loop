@@ -1,0 +1,85 @@
+---
+description: "Abort contracts for ai_dev_loop process control, active child metadata, safe termination, and non-destructive cancellation. Apply whenever editing abort, process execution, workflow control, status/logs/inspect abort reporting, docs, or tests."
+globs:
+alwaysApply: true
+---
+
+# ai_dev_loop Abort Contracts
+
+These contracts protect `ai_dev_loop abort <run-id>` and any code that observes abort requests while a run is active. They apply in addition to `ai-dev-loop-governance.mdc`, `ai-dev-loop-orchestrator-contracts.mdc`, `ai-dev-loop-state-and-schema-contracts.mdc`, `ai-dev-loop-codex-review-contracts.mdc`, and `ai-dev-loop-loop-and-resume-contracts.mdc`.
+
+## Source Of Truth
+
+- `plan-2-build-ai-dev-loop-orchestrator.md` is the master architecture contract.
+- The active phase plan narrows implementation scope.
+- `abort` is a process-control and state-preservation command, not a cleanup or rollback command.
+- If process-control state is ambiguous, fail safely and preserve diagnostics.
+
+## Non-Destructive Abort
+
+- Preserve repository contents exactly as they exist when abort is requested.
+- Preserve staged changes exactly as they exist when abort is requested.
+- Preserve run artifacts, logs, prompts, reviews, patches, and partial child output.
+- Do not commit, tag, push, reset, clean, stash, unstage, delete agent edits, or rewrite Git state.
+- Do not remove lock files owned by another active process.
+- Do not delete partial Cursor or Codex artifacts.
+
+## Abort Request Contract
+
+- Persist a durable abort request under the run directory before attempting process termination.
+- The abort request must include the run ID, request timestamp, requesting PID, and a stable reason such as `user_requested_abort`.
+- Write abort request metadata atomically and apply sensitive permissions where supported.
+- The active workflow must check for abort requests before starting each Cursor turn, staging pass, Codex review, or review-processing step.
+- The active workflow must check again after each workflow action.
+- Once an abort request is observed, do not start another Cursor turn, staging pass, Codex review, or correction turn.
+
+## Active Process Metadata
+
+- Register active Cursor and Codex streaming subprocesses immediately after process start.
+- Metadata must include run ID, component, iteration, PID, PGID, parent PID, start timestamp, working directory, and redacted argv.
+- Redact prompts, fix prompts, raw patches, full review content, auth payloads, and secret-like values.
+- Do not store full process environments.
+- Clear or mark active metadata when the child completes, fails, times out, or is aborted.
+- Keep process metadata under XDG-managed run state outside target repositories.
+
+## Process Signaling Safety
+
+- Signal only process groups clearly tied to the selected run by active-process metadata.
+- Validate the metadata run ID before signaling.
+- Validate PID and PGID are positive integers.
+- Check process liveness before signaling.
+- Prefer conservative stale-metadata handling. If metadata may point at an unrelated process, do not signal it.
+- Send `SIGTERM` first, wait a bounded grace period, then send `SIGKILL` only if the same process group is still live.
+- Never execute text emitted by Cursor or Codex while handling abort.
+
+## Workflow Outcome
+
+- A child process killed because of a user abort must lead to run status `aborted`.
+- Do not report a user-aborted child as a generic `failed` or `interrupted` outcome.
+- If no child is active and the run is non-terminal, `abort` may mark the run `aborted` after acquiring safe mutation locks.
+- If the workflow lock is held by an active run, `abort` may leave the abort request for the active workflow to observe at the next checkpoint.
+- Terminal states remain terminal:
+  - `completed`;
+  - `completed_with_residual_risk`;
+  - `max_iterations_reached`;
+  - `failed`;
+  - `aborted`.
+
+## Privacy And Output
+
+- Default CLI output must be concise and must not include full prompts, fix prompts, staged patches, review Markdown, raw JSONL, full session IDs, auth payloads, full environments, or secret-like values.
+- Human-readable errors should point to artifact paths or safe summaries instead of embedding raw child output.
+- Structured event details must be redacted.
+- Include enough status/log/inspect context for manual recovery without leaking sensitive content.
+
+## Tests
+
+- Use fake `agent` and fake `codex` executables in automated tests.
+- Do not invoke real model activity in tests.
+- Test aborting a running fake Cursor process.
+- Test aborting a running fake Codex process.
+- Test abort requests with no active child process.
+- Test terminal-state refusal or no-op behavior.
+- Test stale or mismatched active-process metadata does not kill unrelated processes.
+- Test staged and unstaged repository contents are preserved.
+- Test status, logs, and inspect expose abort diagnostics without leaking sensitive content.
