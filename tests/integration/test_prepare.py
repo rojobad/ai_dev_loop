@@ -38,9 +38,7 @@ def test_cli_help() -> None:
         assert command in result.stdout
 
 
-def test_start_not_implemented_for_resume_and_abort() -> None:
-    result = runner.invoke(app, ["resume", "demo-run"])
-    assert result.exit_code == 3
+def test_resume_not_implemented_for_abort_only() -> None:
     result = runner.invoke(app, ["abort", "demo-run"])
     assert result.exit_code == 3
 

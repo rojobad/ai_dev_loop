@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from ai_dev_loop.run_discovery import load_run
-from ai_dev_loop.runners.staging import staging_complete
+from ai_dev_loop.runners.staging import staging_complete_for_iteration
 from ai_dev_loop.state import RunState, shorten_session_id
 
 
@@ -30,6 +30,7 @@ def render_status(run_id: str, *, output: str = "text") -> str:
             "result": state.result,
             "run_directory": str(run_path),
             "next_safe_action": next_action,
+            "iteration_count": len(state.iterations),
         }
         return json.dumps(payload, indent=2) + "\n"
 
@@ -41,6 +42,7 @@ def render_status(run_id: str, *, output: str = "text") -> str:
         f"Branch: {state.repository.branch}",
         f"Initial HEAD: {state.repository.initial_head}",
         f"Review iteration: {state.workflow.current_review_iteration}/{state.workflow.max_review_iterations}",
+        f"Recorded iterations: {len(state.iterations)}",
         f"Cursor chat: {state.cursor.chat_id or '(not created)'}",
         f"Codex session: {shorten_session_id(state.codex.session_id)}",
         f"Run directory: {run_path}",
@@ -58,22 +60,19 @@ def _next_action(state: RunState, run_path: Path) -> str:
     if status == "prepared":
         return "Exit Codex TUI, then run ai_dev_loop start <run-id>."
     if status == "staging":
-        if staging_complete(state, run_path):
-            return (
-                "Git staging is complete but Codex review did not finish. "
-                "Inspect git/diffs/ and logs/events.jsonl."
-            )
+        iteration = f"{state.workflow.current_review_iteration:02d}"
+        if state.workflow.current_review_iteration > 0 and staging_complete_for_iteration(
+            state, run_path, iteration
+        ):
+            return "Run ai_dev_loop resume <run-id> to continue with Codex review."
         return (
             "Cursor execution finished but Git staging is incomplete. "
-            "Inspect git/status/ and cursor/iterations/ artifacts."
+            "Inspect git/status/ and cursor/iterations/ artifacts, then run ai_dev_loop resume <run-id>."
         )
     if status == "reviewing":
-        return "Wait for start to finish or inspect logs if the run appears stuck."
+        return "Run ai_dev_loop resume <run-id> to continue or finish Codex review processing."
     if status == "waiting_for_cursor_fix":
-        return (
-            "Codex review found actionable findings. Cursor correction execution is not "
-            "implemented yet. Inspect prompts/fixes/ and codex/reviews/ artifacts."
-        )
+        return "Run ai_dev_loop resume <run-id> to send the stored fix prompt to Cursor."
     if status == "completed":
         return (
             "Run completed with no actionable findings. Changes remain staged in the "
@@ -84,10 +83,15 @@ def _next_action(state: RunState, run_path: Path) -> str:
             "Run completed with residual risk. Inspect codex/reviews/ and repository state "
             "before committing."
         )
+    if status == "max_iterations_reached":
+        return (
+            "Maximum review iterations reached. Inspect prompts/fixes/ and codex/reviews/, "
+            "apply fixes manually, then commit when ready."
+        )
     if status in {"running_cursor", "validating"}:
-        return "Wait for start to finish or inspect logs if the run appears stuck."
+        return "Wait for start/resume to finish or inspect logs if the run appears stuck."
     if status == "interrupted":
-        return "ai_dev_loop resume is not implemented yet. Inspect artifacts manually."
+        return "Run ai_dev_loop resume <run-id> after inspecting cursor/ and codex/ artifacts."
     if status == "failed":
         return "Inspect last_error, codex/, and cursor artifacts before preparing a new run."
     return "Inspect artifacts or wait for a later-phase recovery command."

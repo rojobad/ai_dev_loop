@@ -138,6 +138,13 @@ def mark_waiting_for_cursor_fix(state: RunState, message: str) -> None:
     state.last_error = None
 
 
+def mark_max_iterations_reached(state: RunState, message: str) -> None:
+    transition_status(state.status, RunStatus.MAX_ITERATIONS_REACHED)
+    state.status = RunStatus.MAX_ITERATIONS_REACHED
+    state.result = message
+    state.last_error = None
+
+
 def mark_failed(state: RunState, message: str) -> None:
     if state.status in {RunStatus.FAILED, RunStatus.ABORTED}:
         state.last_error = message
@@ -157,3 +164,49 @@ def mark_interrupted(state: RunState, message: str) -> None:
         state.status = RunStatus.INTERRUPTED
     state.status = RunStatus.INTERRUPTED
     state.last_error = message
+
+
+TERMINAL_RESUME_STATUSES = frozenset(
+    {
+        RunStatus.COMPLETED,
+        RunStatus.COMPLETED_WITH_RESIDUAL_RISK,
+        RunStatus.MAX_ITERATIONS_REACHED,
+        RunStatus.FAILED,
+        RunStatus.ABORTED,
+    }
+)
+
+
+RESUMABLE_CHECKPOINT_STATUSES = frozenset(
+    {
+        RunStatus.PREPARED,
+        RunStatus.WAITING_FOR_CURSOR_FIX,
+        RunStatus.STAGING,
+        RunStatus.REVIEWING,
+        RunStatus.INTERRUPTED,
+        RunStatus.RUNNING_CURSOR,
+    }
+)
+
+
+def validate_resume_status(state: RunState) -> None:
+    if state.status in TERMINAL_RESUME_STATUSES:
+        raise ValidationError(
+            f"run is in terminal status {state.status.value}; resume is not available"
+        )
+    if state.status not in RESUMABLE_CHECKPOINT_STATUSES:
+        raise ValidationError(
+            f"run status {state.status.value} is not a supported resume checkpoint"
+        )
+
+
+def run_resume_preflight_checks(
+    state: RunState, run_directory: Path, *, from_prepared: bool
+) -> None:
+    validate_timeouts(state)
+    validate_codex_session(state)
+    validate_repository_contract(state, run_directory)
+    validate_plan_contract(state, run_directory)
+    validate_prompt_contract(state, run_directory)
+    if from_prepared:
+        validate_worktree_baseline(state, run_directory)

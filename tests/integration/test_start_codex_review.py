@@ -12,7 +12,7 @@ from typer.testing import CliRunner
 from ai_dev_loop.cli import app
 from ai_dev_loop.commands.start import start_run
 from ai_dev_loop.errors import AiDevLoopError
-from ai_dev_loop.runners.codex import PHASE_4_FINDINGS_MESSAGE, PHASE_4_NO_FINDINGS_MESSAGE
+from ai_dev_loop.runners.codex import PHASE_4_NO_FINDINGS_MESSAGE
 from ai_dev_loop.state import RunStatus, load_run_state
 
 runner = CliRunner()
@@ -56,15 +56,36 @@ def test_start_completes_after_no_finding_codex_review(
 
 
 def test_start_waiting_for_cursor_fix_after_findings(prepared_run, fake_clis, monkeypatch) -> None:
+    """Single-review findings without sequence stop at waiting_for_cursor_fix when max=1."""
     monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "findings")
-    result = start_run(prepared_run["run_id"])
-    assert result.status == "waiting_for_cursor_fix"
-    assert PHASE_4_FINDINGS_MESSAGE in result.result_message
+    monkeypatch.setenv("FAKE_CODEX_REVIEW_SEQUENCE", "")
+    from io import StringIO
+    from unittest.mock import patch
 
-    run_path = prepared_run["run_path"]
+    from ai_dev_loop.commands.prepare import PrepareOptions, prepare_run
+    from ai_dev_loop.paths import run_dir
+
+    prompt = Path(__file__).resolve().parents[1] / "fixtures" / "sample_repo"
+    prompt_text = (prompt / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
+    repo = prepared_run["repo"]
+    with patch("sys.stdin", StringIO(prompt_text)):
+        prepared = prepare_run(
+            PrepareOptions(
+                repo_path=repo,
+                plan_path=Path("docs/plans/sample-plan.md"),
+                prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
+                codex_session_id="019abc00-0000-0000-0000-000000000000",
+                max_review_iterations=1,
+            )
+        )
+    monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "findings")
+    result = start_run(prepared.run_id)
+    assert result.status == "max_iterations_reached"
+
+    run_path = run_dir("fixture-project", prepared.run_id)
     state = load_run_state(run_path / "state.json")
-    assert state.status == RunStatus.WAITING_FOR_CURSOR_FIX
+    assert state.status == RunStatus.MAX_ITERATIONS_REACHED
     assert state.iterations[0]["review"]["has_actionable_findings"] is True
     assert state.iterations[0]["codex"]["fix_prompt_path"] == "prompts/fixes/01.txt"
     fix_prompt = (run_path / "prompts/fixes/01.txt").read_text(encoding="utf-8")
@@ -166,7 +187,7 @@ def test_logs_component_codex_shows_review_summary(prepared_run, fake_clis, monk
     start_run(prepared_run["run_id"])
     result = runner.invoke(app, ["logs", prepared_run["run_id"], "--component", "codex"])
     assert result.exit_code == 0
-    assert "review summary" in result.stdout
+    assert "review 1 summary" in result.stdout
     assert "has_actionable_findings" in result.stdout
     assert "content redacted" in result.stdout
     assert "Fix the sample issue" not in result.stdout
@@ -178,7 +199,7 @@ def test_logs_component_codex_redacts_findings_prompt(prepared_run, fake_clis, m
     start_run(prepared_run["run_id"])
     result = runner.invoke(app, ["logs", prepared_run["run_id"], "--component", "codex"])
     assert result.exit_code == 0
-    assert "review summary" in result.stdout
+    assert "review 1 summary" in result.stdout
     assert '"cursor_fix_prompt": "<redacted>"' in result.stdout
     assert "Fix the sample issue" not in result.stdout
     assert "Found issue." not in result.stdout

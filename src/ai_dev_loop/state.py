@@ -36,7 +36,13 @@ class RunStatus(StrEnum):
 ALLOWED_STATUS_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
     RunStatus.PREPARED: frozenset({RunStatus.VALIDATING, RunStatus.ABORTED, RunStatus.FAILED}),
     RunStatus.VALIDATING: frozenset(
-        {RunStatus.RUNNING_CURSOR, RunStatus.FAILED, RunStatus.ABORTED}
+        {
+            RunStatus.RUNNING_CURSOR,
+            RunStatus.STAGING,
+            RunStatus.REVIEWING,
+            RunStatus.FAILED,
+            RunStatus.ABORTED,
+        }
     ),
     RunStatus.RUNNING_CURSOR: frozenset(
         {RunStatus.STAGING, RunStatus.INTERRUPTED, RunStatus.FAILED, RunStatus.ABORTED}
@@ -54,12 +60,27 @@ ALLOWED_STATUS_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
         }
     ),
     RunStatus.WAITING_FOR_CURSOR_FIX: frozenset(
-        {RunStatus.RUNNING_CURSOR, RunStatus.INTERRUPTED, RunStatus.FAILED, RunStatus.ABORTED}
+        {
+            RunStatus.RUNNING_CURSOR,
+            RunStatus.MAX_ITERATIONS_REACHED,
+            RunStatus.INTERRUPTED,
+            RunStatus.FAILED,
+            RunStatus.ABORTED,
+        }
     ),
     RunStatus.COMPLETED: frozenset(),
     RunStatus.COMPLETED_WITH_RESIDUAL_RISK: frozenset(),
     RunStatus.MAX_ITERATIONS_REACHED: frozenset(),
-    RunStatus.INTERRUPTED: frozenset({RunStatus.VALIDATING, RunStatus.ABORTED, RunStatus.FAILED}),
+    RunStatus.INTERRUPTED: frozenset(
+        {
+            RunStatus.VALIDATING,
+            RunStatus.RUNNING_CURSOR,
+            RunStatus.STAGING,
+            RunStatus.REVIEWING,
+            RunStatus.ABORTED,
+            RunStatus.FAILED,
+        }
+    ),
     RunStatus.FAILED: frozenset(),
     RunStatus.ABORTED: frozenset(),
 }

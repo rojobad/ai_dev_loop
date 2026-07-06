@@ -338,6 +338,72 @@ def validate_prompt_source_unchanged(
         )
 
 
+def paths_with_unstaged_changes(status: str) -> set[str]:
+    """Return repository-relative tracked paths with unstaged worktree changes."""
+    paths: set[str] = set()
+    for line in status.splitlines():
+        if not line:
+            continue
+        if line.startswith("1 "):
+            parts = line.split(" ", 2)
+            if len(parts) < 2:
+                continue
+            xy = parts[1]
+            if len(xy) >= 2 and xy[1] not in {".", " "}:
+                path = _extract_status_path(line)
+                if path:
+                    paths.add(path)
+            continue
+        if line.startswith("2 "):
+            parts = line.split(" ", 2)
+            if len(parts) < 2:
+                continue
+            xy = parts[1]
+            if len(xy) >= 2 and xy[1] not in {".", " "}:
+                path = _extract_status_path(line)
+                if path:
+                    paths.add(path)
+    return paths
+
+
+def paths_with_untracked(status: str) -> set[str]:
+    paths: set[str] = set()
+    for line in status.splitlines():
+        if line.startswith("?"):
+            path = _extract_status_path(line)
+            if path:
+                paths.add(path)
+    return paths
+
+
+def normalize_patch_text(text: str) -> str:
+    return text.replace("\r\n", "\n").rstrip("\n")
+
+
+def validate_staged_patch_matches_artifact(repo_root: Path, patch_artifact: Path) -> None:
+    if not patch_artifact.is_file():
+        raise ValidationError(f"recorded staged patch artifact missing: {patch_artifact}")
+    recorded = normalize_patch_text(patch_artifact.read_text(encoding="utf-8"))
+    current = normalize_patch_text(git_diff_cached_patch(repo_root))
+    if current != recorded:
+        raise ValidationError(
+            "staged index no longer matches the previous orchestrator-recorded staged patch"
+        )
+
+
+def validate_correction_pre_cursor(repo_root: Path, *, patch_artifact: Path) -> None:
+    validate_staged_patch_matches_artifact(repo_root, patch_artifact)
+    status = git_status_porcelain(repo_root)
+    unstaged = paths_with_unstaged_changes(status)
+    if unstaged:
+        joined = ", ".join(sorted(unstaged))
+        raise ValidationError(f"unstaged tracked changes detected before correction: {joined}")
+    untracked = paths_with_untracked(status)
+    if untracked:
+        joined = ", ".join(sorted(untracked))
+        raise ValidationError(f"untracked files detected before correction: {joined}")
+
+
 def validate_staged_paths_safe(
     staged_paths: tuple[str, ...],
     *,

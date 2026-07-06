@@ -90,7 +90,7 @@ def test_start_does_not_stage_after_cursor_timeout(prepared_run, fake_clis, monk
         kwargs["timeout_seconds"] = 0.5
         return original_execute(*args, **kwargs)
 
-    monkeypatch.setattr("ai_dev_loop.commands.start.execute_prompt", short_timeout_execute)
+    monkeypatch.setattr("ai_dev_loop.workflow_engine.execute_prompt", short_timeout_execute)
 
     result = runner.invoke(app, ["start", prepared_run["run_id"]])
     assert result.exit_code == 1

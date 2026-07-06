@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from ai_dev_loop.errors import ValidationError
+from ai_dev_loop.iterations import (
+    find_iteration,
+    iteration_kind,
+    iteration_label,
+    upsert_iteration,
+)
 from ai_dev_loop.runners.git import (
     discover_repository,
     git_add_all,
@@ -15,6 +21,7 @@ from ai_dev_loop.runners.git import (
     git_diff_cached_patch,
     git_diff_cached_stat,
     git_status_porcelain,
+    normalize_patch_text,
     staged_paths_from_name_only,
     validate_no_preexisting_staged_paths,
     validate_plan_hash_unchanged,
@@ -23,12 +30,6 @@ from ai_dev_loop.runners.git import (
     validate_staged_paths_safe,
 )
 from ai_dev_loop.state import RunState, atomic_write_text, utc_now
-
-PHASE_3_BOUNDARY_MESSAGE = (
-    "Git staging is complete. Codex review, corrections, and completion are not implemented yet."
-)
-
-# Retained for historical references in tests/docs; Phase 4 start continues past staging.
 
 
 @dataclass(frozen=True)
@@ -46,11 +47,41 @@ class GitStagingResult:
     staged_paths: tuple[str, ...]
 
 
-def validate_pre_staging(state: RunState, repo_root: Path) -> None:
+def validate_pre_staging(
+    state: RunState,
+    repo_root: Path,
+    *,
+    iteration_number: int,
+    run_directory: Path,
+) -> None:
     validate_stage_mode(state.workflow.stage_mode)
 
     repo_info = discover_repository(repo_root)
-    validate_no_preexisting_staged_paths(repo_info.staged_paths)
+    if iteration_number == 1:
+        validate_no_preexisting_staged_paths(repo_info.staged_paths)
+    else:
+        previous = find_iteration(state, iteration_number - 1)
+        if previous is None:
+            raise ValidationError(
+                f"previous iteration metadata missing before staging iteration "
+                f"{iteration_label(iteration_number)}"
+            )
+        git_section = previous.get("git")
+        if not isinstance(git_section, dict):
+            raise ValidationError("previous iteration git metadata is missing")
+        patch_rel = git_section.get("staged_diff_path")
+        if not isinstance(patch_rel, str):
+            raise ValidationError("previous iteration staged diff path is missing")
+        patch_artifact = run_directory / patch_rel
+        if not patch_artifact.is_file():
+            raise ValidationError(f"previous staged patch artifact missing: {patch_rel}")
+        recorded = normalize_patch_text(patch_artifact.read_text(encoding="utf-8"))
+        current = normalize_patch_text(git_diff_cached_patch(repo_root))
+        if current != recorded:
+            raise ValidationError(
+                "staged index changed before correction staging; "
+                "expected the previous orchestrator-recorded staged patch"
+            )
 
     validate_plan_hash_unchanged(repo_root, state.plan.repository_path, state.plan.sha256)
 
@@ -69,11 +100,18 @@ def run_git_staging(
     run_directory: Path,
     *,
     iteration: str,
+    iteration_number: int,
     cursor_started_at: datetime,
     cursor_exit_code: int,
+    prompt_path: str,
 ) -> GitStagingResult:
     repo_root = Path(state.repository.root)
-    validate_pre_staging(state, repo_root)
+    validate_pre_staging(
+        state,
+        repo_root,
+        iteration_number=iteration_number,
+        run_directory=run_directory,
+    )
 
     before_staging_rel = f"git/status/{iteration}-before-staging.txt"
     after_staging_rel = f"git/status/{iteration}-after-staging.txt"
@@ -125,7 +163,9 @@ def run_git_staging(
     _record_iteration(
         state,
         iteration=iteration,
+        iteration_number=iteration_number,
         cursor_exit_code=cursor_exit_code,
+        prompt_path=prompt_path,
         artifacts=artifacts,
         started_at=cursor_started_at,
         completed_at=utc_now(),
@@ -137,24 +177,35 @@ def _record_iteration(
     state: RunState,
     *,
     iteration: str,
+    iteration_number: int,
     cursor_exit_code: int,
+    prompt_path: str,
     artifacts: GitStagingArtifacts,
     started_at: datetime,
     completed_at: datetime,
 ) -> None:
+    existing = find_iteration(state, iteration_number)
+    cursor_section: dict[str, Any] = {
+        "prompt_path": prompt_path,
+        "events_path": f"cursor/iterations/{iteration}/events.jsonl",
+        "stderr_path": f"cursor/iterations/{iteration}/stderr.txt",
+        "metadata_path": f"cursor/iterations/{iteration}/metadata.json",
+        "final_message_path": f"cursor/iterations/{iteration}/final.txt",
+        "exit_code": cursor_exit_code,
+    }
+    if existing and isinstance(existing.get("cursor"), dict):
+        cursor_section = {**existing["cursor"], **cursor_section}
+
     entry: dict[str, Any] = {
-        "number": int(iteration),
-        "kind": "initial_implementation",
-        "started_at": started_at.astimezone(UTC).isoformat(),
+        "number": iteration_number,
+        "kind": iteration_kind(iteration_number),
+        "started_at": (
+            existing.get("started_at")
+            if existing and isinstance(existing.get("started_at"), str)
+            else started_at.astimezone(UTC).isoformat()
+        ),
         "completed_at": completed_at.astimezone(UTC).isoformat(),
-        "cursor": {
-            "prompt_path": state.prompt.snapshot_path,
-            "events_path": f"cursor/iterations/{iteration}/events.jsonl",
-            "stderr_path": f"cursor/iterations/{iteration}/stderr.txt",
-            "metadata_path": f"cursor/iterations/{iteration}/metadata.json",
-            "final_message_path": f"cursor/iterations/{iteration}/final.txt",
-            "exit_code": cursor_exit_code,
-        },
+        "cursor": cursor_section,
         "git": {
             "status_before_cursor_path": f"git/status/{iteration}-before-cursor.txt",
             "status_after_cursor_path": f"git/status/{iteration}-after-cursor.txt",
@@ -165,17 +216,33 @@ def _record_iteration(
             "staged_diff_path": artifacts.patch_path,
         },
     }
-    if state.iterations:
-        state.iterations[0] = entry
-    else:
-        state.iterations.append(entry)
+    upsert_iteration(state, entry)
 
 
-def staging_complete(state: RunState, run_directory: Path) -> bool:
+def staging_complete(state: RunState, run_directory: Path, *, iteration: str | None = None) -> bool:
+    if iteration is not None:
+        return staging_complete_for_iteration(state, run_directory, iteration)
     if state.iterations:
-        git_section = state.iterations[0].get("git", {})
-        staged_diff_path = git_section.get("staged_diff_path")
-        if isinstance(staged_diff_path, str):
-            return (run_directory / staged_diff_path).is_file()
+        latest = max(
+            entry["number"] for entry in state.iterations if isinstance(entry.get("number"), int)
+        )
+        return staging_complete_for_iteration(state, run_directory, iteration_label(latest))
     patch = run_directory / "git" / "diffs" / "01.patch"
+    return patch.is_file()
+
+
+def staging_complete_for_iteration(
+    state: RunState,
+    run_directory: Path,
+    iteration: str,
+) -> bool:
+    number = int(iteration)
+    entry = find_iteration(state, number)
+    if entry:
+        git_section = entry.get("git", {})
+        if isinstance(git_section, dict):
+            staged_diff_path = git_section.get("staged_diff_path")
+            if isinstance(staged_diff_path, str) and (run_directory / staged_diff_path).is_file():
+                return True
+    patch = run_directory / f"git/diffs/{iteration}.patch"
     return patch.is_file()

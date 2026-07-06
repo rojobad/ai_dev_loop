@@ -72,24 +72,26 @@ def _render_codex_logs(run_path: Path, state) -> str:  # type: ignore[no-untyped
 
     chunks: list[str] = []
     if state.iterations:
-        review = state.iterations[0].get("review")
-        if isinstance(review, dict):
-            chunks.append("=== review summary ===\n")
-            chunks.append(json.dumps(review, indent=2) + "\n")
+        for entry in sorted(state.iterations, key=lambda item: item.get("number", 0)):
+            number = entry.get("number")
+            review = entry.get("review")
+            if isinstance(review, dict):
+                chunks.append(f"=== review {number} summary ===\n")
+                chunks.append(json.dumps(review, indent=2) + "\n")
 
-        codex = state.iterations[0].get("codex")
-        if isinstance(codex, dict):
-            chunks.append("=== codex artifact paths ===\n")
-            for key in sorted(codex):
-                value = codex[key]
-                if not isinstance(value, (str, int)):
-                    continue
-                chunks.append(f"  {key}: {value}\n")
-                if key.endswith("_path") and isinstance(value, str):
-                    artifact = run_path / value
-                    if artifact.is_file():
-                        chunks.append(f"    size: {artifact.stat().st_size} bytes\n")
-            chunks.append("\n")
+            codex = entry.get("codex")
+            if isinstance(codex, dict):
+                chunks.append(f"=== codex {number} artifact paths ===\n")
+                for key in sorted(codex):
+                    value = codex[key]
+                    if not isinstance(value, (str, int)):
+                        continue
+                    chunks.append(f"  {key}: {value}\n")
+                    if key.endswith("_path") and isinstance(value, str):
+                        artifact = run_path / value
+                        if artifact.is_file():
+                            chunks.append(f"    size: {artifact.stat().st_size} bytes\n")
+                chunks.append("\n")
 
     for path in sorted(codex_root.rglob("*")):
         if not path.is_file():

@@ -168,6 +168,10 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                     target = os.path.join(workspace, "docs/plans/prompt_sample-plan.txt")
                     with open(target, "a", encoding="utf-8") as handle:
                         handle.write("\\nmodified prompt\\n")
+                elif modify_mode == "correction":
+                    target = os.path.join(workspace, "correction_feature.txt")
+                    with open(target, "w", encoding="utf-8") as handle:
+                        handle.write("correction feature\\n")
                 elif modify_mode == "modify_plan":
                     target = os.path.join(workspace, "docs/plans/sample-plan.md")
                     with open(target, "w", encoding="utf-8") as handle:
@@ -205,7 +209,23 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
             log("ARGS:" + repr(args))
             stdin_prompt = sys.stdin.read()
             log("STDIN:" + stdin_prompt)
-            mode = os.environ.get("FAKE_CODEX_REVIEW_MODE", "no_findings")
+            sequence = os.environ.get("FAKE_CODEX_REVIEW_SEQUENCE", "").strip()
+            if sequence:
+                counter_file = os.environ.get(
+                    "FAKE_CODEX_REVIEW_COUNTER",
+                    os.path.join(os.path.dirname(log_path), "codex_review_counter.txt"),
+                )
+                try:
+                    with open(counter_file, encoding="utf-8") as handle:
+                        counter = int(handle.read().strip() or "0")
+                except (OSError, ValueError):
+                    counter = 0
+                modes = [item.strip() for item in sequence.split(",") if item.strip()]
+                mode = modes[min(counter, len(modes) - 1)]
+                with open(counter_file, "w", encoding="utf-8") as handle:
+                    handle.write(str(counter + 1))
+            else:
+                mode = os.environ.get("FAKE_CODEX_REVIEW_MODE", "no_findings")
             if mode == "sleep":
                 time.sleep(float(os.environ.get("FAKE_CODEX_SLEEP_SECONDS", "5")))
                 sys.exit(0)
@@ -263,10 +283,12 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
     _write_executable(bin_dir / "agent", agent_script)
     _write_executable(bin_dir / "codex", codex_script)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("FAKE_CODEX_REVIEW_COUNTER", str(tmp_path / "codex_review_counter.txt"))
     return {
         "bin_dir": bin_dir,
         "agent_log": agent_log,
         "codex_log": codex_log,
+        "codex_review_counter": tmp_path / "codex_review_counter.txt",
     }
 
 

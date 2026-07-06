@@ -18,6 +18,7 @@ from ai_dev_loop.commands.list_runs import render_list
 from ai_dev_loop.commands.logs import render_logs
 from ai_dev_loop.commands.placeholders import not_implemented
 from ai_dev_loop.commands.prepare import PrepareOptions, prepare_run, render_prepare_output
+from ai_dev_loop.commands.resume import render_resume_output, resume_run
 from ai_dev_loop.commands.start import CODEX_TUI_WARNING, render_start_output, start_run
 from ai_dev_loop.commands.status import render_status
 from ai_dev_loop.errors import AiDevLoopError
@@ -176,10 +177,12 @@ def start_command(
 def resume_command(
     run_id: Annotated[str, typer.Argument(help="Run identifier to resume.")],
 ) -> None:
-    """Resume an interrupted run."""
+    """Resume an interrupted or checkpointed run."""
 
     def run() -> None:
-        not_implemented("resume")
+        typer.echo(CODEX_TUI_WARNING)
+        result = resume_run(run_id)
+        typer.echo(render_resume_output(result), nl=False)
 
     _handle(run)
 

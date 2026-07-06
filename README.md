@@ -2,63 +2,45 @@
 
 Deterministic local orchestrator for Codex/Cursor development loops.
 
-Phase 4 adds Codex review after Git staging. A real `ai_dev_loop start <run-id>` now runs start preflight, acquires run/repository locks, probes local Git/Cursor/Codex CLIs, creates or reuses one Cursor chat, executes the prepared prompt headlessly, stages repository changes with `git add -A` when `stage_mode: all`, resumes the exact prepared Codex session for review, validates the schema-constrained review result, and stops with either a completed outcome or a `waiting_for_cursor_fix` boundary when findings exist.
+Phase 5 implements the complete bounded stage-review-fix loop and real `resume`. A prepared run can now move through Cursor implementation, Git staging, Codex review, optional Cursor correction turns, and additional reviews until Codex reports no actionable findings, residual-risk completion applies, or `workflow.max_review_iterations` is reached.
 
-The full automated loop is **still incomplete**: Cursor correction turns, `resume`, and `abort` are not implemented yet.
+`ai_dev_loop resume <run-id>` continues from durable checkpoints such as `waiting_for_cursor_fix`, `staging`, `reviewing`, and `interrupted` without changing Cursor chat identity or Codex session identity.
 
-## What Phase 4 Implements
+`abort` and global integrations install/uninstall are still not implemented.
 
-- Structured orchestrator event logging at `logs/events.jsonl`
-- Codex review via `codex exec --cd <repo> --sandbox <sandbox> resume ... <exact-session-id> -`
-- Deterministic review wrapper prompt that invokes the configured target-repository review skill (for example `$review-staged-cursor-execution`)
-- Schema-validated `codex-review-result-v1` handling with cross-field validation
-- Codex review artifacts:
-  - `codex/events/01.jsonl` and `codex/events/01.stderr.txt`
-  - `codex/reviews/01.json`, `codex/reviews/01.md`, and `codex/reviews/01.metadata.json`
-  - `prompts/fixes/01.txt` when actionable findings exist
-- Durable `state.iterations` metadata with real `codex` and `review` sections
+## What Phase 5 Implements
+
+- Shared workflow engine used by both `start` and `resume`
+- Bounded review/fix loop driven only by schema-validated Codex JSON
+- One Cursor chat per run, reused for every implementation and correction turn
+- One Codex session per run, resumed for every review
+- Exact forwarding of Codex-authored `cursor_fix_prompt` values from `prompts/fixes/NN.txt`
+- Multi-iteration artifacts:
+  - `cursor/iterations/01`, `02`, `03`, ...
+  - `git/diffs/NN.patch`, `git/status/NN-*`
+  - `codex/reviews/NN.json`, `codex/events/NN.jsonl`
+  - `prompts/fixes/NN.txt`
+- Correction-iteration Git safety:
+  - initial staging still rejects pre-existing staged paths
+  - correction turns require the current staged patch to match the previous orchestrator-recorded patch
+  - correction turns reject unstaged tracked changes and unexpected untracked files
+- Real `resume <run-id>` with conservative checkpoint planning and partial-attempt artifact preservation
 - Terminal outcomes:
-  - `completed` when there are no actionable findings and tests passed or were not applicable
-  - `completed_with_residual_risk` when tests failed, were blocked, or reported residual risk without actionable findings
-  - `waiting_for_cursor_fix` when Codex returns actionable findings and stores the exact correction prompt
+  - `completed`
+  - `completed_with_residual_risk`
+  - `max_iterations_reached`
+  - `waiting_for_cursor_fix` as a durable checkpoint between loop iterations or for manual resume
 
-## What Phase 3 Still Provides
+## What Earlier Phases Still Provide
 
-- Git staging after a successful Cursor implementation turn
-- Post-Cursor safety checks before staging
-- `git add -A` for `stage_mode: all` only
-- Staged diff artifacts under `git/status/` and `git/diffs/`
-- A successful real `start` may leave changes **staged** in the target repository
-
-## What Phase 2 Still Provides
-
-- Real `ai_dev_loop start <run-id>` preflight, locks, CLI probes, and Cursor execution
-- Cursor chat creation via `agent create-chat` with immediate persistence
-- Cursor headless execution with process-group timeout handling and durable artifacts:
-  - `cursor/iterations/01/events.jsonl`
-  - `cursor/iterations/01/stderr.txt`
-  - `cursor/iterations/01/final.txt` (when detected)
-  - `cursor/iterations/01/metadata.json`
-  - `git/status/01-before-cursor.txt` and `git/status/01-after-cursor.txt`
-
-## What Phase 1 Still Provides
-
-- Installable Python 3.11+ package with console entry point `ai_dev_loop`
-- Real `ai_dev_loop prepare` that reads the exact Cursor prompt from stdin
-- `ai_dev_loop config validate`
-- Read-only inspection: `status`, `list`, `inspect`, `logs`
-- Non-mutating `doctor` and `integrations status`
-- XDG config/state/cache paths outside target repositories
-- Secure permissions (`0700` directories, `0600` sensitive files)
-- Typed configuration and run-state models with JSON schemas
-- Atomic writes and SHA-256 artifact hashes
-- Git discovery and clean-worktree safety checks
+- Phase 4 Codex review execution, structured result validation, and review artifacts
+- Phase 3 Git staging with `git add -A` for `stage_mode: all`
+- Phase 2 start preflight, locks, CLI probes, and Cursor execution
+- Phase 1 `prepare`, config validation, read-only inspection, XDG storage, and secure permissions
 
 ## What Is Still Pending
 
-- Cursor correction turns from stored Codex fix prompts
-- The complete bounded stage-review-fix loop
-- `resume` recovery semantics and `abort` child-process termination
+- `abort` child-process termination
 - Global Codex skill and SessionStart hook installation
 - `integrations install` / `uninstall`
 
@@ -163,7 +145,7 @@ JSON output includes:
 }
 ```
 
-**Important:** exit the active Codex TUI before running `start`.
+**Important:** exit the active Codex TUI before running `start` or `resume`.
 
 ## Start A Prepared Run
 
@@ -171,7 +153,15 @@ JSON output includes:
 ai_dev_loop start <run-id>
 ```
 
-On success with no actionable findings, the run moves to `completed` and the CLI reports that changes remain staged. When Codex returns findings, the run stops in `waiting_for_cursor_fix` with a stored correction prompt; correction execution is not implemented yet.
+`start` runs the full bounded loop when possible. Successful completion leaves repository changes staged. If Codex still reports actionable findings when `max_review_iterations` is reached, the run stops in `max_iterations_reached` with the latest review and fix prompt preserved.
+
+## Resume A Checkpointed Run
+
+```bash
+ai_dev_loop resume <run-id>
+```
+
+`resume` continues from clear checkpoints without rerunning completed agent turns when durable artifacts prove they finished. Supported checkpoints include `prepared`, `waiting_for_cursor_fix`, `staging`, `reviewing`, and `interrupted`.
 
 Inspect results:
 
@@ -194,6 +184,7 @@ $XDG_STATE_HOME/ai_dev_loop/runs/<project-slug>/<run-id>/
 ├── manifest.json
 ├── plan/
 ├── prompts/
+│   └── fixes/
 ├── cursor/
 │   ├── chat.json
 │   └── iterations/
@@ -229,6 +220,7 @@ ai_dev_loop list
 ai_dev_loop status <run-id>
 ai_dev_loop inspect <run-id>
 ai_dev_loop logs <run-id>
+ai_dev_loop resume <run-id>
 ```
 
 ## Development Validation
@@ -245,9 +237,10 @@ uv run ai_dev_loop --help
 ## Safety Model
 
 - `prepare` rejects empty stdin and unrelated dirty worktrees when `require_clean_worktree: true`
-- `start` re-validates branch, HEAD, plan/prompt hashes, and worktree baseline before invoking Cursor
-- After Cursor, `start` re-validates plan hash and prompt-source safety before `git add -A`
+- `start` and `resume` re-validate branch, HEAD, plan/prompt hashes, and prepared baseline where applicable
+- Correction turns require the staged index to still match the previous orchestrator-recorded staged patch
 - Codex review resumes the exact prepared session ID and decides outcomes from structured JSON, not Markdown parsing
+- The orchestrator forwards Codex fix prompts exactly as stored; it does not rewrite them
 - Repository file inputs must resolve inside the repository root; symlink escapes are rejected
 - Subprocesses use direct argument arrays (`shell=False` is never used)
 - Prompts, session IDs, staged patches, review artifacts, and agent output files are written with user-only permissions

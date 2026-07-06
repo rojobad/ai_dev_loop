@@ -42,6 +42,26 @@ def test_status_transitions() -> None:
     transition_status(RunStatus.STAGING, RunStatus.REVIEWING)
     transition_status(RunStatus.REVIEWING, RunStatus.COMPLETED)
     transition_status(RunStatus.REVIEWING, RunStatus.WAITING_FOR_CURSOR_FIX)
+    transition_status(RunStatus.REVIEWING, RunStatus.MAX_ITERATIONS_REACHED)
+    transition_status(RunStatus.WAITING_FOR_CURSOR_FIX, RunStatus.RUNNING_CURSOR)
+    transition_status(RunStatus.WAITING_FOR_CURSOR_FIX, RunStatus.MAX_ITERATIONS_REACHED)
+    transition_status(RunStatus.INTERRUPTED, RunStatus.VALIDATING)
+    transition_status(RunStatus.INTERRUPTED, RunStatus.STAGING)
+    transition_status(RunStatus.INTERRUPTED, RunStatus.REVIEWING)
+    transition_status(RunStatus.VALIDATING, RunStatus.STAGING)
+    transition_status(RunStatus.VALIDATING, RunStatus.REVIEWING)
+    for terminal in (
+        RunStatus.COMPLETED,
+        RunStatus.COMPLETED_WITH_RESIDUAL_RISK,
+        RunStatus.MAX_ITERATIONS_REACHED,
+        RunStatus.FAILED,
+        RunStatus.ABORTED,
+    ):
+        try:
+            transition_status(terminal, RunStatus.VALIDATING)
+        except ValueError:
+            continue
+        raise AssertionError(f"expected terminal status {terminal.value} to reject transitions")
     try:
         transition_status(RunStatus.PREPARED, RunStatus.COMPLETED)
     except ValueError:

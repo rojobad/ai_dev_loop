@@ -11,21 +11,32 @@ from typing import Any
 from pydantic import ValidationError as PydanticValidationError
 
 from ai_dev_loop.errors import AiDevLoopError, ValidationError
+from ai_dev_loop.iterations import find_iteration, upsert_iteration
 from ai_dev_loop.paths import schema_path, set_sensitive_file_mode
 from ai_dev_loop.process import StreamingProcessResult, run_process_streaming
 from ai_dev_loop.review_result import CodexReviewResult, completion_status_for_review
 from ai_dev_loop.state import CodexState, RunState, atomic_write_json, atomic_write_text
 
-PHASE_4_NO_FINDINGS_MESSAGE = (
+PHASE_5_NO_FINDINGS_MESSAGE = (
     "Codex review found no actionable findings. Changes remain staged in the target repository."
 )
-PHASE_4_RESIDUAL_RISK_MESSAGE = (
+PHASE_5_RESIDUAL_RISK_MESSAGE = (
     "Codex review found no actionable findings, but tests failed, were blocked, or reported "
     "residual risk. Changes remain staged in the target repository."
 )
+PHASE_5_FINDINGS_CONTINUE_MESSAGE = (
+    "Codex review found actionable findings. Continuing with the stored Cursor correction prompt."
+)
+PHASE_5_MAX_ITERATIONS_MESSAGE = (
+    "Maximum review iterations reached. Latest fix prompt and review artifacts are stored. "
+    "Changes remain staged in the target repository."
+)
+
+# Backward-compatible aliases used by existing tests during transition.
+PHASE_4_NO_FINDINGS_MESSAGE = PHASE_5_NO_FINDINGS_MESSAGE
+PHASE_4_RESIDUAL_RISK_MESSAGE = PHASE_5_RESIDUAL_RISK_MESSAGE
 PHASE_4_FINDINGS_MESSAGE = (
-    "Codex review found actionable findings. A Cursor correction prompt is stored, but "
-    "correction execution is not implemented yet."
+    "Codex review found actionable findings. A Cursor correction prompt is stored."
 )
 
 
@@ -55,8 +66,7 @@ def _codex_failure_message(
     stderr_path: str,
 ) -> str:
     return (
-        f"Codex review failed with exit code {exit_code}; "
-        f"inspect {events_path} and {stderr_path}"
+        f"Codex review failed with exit code {exit_code}; inspect {events_path} and {stderr_path}"
     )
 
 
@@ -194,9 +204,13 @@ def _update_iteration_review(
     exit_code: int,
     review: CodexReviewResult,
 ) -> None:
-    if not state.iterations:
-        raise ValidationError("iteration metadata is missing before Codex review update")
-    entry = dict(state.iterations[0])
+    number = int(iteration)
+    existing = find_iteration(state, number)
+    if existing is None:
+        raise ValidationError(
+            f"iteration metadata is missing before Codex review update: {iteration}"
+        )
+    entry = dict(existing)
     codex_section: dict[str, Any] = {
         "events_path": artifacts.events_path,
         "stderr_path": artifacts.stderr_path,
@@ -216,7 +230,7 @@ def _update_iteration_review(
         "summary": review.summary,
     }
     entry["completed_at"] = datetime.now(tz=UTC).isoformat()
-    state.iterations[0] = entry
+    upsert_iteration(state, entry)
 
 
 def run_codex_review(
@@ -322,9 +336,21 @@ def run_codex_review(
     )
 
 
+def load_review_result_from_artifacts(run_directory: Path, iteration: str) -> CodexReviewResult:
+    return _load_review_result(run_directory / f"codex/reviews/{iteration}.json")
+
+
 def result_message_for_review(review: CodexReviewResult) -> str:
     if review.has_actionable_findings:
         return PHASE_4_FINDINGS_MESSAGE
     if review.tests_status in {"failed", "blocked_environment", "skipped_findings_present"}:
-        return PHASE_4_RESIDUAL_RISK_MESSAGE
-    return PHASE_4_NO_FINDINGS_MESSAGE
+        return PHASE_5_RESIDUAL_RISK_MESSAGE
+    return PHASE_5_NO_FINDINGS_MESSAGE
+
+
+def result_message_for_loop_continue() -> str:
+    return PHASE_5_FINDINGS_CONTINUE_MESSAGE
+
+
+def result_message_for_max_iterations() -> str:
+    return PHASE_5_MAX_ITERATIONS_MESSAGE

@@ -112,13 +112,26 @@ def test_start_records_cursor_failure(prepared_run, fake_clis, monkeypatch) -> N
     assert (run_path / "cursor" / "iterations" / "01" / "events.jsonl").exists()
 
 
+def test_start_marks_failed_when_create_chat_returns_invalid_id(
+    prepared_run, fake_clis, monkeypatch
+) -> None:
+    monkeypatch.setenv("FAKE_AGENT_CHAT_ID", "not-a-valid-chat-id")
+
+    with pytest.raises(AiDevLoopError, match="invalid chat ID"):
+        start_run(prepared_run["run_id"])
+
+    state = load_run_state(prepared_run["run_path"] / "state.json")
+    assert state.status == RunStatus.FAILED
+    assert state.last_error == "Cursor chat creation returned an invalid chat ID"
+
+
 def test_start_marks_failed_when_execute_prompt_raises(
     prepared_run, fake_clis, monkeypatch
 ) -> None:
     def raise_launch_error(*args, **kwargs):
         raise AiDevLoopError("Cursor launch failed: agent not found")
 
-    monkeypatch.setattr("ai_dev_loop.commands.start.execute_prompt", raise_launch_error)
+    monkeypatch.setattr("ai_dev_loop.workflow_engine.execute_prompt", raise_launch_error)
 
     with pytest.raises(AiDevLoopError, match="Cursor launch failed"):
         start_run(prepared_run["run_id"])
@@ -140,7 +153,7 @@ def test_start_timeout_records_interrupted(prepared_run, fake_clis, monkeypatch)
         kwargs["timeout_seconds"] = 0.5
         return original_execute(*args, **kwargs)
 
-    monkeypatch.setattr("ai_dev_loop.commands.start.execute_prompt", short_timeout_execute)
+    monkeypatch.setattr("ai_dev_loop.workflow_engine.execute_prompt", short_timeout_execute)
 
     result = runner.invoke(app, ["start", prepared_run["run_id"]])
     assert result.exit_code == 1
@@ -221,7 +234,7 @@ def test_cli_start_prints_codex_warning_before_success_output(prepared_run, fake
     result = runner.invoke(app, ["start", prepared_run["run_id"]])
     assert result.exit_code == 0
     warning_index = result.stdout.index("Codex TUI")
-    started_index = result.stdout.index("Started run")
+    started_index = result.stdout.index(f"Run {prepared_run['run_id']}")
     assert warning_index < started_index
 
 
