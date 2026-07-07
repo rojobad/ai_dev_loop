@@ -2,6 +2,16 @@
 
 Deterministic local orchestrator for Codex/Cursor development loops.
 
+Official documentation is being scaffolded with MkDocs. Phase 8 adds the build
+scaffold only; final docs content arrives in Phase 8.5.
+
+```bash
+uv sync --all-extras
+uv run mkdocs build --strict
+```
+
+See `docs/index.md` for the current placeholder site.
+
 Phase 7.5 adds Codex Desktop on Windows with WSL bridge support. Phase 7's global Codex integrations remain available as the `wsl-cli` target. Phase 6's real `abort`, Phase 5's bounded stage-review-fix loop, and `resume` remain unchanged.
 
 ## What Phase 7.5 Implements
@@ -344,6 +354,7 @@ uv run python -m ruff check .
 uv run python -m ruff format --check .
 uv run python -m mypy src
 uv run python -m build
+uv run mkdocs build --strict
 uv run ai_dev_loop --help
 uv run ai_dev_loop integrations status
 uv run ai_dev_loop doctor

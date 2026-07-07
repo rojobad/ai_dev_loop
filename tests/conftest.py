@@ -224,6 +224,8 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
             sys.exit(1)
         if args[0] == "create-chat":
             chat_id = os.environ.get("FAKE_AGENT_CHAT_ID", "019abc00-1111-2222-3333-444444444444")
+            log("ARGS:" + repr(args))
+            log("CREATE_CHAT:" + chat_id)
             print(chat_id)
             sys.exit(0)
         if args[0] == "status":

@@ -35,6 +35,21 @@ def verify_executable(command: str, *, label: str) -> None:
         raise ValidationError(failure.detail)
 
 
+def _parse_cursor_models(stdout: str) -> set[str]:
+    models: set[str] = set()
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        lowered = stripped.lower()
+        if lowered.startswith("available"):
+            continue
+        model_id = stripped.split(" - ", 1)[0].strip()
+        if model_id:
+            models.add(model_id)
+    return models
+
+
 def probe_cursor_auth(cursor_command: str) -> ProbeResult:
     result = run_process([cursor_command, "status", "--format", "json"])
     if result.returncode != 0:
@@ -49,7 +64,9 @@ def probe_cursor_auth(cursor_command: str) -> ProbeResult:
             detail="Cursor auth probe returned invalid JSON",
         )
     authenticated = payload.get("authenticated")
-    if authenticated is True:
+    if authenticated is None:
+        authenticated = payload.get("isAuthenticated")
+    if authenticated is True or payload.get("status") == "authenticated":
         return ProbeResult(command=cursor_command, ok=True, detail="authenticated")
     return ProbeResult(command=cursor_command, ok=False, detail="Cursor is not authenticated")
 
@@ -61,7 +78,7 @@ def probe_cursor_model(cursor_command: str, model: str) -> ProbeResult:
             result.stderr.strip() or result.stdout.strip() or "models probe failed"
         )
         return ProbeResult(command=cursor_command, ok=False, detail=detail)
-    models = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+    models = _parse_cursor_models(result.stdout)
     if model in models:
         return ProbeResult(command=cursor_command, ok=True, detail=f"model available: {model}")
     return ProbeResult(

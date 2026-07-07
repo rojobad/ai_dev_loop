@@ -1,0 +1,14 @@
+site_name: ai_dev_loop
+site_description: Deterministic local orchestrator for Codex/Cursor development loops
+
+docs_dir: docs
+
+theme:
+  name: material
+
+nav:
+  - Home: index.md
+  - Reference:
+      - Codex Desktop WSL Sessions (placeholder): reference/codex-desktop-wsl-sessions.md
+
+strict: true
