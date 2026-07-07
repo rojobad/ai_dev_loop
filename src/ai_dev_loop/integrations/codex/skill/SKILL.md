@@ -52,7 +52,10 @@ The orchestrator will run Cursor implementation, stage changes, resume this same
 
 If SessionStart context does not include the current session ID:
 
-1. ask the user to run `ai_dev_loop integrations status`;
-2. if the hook is installed but not trusted, tell them to open `/hooks` in Codex and trust the `ai_dev_loop` hook, then restart or resume Codex;
-3. only if the user can supply the exact session ID from a trusted source, pass `--codex-session-id` manually to `ai_dev_loop prepare`;
-4. do not guess, shorten, or substitute another session ID.
+1. ask the user to run `ai_dev_loop integrations status --target codex-desktop-wsl` when using Codex Desktop on Windows with WSL agents;
+2. for Codex Desktop on Windows, tell them to open `/hooks` in Codex Desktop and trust the `ai_dev_loop` hook (trusting the WSL CLI hook browser is not sufficient);
+3. ask the user to run `ai_dev_loop integrations sessions status` and ensure the desktop session bridge is healthy when resuming desktop-originated sessions from WSL;
+4. use `ai_dev_loop integrations sessions list` only as a manual recovery path to discover desktop session IDs from rollout filenames;
+5. only if the user can supply the exact session ID from a trusted source, pass `--codex-session-id` manually to `ai_dev_loop prepare`;
+6. do not guess, shorten, or substitute another session ID;
+7. do not use `--last`.

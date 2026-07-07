@@ -122,6 +122,7 @@ def test_status_json_after_install_and_uninstall(
     installed = runner.invoke(app, ["integrations", "status", "--output", "json"])
     assert installed.exit_code == 0
     payload = json.loads(installed.stdout)
+    assert payload["target"] == "wsl-cli"
     assert payload["skill_installed"] is True
     assert payload["hook_registration_present"] is True
     assert payload["hook_trust_status"] == "unknown"

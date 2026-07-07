@@ -15,9 +15,16 @@ from ai_dev_loop.commands.config_cmd import run_validate_config
 from ai_dev_loop.commands.doctor import render_doctor
 from ai_dev_loop.commands.inspect import render_inspect
 from ai_dev_loop.commands.integrations import (
+    CodexIntegrationTarget,
+    collect_bridge_status,
+    install_desktop_bridge,
     install_integrations,
+    list_desktop_sessions,
+    remove_desktop_bridge,
+    render_bridge_status,
     render_install_output,
     render_integrations_status,
+    render_session_list,
     render_uninstall_output,
     uninstall_integrations,
 )
@@ -37,6 +44,8 @@ app = typer.Typer(
 )
 config_app = typer.Typer(help="Configuration commands.")
 integrations_app = typer.Typer(help="Global Codex integration commands.")
+sessions_app = typer.Typer(help="Desktop session rollout bridge commands.")
+integrations_app.add_typer(sessions_app, name="sessions")
 app.add_typer(config_app, name="config")
 app.add_typer(integrations_app, name="integrations")
 
@@ -48,6 +57,38 @@ class OutputFormat(StrEnum):
 
 OutputOption = Annotated[OutputFormat, typer.Option("--output", help="Output format.")]
 DEFAULT_OUTPUT = OutputFormat.text
+
+TargetOption = Annotated[
+    CodexIntegrationTarget,
+    typer.Option(
+        "--target",
+        help="Codex integration target: wsl-cli or codex-desktop-wsl.",
+    ),
+]
+DEFAULT_TARGET = CodexIntegrationTarget.WSL_CLI
+
+WindowsCodexHomeOption = Annotated[
+    Path | None,
+    typer.Option(
+        "--windows-codex-home",
+        help="Windows Codex home path (must end with .codex).",
+    ),
+]
+WslDistroOption = Annotated[
+    str | None,
+    typer.Option("--wsl-distro", help="WSL distribution name for desktop hook commands."),
+]
+WslHookPythonOption = Annotated[
+    str,
+    typer.Option("--wsl-hook-python", help="Python executable used in desktop hook commands."),
+]
+WslHookScriptPathOption = Annotated[
+    Path | None,
+    typer.Option(
+        "--wsl-hook-script-path",
+        help="Override WSL hook script path for desktop hook commands.",
+    ),
+]
 
 
 def _handle(fn: Callable[[], None]) -> None:
@@ -311,11 +352,30 @@ def config_validate_command(
 @integrations_app.command("install")
 def integrations_install_command(
     output: OutputOption = DEFAULT_OUTPUT,
+    target: TargetOption = DEFAULT_TARGET,
+    windows_codex_home: WindowsCodexHomeOption = None,
+    wsl_distro: WslDistroOption = None,
+    wsl_hook_python: WslHookPythonOption = "python3",
+    wsl_hook_script_path: WslHookScriptPathOption = None,
+    install_session_bridge: Annotated[
+        bool,
+        typer.Option(
+            "--install-session-bridge",
+            help="Also install the desktop session rollout bridge.",
+        ),
+    ] = False,
 ) -> None:
     """Install global Codex skill and SessionStart hook."""
 
     def run() -> None:
-        result = install_integrations()
+        result = install_integrations(
+            target=target,
+            windows_codex_home=windows_codex_home,
+            wsl_distro=wsl_distro,
+            wsl_hook_python=wsl_hook_python,
+            wsl_hook_script_path=wsl_hook_script_path,
+            install_session_bridge=install_session_bridge,
+        )
         typer.echo(render_install_output(result, output=output.value), nl=False)
 
     _handle(run)
@@ -324,11 +384,22 @@ def integrations_install_command(
 @integrations_app.command("uninstall")
 def integrations_uninstall_command(
     output: OutputOption = DEFAULT_OUTPUT,
+    target: TargetOption = DEFAULT_TARGET,
+    windows_codex_home: WindowsCodexHomeOption = None,
+    wsl_distro: WslDistroOption = None,
+    wsl_hook_python: WslHookPythonOption = "python3",
+    wsl_hook_script_path: WslHookScriptPathOption = None,
 ) -> None:
     """Remove ai_dev_loop global integration assets."""
 
     def run() -> None:
-        result = uninstall_integrations()
+        result = uninstall_integrations(
+            target=target,
+            windows_codex_home=windows_codex_home,
+            wsl_distro=wsl_distro,
+            wsl_hook_python=wsl_hook_python,
+            wsl_hook_script_path=wsl_hook_script_path,
+        )
         typer.echo(render_uninstall_output(result, output=output.value), nl=False)
 
     _handle(run)
@@ -337,11 +408,116 @@ def integrations_uninstall_command(
 @integrations_app.command("status")
 def integrations_status_command(
     output: OutputOption = DEFAULT_OUTPUT,
+    target: TargetOption = DEFAULT_TARGET,
+    windows_codex_home: WindowsCodexHomeOption = None,
+    wsl_distro: WslDistroOption = None,
+    wsl_hook_python: WslHookPythonOption = "python3",
+    wsl_hook_script_path: WslHookScriptPathOption = None,
 ) -> None:
     """Report global integration installation status."""
 
     def run() -> None:
-        typer.echo(render_integrations_status(output=output.value), nl=False)
+        typer.echo(
+            render_integrations_status(
+                output=output.value,
+                target=target,
+                windows_codex_home=windows_codex_home,
+                wsl_distro=wsl_distro,
+                wsl_hook_python=wsl_hook_python,
+                wsl_hook_script_path=wsl_hook_script_path,
+            ),
+            nl=False,
+        )
+
+    _handle(run)
+
+
+@sessions_app.command("install")
+def integrations_sessions_install_command(
+    output: OutputOption = DEFAULT_OUTPUT,
+    windows_codex_home: WindowsCodexHomeOption = None,
+    wsl_codex_home: Annotated[
+        Path | None,
+        typer.Option("--wsl-codex-home", help="Override WSL Codex home."),
+    ] = None,
+) -> None:
+    """Install the desktop session rollout bridge symlink."""
+
+    def run() -> None:
+        status = install_desktop_bridge(
+            wsl_codex_home=wsl_codex_home,
+            windows_codex_home=windows_codex_home,
+        )
+        typer.echo(render_bridge_status(output=output.value, status=status), nl=False)
+
+    _handle(run)
+
+
+@sessions_app.command("status")
+def integrations_sessions_status_command(
+    output: OutputOption = DEFAULT_OUTPUT,
+    windows_codex_home: WindowsCodexHomeOption = None,
+    wsl_codex_home: Annotated[
+        Path | None,
+        typer.Option("--wsl-codex-home", help="Override WSL Codex home."),
+    ] = None,
+) -> None:
+    """Report desktop session bridge status."""
+
+    def run() -> None:
+        status = collect_bridge_status(
+            wsl_codex_home=wsl_codex_home,
+            windows_codex_home=windows_codex_home,
+        )
+        typer.echo(render_bridge_status(output=output.value, status=status), nl=False)
+
+    _handle(run)
+
+
+@sessions_app.command("list")
+def integrations_sessions_list_command(
+    output: OutputOption = DEFAULT_OUTPUT,
+    windows_codex_home: WindowsCodexHomeOption = None,
+    wsl_codex_home: Annotated[
+        Path | None,
+        typer.Option("--wsl-codex-home", help="Override WSL Codex home."),
+    ] = None,
+    desktop_sessions_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--desktop-sessions-dir",
+            help="Override desktop sessions directory for listing.",
+        ),
+    ] = None,
+    limit: Annotated[int, typer.Option("--limit", help="Maximum sessions to list.")] = 20,
+) -> None:
+    """List recent desktop rollout session IDs."""
+
+    def run() -> None:
+        entries = list_desktop_sessions(
+            wsl_codex_home=wsl_codex_home,
+            windows_codex_home=windows_codex_home,
+            desktop_sessions_dir=desktop_sessions_dir,
+            limit=limit,
+        )
+        typer.echo(render_session_list(entries, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@sessions_app.command("remove")
+def integrations_sessions_remove_command(
+    output: OutputOption = DEFAULT_OUTPUT,
+    wsl_codex_home: Annotated[
+        Path | None,
+        typer.Option("--wsl-codex-home", help="Override WSL Codex home."),
+    ] = None,
+) -> None:
+    """Remove the desktop session rollout bridge symlink."""
+
+    def run() -> None:
+        status = remove_desktop_bridge(wsl_codex_home=wsl_codex_home)
+        typer.echo(render_bridge_status(output=output.value, status=status), nl=False)
 
     _handle(run)
 

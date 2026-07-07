@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -10,6 +11,8 @@ from pathlib import Path
 from ai_dev_loop import __version__
 from ai_dev_loop.config import resolve_effective_config
 from ai_dev_loop.integrations.codex.install import doctor_integration_checks
+from ai_dev_loop.integrations.codex.windows_home import CODEX_DESKTOP_HOME_ENV
+from ai_dev_loop.integrations.codex.wsl_invocation import WSL_DISTRO_ENV
 from ai_dev_loop.paths import cache_dir, config_dir, ensure_app_dirs, schema_path, state_dir
 from ai_dev_loop.process import run_process
 from ai_dev_loop.runners.git import discover_repository
@@ -74,7 +77,19 @@ def render_doctor(*, repo_path: Path | None = None, output: str = "text") -> str
 
     add("package_version", True, __version__)
 
-    for check in doctor_integration_checks():
+    windows_codex_home: Path | None = None
+    wsl_distro: str | None = None
+    env_desktop_home = os.environ.get(CODEX_DESKTOP_HOME_ENV, "").strip()
+    if env_desktop_home:
+        windows_codex_home = Path(env_desktop_home)
+    env_wsl_distro = os.environ.get(WSL_DISTRO_ENV, "").strip()
+    if env_wsl_distro:
+        wsl_distro = env_wsl_distro
+
+    for check in doctor_integration_checks(
+        windows_codex_home=windows_codex_home,
+        wsl_distro=wsl_distro,
+    ):
         add(str(check["name"]), bool(check["ok"]), str(check["detail"]))
 
     if output == "json":

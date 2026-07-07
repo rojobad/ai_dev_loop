@@ -15,6 +15,7 @@ from ai_dev_loop.integrations.codex.assets import (
     HOOK_SCRIPT_NAME,
     HOOK_STATUS_MESSAGE,
 )
+from ai_dev_loop.integrations.codex.wsl_invocation import WSL_EXE
 from ai_dev_loop.state import atomic_write_json
 
 
@@ -35,7 +36,9 @@ def is_managed_hook_command(command: str, *, hook_script: Path, hook: dict[str, 
     if hook.get("statusMessage") != HOOK_STATUS_MESSAGE:
         return False
     canonical_suffix = f"/.codex/hooks/{HOOK_SCRIPT_NAME}"
-    return command.startswith("python3 ") and command.endswith(canonical_suffix)
+    if command.startswith("python3 ") and command.endswith(canonical_suffix):
+        return True
+    return command.startswith(f"{WSL_EXE} ") and canonical_suffix in command
 
 
 def _command_is_owned(
@@ -119,9 +122,13 @@ def _remove_ai_dev_loop_hooks_from_entry(
 
 
 def remove_all_ai_dev_loop_hooks(
-    document: dict[str, Any], *, hook_script: Path, managed: bool = False
+    document: dict[str, Any],
+    *,
+    hook_script: Path,
+    managed: bool = False,
+    expected_command: str | None = None,
 ) -> tuple[dict[str, Any], int]:
-    expected_command = build_hook_command(hook_script)
+    expected = expected_command or build_hook_command(hook_script)
     updated = copy.deepcopy(document)
     entries = _iter_session_start_entries(updated)
     removed_total = 0
@@ -131,7 +138,7 @@ def remove_all_ai_dev_loop_hooks(
             entry,
             hook_script=hook_script,
             managed=managed,
-            expected_command=expected_command,
+            expected_command=expected,
         )
         removed_total += removed
         hooks = cleaned.get("hooks")
@@ -188,9 +195,12 @@ def _desired_hook_entry(command: str) -> dict[str, str]:
 
 
 def merge_hook_registration(
-    document: dict[str, Any], *, hook_script: Path
+    document: dict[str, Any],
+    *,
+    hook_script: Path,
+    command: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
-    command = build_hook_command(hook_script)
+    command = command or build_hook_command(hook_script)
     before = json.dumps(document, sort_keys=True)
     hook_entry = _desired_hook_entry(command)
 

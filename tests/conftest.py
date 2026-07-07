@@ -21,6 +21,93 @@ from ai_dev_loop.commands.prepare import PrepareOptions, prepare_run
 FIXTURE_REPO = Path(__file__).resolve().parent / "fixtures" / "sample_repo"
 
 
+def native_linux_temp_root() -> Path:
+    """Prefer a native Linux temp root so WSL tests avoid DrvFS /mnt/c temp dirs."""
+
+    for candidate in (Path("/tmp"), Path("/dev/shm")):
+        if candidate.is_dir() and not str(candidate.resolve()).startswith("/mnt/"):
+            return candidate
+    default = Path(tempfile.gettempdir()).resolve()
+    if str(default).startswith("/mnt/"):
+        pytest.fail(
+            "Tests require a native Linux temp directory. "
+            "Set TMPDIR=/tmp (or use a native WSL filesystem temp path)."
+        )
+    return default
+
+
+@pytest.fixture
+def hermetic_tmp_path(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """Temporary directory on a native Linux filesystem."""
+
+    root = native_linux_temp_root()
+    for variable in ("TMPDIR", "TMP", "TEMP"):
+        monkeypatch.setenv(variable, str(root))
+    path = Path(tempfile.mkdtemp(prefix="ai_dev_loop_hermetic_", dir=root))
+    yield path
+    shutil.rmtree(path, ignore_errors=True)
+
+
+@pytest.fixture
+def hermetic_home(hermetic_tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    home = hermetic_tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    return home
+
+
+@pytest.fixture
+def hermetic_xdg(hermetic_tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    base = hermetic_tmp_path / "xdg"
+    config = base / "config"
+    state = base / "state"
+    cache = base / "cache"
+    for path in (config, state, cache):
+        path.mkdir(parents=True)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
+    monkeypatch.setenv("XDG_STATE_HOME", str(state))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
+    return base
+
+
+@pytest.fixture
+def hermetic_codex_env(hermetic_home: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Native WSL CODEX_HOME for bridge tests, overriding inherited DrvFS values."""
+
+    codex_home = hermetic_home / ".codex"
+    (codex_home / "sessions").mkdir(parents=True, exist_ok=True)
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    return codex_home
+
+
+@pytest.fixture
+def propagated_windows_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, str]:
+    """Simulate Windows-propagated TMP and CODEX_HOME values on WSL."""
+
+    values = {
+        "TMPDIR": "/mnt/c/Users/WinUser/AppData/Local/Temp",
+        "TMP": "/mnt/c/Users/WinUser/AppData/Local/Temp",
+        "TEMP": "/mnt/c/Users/WinUser/AppData/Local/Temp",
+        "CODEX_HOME": "/mnt/c/Users/WinUser/.codex",
+    }
+    for key, value in values.items():
+        monkeypatch.setenv(key, value)
+    return values
+
+
+@pytest.fixture
+def hermetic_desktop_cli_env(
+    propagated_windows_env: dict[str, str],
+    hermetic_codex_env: Path,
+) -> Path:
+    """Native CODEX_HOME for CLI tests after simulating propagated DrvFS env."""
+
+    return hermetic_codex_env
+
+
 def chmod_supported(directory: Path) -> bool:
     if os.name == "nt":
         return False

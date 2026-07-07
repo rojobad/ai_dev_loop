@@ -17,12 +17,48 @@ These contracts protect the user-level Codex integration layer for `ai_dev_loop`
 
 ## Installed Paths
 
-- Install the global handoff skill only at `$HOME/.agents/skills/ai-dev-loop-handoff/SKILL.md`.
+- Install the global handoff skill only at `$HOME/.agents/skills/ai-dev-loop-handoff/SKILL.md` for the selected target's Codex-visible home.
+- For `wsl-cli`, the Codex-visible home is the WSL user home.
+- For `codex-desktop-wsl`, the Codex-visible home is the Windows user profile exposed to WSL (for example `/mnt/c/Users/<user>`), not the WSL home.
 - Do not install skills under `~/.codex/skills` or any invented/deprecated skill path.
-- Install the SessionStart hook script only at `$HOME/.codex/hooks/ai_dev_loop_session_start.py`.
-- Register the hook only through `$HOME/.codex/hooks.json`.
-- Store hook session metadata under XDG-managed `ai_dev_loop` state outside target repositories.
+- Install the SessionStart hook script only at the WSL user's `$HOME/.codex/hooks/ai_dev_loop_session_start.py`. The hook script always lives in WSL even for the desktop target.
+- Register the hook through the selected target's Codex-visible `hooks.json`.
+- For `wsl-cli`, register under `$HOME/.codex/hooks.json` in WSL.
+- For `codex-desktop-wsl`, register under the Windows Codex home `hooks.json`, but the registered command must invoke WSL explicitly via `wsl.exe`.
+- Store hook session metadata under XDG-managed `ai_dev_loop` state in WSL, not under Windows application state.
 - Do not write `state.json`, hook session records, prompts, reviews, patches, logs, or agent output inside target repositories.
+- Do not share the entire Windows `.codex` home with WSL.
+- Do not set WSL `CODEX_HOME` to `/mnt/c/.../.codex`.
+- Do not symlink, copy, migrate, open, or inspect Codex SQLite databases across Windows and WSL.
+
+## Integration Targets
+
+- Support `wsl-cli` and `codex-desktop-wsl` explicitly via `--target`.
+- Default target may remain `wsl-cli` for backward compatibility.
+- `integrations install --target codex-desktop-wsl` must not silently create the desktop session bridge unless an explicit flag such as `--install-session-bridge` is supplied.
+- Session bridge creation must use `integrations sessions install` or the explicit bridge flag.
+- Legacy helper material such as `scripts/share-codex-desktop-sessions.sh` and `scripts/codex-desktop-wsl-sessions.md` is reference material only unless an explicit later plan converts it into documentation or a thin wrapper around the Python CLI. Do not reintroduce a loose shell script as the product interface for bridge setup.
+
+## Desktop WSL Hook Command
+
+- The Windows `hooks.json` command for `codex-desktop-wsl` must invoke WSL explicitly with `wsl.exe`, the selected distro, `--exec`, the configured Python command, and the WSL hook script path.
+- Validate every dynamic token included in the Windows command string: WSL distro name, Python command, and hook script path.
+- Quote tokens with whitespace in the generated command string.
+- Reject newlines, quotes, and Windows command metacharacters in dynamic command tokens, including `&`, `|`, `<`, `>`, `^`, `%`, `!`, `(`, and `)`.
+- Do not rely on shell interpretation or shell escaping to make unsafe command text safe.
+
+## Desktop Session Bridge
+
+- Bridge path: `<wsl-codex-home>/sessions/from-desktop` -> `<windows-codex-home>/sessions`.
+- Reject WSL `CODEX_HOME` values under `/mnt/*`.
+- Reject when the whole WSL `sessions/` directory is itself a symlink.
+- Create only the nested `from-desktop` symlink; never symlink the entire sessions directory or whole Codex home.
+- Bridge status must not treat any `from-desktop` symlink as healthy by presence alone. Resolve the symlink target and compare it with the resolved Windows desktop sessions directory.
+- If `from-desktop` points anywhere other than the resolved Windows desktop sessions directory, status and doctor must warn, report the bridge as unhealthy, skip rollout counting through that link, and `integrations sessions list` must refuse to list through it.
+- `integrations sessions remove` must resolve only WSL-side bridge paths. It must not require Windows home detection, because stale bridge cleanup must remain possible when Windows detection fails.
+- `integrations sessions remove` removes only the bridge symlink and refuses non-symlink paths.
+- `integrations uninstall` must not remove the session bridge by default.
+- `integrations sessions list` may read rollout filenames only; do not read rollout contents or SQLite state.
 
 ## Skill Contract
 
@@ -100,6 +136,9 @@ These contracts protect the user-level Codex integration layer for `ai_dev_loop`
 ## Tests
 
 - Automated tests must use temporary `HOME` and XDG directories.
+- Desktop bridge and desktop integration tests must use hermetic native-WSL temp/home/Codex env fixtures. Do not let `tmp_path`, `TMP`, `TEMP`, `TMPDIR`, or inherited `CODEX_HOME` accidentally place the fake WSL Codex home under `/mnt/*`.
+- Add explicit coverage for Windows-propagated WSL environments where `TMP`, `TEMP`, `TMPDIR`, or `CODEX_HOME` point under `/mnt/*`, and prove the product either rejects unsafe runtime configuration or uses explicit native WSL overrides in tests.
+- When full-suite pytest capture is incompatible with DrvFS temp directories before fixtures can run, run full-suite validation with native WSL temp such as `TMPDIR=/tmp TMP=/tmp TEMP=/tmp`; use focused `-s` runs for DrvFS propagation simulations.
 - Do not touch the real user's `~/.agents`, `~/.codex`, or XDG state in tests.
 - Do not invoke real Cursor or Codex model activity in tests.
 - Test first-time install.
@@ -110,6 +149,18 @@ These contracts protect the user-level Codex integration layer for `ai_dev_loop`
 - Test hook input/output and minimal session metadata persistence.
 - Test status JSON and doctor checks.
 - Test package build includes integration assets.
+- Test target-aware install/status/uninstall for `wsl-cli` and `codex-desktop-wsl`.
+- Test desktop hook command generation uses `wsl.exe`, distro, `--exec`, and the WSL hook script path.
+- Test desktop hook command generation quotes tokens with spaces and rejects unsafe command-token characters for distro, Python command, and hook script path.
+- Test desktop install does not create the session bridge unless explicitly requested.
+- Test `integrations sessions install/status/list/remove` with temporary fixture homes.
+- Test bridge install rejects WSL `CODEX_HOME` under `/mnt/*` and whole-sessions symlinks.
+- Test bridge status warns on a mispointed `from-desktop` symlink and treats it as unhealthy.
+- Test `integrations sessions list` refuses a mispointed bridge.
+- Test bridge removal works without Windows home detection.
+- Test desktop uninstall preserves unrelated Windows hooks and the session bridge.
+- Test invalid Windows `hooks.json` fail-safe behavior for the desktop target.
+- Test doctor/status JSON includes desktop target and bridge checks without mutation.
 - Test unsafe `session_id` values, including path traversal and non-UUID values, do not write session files or return session context.
 - Test invalid `hooks.json` during uninstall preserves installed files and does not leave a broken registration pointing at a missing hook script.
 - Test install and uninstall preserve unrelated hooks that reference a same-named hook script outside the owned command identity.
@@ -127,6 +178,15 @@ These regressions came from Phase 7 staged reviews and must remain covered when 
 - uninstall must preserve unrelated same-named hooks by using exact ownership identity;
 - uninstall must preserve user files inside `$HOME/.agents/skills/ai-dev-loop-handoff/`;
 - SessionStart hook directory creation must keep the `ai_dev_loop` XDG state root and managed subdirectories user-only.
+
+These regressions came from Phase 7.5 staged reviews and must remain covered when desktop integration or bridge code changes:
+
+- bridge status must compare `sessions/from-desktop` with the resolved Windows desktop sessions directory instead of accepting any symlink;
+- bridge listing must refuse mispointed symlinks;
+- bridge removal must work using WSL-side paths even when Windows home detection fails;
+- desktop hook command generation must validate and quote every dynamic token;
+- tests must remain hermetic when WSL inherits DrvFS `TMP`, `TEMP`, `TMPDIR`, or `CODEX_HOME`;
+- legacy shell bridge helpers must not replace the Python CLI as the product surface.
 
 ## Real Install
 

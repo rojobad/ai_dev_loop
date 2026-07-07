@@ -2,11 +2,20 @@
 
 Deterministic local orchestrator for Codex/Cursor development loops.
 
-Phase 7 implements global Codex integrations: the handoff skill, SessionStart hook, and `integrations install` / `uninstall` / `status`. Phase 6's real `abort`, Phase 5's bounded stage-review-fix loop, and `resume` remain unchanged.
+Phase 7.5 adds Codex Desktop on Windows with WSL bridge support. Phase 7's global Codex integrations remain available as the `wsl-cli` target. Phase 6's real `abort`, Phase 5's bounded stage-review-fix loop, and `resume` remain unchanged.
+
+## What Phase 7.5 Implements
+
+- Two Codex integration targets: `wsl-cli` and `codex-desktop-wsl`
+- Desktop target installs Codex-visible skill and hook registration into the Windows Codex home
+- Desktop hook commands invoke WSL explicitly via `wsl.exe`
+- Explicit desktop session rollout bridge via `integrations sessions install/status/list/remove`
+- Safe nested symlink bridge at `~/.codex/sessions/from-desktop` (never whole-home sharing)
+- Read-only doctor/status diagnostics for both targets and the session bridge
 
 ## What Phase 7 Implements
 
-- Real `ai_dev_loop integrations install` and `integrations uninstall`
+- Real `ai_dev_loop integrations install` and `integrations uninstall` for the `wsl-cli` target
 - Global handoff skill at `~/.agents/skills/ai-dev-loop-handoff/SKILL.md`
 - SessionStart hook at `~/.codex/hooks/ai_dev_loop_session_start.py`
 - Safe idempotent merge into `~/.codex/hooks.json`
@@ -66,10 +75,19 @@ Optional alternative: `pipx install .` if you already manage CLIs with pipx.
 
 ## Global Codex Integrations
 
-Install the user-level Codex assets once per machine:
+Codex Desktop on Windows and the Codex CLI in WSL use **separate** `.codex` homes. Do not point WSL `CODEX_HOME` at `/mnt/c/.../.codex` and do not share SQLite state across the boundary.
+
+Choose the integration target explicitly:
+
+| Target | Use when |
+| --- | --- |
+| `wsl-cli` | The interactive Codex session runs in WSL |
+| `codex-desktop-wsl` | Codex Desktop runs on Windows and agents/CLI run in WSL |
+
+### WSL CLI target
 
 ```bash
-ai_dev_loop integrations install
+ai_dev_loop integrations install --target wsl-cli
 ```
 
 This installs:
@@ -78,16 +96,55 @@ This installs:
 - `~/.codex/hooks/ai_dev_loop_session_start.py`
 - a merged SessionStart registration in `~/.codex/hooks.json`
 
+### Codex Desktop + WSL target
+
+```bash
+ai_dev_loop integrations install --target codex-desktop-wsl --wsl-distro <distro>
+```
+
+This installs:
+
+- Windows-visible skill under `/mnt/c/Users/<user>/.agents/skills/ai-dev-loop-handoff/SKILL.md`
+- WSL hook script at `~/.codex/hooks/ai_dev_loop_session_start.py`
+- Windows-visible hook registration in `/mnt/c/Users/<user>/.codex/hooks.json` using a `wsl.exe` command
+
+Install does **not** create the session bridge by default. After install:
+
+```bash
+ai_dev_loop integrations sessions install
+```
+
+The bridge creates only a nested symlink:
+
+```text
+~/.codex/sessions/from-desktop -> /mnt/c/Users/<user>/.codex/sessions
+```
+
+Manage the bridge explicitly:
+
+```bash
+ai_dev_loop integrations sessions status
+ai_dev_loop integrations sessions list
+ai_dev_loop integrations sessions remove
+```
+
+Override detection when needed:
+
+- `--windows-codex-home` or `CODEX_DESKTOP_HOME` for the Windows Codex home
+- `--wsl-distro` or `AI_DEV_LOOP_WSL_DISTRO` for the WSL distribution name
+
 After install:
 
-1. Open `/hooks` in Codex.
+1. Open `/hooks` in Codex (Codex Desktop for the desktop target).
 2. Trust the `ai_dev_loop` hook. The hook may be skipped until it is trusted.
 3. Restart or resume Codex so SessionStart context includes the exact current session ID.
 
 Check installation:
 
 ```bash
-ai_dev_loop integrations status
+ai_dev_loop integrations status --target wsl-cli
+ai_dev_loop integrations status --target codex-desktop-wsl
+ai_dev_loop integrations sessions status
 ai_dev_loop integrations status --output json
 ai_dev_loop doctor
 ```
