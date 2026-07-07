@@ -42,6 +42,9 @@ These contracts protect the user-level Codex integration layer for `ai_dev_loop`
 - The hook must read one JSON object from stdin and return valid JSON on stdout.
 - Accept only SessionStart sources `startup`, `resume`, `clear`, and `compact`.
 - Extract only minimal metadata: session ID, model, cwd, transcript path string if supplied, source, and timestamp.
+- Validate any externally supplied value before using it as a filesystem path component.
+- Treat `session_id` as untrusted hook input. It must pass a strict safe format check, such as UUID format or an equally narrow allowlist, before being used in a filename or returned in additional context.
+- Reject `session_id` values containing path separators, traversal components such as `..`, whitespace-only content, or any character outside the accepted format.
 - Never read, copy, parse, summarize, or persist transcript contents.
 - Never store authentication files, API keys, tokens, full process environments, full prompts, patches, reviews, or agent output.
 - If input is invalid or incomplete, exit safely with minimal valid JSON and no destructive side effects.
@@ -56,6 +59,9 @@ These contracts protect the user-level Codex integration layer for `ai_dev_loop`
 - Back up an existing `hooks.json` before modifying it.
 - Write `hooks.json` atomically.
 - Use deterministic command identity so uninstall can remove only the `ai_dev_loop` hook entry.
+- Never identify owned hooks by substring matching alone.
+- Uninstall must remove only an exact expected command or another explicitly documented ownership marker that cannot match unrelated hooks accidentally.
+- Install may clean stale `ai_dev_loop` hook registrations only when a strong ownership signal is present, such as the expected status message plus the canonical `ai_dev_loop` hook path shape. Same-named scripts without the ownership signal must be preserved.
 - Do not automatically trust hooks or edit Codex trust state.
 - Install output must tell the user to open `/hooks` in Codex and trust the `ai_dev_loop` hook.
 - Install output must state that the hook may be skipped until trusted.
@@ -65,6 +71,10 @@ These contracts protect the user-level Codex integration layer for `ai_dev_loop`
 - Remove only assets installed by `ai_dev_loop`.
 - Preserve unrelated skills and hook scripts.
 - Preserve unrelated hook registrations.
+- Validate and parse `hooks.json` before deleting installed files. If `hooks.json` is invalid, leave the skill file, hook script, and hook registration untouched and report the validation error.
+- Do all fallible validation work before destructive or irreversible file operations whenever mutating user-global files.
+- Delete only installed files, such as `SKILL.md` and the installed hook script. Remove an installed asset directory only when it is empty after deleting owned files.
+- Preserve user-added files inside the `ai-dev-loop-handoff` skill directory.
 - Preserve run history, prompts, reviews, staged patches, logs, XDG state, and XDG config by default.
 - Back up `hooks.json` before removing the `ai_dev_loop` hook registration.
 - If `hooks.json` is invalid, fail safely and do not rewrite it.
@@ -84,6 +94,7 @@ These contracts protect the user-level Codex integration layer for `ai_dev_loop`
 - Use package resources for installable assets, not working-tree-relative paths.
 - Ensure assets are included in wheel and sdist builds.
 - Apply user-only permissions where supported: directories `0700`; files containing session IDs, transcript paths, hook script content, skill instructions, or hook config `0600`.
+- When creating hook-owned XDG state paths, apply `0700` to the `ai_dev_loop` state root and every managed subdirectory, not only the final leaf directory.
 - Avoid rewriting installed files that already match the current package content.
 
 ## Tests
@@ -99,6 +110,23 @@ These contracts protect the user-level Codex integration layer for `ai_dev_loop`
 - Test hook input/output and minimal session metadata persistence.
 - Test status JSON and doctor checks.
 - Test package build includes integration assets.
+- Test unsafe `session_id` values, including path traversal and non-UUID values, do not write session files or return session context.
+- Test invalid `hooks.json` during uninstall preserves installed files and does not leave a broken registration pointing at a missing hook script.
+- Test install and uninstall preserve unrelated hooks that reference a same-named hook script outside the owned command identity.
+- Test install preserves unrelated same-named canonical hooks when the `ai_dev_loop` ownership signal is absent.
+- Test uninstall preserves user-added files in the handoff skill directory.
+- Test hook-created XDG parent directories and leaf directories use `0700` where the filesystem supports chmod.
+
+## Review Regression Tests
+
+These regressions came from Phase 7 staged reviews and must remain covered when global integration code changes:
+
+- unsafe `session_id` must not allow path traversal outside `codex-sessions`;
+- invalid `hooks.json` during uninstall must not delete `SKILL.md` or the installed hook script;
+- install must preserve unrelated same-named hooks unless they carry the documented `ai_dev_loop` ownership signal;
+- uninstall must preserve unrelated same-named hooks by using exact ownership identity;
+- uninstall must preserve user files inside `$HOME/.agents/skills/ai-dev-loop-handoff/`;
+- SessionStart hook directory creation must keep the `ai_dev_loop` XDG state root and managed subdirectories user-only.
 
 ## Real Install
 

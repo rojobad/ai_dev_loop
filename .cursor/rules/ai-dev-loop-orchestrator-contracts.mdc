@@ -76,9 +76,16 @@ These contracts preserve the product's safety model across implementation phases
 - Capture stdout and stderr separately.
 - Use explicit working directories.
 - Apply timeouts where a child process could block.
+- When stdin text is supplied to a child process, open the child's stdin pipe explicitly and put stdin delivery under the same timeout as stdout/stderr collection.
+- Prefer a single `communicate(input=..., timeout=...)`-style operation, or an equivalently tested implementation, so large stdin payloads cannot block outside the configured timeout.
 - Terminate process groups, not only parent PIDs.
+- Timeout handling must not duplicate partial stdout/stderr. After a timeout, terminate and reap the process group, then persist one canonical captured output set.
+- When a subprocess is launched with required external control metadata, any failure between `Popen` and the durable checkpoint must terminate and reap the child process group before returning an error.
+- Do not leave child processes running without the metadata, timeout, lock, or abort-control path that later commands rely on to manage them.
+- Do not classify signal-based child termination as user intent unless a durable user/request marker exists for that run.
 - Redact known secret patterns and avoid logging full environments or auth payloads.
 - Store raw outputs after redaction for diagnosis.
+- Process helper changes require regression tests for stdin delivery, large stdin to a child that does not read, timeout process-group cleanup, and partial output capture without duplication.
 
 ## Phase Boundary Contracts
 

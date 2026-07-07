@@ -15,6 +15,8 @@ These contracts protect the local audit trail and recovery model. They apply in 
 - Do not add persisted fields just because they are convenient for the current function. Each persisted field must support auditability, recovery, compatibility, or clear user inspection.
 - Do not store absolute XDG run paths inside target repositories or target-repository files.
 - Do not store authentication tokens, API keys, full process environments, or copied Codex transcript contents.
+- Treat `result`, `last_error`, structured event details, command metadata, and other diagnostic fields as user-facing privacy surfaces unless they are documented sensitive artifacts.
+- Persist raw prompts, patches, agent stdout/stderr, review Markdown, and fix prompts only in dedicated sensitive artifacts, not in summary fields that status, logs, inspect, or CLI errors render by default.
 
 ## Schema Discipline
 
@@ -31,6 +33,8 @@ These contracts protect the local audit trail and recovery model. They apply in 
 - Do not use terminal states to mean "temporarily paused".
 - Do not set a status that implies a later phase has run. For example, do not set `reviewing` before Codex review execution exists.
 - Keep `result`, `last_error`, and status-specific next actions consistent with the actual completed checkpoint.
+- Once a command has mutated status or entered a resumable checkpoint, validation and preflight failures must be persisted before returning: set `failed`, set `last_error`, save state, and append a diagnostic event/log entry.
+- Do not leave runs parked in transient statuses such as `validating`, `running_cursor`, `staging`, or `reviewing` after a handled local validation failure.
 
 ## Iteration Contract
 
@@ -46,6 +50,7 @@ These contracts protect the local audit trail and recovery model. They apply in 
 - Use sensitive file permissions for prompts, session IDs, agent output, review content, staged patches, and other proprietary context where supported.
 - Every artifact needed for recovery or audit should either be listed in `manifest.json`, recorded in `state.json`, or be discoverable by a documented deterministic path.
 - Full patches and agent outputs may contain proprietary code context. Do not print them by default in human CLI output.
+- Persisted summary fields should reference sensitive raw artifacts by relative path instead of copying raw artifact contents.
 - Preserve raw agent output after redaction even when parsing fails.
 
 ## Recovery Compatibility
@@ -55,6 +60,7 @@ These contracts protect the local audit trail and recovery model. They apply in 
 - Persist staged diff artifacts before any Codex review consumes them.
 - Persist Codex review results and correction prompts exactly as returned once review is implemented.
 - On ambiguous or partially written state, fail safely and preserve diagnostics rather than guessing.
+- Resume planners should make failure persistence part of the checkpoint contract: missing chat IDs, missing prompts, staged-patch drift, dirty worktrees, and invalid recorded artifacts must not exit without updating `state.json`.
 
 ## Testing Requirements
 
@@ -62,5 +68,7 @@ These contracts protect the local audit trail and recovery model. They apply in 
 - Test allowed and rejected status transitions.
 - Test schema/model alignment for changed models.
 - Test recovery-relevant checkpoints using fake CLIs and temporary repositories.
+- Test checkpoint validation failures after status mutation persist `failed`, `last_error`, and an event/log diagnostic instead of leaving transient statuses behind.
 - Test that sensitive artifacts are not world-readable on chmod-capable filesystems.
 - Test that human output does not print full prompts, full patches, auth payloads, or full process environments by default.
+- Test that `result`, `last_error`, human logs, structured event logs, and CLI errors do not contain raw agent stdout/stderr, review Markdown, staged patches, fix prompts, or full session IDs.

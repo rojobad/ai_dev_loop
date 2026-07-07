@@ -29,6 +29,7 @@ These contracts protect `ai_dev_loop abort <run-id>` and any code that observes 
 - Persist a durable abort request under the run directory before attempting process termination.
 - The abort request must include the run ID, request timestamp, requesting PID, and a stable reason such as `user_requested_abort`.
 - Write abort request metadata atomically and apply sensitive permissions where supported.
+- Check for an existing abort request before creating a Cursor chat or performing any other post-preflight side effect.
 - The active workflow must check for abort requests before starting each Cursor turn, staging pass, Codex review, or review-processing step.
 - The active workflow must check again after each workflow action.
 - Once an abort request is observed, do not start another Cursor turn, staging pass, Codex review, or correction turn.
@@ -36,6 +37,8 @@ These contracts protect `ai_dev_loop abort <run-id>` and any code that observes 
 ## Active Process Metadata
 
 - Register active Cursor and Codex streaming subprocesses immediately after process start.
+- Active-process registration is all-or-nothing: if a child process has started and metadata registration fails, terminate and reap the entire child process group before returning an error.
+- Never allow a Cursor or Codex child process to continue running without active-process metadata when that metadata is required for abort control.
 - Metadata must include run ID, component, iteration, PID, PGID, parent PID, start timestamp, working directory, and redacted argv.
 - Redact prompts, fix prompts, raw patches, full review content, auth payloads, and secret-like values.
 - Do not store full process environments.
@@ -49,12 +52,16 @@ These contracts protect `ai_dev_loop abort <run-id>` and any code that observes 
 - Validate PID and PGID are positive integers.
 - Check process liveness before signaling.
 - Prefer conservative stale-metadata handling. If metadata may point at an unrelated process, do not signal it.
+- Do not mark a run `aborted` while stale-but-live active-process metadata may still represent a child mutating the repository.
+- Preserve stale or ambiguous active-process metadata for manual diagnostics unless process-group liveness was actually checked and the group is confirmed not live.
 - Send `SIGTERM` first, wait a bounded grace period, then send `SIGKILL` only if the same process group is still live.
 - Never execute text emitted by Cursor or Codex while handling abort.
 
 ## Workflow Outcome
 
 - A child process killed because of a user abort must lead to run status `aborted`.
+- A child process exit from `SIGTERM` or `SIGKILL` is a user abort only when a durable abort request exists for the run.
+- External kills, OOMs, terminal closures, or manual signals without an abort request must follow normal failure/interruption handling with diagnostics.
 - Do not report a user-aborted child as a generic `failed` or `interrupted` outcome.
 - If no child is active and the run is non-terminal, `abort` may mark the run `aborted` after acquiring safe mutation locks.
 - If the workflow lock is held by an active run, `abort` may leave the abort request for the active workflow to observe at the next checkpoint.
@@ -81,5 +88,9 @@ These contracts protect `ai_dev_loop abort <run-id>` and any code that observes 
 - Test abort requests with no active child process.
 - Test terminal-state refusal or no-op behavior.
 - Test stale or mismatched active-process metadata does not kill unrelated processes.
+- Test stale-but-live metadata does not mark the run `aborted` and preserves diagnostics.
+- Test active-process registration failure after child start terminates and reaps the child process group.
+- Test external `SIGTERM` or `SIGKILL` without an abort request is not classified as user abort.
+- Test abort requested before Cursor chat creation does not create `cursor/chat.json`.
 - Test staged and unstaged repository contents are preserved.
 - Test status, logs, and inspect expose abort diagnostics without leaking sensitive content.

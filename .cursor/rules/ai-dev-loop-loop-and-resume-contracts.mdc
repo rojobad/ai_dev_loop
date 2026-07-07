@@ -23,13 +23,16 @@ These contracts protect the complete stage-review-fix loop and explicit resume b
 - If review `NN` has no actionable findings, stop with `completed` or `completed_with_residual_risk` according to the structured `tests_status`.
 - If review `NN` has actionable findings and `NN < max_review_iterations`, persist `waiting_for_cursor_fix`, then continue with Cursor correction iteration `NN+1`.
 - If review `NN` has actionable findings and `NN >= max_review_iterations`, set `max_iterations_reached`, leave changes staged, preserve the latest review and fix prompt, and do not invoke Cursor again.
+- Any path that resumes from `waiting_for_cursor_fix` must re-check the review iteration limit before transitioning to a Cursor correction turn. Legacy or checkpointed waiting states at the limit must become `max_iterations_reached` without another Cursor invocation.
 
 ## Cursor Identity And Fix Prompts
 
 - Create at most one Cursor chat per run.
 - Persist the chat ID immediately and reuse `state.cursor.chat_id` for every Cursor turn.
+- If any workflow progress exists, including iteration metadata, Cursor artifacts, or `cursor/chat.json`, a missing `state.cursor.chat_id` is a fatal checkpoint error. Do not create a replacement chat for a checkpointed run.
 - The initial Cursor prompt comes from `state.prompt.snapshot_path`.
 - Correction iteration `NN+1` must use the exact persisted `prompts/fixes/NN.txt`.
+- Missing or empty persisted Cursor prompts, including correction fix prompts, must mark the run `failed` with `last_error` and an event before returning an error.
 - `cursor_fix_prompt` must come from the resumed Codex review result. Do not synthesize, rewrite, summarize, translate, or improve it.
 - Pass Cursor prompts as single positional arguments without shell interpolation.
 - Treat Cursor output as untrusted data and never execute it.
@@ -59,7 +62,9 @@ These contracts protect the complete stage-review-fix loop and explicit resume b
 
 - The first staging pass must reject pre-existing staged changes.
 - Correction staging may begin with staged changes only when they exactly match the previous orchestrator-recorded staged patch.
-- Before a correction Cursor turn, reject changed staged patches, unstaged tracked changes, and untracked work that is not part of a clear orchestrator checkpoint.
+- Staged-patch equality checks are unconditional. An empty current index does not satisfy a previously recorded non-empty staged patch.
+- Before a correction Cursor turn, reject changed staged patches, unstaged tracked changes, and untracked work that is not part of a clear orchestrator checkpoint. Persist these safety failures as `failed` with `last_error`.
+- Before running Codex review or processing an existing review result during `resume`, validate that the current staged patch still matches the current iteration's recorded staged patch and reject any extra unstaged tracked changes or untracked files.
 - Continue protecting the repository plan hash and prompt source path.
 - Continue rejecting staged prompt-source paths.
 - Do not commit, tag, push, reset, clean, stash, unstage, or otherwise rewrite Git state.
@@ -71,6 +76,7 @@ These contracts protect the complete stage-review-fix loop and explicit resume b
 - `resume` must preserve Cursor chat identity and Codex session identity.
 - `resume` must not rerun completed agent turns when durable artifacts prove they completed.
 - `resume` may continue only from clear checkpoints such as `prepared`, `waiting_for_cursor_fix`, completed staging waiting for review, completed review waiting for outcome processing, or explicit interrupted states with enough artifacts to determine the next safe action.
+- `interrupted` resume must derive the real checkpoint from durable artifacts, then restore to `running_cursor`, `staging`, or `reviewing` as appropriate. Do not blindly route `interrupted` through `validating`.
 - If retrying an interrupted Cursor or Codex turn, preserve existing partial artifacts before writing new attempt artifacts.
 - If the next safe action is ambiguous, fail with a diagnostic and do not mutate the repository.
 - Terminal states remain terminal unless a future explicit phase defines a safe no-op behavior.
@@ -91,5 +97,10 @@ These contracts protect the complete stage-review-fix loop and explicit resume b
 - Test max-iteration exhaustion without an extra Cursor turn.
 - Test resume from `waiting_for_cursor_fix`.
 - Test resume does not rerun completed turns.
+- Test checkpointed runs with workflow progress reject missing Cursor chat IDs instead of creating new chats.
+- Test missing and empty correction fix prompts persist `failed` state and `last_error`.
+- Test interrupted resume derives `running_cursor`, `staging`, or `reviewing` from artifacts.
+- Test review and review-processing resume reject staged index drift, unstaged tracked changes, and untracked files.
 - Test correction staging rejects drift in the previously recorded staged patch.
+- Test correction staging rejects an emptied index when a previous staged patch was recorded.
 - Test status, logs, and inspect output across multiple iterations without leaking sensitive content.
