@@ -9,6 +9,7 @@ from pathlib import Path
 
 from ai_dev_loop import __version__
 from ai_dev_loop.config import resolve_effective_config
+from ai_dev_loop.integrations.codex.install import doctor_integration_checks
 from ai_dev_loop.paths import cache_dir, config_dir, ensure_app_dirs, schema_path, state_dir
 from ai_dev_loop.process import run_process
 from ai_dev_loop.runners.git import discover_repository
@@ -72,6 +73,9 @@ def render_doctor(*, repo_path: Path | None = None, output: str = "text") -> str
         add("codex_version", result.returncode == 0, result.stdout.strip() or result.stderr.strip())
 
     add("package_version", True, __version__)
+
+    for check in doctor_integration_checks():
+        add(str(check["name"]), bool(check["ok"]), str(check["detail"]))
 
     if output == "json":
         return json.dumps({"schema_version": 1, "checks": checks}, indent=2) + "\n"

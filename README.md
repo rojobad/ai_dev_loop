@@ -2,11 +2,17 @@
 
 Deterministic local orchestrator for Codex/Cursor development loops.
 
-Phase 6 implements real `abort`. Phase 5's bounded stage-review-fix loop and `resume` remain unchanged.
+Phase 7 implements global Codex integrations: the handoff skill, SessionStart hook, and `integrations install` / `uninstall` / `status`. Phase 6's real `abort`, Phase 5's bounded stage-review-fix loop, and `resume` remain unchanged.
 
-A prepared or active run can be cancelled with `ai_dev_loop abort <run-id>`. Abort requests termination of an active Cursor or Codex child process group when durable active-process metadata clearly ties the child to the selected run, persists an abort-request marker, marks the run `aborted`, and preserves repository contents, staged changes, and existing run artifacts.
+## What Phase 7 Implements
 
-Global Codex integrations (`integrations install` / `uninstall`, SessionStart hook, global handoff skill) remain pending for Phase 7.
+- Real `ai_dev_loop integrations install` and `integrations uninstall`
+- Global handoff skill at `~/.agents/skills/ai-dev-loop-handoff/SKILL.md`
+- SessionStart hook at `~/.codex/hooks/ai_dev_loop_session_start.py`
+- Safe idempotent merge into `~/.codex/hooks.json`
+- `integrations status` with package-content match reporting
+- `doctor` checks for installed skill, hook script, hook registration, and trust guidance
+- Minimal Codex session metadata under XDG state; no transcript reads or auth storage
 
 ## What Phase 6 Implements
 
@@ -15,8 +21,6 @@ Global Codex integrations (`integrations install` / `uninstall`, SessionStart ho
 - Durable active-child metadata at `locks/active-process.json` while Cursor/Codex streaming subprocesses run
 - Workflow abort observation before and after each loop action in `start` and `resume`
 - User-aborted child processes end the run as `aborted`, not as generic failure or timeout
-- Conservative stale-process safety: abort does not signal unrelated process groups
-- `status`, `logs`, `inspect`, and README updates for abort diagnostics without sensitive leakage
 
 ## What Phase 5 Implements
 
@@ -26,30 +30,6 @@ Global Codex integrations (`integrations install` / `uninstall`, SessionStart ho
 - One Codex session per run, resumed for every review
 - Exact forwarding of Codex-authored `cursor_fix_prompt` values from `prompts/fixes/NN.txt`
 - Real `resume <run-id>` with conservative checkpoint planning
-
-## What Is Still Pending
-
-- Global Codex skill and SessionStart hook installation
-- `integrations install` / `uninstall`
-
-## Using Abort
-
-Request cancellation while a run is active or waiting at a non-terminal checkpoint:
-
-```bash
-ai_dev_loop abort <run-id>
-```
-
-Abort:
-
-- writes `locks/abort-request.json`
-- signals the active child process group when metadata is clearly tied to the run
-- marks the run `aborted` immediately when no workflow lock is held and no live child is running
-- otherwise leaves the abort request for the active `start`/`resume` workflow to observe
-
-Abort does **not** commit, push, reset, clean, stash, unstage, delete artifacts, or remove lock files.
-
-Repository contents and staged changes remain exactly as they were when abort was requested. Inspect `cursor/`, `codex/`, `git/`, and `logs/events.jsonl` for the audit trail. Terminal runs (`completed`, `failed`, `aborted`, etc.) refuse abort with a clear no-op message.
 
 ## Recommended Setup (WSL)
 
@@ -83,6 +63,50 @@ ai_dev_loop --help
 ```
 
 Optional alternative: `pipx install .` if you already manage CLIs with pipx.
+
+## Global Codex Integrations
+
+Install the user-level Codex assets once per machine:
+
+```bash
+ai_dev_loop integrations install
+```
+
+This installs:
+
+- `~/.agents/skills/ai-dev-loop-handoff/SKILL.md`
+- `~/.codex/hooks/ai_dev_loop_session_start.py`
+- a merged SessionStart registration in `~/.codex/hooks.json`
+
+After install:
+
+1. Open `/hooks` in Codex.
+2. Trust the `ai_dev_loop` hook. The hook may be skipped until it is trusted.
+3. Restart or resume Codex so SessionStart context includes the exact current session ID.
+
+Check installation:
+
+```bash
+ai_dev_loop integrations status
+ai_dev_loop integrations status --output json
+ai_dev_loop doctor
+```
+
+The SessionStart hook exposes the exact current Codex session ID through `hookSpecificOutput.additionalContext` and stores only minimal session metadata under:
+
+```text
+$XDG_STATE_HOME/ai_dev_loop/codex-sessions/<session-id>.json
+```
+
+The hook never reads transcript contents and never stores auth material.
+
+### Uninstall
+
+```bash
+ai_dev_loop integrations uninstall
+```
+
+Uninstall removes only `ai_dev_loop` assets. It preserves unrelated hooks, unrelated skills, run history, prompts, reviews, staged patches, and XDG state by default.
 
 ## Target Repository Configuration
 
@@ -126,9 +150,19 @@ Validate it:
 ai_dev_loop config validate --repo /path/to/repo
 ```
 
-## Prepare A Run
+## Handoff Workflow
 
-From the active Codex session, pipe the exact approved Cursor prompt on stdin:
+From the active Codex session after a plan and Cursor prompt are finalized:
+
+1. Use the `ai-dev-loop-handoff` skill, or follow the same steps manually.
+2. Ensure the plan is final and the separate Cursor prompt file exists.
+3. Read the repository `ai_dev_loop.yaml`.
+4. Use the exact session ID from SessionStart context. Do not infer another session and do not use `--last`.
+5. Run `ai_dev_loop prepare` with the exact Cursor prompt on stdin.
+6. Exit Codex with `/exit`.
+7. Run the returned `ai_dev_loop start <run-id>` command in the shell.
+
+Example prepare:
 
 ```bash
 ai_dev_loop prepare \
@@ -152,7 +186,9 @@ JSON output includes:
 }
 ```
 
-**Important:** exit the active Codex TUI before running `start` or `resume`.
+**Important:** never run `ai_dev_loop start` or `ai_dev_loop resume` from the active Codex TUI.
+
+If SessionStart context is missing, run `ai_dev_loop integrations status`, trust the hook in `/hooks`, restart or resume Codex, or pass `--codex-session-id` only when you have the exact session ID from a trusted source.
 
 ## Start A Prepared Run
 
@@ -170,7 +206,17 @@ ai_dev_loop resume <run-id>
 
 `resume` continues from clear checkpoints without rerunning completed agent turns when durable artifacts prove they finished. Supported checkpoints include `prepared`, `waiting_for_cursor_fix`, `staging`, `reviewing`, and `interrupted`.
 
-Inspect results:
+## Using Abort
+
+Request cancellation while a run is active or waiting at a non-terminal checkpoint:
+
+```bash
+ai_dev_loop abort <run-id>
+```
+
+Abort preserves repository contents, staged changes, and existing run artifacts. It does not commit, push, reset, clean, stash, unstage, or delete artifacts.
+
+## Inspect Results
 
 ```bash
 ai_dev_loop status <run-id>
@@ -222,12 +268,15 @@ Fallback when XDG variables are unset:
 
 ```bash
 ai_dev_loop doctor
+ai_dev_loop integrations install
 ai_dev_loop integrations status
+ai_dev_loop integrations uninstall
 ai_dev_loop list
 ai_dev_loop status <run-id>
 ai_dev_loop inspect <run-id>
 ai_dev_loop logs <run-id>
 ai_dev_loop resume <run-id>
+ai_dev_loop abort <run-id>
 ```
 
 ## Development Validation
@@ -239,6 +288,8 @@ uv run python -m ruff format --check .
 uv run python -m mypy src
 uv run python -m build
 uv run ai_dev_loop --help
+uv run ai_dev_loop integrations status
+uv run ai_dev_loop doctor
 ```
 
 ## Safety Model
@@ -252,6 +303,14 @@ uv run ai_dev_loop --help
 - Subprocesses use direct argument arrays (`shell=False` is never used)
 - Prompts, session IDs, staged patches, review artifacts, and agent output files are written with user-only permissions
 - The orchestrator stages changes with `git add -A` for `stage_mode: all` but does not commit, push, tag, reset, clean, stash, or unstage
+- Global integration install preserves unrelated hooks and does not bypass Codex hook trust
+
+## Privacy And Cleanup
+
+- Default CLI output does not print full prompts, fix prompts, staged patches, review Markdown, raw JSONL, or auth payloads
+- Run artifacts remain under XDG state for audit and recovery
+- `integrations uninstall` does not delete run history, prompts, reviews, or logs
+- The SessionStart hook stores only minimal session metadata and never reads transcript contents
 
 ## License
 

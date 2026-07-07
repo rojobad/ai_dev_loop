@@ -14,7 +14,13 @@ from ai_dev_loop.commands.abort import render_abort_output, run_abort
 from ai_dev_loop.commands.config_cmd import run_validate_config
 from ai_dev_loop.commands.doctor import render_doctor
 from ai_dev_loop.commands.inspect import render_inspect
-from ai_dev_loop.commands.integrations import raise_not_implemented, render_integrations_status
+from ai_dev_loop.commands.integrations import (
+    install_integrations,
+    render_install_output,
+    render_integrations_status,
+    render_uninstall_output,
+    uninstall_integrations,
+)
 from ai_dev_loop.commands.list_runs import render_list
 from ai_dev_loop.commands.logs import render_logs
 from ai_dev_loop.commands.prepare import PrepareOptions, prepare_run, render_prepare_output
@@ -303,21 +309,27 @@ def config_validate_command(
 
 
 @integrations_app.command("install")
-def integrations_install_command() -> None:
+def integrations_install_command(
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
     """Install global Codex skill and SessionStart hook."""
 
     def run() -> None:
-        raise_not_implemented("install")
+        result = install_integrations()
+        typer.echo(render_install_output(result, output=output.value), nl=False)
 
     _handle(run)
 
 
 @integrations_app.command("uninstall")
-def integrations_uninstall_command() -> None:
+def integrations_uninstall_command(
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
     """Remove ai_dev_loop global integration assets."""
 
     def run() -> None:
-        raise_not_implemented("uninstall")
+        result = uninstall_integrations()
+        typer.echo(render_uninstall_output(result, output=output.value), nl=False)
 
     _handle(run)
 

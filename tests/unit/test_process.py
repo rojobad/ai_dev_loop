@@ -105,7 +105,9 @@ def test_sensitive_capture_files_are_restrictive_while_process_runs(
     assert stat.S_IMODE(stderr_path.stat().st_mode) == SENSITIVE_FILE_MODE
 
 
-def test_registration_failure_terminates_child(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_registration_failure_terminates_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     script = tmp_path / "sleeper.py"
     script.write_text("import time\ntime.sleep(60)\n", encoding="utf-8")
     run_directory = tmp_path / "run"
@@ -131,12 +133,12 @@ def test_registration_failure_terminates_child(tmp_path: Path, monkeypatch: pyte
         pytest.raises(AiDevLoopError, match="register active child process metadata"),
     ):
         run_process_streaming(
-                [sys.executable, str(script)],
-                active_process=ActiveProcessRegistration(
-                    run_directory=run_directory,
-                    run_id="demo-run",
-                    component="cursor",
-                    iteration=1,
+            [sys.executable, str(script)],
+            active_process=ActiveProcessRegistration(
+                run_directory=run_directory,
+                run_id="demo-run",
+                component="cursor",
+                iteration=1,
                 argv_redacted=["agent", "<prompt-redacted>"],
             ),
         )

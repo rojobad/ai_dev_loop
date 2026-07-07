@@ -53,6 +53,14 @@ def permission_test_root() -> Iterator[Path]:
 
 
 @pytest.fixture
+def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    return home
+
+
+@pytest.fixture
 def isolated_xdg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     base = tmp_path / "xdg"
     config = base / "config"
@@ -64,6 +72,11 @@ def isolated_xdg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("XDG_STATE_HOME", str(state))
     monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
     return base
+
+
+@pytest.fixture
+def isolated_integrations(isolated_home: Path, isolated_xdg: Path) -> Path:
+    return isolated_home
 
 
 @pytest.fixture

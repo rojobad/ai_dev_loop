@@ -279,7 +279,9 @@ def test_abort_during_probes_skips_cursor_chat_creation(prepared_run, monkeypatc
     assert not (run_path / "cursor" / "chat.json").is_file()
 
 
-def test_child_sigterm_without_abort_request_is_not_treated_as_abort(prepared_run, monkeypatch) -> None:
+def test_child_sigterm_without_abort_request_is_not_treated_as_abort(
+    prepared_run, monkeypatch
+) -> None:
     from ai_dev_loop import workflow_engine
     from ai_dev_loop.process import StreamingProcessResult
     from ai_dev_loop.runners.cursor import CursorExecutionResult, CursorParseResult
