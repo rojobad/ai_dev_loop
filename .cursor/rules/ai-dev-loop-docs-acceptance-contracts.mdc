@@ -1,0 +1,76 @@
+---
+description: "Cursor implementation contracts for ai_dev_loop final acceptance, MkDocs scaffold, real workstation validation, model smoke tests, and Phase 8/8.5 handoff. Apply whenever editing docs scaffold, acceptance tests, validation flows, package install checks, integration verification, findings files, or documentation-related project configuration."
+globs:
+alwaysApply: true
+---
+
+# ai_dev_loop Docs And Acceptance Contracts
+
+These contracts are the Cursor-side governance for Phase 8 and later acceptance/documentation-adjacent implementation work. They apply in addition to all other `ai-dev-loop-*` rules.
+
+## Source Of Truth
+
+- `plan-2-build-ai-dev-loop-orchestrator.md` is the master architecture contract.
+- The active phase plan under `plans/` narrows scope.
+- Phase findings files are durable audit and handoff artifacts.
+- Cursor must implement only the active phase and preserve all architecture guardrails from the master plan and relevant findings.
+
+## Phase 8 Implementation Boundary
+
+- Phase 8 owns final acceptance hardening, package validation, real workstation validation, model-backed smoke validation, and MkDocs scaffolding.
+- Phase 8 must not write the final documentation content.
+- Configure MkDocs with Material for MkDocs.
+- Keep `docs/index.md` intentionally minimal.
+- Move `scripts/codex-desktop-wsl-sessions.md` to `docs/reference/codex-desktop-wsl-sessions.md` as a placeholder for Codex-driven Phase 8.5 documentation.
+- Do not restore `scripts/share-codex-desktop-sessions.sh`.
+- Do not implement destructive state cleanup.
+
+## Cursor Validation Discipline
+
+- Automated tests must use fake `agent` and fake `codex` executables.
+- Real model calls are allowed only because the active Phase 8 plan and user explicitly approve them.
+- Do not run real model-backed smoke tests against the `ai_dev_loop` source repository.
+- If no exact desktop session ID is available for real model-backed smoke validation, stop. Do not guess, shorten, infer, search heuristically, or use `--last`.
+- If WSL distro detection is ambiguous during real desktop integration checks, use `Ubuntu-22.04`.
+- Treat Codex Desktop `/hooks` trust as user-confirmed before Phase 8, but report renewed trust may be required if installation changes the hook definition.
+
+## Documentation Scaffold Discipline
+
+- MkDocs is the official documentation surface.
+- Use Material for MkDocs.
+- `site/` and other generated documentation build output must not be tracked.
+- Phase 8 may add placeholders and TODOs needed for Phase 8.5, but must not write complete final docs pages.
+- Do not document behavior that is not implemented and verified.
+- Any README edits should be minimal and factual.
+
+## Global Integration And Bridge Guardrails
+
+- Do not share the entire Windows `.codex` home with WSL.
+- Do not set WSL `CODEX_HOME` to `/mnt/c/.../.codex`.
+- Do not symlink, copy, migrate, open, or inspect Codex SQLite databases across Windows and WSL.
+- Keep the desktop bridge limited to rollout session files.
+- Do not bypass, mutate, or guess Codex hook trust state.
+- Do not use `--last`.
+
+## Non-Destructive Policy
+
+- Do not commit, push, tag, reset, clean, stash, unstage, or perform destructive cleanup.
+- Do not add destructive cleanup commands.
+- Preserve run artifacts, prompts, logs, staged patches, and findings for auditability.
+
+## Privacy And Output
+
+- Default CLI output and findings summaries must not include full prompts, fix prompts, staged patches, raw JSONL, auth payloads, full environments, transcript contents, or full session IDs.
+- Prefer artifact paths and safe summaries over raw sensitive content.
+
+## Findings Handoff
+
+Phase 8 must create `phase-8-findings.md` with:
+
+- commands run;
+- validation results;
+- package install verification;
+- real workstation integration actions;
+- real model smoke outcome or exact stop reason;
+- residual risks;
+- Phase 8.5 documentation handoff.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "ai_dev_loop Docs Governance"
+  short_description: "Guide Codex documentation and acceptance review"
+  default_prompt: "Use $ai-dev-loop-docs-acceptance-governance to write or review ai_dev_loop MkDocs documentation from Phase 8 findings."
