@@ -6,9 +6,9 @@ Build a complete, production-quality local orchestration system named `ai_dev_lo
 
 The system must automate the user's full local AI development cycle:
 
-1. A local interactive Codex CLI session owns the architectural discussion and creates an approved implementation plan.
+1. A local interactive Codex session owns the architectural discussion and creates an approved implementation plan. The planning surface may be Codex Desktop on Windows or Codex CLI in WSL.
 2. The same session prepares a run and hands it off to `ai_dev_loop`.
-3. The user exits the interactive Codex TUI.
+3. The user exits or stops using the interactive Codex UI for that session while the automated loop owns subsequent review turns.
 4. `ai_dev_loop` creates a Cursor CLI chat and sends the approved implementation prompt.
 5. Cursor implements the plan in the existing WSL repository and worktree.
 6. `ai_dev_loop` stages the resulting changes.
@@ -32,6 +32,8 @@ Implement the complete system now. Do not split the work into future phases or d
 Codex is the architect, analyst, context owner, prompt author, and reviewer.
 
 The original Codex session must be resumed for every review. A new Codex session is not an acceptable substitute.
+
+When the original session was started in Codex Desktop on Windows, `ai_dev_loop` must still resume that exact session from WSL by session ID. The WSL Codex CLI may access the desktop session rollout files, but it must not share or migrate the desktop SQLite state database.
 
 ### Cursor
 
@@ -66,12 +68,31 @@ The primary supported environment is:
 - target repositories stored and executed inside WSL;
 - Cursor editor connected to WSL;
 - Cursor CLI installed inside WSL as `agent`;
-- Codex CLI installed inside WSL as `codex`;
+- Codex CLI installed inside WSL as `codex` for non-interactive review resume;
+- Codex Desktop may run on Windows and use WSL as its agent execution environment;
 - no cloud agents;
 - no remote implementation workers;
 - all repository edits and tests executed locally.
 
 The design may remain portable to native Linux, but WSL is the required acceptance environment.
+
+Codex Desktop on Windows and Codex CLI in WSL use different home directories:
+
+```text
+Windows desktop Codex home:
+C:\Users\<user>\.codex
+WSL CLI Codex home:
+/home/<user>/.codex
+```
+
+Do not point the WSL CLI `CODEX_HOME` at the Windows `.codex` directory. In particular, do not share or symlink `state_*.sqlite`, configuration databases, auth files, indexes, or the entire `.codex` home across the Windows/WSL filesystem boundary.
+
+The supported bridge for desktop-originated sessions is:
+
+- keep the WSL CLI on its native `.codex` home;
+- expose only the Windows desktop `sessions/` rollout tree to the WSL CLI, for example as a nested symlink under `/home/<user>/.codex/sessions/from-desktop`;
+- resume desktop sessions from WSL only by exact session ID;
+- avoid concurrent writes to the same desktop session from both Codex Desktop and WSL CLI.
 
 ## Technology and Packaging
 
@@ -194,6 +215,7 @@ ai_dev_loop/
 │       │   └── git.py
 │       ├── integrations/
 │       │   └── codex/
+│       │       ├── desktop_bridge.py
 │       │       ├── session_start.py
 │       │       ├── hook_template.json
 │       │       └── skill/
@@ -229,6 +251,10 @@ ai_dev_loop doctor
 ai_dev_loop integrations install
 ai_dev_loop integrations uninstall
 ai_dev_loop integrations status
+ai_dev_loop integrations sessions install
+ai_dev_loop integrations sessions status
+ai_dev_loop integrations sessions list
+ai_dev_loop integrations sessions remove
 ai_dev_loop config validate
 ```
 
@@ -320,6 +346,19 @@ Never parse project YAML with regular expressions.
 
 The application must install everything required for the current Codex session to identify itself and perform the handoff.
 
+The installer must support two Codex host targets:
+
+```text
+wsl-cli
+codex-desktop-wsl
+```
+
+`wsl-cli` installs assets into the WSL user's Codex home and is appropriate when the original interactive Codex session is started by the WSL Codex CLI.
+
+`codex-desktop-wsl` installs the Codex-visible skill and hook registration into the Windows user's Codex home, while still causing the hook command to execute the WSL-installed hook script and write `ai_dev_loop` state under the WSL user's XDG state directory. This is the required target when the original interactive session is started in Codex Desktop on Windows and its agents execute in WSL.
+
+The installer must never solve this by sharing the entire Windows `.codex` home with WSL or by setting WSL `CODEX_HOME` to `/mnt/c/.../.codex`.
+
 ### Global Skill
 
 Install a user-global skill at:
@@ -328,7 +367,7 @@ Install a user-global skill at:
 $HOME/.agents/skills/ai-dev-loop-handoff/SKILL.md
 ```
 
-This is the user-level skill discovery location. Do not install it under a deprecated or invented `~/.codex/skills` path.
+This is the user-level skill discovery location for the selected Codex host target. For `wsl-cli`, `$HOME` is the WSL home. For `codex-desktop-wsl`, `$HOME` means the Windows user profile exposed to WSL, for example `/mnt/c/Users/<user>`. Do not install the skill under a deprecated or invented `~/.codex/skills` path.
 
 The skill frontmatter must be equivalent to:
 
@@ -348,7 +387,7 @@ The skill must instruct Codex to:
 - run `ai_dev_loop prepare`;
 - pass the exact prompt through stdin;
 - parse the prepare result;
-- never start the loop from the active TUI;
+- never start the loop from the active interactive Codex UI;
 - tell the user to exit and run the returned command.
 
 The project-specific planning skill may invoke the CLI directly, but the global skill must provide a reusable generic workflow and a recovery path for projects without a customized planning skill.
@@ -356,6 +395,14 @@ The project-specific planning skill may invoke the CLI directly, but the global 
 ### SessionStart Hook
 
 Install a user-global Codex `SessionStart` hook.
+
+For `wsl-cli`, install and register the hook under the WSL home. For `codex-desktop-wsl`, install and register the hook under the Windows Codex home, but make the registered command invoke WSL explicitly. The command shape must be direct, explicit, and documented, equivalent to:
+
+```text
+wsl.exe -d <distro-name> --exec python3 /home/<wsl-user>/.codex/hooks/ai_dev_loop_session_start.py
+```
+
+The implementation must discover the Windows user profile and WSL distribution where possible, while allowing explicit flags for both values. It must validate that the generated command is visible to Codex Desktop and that the WSL hook script path exists inside WSL.
 
 Codex command hooks receive JSON on stdin containing, among other fields:
 
@@ -396,6 +443,8 @@ When preparing an approved ai_dev_loop run, pass this exact session ID. Do not i
 7. Exits safely with no destructive side effects if input is incomplete.
 8. Never exposes authentication data.
 
+When invoked through the desktop bridge, the hook must still write its session record under the WSL XDG state directory used by `ai_dev_loop`, not under Windows application state. It may receive Windows-style `cwd` or transcript paths from Codex Desktop; it must store those as metadata only and must not attempt to read transcript contents.
+
 ### Hook Registration
 
 Register the hook in:
@@ -403,6 +452,8 @@ Register the hook in:
 ```text
 ~/.codex/hooks.json
 ```
+
+For `wsl-cli`, this path resolves under `/home/<user>`. For `codex-desktop-wsl`, this path resolves under the Windows user profile, for example `/mnt/c/Users/<user>/.codex/hooks.json`, because Codex Desktop does not read the WSL user's `~/.codex/hooks.json`.
 
 Use a definition equivalent to:
 
@@ -415,7 +466,7 @@ Use a definition equivalent to:
         "hooks": [
           {
             "type": "command",
-            "command": "python3 <absolute-installed-hook-path>",
+            "command": "<target-specific-hook-command>",
             "statusMessage": "Loading ai_dev_loop session context"
           }
         ]
@@ -438,6 +489,28 @@ The installer must:
 - report that the hook may be skipped until trusted.
 
 Do not automatically bypass Codex hook trust in normal use.
+
+For `codex-desktop-wsl`, hook trust must be performed in Codex Desktop. Trusting the WSL CLI hook browser is not sufficient because the desktop and WSL Codex homes are separate.
+
+### Desktop Session Bridge
+
+For desktop-originated sessions, `ai_dev_loop` must provide or document an idempotent bridge equivalent to:
+
+```text
+/home/<wsl-user>/.codex/sessions/from-desktop
+  -> /mnt/c/Users/<windows-user>/.codex/sessions
+```
+
+This bridge exists only so the WSL Codex CLI can resolve `codex exec resume <exact-session-id>` for a desktop session. It must:
+
+- create only a nested symlink under the WSL CLI `sessions/` directory;
+- reject configurations where the entire WSL `CODEX_HOME` or `sessions/` directory points at `/mnt/c`;
+- never symlink or copy desktop SQLite state databases;
+- list recent desktop session IDs for manual recovery;
+- support status and removal;
+- warn users not to edit the same session concurrently in Desktop and WSL.
+
+The automated loop must continue to use exact session IDs. It must never use `--last` as a workaround for desktop session discovery.
 
 ## Prepare Command
 
@@ -614,7 +687,7 @@ JSON output must be equivalent to:
 }
 ```
 
-`prepare` must make clear that the user must exit the active Codex TUI before starting the run.
+`prepare` must make clear that the user must exit or stop using the active Codex UI for that session before starting the run.
 
 ## Run State Schema
 
@@ -781,7 +854,7 @@ Before invoking an agent:
 - verify the Cursor model exact identifier exists;
 - validate timeouts;
 - ensure the original Codex session ID is present;
-- warn clearly that the original interactive Codex TUI must be closed;
+- warn clearly that the original interactive Codex UI must be closed or inactive for that session;
 - fail before editing if preflight is not satisfied.
 
 Do not rely on `--resume --last` for either agent.
@@ -1224,6 +1297,10 @@ List recent runs across projects with filters for:
 - Codex authentication status when safely detectable;
 - Codex hook installation;
 - Codex hook trust status when detectable;
+- selected Codex integration target (`wsl-cli` or `codex-desktop-wsl`);
+- Windows Codex Desktop home detection when `codex-desktop-wsl` is selected;
+- WSL distribution detection and `wsl.exe` availability when `codex-desktop-wsl` is selected;
+- desktop session bridge status when `codex-desktop-wsl` is selected;
 - global skill installation;
 - JSON schema availability;
 - target repository configuration when `--repo` is supplied.
@@ -1286,12 +1363,25 @@ ai_dev_loop integrations install
 
 It must:
 
+- accept an explicit target equivalent to `--target wsl-cli` or `--target codex-desktop-wsl`;
 - install or link the global skill;
 - install the SessionStart hook script;
 - merge hook configuration;
+- install or verify the desktop session bridge when `--target codex-desktop-wsl`;
 - create XDG directories;
 - report trust instructions;
 - be idempotent.
+
+For `codex-desktop-wsl`, support explicit options equivalent to:
+
+```text
+--windows-codex-home
+--wsl-distro
+--wsl-hook-python
+--wsl-hook-script-path
+```
+
+Use auto-detection as a convenience only. If detection is ambiguous, fail with a clear message and ask for explicit flags rather than guessing.
 
 Implement:
 
@@ -1303,6 +1393,8 @@ It must:
 
 - remove only assets installed by `ai_dev_loop`;
 - preserve other hooks and skills;
+- remove only the selected target's hook registration and installed files unless an explicit all-targets option is added;
+- preserve the desktop session bridge by default unless an explicit bridge-removal flag is supplied;
 - preserve run history by default;
 - optionally remove state only with an explicit destructive flag and confirmation.
 
@@ -1312,7 +1404,32 @@ Implement:
 ai_dev_loop integrations status
 ```
 
-It must report exact installed paths and whether files match the current package version.
+It must report exact installed paths and whether files match the current package version for each supported target. For `codex-desktop-wsl`, it must also report:
+
+- Windows Codex home path;
+- WSL Codex home path;
+- registered hook command;
+- detected WSL distribution;
+- whether the desktop sessions symlink exists;
+- number of reachable desktop rollout files when cheaply available;
+- whether hook trust remains unknown and must be checked in Codex Desktop.
+
+Implement:
+
+```text
+ai_dev_loop integrations sessions
+```
+
+or an equivalent subcommand group for the desktop session bridge. It must support:
+
+```text
+ai_dev_loop integrations sessions install
+ai_dev_loop integrations sessions status
+ai_dev_loop integrations sessions list
+ai_dev_loop integrations sessions remove
+```
+
+These commands may wrap or replace the helper script currently represented by `scripts/share-codex-desktop-sessions.sh`, but they must preserve its safety properties.
 
 ## Tests
 
@@ -1338,7 +1455,11 @@ Cover:
 - structured orchestrator event logging;
 - redaction;
 - hook input/output;
-- hook JSON merge and uninstall.
+- hook JSON merge and uninstall;
+- Codex integration target resolution;
+- Windows Codex home detection and explicit override handling;
+- WSL hook command generation for `codex-desktop-wsl`;
+- desktop session bridge creation, status, listing, removal, and unsafe symlink rejection.
 
 ### Integration Tests
 
@@ -1366,14 +1487,19 @@ Simulate:
 14. latest Cursor final response content passed into the first Codex review prompt;
 15. structured JSON, not Markdown parsing, drives review decisions and fix prompts;
 16. hook installation with existing unrelated hooks;
-17. uninstall preserving unrelated hooks.
+17. uninstall preserving unrelated hooks;
+18. `codex-desktop-wsl` install with a temporary Windows-style home under `/mnt/c` or an equivalent fixture path;
+19. desktop hook registration command invokes WSL and points at the WSL hook script;
+20. desktop session bridge exposes rollout files without sharing SQLite state;
+21. uninstall preserves unrelated Windows-home hooks and leaves the session bridge unless explicitly removed.
 
 ### End-to-End Local Acceptance Test
 
 In a disposable temporary Git repository:
 
 - install the CLI;
-- install the global integration into a temporary HOME;
+- install the global integration into a temporary HOME for `wsl-cli`;
+- install the global integration into separate temporary WSL and Windows Codex homes for `codex-desktop-wsl`;
 - create a valid `ai_dev_loop.yaml`;
 - create a plan and prompt;
 - prepare a run through stdin;
@@ -1382,6 +1508,7 @@ In a disposable temporary Git repository:
 - verify final staged changes;
 - verify run artifacts and state;
 - verify no state files were created inside the target repository.
+- verify no Codex SQLite database is symlinked, copied, or opened across the Windows/WSL boundary.
 
 Do not require paid model calls in the automated test suite.
 
@@ -1393,7 +1520,9 @@ The README must include:
 - role definitions;
 - installation in WSL;
 - `pipx` installation;
-- global integration installation;
+- global integration installation for WSL CLI and Codex Desktop on Windows;
+- Windows/WSL Codex home separation;
+- desktop session bridge setup and removal;
 - hook trust step;
 - target repository configuration;
 - planning-skill integration;
@@ -1413,15 +1542,19 @@ The README must include:
 Include an exact user workflow:
 
 ```text
-1. Start Codex in the target repo.
-2. Discuss and finalize the change.
-3. Let the project planning skill create the plan and prompt file.
-4. Approve the plan.
-5. Codex runs ai_dev_loop prepare.
-6. Copy the returned start command.
-7. Exit Codex with /exit.
-8. Run the returned ai_dev_loop start command.
-9. Inspect the final staged changes and review report.
+1. Install the matching integration target:
+   - wsl-cli when Codex itself runs in WSL;
+   - codex-desktop-wsl when Codex Desktop runs on Windows and agents run in WSL.
+2. For codex-desktop-wsl, trust the hook in Codex Desktop /hooks and ensure the desktop session bridge is installed.
+3. Start Codex in the target repo.
+4. Discuss and finalize the change.
+5. Let the project planning skill create the plan and prompt file.
+6. Approve the plan.
+7. Codex runs ai_dev_loop prepare with the exact current session ID.
+8. Copy the returned start command.
+9. Exit or stop using the active Codex UI for that session.
+10. Run the returned ai_dev_loop start command in WSL.
+11. Inspect the final staged changes and review report.
 ```
 
 ## Architecture Guardrails
@@ -1435,13 +1568,16 @@ Include an exact user workflow:
 - The correction prompt comes from the resumed original Codex session.
 - The orchestrator never extracts findings by scraping Markdown review text.
 - The Codex structured JSON result is the source of truth for review decisions.
+- Windows Codex Desktop hooks must be installed in the Windows Codex home, not the WSL Codex home.
+- The WSL Codex CLI must not use the Windows `.codex` directory as `CODEX_HOME`.
+- The desktop bridge may expose only rollout session files, never SQLite state databases, auth files, indexes, or the entire `.codex` home.
 - The target repo never knows the XDG state path.
 - The target repo never contains `state.json`, session logs, or agent output.
 - The loop never commits, tags, or pushes.
 - The loop leaves final changes staged.
 - The loop does not use subagents as the final reviewer.
 - The loop does not use cloud agents.
-- The loop does not run while the original Codex TUI is still expected to own the same active session.
+- The loop does not run while the original Codex UI is still expected to own the same active session.
 - The system must fail safely on ambiguous state rather than guessing.
 - No shell interpolation of prompts, paths, findings, or agent output.
 - Do not silently accept unrelated dirty work.
@@ -1464,11 +1600,18 @@ Include an exact user workflow:
 13. Implement the global Codex skill.
 14. Implement the SessionStart hook and safe hook registration.
 15. Implement integration install, status, repair behavior, and uninstall.
-16. Add comprehensive unit and integration tests.
-17. Add the disposable end-to-end acceptance test.
-18. Write the full README and troubleshooting documentation.
-19. Run formatting, linting, type checking, unit tests, integration tests, and package build validation.
-20. Verify installation and command discovery inside WSL.
+16. Implement the Codex Desktop on Windows to WSL bridge:
+    - target-specific integration install/status/uninstall;
+    - Windows Codex home detection and explicit overrides;
+    - WSL hook command generation;
+    - desktop session rollout bridge setup/status/list/remove;
+    - safety checks that prevent sharing the whole Codex home or SQLite state.
+17. Add comprehensive unit and integration tests.
+18. Add the disposable end-to-end acceptance test, including the `codex-desktop-wsl` fixture path.
+19. Write the full README and troubleshooting documentation.
+20. Run formatting, linting, type checking, unit tests, integration tests, and package build validation.
+21. Verify installation and command discovery inside WSL.
+22. Verify the Codex Desktop bridge on the user's workstation, including hook trust in Codex Desktop and `codex exec resume <desktop-session-id>` from WSL.
 
 ## Validation Commands
 
@@ -1488,6 +1631,8 @@ Also validate:
 ai_dev_loop --help
 ai_dev_loop doctor
 ai_dev_loop integrations status
+ai_dev_loop integrations status --target codex-desktop-wsl
+ai_dev_loop integrations sessions status
 ai_dev_loop config validate --repo <fixture-repo>
 ```
 
@@ -1497,9 +1642,14 @@ ai_dev_loop config validate --repo <fixture-repo>
 - `prepare` accepts the prompt through stdin.
 - `prepare` persists plan, prompt, configuration, hashes, repository metadata, and exact Codex session ID.
 - `prepare` returns a start command and does not start the loop.
-- The global Codex skill is installed in `$HOME/.agents/skills`.
+- The global Codex skill is installed in the selected Codex host target's `$HOME/.agents/skills`.
 - The SessionStart hook exposes the exact session ID to Codex context.
 - Hook installation preserves existing hooks and supports safe uninstall.
+- `wsl-cli` and `codex-desktop-wsl` integration targets are supported and documented.
+- Codex Desktop hooks and skills are installed into the Windows Codex-visible home when `codex-desktop-wsl` is selected.
+- The `codex-desktop-wsl` hook command invokes WSL explicitly and writes session metadata under WSL XDG state.
+- The desktop session bridge lets WSL `codex exec resume <desktop-session-id>` find desktop rollout files by exact ID.
+- The implementation never shares, symlinks, copies, or migrates Codex SQLite state databases across Windows and WSL.
 - Run state is stored under XDG state outside target repositories.
 - Cursor is run in local headless mode.
 - One Cursor chat is created and reused.
@@ -1538,4 +1688,4 @@ ai_dev_loop config validate --repo <fixture-repo>
 
 ## OpenQuestions
 
-None. The implementation must verify exact local CLI flag behavior and valid model slugs against the installed Cursor and Codex versions rather than inventing unsupported values.
+None. The implementation must verify exact local CLI flag behavior, valid model slugs, Windows Codex home detection, WSL distribution detection, desktop hook command behavior, and desktop-session resume behavior against the installed Cursor and Codex versions rather than inventing unsupported values.
