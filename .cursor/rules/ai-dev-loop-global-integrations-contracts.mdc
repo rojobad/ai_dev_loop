@@ -1,0 +1,107 @@
+---
+description: "Global Codex integration contracts for ai_dev_loop skill installation, SessionStart hooks, hook JSON merge/uninstall, trust instructions, and integration diagnostics. Apply whenever editing integration assets, integrations commands, doctor checks, docs, or tests."
+globs:
+alwaysApply: true
+---
+
+# ai_dev_loop Global Integration Contracts
+
+These contracts protect the user-level Codex integration layer for `ai_dev_loop`. They apply in addition to `ai-dev-loop-governance.mdc`, `ai-dev-loop-orchestrator-contracts.mdc`, `ai-dev-loop-state-and-schema-contracts.mdc`, `ai-dev-loop-codex-review-contracts.mdc`, `ai-dev-loop-loop-and-resume-contracts.mdc`, and `ai-dev-loop-abort-contracts.mdc`.
+
+## Source Of Truth
+
+- `plan-2-build-ai-dev-loop-orchestrator.md` is the master architecture contract.
+- The active phase plan narrows implementation scope.
+- Global integration assets are user-level Codex assets, not target-repository run state.
+- If existing user files are invalid or ambiguous, fail safely and preserve diagnostics instead of overwriting them.
+
+## Installed Paths
+
+- Install the global handoff skill only at `$HOME/.agents/skills/ai-dev-loop-handoff/SKILL.md`.
+- Do not install skills under `~/.codex/skills` or any invented/deprecated skill path.
+- Install the SessionStart hook script only at `$HOME/.codex/hooks/ai_dev_loop_session_start.py`.
+- Register the hook only through `$HOME/.codex/hooks.json`.
+- Store hook session metadata under XDG-managed `ai_dev_loop` state outside target repositories.
+- Do not write `state.json`, hook session records, prompts, reviews, patches, logs, or agent output inside target repositories.
+
+## Skill Contract
+
+- The installed skill frontmatter name must be `ai-dev-loop-handoff`.
+- The skill must be generic and reusable across target repositories.
+- The skill must tell Codex to ensure the plan is final and the separate Cursor prompt file exists.
+- The skill must tell Codex to read the target repository's `ai_dev_loop.yaml`.
+- The skill must tell Codex to use the exact session ID supplied by SessionStart context.
+- The skill must tell Codex to run `ai_dev_loop prepare` and pass the exact Cursor prompt through stdin.
+- The skill must tell Codex to parse the prepare result and instruct the user to exit the active TUI before running the returned `ai_dev_loop start <run-id>` command.
+- The skill must not tell Codex to run `ai_dev_loop start` from the active TUI.
+- The skill must not hard-code project names, plan paths, prompt paths, model names, or review skill names.
+
+## SessionStart Hook Contract
+
+- The hook script must be standalone and standard-library-only after installation.
+- The hook must read one JSON object from stdin and return valid JSON on stdout.
+- Accept only SessionStart sources `startup`, `resume`, `clear`, and `compact`.
+- Extract only minimal metadata: session ID, model, cwd, transcript path string if supplied, source, and timestamp.
+- Never read, copy, parse, summarize, or persist transcript contents.
+- Never store authentication files, API keys, tokens, full process environments, full prompts, patches, reviews, or agent output.
+- If input is invalid or incomplete, exit safely with minimal valid JSON and no destructive side effects.
+- The additional context must clearly state the exact current Codex session ID and must warn not to infer another session or use `--last`.
+
+## Hook Registration Contract
+
+- Preserve unrelated top-level keys in `hooks.json`.
+- Preserve unrelated hook events and unrelated `SessionStart` entries.
+- Merge idempotently and avoid duplicate `ai_dev_loop` hook command entries.
+- Validate existing JSON before writing. If it is invalid, fail without overwriting it.
+- Back up an existing `hooks.json` before modifying it.
+- Write `hooks.json` atomically.
+- Use deterministic command identity so uninstall can remove only the `ai_dev_loop` hook entry.
+- Do not automatically trust hooks or edit Codex trust state.
+- Install output must tell the user to open `/hooks` in Codex and trust the `ai_dev_loop` hook.
+- Install output must state that the hook may be skipped until trusted.
+
+## Uninstall Contract
+
+- Remove only assets installed by `ai_dev_loop`.
+- Preserve unrelated skills and hook scripts.
+- Preserve unrelated hook registrations.
+- Preserve run history, prompts, reviews, staged patches, logs, XDG state, and XDG config by default.
+- Back up `hooks.json` before removing the `ai_dev_loop` hook registration.
+- If `hooks.json` is invalid, fail safely and do not rewrite it.
+- Do not implement destructive state cleanup unless an explicit later plan adds confirmation and tests.
+
+## Status And Doctor
+
+- `integrations status` must be read-only.
+- `doctor` must remain read-only.
+- Report exact installed paths, parse status, registration status, package-content match status, and duplicate registrations when detected.
+- Report hook trust as `unknown` when it cannot be safely detected.
+- Do not print full `hooks.json`, full session IDs, transcript contents, prompts, reviews, patches, raw JSONL, auth payloads, or secret-like values in default output.
+- JSON output should be stable and machine-readable.
+
+## Permissions And Packaging
+
+- Use package resources for installable assets, not working-tree-relative paths.
+- Ensure assets are included in wheel and sdist builds.
+- Apply user-only permissions where supported: directories `0700`; files containing session IDs, transcript paths, hook script content, skill instructions, or hook config `0600`.
+- Avoid rewriting installed files that already match the current package content.
+
+## Tests
+
+- Automated tests must use temporary `HOME` and XDG directories.
+- Do not touch the real user's `~/.agents`, `~/.codex`, or XDG state in tests.
+- Do not invoke real Cursor or Codex model activity in tests.
+- Test first-time install.
+- Test idempotent install.
+- Test install with existing unrelated hooks.
+- Test invalid `hooks.json` fail-safe behavior.
+- Test uninstall preserving unrelated hooks.
+- Test hook input/output and minimal session metadata persistence.
+- Test status JSON and doctor checks.
+- Test package build includes integration assets.
+
+## Real Install
+
+- Real installation into the user's HOME is allowed only after the active phase plan explicitly approves it and automated validation has passed.
+- If real installation encounters invalid or ambiguous user files, stop safely and report remediation.
+- Do not bypass `/hooks` trust during real install.
