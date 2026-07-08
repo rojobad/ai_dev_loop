@@ -6,20 +6,19 @@ alwaysApply: true
 
 # ai_dev_loop Governance
 
-This repository builds `ai_dev_loop`, a deterministic local orchestrator for Codex/Cursor development loops. The master contract is `plan-2-build-ai-dev-loop-orchestrator.md`; phase handoff files in `plans/` narrow scope but do not override the master contract unless explicitly stated by the user.
+This repository builds `ai_dev_loop`, a deterministic local orchestrator for Codex/Cursor development loops. The original implementation contract and phase handoffs are archived under `archive/implementation-history/`. They preserve historical context but should not be treated as active product documentation.
 
 ## Required Context
 
-Before implementing a phase, read:
+Before making architecture, workflow, integration, or safety-sensitive changes, read the current product documentation and, when historical context is needed, the archived implementation history:
 
-- `plan-2-build-ai-dev-loop-orchestrator.md`
-- `phase-0-findings.md`
-- `phase-1-findings.md` when present
-- the active phase plan under `plans/`
-- the active Cursor prompt under `plans/`
+- `docs/`
+- `archive/implementation-history/master-plan.md`
+- `archive/implementation-history/findings/`
+- `archive/implementation-history/plans/`
 - all applicable `.cursor/rules/*.mdc`
 
-If these files conflict, prefer the most specific active phase plan for scope and the master plan for architecture and safety. If a conflict would change safety behavior, stop and report it before making dependent changes.
+If archived files conflict with current code, tests, schemas, CLI help, or `/docs`, treat the current implementation as authoritative and use the archive only to understand intent. If a conflict would change safety behavior, stop and report it before making dependent changes.
 
 ## Scope Discipline
 
@@ -33,7 +32,7 @@ If these files conflict, prefer the most specific active phase plan for scope an
 ## Non-Negotiable Guardrails
 
 - Do not stage, commit, push, tag, reset, clean, stash, or otherwise rewrite Git state.
-- Do not remove unrelated user files or metadata artifacts, including `plan-2-build-ai-dev-loop-orchestrator.md:Zone.Identifier`.
+- Do not remove unrelated user files or metadata artifacts.
 - Do not modify, replace, or depend on system Python. Use a standard Python 3.11+ package and document `uv` as the preferred local workflow.
 - Do not use cloud workers or remote implementation agents.
 - Do not invoke real Cursor or Codex model activity in automated tests.

@@ -10,8 +10,8 @@ These contracts protect the complete stage-review-fix loop and explicit resume b
 
 ## Source Of Truth
 
-- `plan-2-build-ai-dev-loop-orchestrator.md` is the master architecture contract.
-- The active `plans/phase-*.md` file narrows the implementation scope for the current phase.
+- `archive/implementation-history/master-plan.md` is the archived master architecture contract.
+- Archived phase plans under `archive/implementation-history/plans/` provide historical scope context.
 - The structured Codex JSON result is the source of truth for loop decisions.
 - The orchestrator may validate, persist, and forward prompts and decisions. It must not invent architecture, reinterpret findings, scrape Markdown, or replace Codex/Cursor reasoning.
 

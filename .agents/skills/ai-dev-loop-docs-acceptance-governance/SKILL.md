@@ -11,9 +11,9 @@ Cursor implementation work is governed by `.cursor/rules/ai-dev-loop-docs-accept
 
 ## Source Of Truth
 
-- `plan-2-build-ai-dev-loop-orchestrator.md` is the master contract.
-- The active phase plan under `plans/` narrows scope.
-- Phase findings files are audit artifacts and handoff context.
+- `archive/implementation-history/master-plan.md` is the archived master contract.
+- Archived phase plans under `archive/implementation-history/plans/` preserve scope history.
+- Phase findings files under `archive/implementation-history/findings/` are audit artifacts and handoff context.
 - `.cursor/rules/*.mdc` are mandatory guardrails for Cursor-driven work.
 - Do not invent behavior in docs. Verify against code, schemas, CLI help, tests, plans, and findings.
 
@@ -57,7 +57,7 @@ Cursor implementation work is governed by `.cursor/rules/ai-dev-loop-docs-accept
 
 ## Findings Handoff
 
-Every final acceptance or documentation phase should create or update a findings file, for example `phase-8-findings.md` or `phase-8-5-findings.md`, with:
+Every future final acceptance or documentation phase should create or update an archived findings file, for example under `archive/implementation-history/findings/`, with:
 
 - commands run;
 - validation results;

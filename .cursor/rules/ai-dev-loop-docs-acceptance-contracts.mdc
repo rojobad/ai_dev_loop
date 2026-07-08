@@ -10,8 +10,8 @@ These contracts are the Cursor-side governance for Phase 8 and later acceptance/
 
 ## Source Of Truth
 
-- `plan-2-build-ai-dev-loop-orchestrator.md` is the master architecture contract.
-- The active phase plan under `plans/` narrows scope.
+- `archive/implementation-history/master-plan.md` is the archived master architecture contract.
+- Archived phase plans under `archive/implementation-history/plans/` provide historical scope context.
 - Phase findings files are durable audit and handoff artifacts.
 - Cursor must implement only the active phase and preserve all architecture guardrails from the master plan and relevant findings.
 
@@ -65,7 +65,7 @@ These contracts are the Cursor-side governance for Phase 8 and later acceptance/
 
 ## Findings Handoff
 
-Phase 8 must create `phase-8-findings.md` with:
+Final acceptance created `archive/implementation-history/findings/phase-8-findings.md` with:
 
 - commands run;
 - validation results;

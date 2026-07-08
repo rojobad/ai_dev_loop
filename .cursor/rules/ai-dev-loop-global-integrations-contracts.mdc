@@ -10,7 +10,7 @@ These contracts protect the user-level Codex integration layer for `ai_dev_loop`
 
 ## Source Of Truth
 
-- `plan-2-build-ai-dev-loop-orchestrator.md` is the master architecture contract.
+- `archive/implementation-history/master-plan.md` is the archived master architecture contract.
 - The active phase plan narrows implementation scope.
 - Global integration assets are user-level Codex assets, not target-repository run state.
 - If existing user files are invalid or ambiguous, fail safely and preserve diagnostics instead of overwriting them.

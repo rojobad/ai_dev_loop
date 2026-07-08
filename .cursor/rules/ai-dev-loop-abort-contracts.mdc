@@ -10,7 +10,7 @@ These contracts protect `ai_dev_loop abort <run-id>` and any code that observes 
 
 ## Source Of Truth
 
-- `plan-2-build-ai-dev-loop-orchestrator.md` is the master architecture contract.
+- `archive/implementation-history/master-plan.md` is the archived master architecture contract.
 - The active phase plan narrows implementation scope.
 - `abort` is a process-control and state-preservation command, not a cleanup or rollback command.
 - If process-control state is ambiguous, fail safely and preserve diagnostics.

@@ -129,10 +129,12 @@ Use Docker Compose for project commands.
 
 ## File Naming
 
-Follow repo conventions first. If no convention exists:
+Follow repo conventions first. For this repository, archived implementation plans
+belong under `archive/implementation-history/plans/`. If no other convention
+exists:
 
-- Plan: `plans/phase-N-short-slug.md`
-- Prompt: `plans/prompt_phase-N-short-slug.txt`
+- Plan: `archive/implementation-history/plans/phase-N-short-slug.md`
+- Prompt: `archive/implementation-history/plans/prompt_phase-N-short-slug.txt`
 
 Use lowercase slugs with hyphens for plan names and the same slug after `prompt_` for prompt names.
 

@@ -10,8 +10,8 @@ These contracts preserve the product's safety model across implementation phases
 
 ## Source Of Truth
 
-- `plan-2-build-ai-dev-loop-orchestrator.md` is the master architecture contract.
-- The active `plans/phase-*.md` file narrows scope for the current implementation phase.
+- `archive/implementation-history/master-plan.md` is the archived master architecture contract.
+- `archive/implementation-history/plans/` contains archived phase plans and prompts. These files are historical context, not active user-facing documentation.
 - `.cursor/rules/ai-dev-loop-state-and-schema-contracts.mdc` is the detailed contract for persisted state, schemas, manifests, checkpoints, and recovery compatibility.
 - `state.json`, `manifest.json`, snapshots, logs, and per-iteration artifacts are the durable local audit trail.
 - The orchestrator transports exact prompts and validated decisions. It must not invent architecture, reinterpret findings, or replace Codex or Cursor reasoning.
