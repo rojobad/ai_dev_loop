@@ -1,0 +1,115 @@
+# Trazabilidad de fases
+
+La documentacion final esta organizada por uso, no por fase. Esta pagina resume que aporto cada fase y donde se reflejan esos requisitos.
+
+## Fase 0
+
+Hallazgos principales:
+
+- WSL2, `git`, `agent` y `codex` disponibles.
+- `uv` es la ruta recomendada para Python 3.11+ sin tocar Python del sistema.
+- Cursor acepta prompt como argumento posicional en modo `agent -p`.
+- `agent create-chat`, `agent models` y `agent status --format json` existen.
+- Codex requiere `--cd` y `--sandbox` antes de `resume`.
+
+Documentado en:
+
+- [Instalacion](../guia/instalacion.md)
+- [Referencia CLI](cli.md)
+- [Configuracion](configuracion.md)
+
+## Fase 1
+
+Implemento paquete Python, CLI base, XDG paths, config, state, Git safety y `prepare`.
+
+Documentado en:
+
+- [Configuracion del repositorio](../guia/configuracion-repositorio.md)
+- [Flujo de handoff](../guia/flujo-handoff.md)
+- [Estado y artefactos](../operacion/estado-artefactos.md)
+
+## Fase 2
+
+Implemento preflight de `start`, locks, probes, creacion/reuso de Cursor chat y primer turno Cursor.
+
+Documentado en:
+
+- [Ejecutar runs](../operacion/prepare-start-resume-abort.md)
+- [Seguridad y privacidad](../operacion/seguridad-privacidad.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+
+## Fase 3
+
+Implemento staging controlado con `git add -A`, artefactos de diff staged y metadata de iteracion.
+
+Documentado en:
+
+- [Estado y artefactos](../operacion/estado-artefactos.md)
+- [Seguridad y privacidad](../operacion/seguridad-privacidad.md)
+
+## Fase 4
+
+Implemento review Codex reanudando la sesion exacta, schema JSON, event log estructurado, reportes y fix prompt persistido.
+
+Documentado en:
+
+- [Ejecutar runs](../operacion/prepare-start-resume-abort.md)
+- [Estado, logs e inspeccion](../operacion/observabilidad.md)
+- [Seguridad y privacidad](../operacion/seguridad-privacidad.md)
+
+## Fase 5
+
+Implemento el loop completo bounded review/fix y `resume` real.
+
+Documentado en:
+
+- [Ejecutar runs](../operacion/prepare-start-resume-abort.md)
+- [Estado y artefactos](../operacion/estado-artefactos.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+
+## Fase 6
+
+Implemento `abort`, metadata de proceso activo, abort request y preservacion de repo/artefactos.
+
+Documentado en:
+
+- [Ejecutar runs](../operacion/prepare-start-resume-abort.md)
+- [Estado y artefactos](../operacion/estado-artefactos.md)
+- [Desinstalacion y limpieza](../operacion/desinstalacion-limpieza.md)
+
+## Fase 7
+
+Implemento integracion global WSL: skill, hook `SessionStart`, merge seguro de `hooks.json`, status, uninstall y doctor.
+
+Documentado en:
+
+- [Elegir target](../integraciones/seleccion-target.md)
+- [WSL CLI](../integraciones/wsl-cli.md)
+- [Confianza de hooks](../integraciones/confianza-hooks.md)
+
+## Fase 7.5
+
+Implemento `codex-desktop-wsl`, deteccion de home Windows, comando hook via `wsl.exe`, puente `sessions/from-desktop` y comandos `integrations sessions`.
+
+Documentado en:
+
+- [Codex Desktop + WSL](../integraciones/codex-desktop-wsl.md)
+- [Puente de sesiones](../integraciones/puente-sesiones.md)
+- [Sesiones Codex Desktop y WSL](codex-desktop-wsl-sessions.md)
+
+## Fase 8
+
+Implemento scaffold MkDocs, E2E fake acceptance, validacion de package install, smoke real acotado y fixes de probes Cursor.
+
+Documentado en:
+
+- Esta documentacion MkDocs.
+- [Instalacion](../guia/instalacion.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+
+## Riesgos residuales documentados
+
+- Hook trust sigue siendo `unknown` desde CLI.
+- `o4-mini` puede no estar disponible para todas las cuentas; elegir modelo soportado.
+- Temporales DrvFS pueden romper pytest capture.
+- No hay comando destructivo de cleanup; limpieza es manual.

@@ -1,14 +1,36 @@
 site_name: ai_dev_loop
-site_description: Deterministic local orchestrator for Codex/Cursor development loops
+site_description: Orquestador local determinista para loops de desarrollo Codex/Cursor
 
 docs_dir: docs
 
 theme:
   name: material
+  language: es
 
 nav:
-  - Home: index.md
-  - Reference:
-      - Codex Desktop WSL Sessions (placeholder): reference/codex-desktop-wsl-sessions.md
+  - Inicio: index.md
+  - Guía:
+      - Guía rápida: guia/guia-rapida.md
+      - Instalación: guia/instalacion.md
+      - Configuración del repositorio: guia/configuracion-repositorio.md
+      - Flujo de handoff: guia/flujo-handoff.md
+  - Integraciones:
+      - Elegir target: integraciones/seleccion-target.md
+      - WSL CLI: integraciones/wsl-cli.md
+      - Codex Desktop + WSL: integraciones/codex-desktop-wsl.md
+      - Puente de sesiones: integraciones/puente-sesiones.md
+      - Confianza de hooks: integraciones/confianza-hooks.md
+  - Operación:
+      - Ejecutar runs: operacion/prepare-start-resume-abort.md
+      - Estado, logs e inspección: operacion/observabilidad.md
+      - Estado y artefactos: operacion/estado-artefactos.md
+      - Seguridad y privacidad: operacion/seguridad-privacidad.md
+      - Troubleshooting: operacion/troubleshooting.md
+      - Desinstalación y limpieza: operacion/desinstalacion-limpieza.md
+  - Referencia:
+      - CLI: referencia/cli.md
+      - Configuración: referencia/configuracion.md
+      - Codex Desktop WSL Sessions: referencia/codex-desktop-wsl-sessions.md
+      - Trazabilidad de fases: referencia/trazabilidad-fases.md
 
 strict: true
