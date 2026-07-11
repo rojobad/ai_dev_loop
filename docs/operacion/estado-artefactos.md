@@ -43,6 +43,7 @@ $XDG_STATE_HOME/ai_dev_loop/runs/<project>/<run-id>/
 │   ├── chat.json
 │   └── iterations/
 ├── codex/
+│   ├── session-runtime.json
 │   ├── events/
 │   └── reviews/
 ├── git/
@@ -59,6 +60,21 @@ $XDG_STATE_HOME/ai_dev_loop/runs/<project>/<run-id>/
 ```
 
 No todos los archivos existen en todos los estados. Por ejemplo, `prompts/fixes/NN.txt` existe solo si Codex reporto findings en review `NN`.
+
+`codex/session-runtime.json` registra la captura segura de Fase 10: prefijo del session ID, modelo/reasoning de sesion, origen y tipo de evento permitido. No contiene transcript ni la ruta absoluta del rollout.
+
+En `state.json`, `codex` incluye:
+
+```text
+session_model
+session_reasoning_effort
+review_model
+review_reasoning_effort
+review_model_source       # session | explicit
+review_reasoning_source   # session | explicit
+```
+
+En runs nuevos, los valores efectivos de review y sus fuentes quedan congelados en `prepare`. Runs historicos de Fase 9 con valores nulos y sin procedencia siguen siendo legibles por el camino legacy, pero no se reinterpretan como session-derived.
 
 ## Iteraciones
 

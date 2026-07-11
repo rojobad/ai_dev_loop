@@ -16,7 +16,9 @@ PROJECT_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 CURSOR_OUTPUT_FORMATS = frozenset({"stream-json", "json", "text"})
 CURSOR_SANDBOX_VALUES = frozenset({"enabled", "disabled"})
 CODEX_SANDBOX_VALUES = frozenset({"read-only", "workspace-write", "danger-full-access"})
-CODEX_REVIEW_REASONING_EFFORTS = frozenset({"minimal", "low", "medium", "high", "xhigh"})
+CODEX_REVIEW_REASONING_EFFORTS = frozenset(
+    {"minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+)
 STAGE_MODES = frozenset({"all"})
 INHERITED_FROM_SESSION = "inherited from session"
 

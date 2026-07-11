@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import stat
@@ -198,12 +199,139 @@ def _write_executable(path: Path, content: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
+DEFAULT_FIXTURE_SESSION_ID = "019abc00-0000-0000-0000-000000000000"
+SENSITIVE_SENTINEL = "SENSITIVE_SENTINEL_TRANSCRIPT_CONTENT_NEVER_PERSIST"
+
+
+def write_session_rollout(
+    sessions_dir: Path,
+    *,
+    session_id: str = DEFAULT_FIXTURE_SESSION_ID,
+    model: str = "gpt-5.6-sol",
+    reasoning_effort: str = "high",
+    timestamp: str = "2026-07-10T12-00-00",
+    include_transcript_sentinel: bool = True,
+    extra_lines: list[str] | None = None,
+    desktop_production_shape: bool = False,
+) -> Path:
+    """Write a sanitized Codex rollout JSONL for tests.
+
+    When ``desktop_production_shape`` is True, emit the allowlisted Desktop fields
+    observed in real rollouts: top-level ``turn_context.effort`` and
+    ``thread_settings_applied.thread_settings.reasoning_effort``.
+    """
+
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    path = sessions_dir / f"rollout-{timestamp}-{session_id}.jsonl"
+    if desktop_production_shape:
+        lines = [
+            json.dumps(
+                {
+                    "timestamp": "2026-07-10T12:00:00.000Z",
+                    "type": "session_meta",
+                    "payload": {"id": session_id, "cwd": "/tmp/fixture-repo"},
+                }
+            ),
+            json.dumps(
+                {
+                    "timestamp": "2026-07-10T12:00:01.000Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "thread_settings_applied",
+                        "thread_settings": {
+                            "model": model,
+                            "reasoning_effort": reasoning_effort,
+                        },
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "timestamp": "2026-07-10T12:00:02.000Z",
+                    "type": "turn_context",
+                    "payload": {
+                        "model": model,
+                        "effort": reasoning_effort,
+                    },
+                }
+            ),
+        ]
+    else:
+        lines = [
+            json.dumps(
+                {
+                    "timestamp": "2026-07-10T12:00:00.000Z",
+                    "type": "session_meta",
+                    "payload": {"id": session_id, "cwd": "/tmp/fixture-repo"},
+                }
+            ),
+            json.dumps(
+                {
+                    "timestamp": "2026-07-10T12:00:01.000Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "thread_settings_applied",
+                        "model": model,
+                        "reasoning_effort": reasoning_effort,
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "timestamp": "2026-07-10T12:00:02.000Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "turn_context",
+                        "model": model,
+                        "reasoning_effort": reasoning_effort,
+                    },
+                }
+            ),
+        ]
+    if include_transcript_sentinel:
+        lines.append(
+            json.dumps(
+                {
+                    "timestamp": "2026-07-10T12:00:03.000Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": SENSITIVE_SENTINEL}],
+                    },
+                }
+            )
+        )
+    if extra_lines:
+        lines.extend(extra_lines)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
 @pytest.fixture
 def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     agent_log = tmp_path / "agent.log"
     codex_log = tmp_path / "codex.log"
+    agent_version_file = tmp_path / "agent_version.txt"
+    codex_version_file = tmp_path / "codex_version.txt"
+    agent_models_file = tmp_path / "agent_models.txt"
+    codex_models_file = tmp_path / "codex_models.json"
+    agent_models_file.write_text("composer-2.5-fast\n", encoding="utf-8")
+    codex_models_file.write_text(
+        json.dumps(
+            {
+                "models": [
+                    {"id": "gpt-5.6-sol"},
+                    {"id": "gpt-5.5"},
+                    {"id": "o4-mini"},
+                    {"id": "prepared-model"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
 
     agent_script = textwrap.dedent(
         f"""\
@@ -222,6 +350,33 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
 
         if not args:
             sys.exit(1)
+        if args[0] == "--version":
+            version_file = os.environ.get("FAKE_AGENT_VERSION_FILE")
+            if version_file and os.path.isfile(version_file):
+                with open(version_file, encoding="utf-8") as handle:
+                    print(handle.read().strip())
+            else:
+                print(os.environ.get("FAKE_AGENT_VERSION", "agent 1.0.0"))
+            sys.exit(0)
+        if args[0] == "update":
+            log("UPDATE")
+            if os.environ.get("FAKE_AGENT_UPDATE_FAIL") == "1":
+                print("agent update failed", file=sys.stderr)
+                sys.exit(2)
+            if os.environ.get("FAKE_AGENT_UPDATE_SLEEP"):
+                time.sleep(float(os.environ["FAKE_AGENT_UPDATE_SLEEP"]))
+            models_after = os.environ.get("FAKE_AGENT_UPDATE_MODELS")
+            models_file = os.environ.get("FAKE_AGENT_MODELS_FILE")
+            if models_after and models_file:
+                with open(models_file, "w", encoding="utf-8") as handle:
+                    handle.write(models_after)
+            version_after = os.environ.get("FAKE_AGENT_VERSION_AFTER")
+            version_file = os.environ.get("FAKE_AGENT_VERSION_FILE")
+            if version_after and version_file:
+                with open(version_file, "w", encoding="utf-8") as handle:
+                    handle.write(version_after)
+            print("agent updated")
+            sys.exit(0)
         if args[0] == "create-chat":
             chat_id = os.environ.get("FAKE_AGENT_CHAT_ID", "019abc00-1111-2222-3333-444444444444")
             log("ARGS:" + repr(args))
@@ -233,7 +388,15 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
             print(json.dumps({{"authenticated": auth == "true"}}))
             sys.exit(0 if auth == "true" else 1)
         if args[0] == "models":
-            model = os.environ.get("FAKE_AGENT_MODELS", "composer-2.5-fast")
+            if "FAKE_AGENT_MODELS" in os.environ:
+                model = os.environ.get("FAKE_AGENT_MODELS", "composer-2.5-fast")
+            else:
+                models_file = os.environ.get("FAKE_AGENT_MODELS_FILE")
+                if models_file and os.path.isfile(models_file):
+                    with open(models_file, encoding="utf-8") as handle:
+                        model = handle.read().strip() or "composer-2.5-fast"
+                else:
+                    model = "composer-2.5-fast"
             print(model)
             sys.exit(0)
         if "-p" in args:
@@ -298,6 +461,56 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
         def log(message):
             with open(log_path, "a", encoding="utf-8") as handle:
                 handle.write(message + "\\n")
+
+        if args and args[0] == "--version":
+            version_file = os.environ.get("FAKE_CODEX_VERSION_FILE")
+            if version_file and os.path.isfile(version_file):
+                with open(version_file, encoding="utf-8") as handle:
+                    print(handle.read().strip())
+            else:
+                print(os.environ.get("FAKE_CODEX_VERSION", "codex-cli 0.142.5"))
+            sys.exit(0)
+
+        if args and args[0] == "update":
+            log("UPDATE")
+            if os.environ.get("FAKE_CODEX_UPDATE_FAIL") == "1":
+                print("codex update failed", file=sys.stderr)
+                sys.exit(2)
+            if os.environ.get("FAKE_CODEX_UPDATE_SLEEP"):
+                time.sleep(float(os.environ["FAKE_CODEX_UPDATE_SLEEP"]))
+            models_after = os.environ.get("FAKE_CODEX_UPDATE_MODELS")
+            models_file = os.environ.get("FAKE_CODEX_MODELS_FILE")
+            if models_after and models_file:
+                with open(models_file, "w", encoding="utf-8") as handle:
+                    handle.write(models_after)
+            version_after = os.environ.get("FAKE_CODEX_VERSION_AFTER")
+            version_file = os.environ.get("FAKE_CODEX_VERSION_FILE")
+            if version_after and version_file:
+                with open(version_file, "w", encoding="utf-8") as handle:
+                    handle.write(version_after)
+            print("codex updated")
+            sys.exit(0)
+
+        if len(args) >= 2 and args[0] == "debug" and args[1] == "models":
+            models_file = os.environ.get("FAKE_CODEX_MODELS_FILE")
+            if models_file and os.path.isfile(models_file):
+                with open(models_file, encoding="utf-8") as handle:
+                    raw = handle.read().strip()
+            else:
+                raw = os.environ.get(
+                    "FAKE_CODEX_MODELS",
+                    json.dumps({{"models": [{{"id": "gpt-5.6-sol"}}, {{"id": "gpt-5.5"}}]}}),
+                )
+            if os.environ.get("FAKE_CODEX_MODELS_FAIL") == "1":
+                print("model catalog unavailable", file=sys.stderr)
+                sys.exit(2)
+            try:
+                json.loads(raw)
+                print(raw)
+            except json.JSONDecodeError:
+                models = [item.strip() for item in raw.split(",") if item.strip()]
+                print(json.dumps({{"models": [{{"id": item}} for item in models]}}))
+            sys.exit(0)
 
         if len(args) >= 2 and args[0] == "login" and args[1] == "status":
             auth = os.environ.get("FAKE_CODEX_AUTH", "true")
@@ -386,16 +599,42 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
     _write_executable(bin_dir / "codex", codex_script)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("FAKE_CODEX_REVIEW_COUNTER", str(tmp_path / "codex_review_counter.txt"))
+    monkeypatch.setenv("FAKE_AGENT_VERSION_FILE", str(agent_version_file))
+    monkeypatch.setenv("FAKE_CODEX_VERSION_FILE", str(codex_version_file))
+    monkeypatch.setenv("FAKE_AGENT_MODELS_FILE", str(agent_models_file))
+    monkeypatch.setenv("FAKE_CODEX_MODELS_FILE", str(codex_models_file))
     return {
         "bin_dir": bin_dir,
         "agent_log": agent_log,
         "codex_log": codex_log,
         "codex_review_counter": tmp_path / "codex_review_counter.txt",
+        "agent_models_file": agent_models_file,
+        "codex_models_file": codex_models_file,
     }
 
 
 @pytest.fixture
-def prepared_run(git_repo: Path, isolated_xdg, fake_clis) -> dict[str, object]:
+def fixture_codex_session(isolated_home: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Hermetic native Codex home with a sanitized default session rollout."""
+
+    codex_home = isolated_home / ".codex"
+    write_session_rollout(codex_home / "sessions")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    return codex_home
+
+
+@pytest.fixture
+def prepared_run(
+    git_repo: Path,
+    isolated_xdg,
+    isolated_home,
+    fake_clis,
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, object]:
+    codex_home = isolated_home / ".codex"
+    sessions = codex_home / "sessions"
+    write_session_rollout(sessions)
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
     prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
     with patch("sys.stdin", StringIO(prompt)):
         result = prepare_run(
@@ -403,7 +642,7 @@ def prepared_run(git_repo: Path, isolated_xdg, fake_clis) -> dict[str, object]:
                 repo_path=git_repo,
                 plan_path=Path("docs/plans/sample-plan.md"),
                 prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
-                codex_session_id="019abc00-0000-0000-0000-000000000000",
+                codex_session_id=DEFAULT_FIXTURE_SESSION_ID,
             )
         )
     from ai_dev_loop.paths import run_dir

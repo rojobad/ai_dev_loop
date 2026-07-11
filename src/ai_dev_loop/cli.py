@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
@@ -217,12 +218,61 @@ def prepare_command(
 @app.command("start")
 def start_command(
     run_id: Annotated[str, typer.Argument(help="Prepared run identifier.")],
+    update_tools: Annotated[
+        bool,
+        typer.Option(
+            "--update-tools",
+            help="Run official Cursor/Codex self-updaters for incompatible tools without prompting.",
+        ),
+    ] = False,
+    skip_tool_update: Annotated[
+        bool,
+        typer.Option(
+            "--skip-tool-update",
+            help="Never run CLI self-updaters; fail on incompatible tools unless allowed.",
+        ),
+    ] = False,
+    allow_incompatible_tools: Annotated[
+        bool,
+        typer.Option(
+            "--allow-incompatible-tools",
+            help="Continue even when required models are not listed by the installed CLIs.",
+        ),
+    ] = False,
 ) -> None:
     """Start the automated Cursor/Codex loop for a prepared run."""
 
     def run() -> None:
+        from ai_dev_loop.runners.tool_updates import (
+            ToolUpdateFlags,
+            ToolUpdatePrompt,
+            policy_from_flags,
+        )
+
+        def ask_callback(prompt: ToolUpdatePrompt) -> bool:
+            typer.echo(
+                f"{prompt.tool} CLI may be incompatible with required model "
+                f"{prompt.required_model or '(unknown)'} "
+                f"(version={prompt.installed_version or 'unknown'}). "
+                f"{prompt.detail}"
+            )
+            return typer.confirm(
+                f"Run `{prompt.command} update` now?",
+                default=False,
+            )
+
+        flags = ToolUpdateFlags(
+            update_tools=update_tools,
+            skip_tool_update=skip_tool_update,
+            allow_incompatible_tools=allow_incompatible_tools,
+        )
+        policy = policy_from_flags(
+            flags,
+            stdin_is_tty=sys.stdin.isatty(),
+            ask_callback=ask_callback,
+        )
         typer.echo(CODEX_TUI_WARNING)
-        result = start_run(run_id)
+        result = start_run(run_id, tool_policy=policy)
         typer.echo(render_start_output(result), nl=False)
 
     _handle(run)
@@ -231,12 +281,61 @@ def start_command(
 @app.command("resume")
 def resume_command(
     run_id: Annotated[str, typer.Argument(help="Run identifier to resume.")],
+    update_tools: Annotated[
+        bool,
+        typer.Option(
+            "--update-tools",
+            help="Run official Cursor/Codex self-updaters for incompatible tools without prompting.",
+        ),
+    ] = False,
+    skip_tool_update: Annotated[
+        bool,
+        typer.Option(
+            "--skip-tool-update",
+            help="Never run CLI self-updaters; fail on incompatible tools unless allowed.",
+        ),
+    ] = False,
+    allow_incompatible_tools: Annotated[
+        bool,
+        typer.Option(
+            "--allow-incompatible-tools",
+            help="Continue even when required models are not listed by the installed CLIs.",
+        ),
+    ] = False,
 ) -> None:
     """Resume an interrupted or checkpointed run."""
 
     def run() -> None:
+        from ai_dev_loop.runners.tool_updates import (
+            ToolUpdateFlags,
+            ToolUpdatePrompt,
+            policy_from_flags,
+        )
+
+        def ask_callback(prompt: ToolUpdatePrompt) -> bool:
+            typer.echo(
+                f"{prompt.tool} CLI may be incompatible with required model "
+                f"{prompt.required_model or '(unknown)'} "
+                f"(version={prompt.installed_version or 'unknown'}). "
+                f"{prompt.detail}"
+            )
+            return typer.confirm(
+                f"Run `{prompt.command} update` now?",
+                default=False,
+            )
+
+        flags = ToolUpdateFlags(
+            update_tools=update_tools,
+            skip_tool_update=skip_tool_update,
+            allow_incompatible_tools=allow_incompatible_tools,
+        )
+        policy = policy_from_flags(
+            flags,
+            stdin_is_tty=sys.stdin.isatty(),
+            ask_callback=ask_callback,
+        )
         typer.echo(CODEX_TUI_WARNING)
-        result = resume_run(run_id)
+        result = resume_run(run_id, tool_policy=policy)
         typer.echo(render_resume_output(result), nl=False)
 
     _handle(run)

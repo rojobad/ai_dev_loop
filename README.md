@@ -49,11 +49,13 @@ ai_dev_loop --version
 1. Install the matching Codex integration:
    - `wsl-cli` when Codex runs inside WSL.
    - `codex-desktop-wsl` when Codex Desktop runs on Windows and agents run in WSL.
-2. Configure `ai_dev_loop.yaml` in the target repository. Omit `codex.review_model` and `codex.review_reasoning_effort` to inherit both from the exact resumed Codex session, or set either override independently.
-3. From the original Codex session, run `ai_dev_loop prepare` with the exact Cursor prompt on stdin.
+2. Configure `ai_dev_loop.yaml` in the target repository. Omit `codex.review_model` and `codex.review_reasoning_effort` to capture both from the exact Codex session during `prepare`, or set either override independently.
+3. From the original Codex session, run `ai_dev_loop prepare` with the exact Cursor prompt on stdin. New runs freeze the captured/effective review runtime and pass it explicitly on every resume.
 4. Exit or stop using the active Codex UI for that session.
 5. Run `ai_dev_loop start <run-id>` from WSL.
 6. Inspect the staged changes and review artifacts.
+
+`start` and `resume` probe WSL Cursor/Codex CLI model compatibility. In a TTY they may offer each incompatible tool's official updater; non-interactive runs require explicit `--update-tools` or `--allow-incompatible-tools`. These updates do not update Windows desktop applications.
 
 ## Validation Commands
 

@@ -4,7 +4,7 @@ Cada repositorio que sera controlado por `ai_dev_loop` debe tener un archivo `ai
 
 ## Ejemplo recomendado (herencia de sesion)
 
-Por defecto, omite `review_model` y `review_reasoning_effort` para que el review reanudado use el modelo y reasoning de la sesion Codex exacta:
+Por defecto, omite `review_model` y `review_reasoning_effort` para que `prepare` capture el modelo y reasoning de la sesion Codex exacta:
 
 ```yaml
 version: 1
@@ -50,7 +50,7 @@ codex:
   sandbox: workspace-write
 ```
 
-Tambien puedes fijar solo uno de los dos campos. `null` o omitir el campo significa herencia. No uses una cadena magica como `inherit`.
+Tambien puedes fijar solo uno de los dos campos. Para runs nuevos, `null` u omitir cada campo significa usar el valor correspondiente capturado de la sesion durante `prepare`. No significa usar `config.toml` ni el default de Codex CLI. No uses una cadena magica como `inherit`.
 
 ## Reglas de validacion
 
@@ -60,7 +60,7 @@ Tambien puedes fijar solo uno de los dos campos. `null` o omitir el campo signif
 - `cursor.sandbox` soporta `enabled` o `disabled`.
 - `codex.sandbox` soporta `read-only`, `workspace-write` o `danger-full-access`.
 - `codex.review_model` es opcional; si esta presente, no puede ser vacio.
-- `codex.review_reasoning_effort` es opcional; valores validos: `minimal`, `low`, `medium`, `high`, `xhigh`.
+- `codex.review_reasoning_effort` es opcional; valores validos: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`.
 - `workflow.stage_mode` soporta actualmente `all`.
 - Timeouts y `max_review_iterations` deben ser positivos.
 - `prompt.filename_template` debe incluir `{plan_stem}`.
@@ -76,11 +76,11 @@ La configuracion efectiva se resuelve en este orden:
 3. Configuracion global opcional bajo XDG config.
 4. Defaults seguros del paquete (herencia para modelo/reasoning de Codex).
 
-Durante `prepare`, `ai_dev_loop` persiste tanto la configuracion fuente como la configuracion efectiva. Esos valores quedan congelados para el run.
+Durante `prepare`, `ai_dev_loop` persiste tanto la configuracion fuente como la configuracion efectiva. Tambien registra `session_model`, `session_reasoning_effort` y la procedencia `session` o `explicit` de cada valor efectivo. Todo queda congelado para el run.
 
 ## Modelo y reasoning de review
 
-El default recomendado es heredar ambos valores de la sesion Codex reanudada. Eso evita forzar un modelo como el antiguo default `o4-mini`, que puede no estar disponible para todas las cuentas.
+El default recomendado es capturar ambos valores de la sesion Codex exacta. Cada review nuevo pasa explicitamente `--model` y `model_reasoning_effort`, para no depender del default WSL.
 
 Si necesitas un override:
 
@@ -96,6 +96,8 @@ codex debug models
 Ese comando puede emitir mucha informacion; no la pegues completa en issues o logs.
 
 No mezcles IDs de Cursor Agent con IDs de Codex. En Codex, el modelo y el reasoning effort son campos distintos.
+
+Un override que cruce entre las familias GPT-5.5 y GPT-5.6 genera una advertencia operativa, no un bloqueo: en versiones validadas se observo que puede intentar `pre-sampling compact`. Evita cambiar de familia dentro del mismo run.
 
 ## Validar configuracion
 

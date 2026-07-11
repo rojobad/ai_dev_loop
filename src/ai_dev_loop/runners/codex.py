@@ -87,6 +87,8 @@ def build_codex_review_args(
     schema_file: Path,
     result_file: Path,
 ) -> list[str]:
+    from ai_dev_loop.review_runtime import is_legacy_phase9_codex_state
+
     args = [
         codex.command,
         "exec",
@@ -96,11 +98,22 @@ def build_codex_review_args(
         codex.sandbox,
         "resume",
     ]
-    if codex.review_model is not None:
-        args.extend(["--model", codex.review_model])
-    if codex.review_reasoning_effort is not None:
-        # Pass as one argv entry; Codex parses the value as TOML.
-        args.extend(["-c", f'model_reasoning_effort="{codex.review_reasoning_effort}"'])
+    legacy = is_legacy_phase9_codex_state(
+        review_model=codex.review_model,
+        review_reasoning_effort=codex.review_reasoning_effort,
+        review_model_source=codex.review_model_source,
+        review_reasoning_source=codex.review_reasoning_source,
+    )
+    if legacy:
+        # Phase 9 compatibility: omit overrides and let the CLI inherit. Callers should
+        # surface a legacy warning; do not invent session-derived values.
+        pass
+    else:
+        if codex.review_model is not None:
+            args.extend(["--model", codex.review_model])
+        if codex.review_reasoning_effort is not None:
+            # Pass as one argv entry; Codex parses the value as TOML.
+            args.extend(["-c", f'model_reasoning_effort="{codex.review_reasoning_effort}"'])
     args.extend(
         [
             "--json",
@@ -309,8 +322,12 @@ def run_codex_review(
         "timed_out": process.timed_out,
         "session_id": state.codex.session_id,
         "review_skill": state.codex.review_skill,
+        "session_model": state.codex.session_model,
+        "session_reasoning_effort": state.codex.session_reasoning_effort,
         "review_model": state.codex.review_model,
         "review_reasoning_effort": state.codex.review_reasoning_effort,
+        "review_model_source": state.codex.review_model_source,
+        "review_reasoning_source": state.codex.review_reasoning_source,
     }
     atomic_write_json(metadata_path, metadata_payload, sensitive=True)
     set_sensitive_file_mode(metadata_path)

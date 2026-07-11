@@ -139,7 +139,18 @@ def test_rejects_invalid_reasoning_effort(tmp_path: Path) -> None:
     )
     with pytest.raises(ValidationError, match="review_reasoning_effort"):
         load_project_config(path)
-    assert "high" in CODEX_REVIEW_REASONING_EFFORTS
+    assert {"max", "ultra", "xhigh"}.issubset(CODEX_REVIEW_REASONING_EFFORTS)
+
+
+@pytest.mark.parametrize("effort", ["max", "ultra"])
+def test_accepts_gpt56_max_and_ultra_reasoning_efforts(tmp_path: Path, effort: str) -> None:
+    path = _write_config(
+        tmp_path / "ai_dev_loop.yaml",
+        f"codex:\n  command: codex\n  review_reasoning_effort: {effort}\n"
+        "  review_skill: review-staged-cursor-execution\n  sandbox: workspace-write\n",
+    )
+    config = load_project_config(path)
+    assert config.codex.review_reasoning_effort == effort
 
 
 def test_cli_override_precedence_for_codex_fields(git_repo: Path) -> None:

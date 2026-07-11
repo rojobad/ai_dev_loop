@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from tests.conftest import write_session_rollout
 from typer.testing import CliRunner
 
 from ai_dev_loop.cli import app
@@ -125,6 +126,7 @@ def test_e2e_acceptance_with_fake_clis_and_disposable_fixtures(
     assert json.loads(sessions_status.stdout)["bridge_present"] is True
 
     # --- prepare with prompt on stdin ---
+    write_session_rollout(hermetic_codex_env / "sessions", session_id=CODEX_SESSION_ID)
     prompt_text = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
     monkeypatch.setenv("FAKE_AGENT_CHAT_ID", CURSOR_CHAT_ID)
     monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")

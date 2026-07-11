@@ -104,8 +104,8 @@ No uses IDs de modelo de Cursor Agent (por ejemplo `gpt-5.6-terra-high`) como `c
 | Campo | Default | Descripcion |
 | --- | --- | --- |
 | `command` | `codex` | Ejecutable Codex CLI en WSL. |
-| `review_model` | `null` (hereda) | Override opcional del modelo de review. Omitido o `null` usa el modelo de la sesion reanudada. |
-| `review_reasoning_effort` | `null` (hereda) | Override opcional de reasoning. Omitido o `null` usa la configuracion de reasoning de la sesion. |
+| `review_model` | `null` (captura) | Override opcional. En un run nuevo, omitido o `null` usa el modelo capturado de la sesion durante `prepare`. |
+| `review_reasoning_effort` | `null` (captura) | Override opcional. En un run nuevo, omitido o `null` usa el reasoning capturado de la sesion durante `prepare`. |
 | `review_skill` | `review-staged-cursor-execution` | Skill que Codex debe invocar para revisar staged changes. |
 | `sandbox` | `workspace-write` | Sandbox para `codex exec`. |
 
@@ -125,31 +125,21 @@ low
 medium
 high
 xhigh
+max
+ultra
 ```
 
-Los overrides son independientes: puedes fijar solo el modelo, solo el reasoning, ambos, o ninguno. No existe un setting inventado de "normal speed"; la velocidad normal es no enviar override de reasoning.
+Los overrides son independientes: puedes fijar solo el modelo, solo el reasoning, ambos, o ninguno. La captura de sesion completa el campo omitido; no se consulta WSL `config.toml` ni el default de Codex CLI.
 
-`prepare` congela los valores efectivos en el run. Cambiar `ai_dev_loop.yaml` despues de `prepare` no altera un run ya preparado; prepara un run nuevo.
+`prepare` congela valores de sesion, valores efectivos y procedencia (`session` o `explicit`). Cambiar `ai_dev_loop.yaml` o el rollout despues no altera un run ya preparado; prepara un run nuevo.
 
-Formas de review esperadas (argv separados, sin shell):
-
-```text
-codex exec --cd <repo> --sandbox <sandbox> resume --json --output-schema <schema> --output-last-message <result.json> <session-id> -
-```
-
-```text
-codex exec --cd <repo> --sandbox <sandbox> resume --model <model> --json --output-schema <schema> --output-last-message <result.json> <session-id> -
-```
-
-```text
-codex exec --cd <repo> --sandbox <sandbox> resume -c model_reasoning_effort="high" --json --output-schema <schema> --output-last-message <result.json> <session-id> -
-```
+Forma de review para runs nuevos (argv separados, sin shell):
 
 ```text
 codex exec --cd <repo> --sandbox <sandbox> resume --model <model> -c model_reasoning_effort="high" --json --output-schema <schema> --output-last-message <result.json> <session-id> -
 ```
 
-`--cd` y `--sandbox` van antes de `resume` para la version de Codex validada. `--model` y `-c` solo aparecen cuando hay override preparado.
+`--cd` y `--sandbox` van antes de `resume`; `--model` y `-c` van despues. Runs historicos de Fase 9 con ambos valores `null` y sin procedencia omiten ambos por compatibilidad y advierten que se vuelva a preparar. Esos `null` no significan captura de sesion.
 
 ## `workflow`
 

@@ -123,16 +123,23 @@ class PromptState(BaseModel):
     sha256: str
 
 
+REVIEW_RUNTIME_SOURCES = frozenset({"session", "explicit", "legacy_inherit"})
+
+
 class CodexState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     command: str
     session_id: str
     session_model: str | None = None
-    # Required and nullable: prepare always writes it; historical runs include it;
-    # omit is invalid, null means inherit from the resumed session.
+    session_reasoning_effort: str | None = None
+    # Effective values passed to Codex for Phase 10 runs. Historical Phase 9 runs may
+    # still store null with review_*_source absent or legacy_inherit.
     review_model: str | None
     review_reasoning_effort: str | None = None
+    review_model_source: str | None = None
+    review_reasoning_source: str | None = None
+    model_family_warning: str | None = None
     review_skill: str
     sandbox: str
 
@@ -141,10 +148,26 @@ class CodexState(BaseModel):
     def validate_review_model(cls, value: str | None) -> str | None:
         return normalize_optional_review_model(value)
 
-    @field_validator("review_reasoning_effort")
+    @field_validator("review_reasoning_effort", "session_reasoning_effort")
     @classmethod
     def validate_review_reasoning_effort(cls, value: str | None) -> str | None:
         return normalize_optional_review_reasoning_effort(value)
+
+    @field_validator("session_model")
+    @classmethod
+    def validate_session_model(cls, value: str | None) -> str | None:
+        return normalize_optional_review_model(value)
+
+    @field_validator("review_model_source", "review_reasoning_source")
+    @classmethod
+    def validate_runtime_source(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value not in REVIEW_RUNTIME_SOURCES:
+            raise ValueError(
+                f"review runtime source must be one of: {sorted(REVIEW_RUNTIME_SOURCES)}"
+            )
+        return value
 
 
 class CursorState(BaseModel):

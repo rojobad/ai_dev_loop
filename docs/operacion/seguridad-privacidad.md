@@ -38,6 +38,8 @@ El usuario decide manualmente si commitea despues de revisar el resultado final.
 - prompt exacto;
 - configuracion fuente y efectiva;
 - Codex session ID;
+- modelo y reasoning capturados de la sesion;
+- modelo y reasoning efectivos, con procedencia `session` o `explicit`;
 - hashes SHA-256.
 
 `start` y `resume` revalidan esos datos antes de mutar. Si plan, prompt, branch, HEAD o baseline cambian inesperadamente, el run falla.
@@ -49,7 +51,8 @@ El usuario decide manualmente si commitea despues de revisar el resultado final.
 - Nunca se usa `--last`.
 - El orquestador no adivina session IDs.
 - El orquestador no crea una sesion nueva de Codex para review.
-- Por defecto, el review hereda modelo y reasoning de esa sesion exacta; solo se envian `--model` o `-c model_reasoning_effort="..."` cuando el run preparado tiene overrides explicitos.
+- En runs nuevos, `prepare` captura modelo y reasoning de la sesion exacta. Los overrides explicitos ganan por campo; cada review envia ambos valores efectivos.
+- Nunca se infieren valores heredados desde WSL `config.toml` ni desde el default de Codex CLI.
 - No uses la UI interactiva original de esa sesion en paralelo con `start`/`resume`.
 
 ## Prompts y findings
@@ -75,6 +78,16 @@ Por defecto, la CLI no imprime:
 - entornos completos de procesos.
 
 Los artefactos crudos se guardan localmente con permisos restrictivos cuando el filesystem lo permite.
+
+`prepare` puede leer rollouts JSONL de una sesion UUID exacta, pero solo procesa eventos allowlisted (`session_meta`, `thread_settings_applied`, `turn_context`, incluidos wrappers `event_msg`). No retiene mensajes, prompts, herramientas ni payloads arbitrarios. `codex/session-runtime.json` contiene solo metadata permitida, un prefijo del session ID y ninguna ruta absoluta al rollout.
+
+## Actualizaciones de CLIs
+
+- Solo flags de `start`/`resume` o consentimiento interactivo autorizan updates; `ai_dev_loop.yaml` nunca puede autorizarlos.
+- Se ejecuta unicamente `[configured_command, "update"]` con `shell=False`.
+- Non-TTY nunca pregunta ni actualiza implicitamente.
+- Un abort pendiente impide prompts y lanzamientos de updater.
+- Solo se actualizan CLIs WSL, no aplicaciones Desktop de Windows.
 
 ## Hooks
 

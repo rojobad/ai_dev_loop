@@ -82,6 +82,7 @@ agent models
 codex --help
 codex login status
 codex exec resume --help
+codex debug models
 ```
 
 No guardes ni publiques respuestas completas de autenticacion. `doctor` resume lo necesario sin mutar archivos:
@@ -89,3 +90,14 @@ No guardes ni publiques respuestas completas de autenticacion. `doctor` resume l
 ```bash
 ai_dev_loop doctor
 ```
+
+`start` y `resume` vuelven a consultar versiones y catalogos de modelos antes de lanzar agentes. Si una CLI WSL es incompatible, una sesion interactiva puede ofrecer `agent update` o `codex update`; la respuesta por defecto es no. En non-TTY nunca se pregunta ni se actualiza sin `--update-tools`.
+
+Tambien puedes actualizar manualmente:
+
+```bash
+agent update
+codex update
+```
+
+Una actualizacion puede agregar soporte, pero no se presume que exista una version nueva. Despues se repiten los probes. Este flujo actualiza solo binarios CLI dentro de WSL, no Cursor Desktop ni Codex Desktop en Windows.

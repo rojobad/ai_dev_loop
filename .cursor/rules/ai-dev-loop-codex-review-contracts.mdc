@@ -23,28 +23,13 @@ These contracts protect the automated review boundary of `ai_dev_loop`. They app
 
 - Use the locally probed Codex CLI option order unless an explicit later probe proves otherwise.
 - Root `codex exec` options such as `--cd` and `--sandbox` must appear before `resume`.
-- Resume-specific options such as optional `--model`, optional `-c model_reasoning_effort="..."`, `--json`, `--output-schema`, and `--output-last-message` must appear after `resume`.
-- `codex.review_model` and `codex.review_reasoning_effort` are independent optional overrides. Absence or `null` means inherit from the exact resumed session; do not invent a second source of truth from rollout files or `session_model`.
-- Emit `--model <review-model>` only when a prepared `review_model` override is present.
-- Emit `-c model_reasoning_effort="<effort>"` only when a prepared `review_reasoning_effort` override is present. Pass the TOML assignment as one argv entry with `shell=False`; never shell-interpolate it.
-- When neither override is present, omit both fragments so the resumed session supplies model and reasoning.
-- The command shape should remain equivalent to one of:
-
-```text
-codex exec
---cd
-<repo-root>
---sandbox
-<codex-sandbox>
-resume
---json
---output-schema
-<codex-review-result-v1.json>
---output-last-message
-<codex/reviews/NN.json>
-<session-id>
--
-```
+- Resume-specific options such as `--model`, `-c model_reasoning_effort="..."`, `--json`, `--output-schema`, and `--output-last-message` must appear after `resume`.
+- During Phase 10 `prepare`, locate the exact session UUID under trusted native WSL sessions and the validated `sessions/from-desktop` bridge. Parse only allowlisted `session_meta`, `thread_settings_applied`, and `turn_context` events, including supported `event_msg` wrappers.
+- `codex.review_model` and `codex.review_reasoning_effort` remain independent optional overrides. For new runs, omission or `null` resolves from `session_model` or `session_reasoning_effort` captured at `prepare`; never infer either value from WSL `config.toml` or a CLI default.
+- New Phase 10 runs must persist non-null effective `review_model` and `review_reasoning_effort` with provenance `session` or `explicit`, then always emit both `--model <effective-model>` and `-c model_reasoning_effort="<effective-effort>"`.
+- Historical Phase 9 runs with both review values null and no provenance retain the legacy no-override command path. Warn the user to re-prepare; never describe those nulls as session-derived.
+- Pass the TOML assignment as one argv entry with `shell=False`; never shell-interpolate it.
+- The Phase 10 command shape should remain equivalent to:
 
 ```text
 codex exec
@@ -54,7 +39,9 @@ codex exec
 <codex-sandbox>
 resume
 --model
-<review-model>
+<effective-model>
+-c
+model_reasoning_effort="<effective-effort>"
 --json
 --output-schema
 <codex-review-result-v1.json>
@@ -64,43 +51,7 @@ resume
 -
 ```
 
-```text
-codex exec
---cd
-<repo-root>
---sandbox
-<codex-sandbox>
-resume
--c
-model_reasoning_effort="<effort>"
---json
---output-schema
-<codex-review-result-v1.json>
---output-last-message
-<codex/reviews/NN.json>
-<session-id>
--
-```
-
-```text
-codex exec
---cd
-<repo-root>
---sandbox
-<codex-sandbox>
-resume
---model
-<review-model>
--c
-model_reasoning_effort="<effort>"
---json
---output-schema
-<codex-review-result-v1.json>
---output-last-message
-<codex/reviews/NN.json>
-<session-id>
--
-```
+- The historical Phase 9 compatibility shape may omit both `--model` and `-c`; it is not the primary behavior for newly prepared runs.
 
 - Supply the review instruction on stdin.
 - Do not shell-interpolate paths, prompts, session IDs, findings, or agent output.
@@ -159,6 +110,7 @@ model_reasoning_effort="<effort>"
 ## Artifact And Privacy Contract
 
 - Store Codex artifacts under the run directory outside the target repository.
+- Store safe session extraction evidence as `codex/session-runtime.json`, containing only allowlisted metadata and a session ID prefix. Never persist the rollout path or transcript content.
 - Use relative run-directory paths in `state.json`.
 - Treat Codex events, review JSON, Markdown reports, metadata, and fix prompts as sensitive.
 - Use user-only permissions where supported.

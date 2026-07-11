@@ -43,7 +43,7 @@ Opciones principales:
 --output [text|json]
 ```
 
-`--codex-review-model` y `--codex-review-reasoning-effort` son overrides opcionales e independientes. Si no se pasan, se conserva el valor del YAML/default (incluyendo herencia por omision/`null`). No hay flag de CLI en esta fase para limpiar un override del YAML; configura herencia en YAML antes de `prepare`.
+`--codex-review-model` y `--codex-review-reasoning-effort` son overrides opcionales e independientes. Si no se pasan y YAML omite/usa `null`, `prepare` captura el campo correspondiente de la sesion exacta. No hay flag para limpiar un override del YAML; configura herencia antes de `prepare`.
 
 Ejemplo:
 
@@ -59,18 +59,26 @@ ai_dev_loop prepare \
 ## `start`
 
 ```bash
-ai_dev_loop start <run-id>
+ai_dev_loop start <run-id> [--update-tools|--skip-tool-update] [--allow-incompatible-tools]
 ```
 
 Ejecuta el loop automatizado completo para un run preparado.
 
+- `--update-tools`: autoriza ejecutar el updater oficial de cada CLI WSL incompatible, sin prompt.
+- `--skip-tool-update`: nunca ejecuta updaters.
+- `--allow-incompatible-tools`: permite continuar pese a incompatibilidad confirmada.
+
+`--update-tools` y `--skip-tool-update` son mutuamente excluyentes. Sin flags, un TTY puede preguntar por cada herramienta incompatible y usa `no` por defecto. Non-TTY nunca pregunta y falla ante incompatibilidad salvo autorizacion explicita para actualizar o continuar.
+
 ## `resume`
 
 ```bash
-ai_dev_loop resume <run-id>
+ai_dev_loop resume <run-id> [--update-tools|--skip-tool-update] [--allow-incompatible-tools]
 ```
 
 Continua un run checkpointed o interrumpido si el siguiente paso seguro puede derivarse de estado y artefactos.
+
+Aplica la misma politica de compatibilidad y updates que `start`. Tras un update se vuelven a consultar version y catalogos (`agent models`, `codex debug models`). Un abort pendiente tiene prioridad.
 
 ## `abort`
 

@@ -81,6 +81,14 @@ These contracts protect the complete stage-review-fix loop and explicit resume b
 - If the next safe action is ambiguous, fail with a diagnostic and do not mutate the repository.
 - Terminal states remain terminal unless a future explicit phase defines a safe no-op behavior.
 
+## Tool Compatibility And Updates
+
+- `start` and `resume` accept `--update-tools`, `--skip-tool-update`, and `--allow-incompatible-tools`; update and skip are mutually exclusive.
+- Interactive TTY execution may ask separately for each incompatible tool and defaults to no. Non-TTY execution never prompts and fails on incompatibility unless update or incompatible-tool continuation was explicitly authorized.
+- Update only the configured WSL CLI executable with `[configured_command, "update"]`, `shell=False`; never derive update consent from repository YAML.
+- Re-probe versions and `agent models`/`codex debug models` after an update. Distinguish incompatible from unknown and say an update may add support, not that one is definitely available.
+- Check durable abort requests before any updater prompt or launch; abort wins.
+
 ## Privacy And Output
 
 - Do not print full prompts, fix prompts, staged patches, review Markdown, raw JSONL, full session IDs, auth payloads, full environments, or secret-like values in default CLI output.

@@ -109,7 +109,7 @@ Documentado en:
 
 ## Fase 9
 
-Hago opcionales `codex.review_model` y `codex.review_reasoning_effort`. Por omision/`null`, el review hereda modelo y reasoning de la sesion Codex exacta; los overrides son independientes y se congelan en `prepare`.
+Hizo opcionales `codex.review_model` y `codex.review_reasoning_effort`, con overrides independientes y compatibilidad para runs preparados bajo esa semantica.
 
 Documentado en:
 
@@ -118,9 +118,22 @@ Documentado en:
 - [CLI](cli.md)
 - [Troubleshooting](../operacion/troubleshooting.md)
 
+## Fase 10
+
+Implemento captura segura del modelo/reasoning de la sesion exacta durante `prepare`, procedencia independiente y paso explicito de ambos valores en cada review. Tambien agrego probes de compatibilidad y politica de updates para las CLIs WSL en `start`/`resume`.
+
+Documentado en:
+
+- [Referencia de configuracion](configuracion.md)
+- [CLI](cli.md)
+- [Estado y artefactos](../operacion/estado-artefactos.md)
+- [Seguridad y privacidad](../operacion/seguridad-privacidad.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+
 ## Riesgos residuales documentados
 
 - Hook trust sigue siendo `unknown` desde CLI.
-- El default de review hereda modelo/reasoning de la sesion; un override explicito como `o4-mini` puede no estar disponible para todas las cuentas.
+- Un override explicito puede no estar disponible para la cuenta o la version instalada de Codex CLI.
+- Cambiar entre familias GPT-5.5 y GPT-5.6 puede intentar compactacion previa en versiones validadas; no ocurre universalmente.
 - Temporales DrvFS pueden romper pytest capture.
 - No hay comando destructivo de cleanup; limpieza es manual.

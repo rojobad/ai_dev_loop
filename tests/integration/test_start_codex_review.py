@@ -55,7 +55,12 @@ def test_start_completes_after_no_finding_codex_review(
     assert "Implement the sample plan exactly as written." in codex_log
 
 
-def test_start_waiting_for_cursor_fix_after_findings(prepared_run, fake_clis, monkeypatch) -> None:
+def test_start_waiting_for_cursor_fix_after_findings(
+    prepared_run,
+    fake_clis,
+    monkeypatch,
+    fixture_codex_session,
+) -> None:
     """Single-review findings without sequence stop at waiting_for_cursor_fix when max=1."""
     monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "findings")
@@ -172,29 +177,37 @@ def test_codex_command_uses_cd_and_sandbox_before_resume(
     resume_index = args.index("resume")
     assert cd_index < resume_index
     assert sandbox_index < resume_index
-    assert "--model" not in args
-    assert "-c" not in args
+    assert "--model" in args
+    assert args[args.index("--model") + 1] == "gpt-5.6-sol"
+    assert "-c" in args
+    assert 'model_reasoning_effort="high"' in args
     assert "--last" not in args
 
 
-def test_inherited_codex_review_omits_model_and_reasoning(
+def test_session_captured_codex_review_emits_model_and_reasoning(
     prepared_run, fake_clis, monkeypatch
 ) -> None:
     monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
     state = load_run_state(prepared_run["run_path"] / "state.json")
-    assert state.codex.review_model is None
-    assert state.codex.review_reasoning_effort is None
+    assert state.codex.review_model == "gpt-5.6-sol"
+    assert state.codex.review_reasoning_effort == "high"
+    assert state.codex.review_model_source == "session"
+    assert state.codex.review_reasoning_source == "session"
     start_run(prepared_run["run_id"])
     codex_log = fake_clis["codex_log"].read_text(encoding="utf-8")
     args_line = next(line for line in codex_log.splitlines() if line.startswith("ARGS:"))
     args = eval(args_line.removeprefix("ARGS:"))  # noqa: S307
-    assert "--model" not in args
-    assert "-c" not in args
-    assert not any("model_reasoning_effort" in str(item) for item in args)
+    assert "--model" in args
+    assert args[args.index("--model") + 1] == "gpt-5.6-sol"
+    assert 'model_reasoning_effort="high"' in args
 
 
 def test_explicit_codex_overrides_reach_fake_executable(
-    git_repo, isolated_xdg, fake_clis, monkeypatch
+    git_repo,
+    isolated_xdg,
+    fake_clis,
+    monkeypatch,
+    fixture_codex_session,
 ) -> None:
     from io import StringIO
     from unittest.mock import patch
@@ -231,7 +244,11 @@ def test_explicit_codex_overrides_reach_fake_executable(
 
 
 def test_prepared_codex_overrides_ignore_later_yaml_edits(
-    git_repo, isolated_xdg, fake_clis, monkeypatch
+    git_repo,
+    isolated_xdg,
+    fake_clis,
+    monkeypatch,
+    fixture_codex_session,
 ) -> None:
     from io import StringIO
     from unittest.mock import patch
@@ -346,7 +363,12 @@ def test_staged_changes_remain_after_completed_review(prepared_run, fake_clis, m
     assert staged.stdout.strip()
 
 
-def test_prepare_creates_events_jsonl(git_repo, isolated_xdg, fake_clis) -> None:
+def test_prepare_creates_events_jsonl(
+    git_repo,
+    isolated_xdg,
+    fake_clis,
+    fixture_codex_session,
+) -> None:
     from io import StringIO
     from unittest.mock import patch
 

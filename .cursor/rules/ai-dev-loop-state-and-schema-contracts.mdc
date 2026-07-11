@@ -17,6 +17,8 @@ These contracts protect the local audit trail and recovery model. They apply in 
 - Do not store authentication tokens, API keys, full process environments, or copied Codex transcript contents.
 - Treat `result`, `last_error`, structured event details, command metadata, and other diagnostic fields as user-facing privacy surfaces unless they are documented sensitive artifacts.
 - Persist raw prompts, patches, agent stdout/stderr, review Markdown, and fix prompts only in dedicated sensitive artifacts, not in summary fields that status, logs, inspect, or CLI errors render by default.
+- Phase 10 `CodexState` records `session_model`, `session_reasoning_effort`, effective `review_model`, effective `review_reasoning_effort`, `review_model_source`, and `review_reasoning_source`. New-run provenance values are `session` or `explicit`; `legacy_inherit` is reserved for historical compatibility.
+- Newly prepared Phase 10 runs require effective review model/reasoning values and provenance. Historical Phase 9 states with null review values and no provenance, or the compatibility marker `legacy_inherit`, remain readable only through the documented legacy path; never reinterpret them as session-derived.
 
 ## Schema Discipline
 
@@ -52,6 +54,7 @@ These contracts protect the local audit trail and recovery model. They apply in 
 - Full patches and agent outputs may contain proprietary code context. Do not print them by default in human CLI output.
 - Persisted summary fields should reference sensitive raw artifacts by relative path instead of copying raw artifact contents.
 - Preserve raw agent output after redaction even when parsing fails.
+- `codex/session-runtime.json` is the safe Phase 10 extraction artifact. It may contain only allowlisted runtime metadata and a shortened session ID; it must not contain transcript content or an absolute rollout path.
 
 ## Recovery Compatibility
 

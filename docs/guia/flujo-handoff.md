@@ -9,7 +9,7 @@ El handoff conecta una sesion interactiva de Codex con el loop automatizado. La 
 3. Discute y aprueba el cambio.
 4. Genera un plan Markdown y un prompt separado para Cursor.
 5. Usa el skill global `ai-dev-loop-handoff` o ejecuta manualmente `ai_dev_loop prepare`.
-6. `prepare` recibe el prompt exacto por stdin y persiste el contrato del run.
+6. `prepare` recibe el prompt exacto por stdin, resuelve el UUID exacto de sesion y captura su modelo/reasoning sin conservar contenido del transcript.
 7. Copia el `start_command`.
 8. Sal de Codex con `/exit` o deja de usar esa UI para esa sesion.
 9. Ejecuta `ai_dev_loop start <run-id>` desde WSL.
@@ -63,6 +63,14 @@ Salida JSON esperada:
 `ai_dev_loop` nunca debe usar `--last` para Codex. El session ID debe ser exacto.
 
 Para Codex Desktop + WSL, el ID puede venir del hook `SessionStart` de Desktop. Como fallback manual, `integrations sessions list` puede listar IDs de rollout por nombre de archivo, pero solo debes usar un ID si sabes que corresponde a la sesion correcta.
+
+## Runtime de review congelado
+
+En runs nuevos, `prepare` busca el UUID exacto bajo `$CODEX_HOME/sessions` nativo y el puente validado `sessions/from-desktop`. Extrae solo metadata permitida de `session_meta`, `thread_settings_applied` y `turn_context`, incluidos wrappers `event_msg`.
+
+Si no hay override, modelo y reasoning efectivos vienen de esa captura. Un override en YAML o CLI gana solo para su campo. Ambos valores efectivos y su procedencia quedan congelados y se pasan explicitamente a `codex exec resume`.
+
+Los runs historicos de Fase 9 con ambos valores `null` y sin procedencia conservan el camino legacy sin overrides y muestran una advertencia para volver a preparar; esos `null` no significan captura de sesion.
 
 ## Regla de control de sesion
 

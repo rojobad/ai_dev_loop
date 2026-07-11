@@ -29,8 +29,13 @@ def render_status(run_id: str, *, output: str = "text") -> str:
             "max_review_iterations": state.workflow.max_review_iterations,
             "cursor_chat_id": state.cursor.chat_id,
             "codex_session_id": state.codex.session_id,
+            "codex_session_model": state.codex.session_model,
+            "codex_session_reasoning_effort": state.codex.session_reasoning_effort,
             "codex_review_model": state.codex.review_model,
             "codex_review_reasoning_effort": state.codex.review_reasoning_effort,
+            "codex_review_model_source": state.codex.review_model_source,
+            "codex_review_reasoning_source": state.codex.review_reasoning_source,
+            "codex_model_family_warning": state.codex.model_family_warning,
             "last_error": state.last_error,
             "result": state.result,
             "run_directory": str(run_path),
@@ -51,11 +56,25 @@ def render_status(run_id: str, *, output: str = "text") -> str:
         f"Recorded iterations: {len(state.iterations)}",
         f"Cursor chat: {state.cursor.chat_id or '(not created)'}",
         f"Codex session: {shorten_session_id(state.codex.session_id)}",
-        f"Codex review model: {format_codex_override(state.codex.review_model)}",
-        f"Codex review reasoning: {format_codex_override(state.codex.review_reasoning_effort)}",
+        f"Session model: {state.codex.session_model or '(unset)'}",
+        f"Session reasoning: {state.codex.session_reasoning_effort or '(unset)'}",
+        (
+            f"Codex review model: {format_codex_override(state.codex.review_model)}"
+            + (f" ({state.codex.review_model_source})" if state.codex.review_model_source else "")
+        ),
+        (
+            f"Codex review reasoning: {format_codex_override(state.codex.review_reasoning_effort)}"
+            + (
+                f" ({state.codex.review_reasoning_source})"
+                if state.codex.review_reasoning_source
+                else ""
+            )
+        ),
         f"Run directory: {run_path}",
         f"Next safe action: {next_action}",
     ]
+    if state.codex.model_family_warning:
+        lines.append(f"Model family warning: {state.codex.model_family_warning}")
     if control["abort_requested"]:
         lines.append("Abort request: pending")
     if control["active_process_registered"]:

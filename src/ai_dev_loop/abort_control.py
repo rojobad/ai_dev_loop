@@ -27,6 +27,8 @@ DEFAULT_SIGNAL_GRACE_SECONDS = 0.5
 class ActiveProcessComponent(StrEnum):
     CURSOR = "cursor"
     CODEX = "codex"
+    CURSOR_UPDATE = "cursor_update"
+    CODEX_UPDATE = "codex_update"
 
 
 class AbortRequest(BaseModel):

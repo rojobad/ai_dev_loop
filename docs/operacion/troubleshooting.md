@@ -74,21 +74,51 @@ Configura `cursor.model` con el identificador exacto, por ejemplo `composer-2.5-
 
 Sintoma comun:
 
-- `codex exec resume` falla con error HTTP/modelo no disponible cuando hay un override explicito.
+- `start` o `resume` clasifica el modelo requerido como incompatible;
+- `codex exec resume` indica que el modelo requiere una version mas nueva de Codex CLI.
 
 Accion:
 
-1. Verifica modelos disponibles para tu cuenta.
-2. Prefiere omitir `codex.review_model` para heredar el modelo de la sesion reanudada.
-3. Si necesitas un override, cambia `codex.review_model` en `ai_dev_loop.yaml` o pasa `--codex-review-model` en `prepare`.
-4. Prepara un run nuevo; un run ya preparado no toma cambios posteriores del YAML.
-5. En esta workstation, un override `o4-mini` fallo en una cuenta enlazada a ChatGPT; la herencia de sesion o un modelo disponible como `gpt-5.5` evita ese fallo.
+1. Consulta `codex --version` y `codex debug models`.
+2. En TTY, acepta el prompt de update solo si quieres actualizar esa CLI WSL; la respuesta por defecto es no.
+3. En non-TTY, usa `--update-tools` para autorizar el updater o ejecuta `codex update` manualmente.
+4. El update puede agregar soporte, pero no garantiza que exista una version compatible. `ai_dev_loop` vuelve a probar version y catalogo.
+5. `--allow-incompatible-tools` permite continuar bajo tu responsabilidad; no corrige la incompatibilidad.
+
+Los updates no modifican Codex Desktop ni Cursor Desktop en Windows.
 
 Para reasoning:
 
-- Omite `review_reasoning_effort` para heredar la configuracion de la sesion.
-- Si fijas un valor, usa solo `minimal`, `low`, `medium`, `high` o `xhigh`.
-- No inventes un setting de "normal speed"; la velocidad normal es no enviar override.
+- Omite `review_reasoning_effort` para capturarlo de la sesion durante `prepare`.
+- Si fijas un valor, usa solo `minimal`, `low`, `medium`, `high`, `xhigh`, `max` o `ultra`.
+
+## Sesion grabada con un modelo y resume usa otro
+
+En runs nuevos, esto no debe depender del default WSL: `prepare` captura modelo/reasoning de la sesion y cada review los pasa explicitamente.
+
+Acciones:
+
+1. Ejecuta `ai_dev_loop inspect <run-id>` y compara runtime de sesion, runtime efectivo y procedencia.
+2. Si el run es historico de Fase 9 con ambos valores `null` y sin procedencia, su camino legacy omite overrides. Prepara un run nuevo; no interpretes esos `null` como session-derived.
+3. Si existe un override explicito, revisa YAML/flags y vuelve a preparar para cambiarlo.
+
+## `Failed to run pre-sampling compact`
+
+Reanudar una sesion GPT-5.5 con GPT-5.6, o viceversa, puede requerir compactacion previa por diferencias entre familias. En versiones validadas se observo `pre-sampling compact`; no es un comportamiento universal.
+
+Acciones:
+
+1. Evita cambiar de familia dentro del mismo run; omite el override para usar el modelo capturado de la sesion.
+2. Verifica que la Codex CLI WSL soporte ese modelo.
+3. Si cambias YAML o flags, prepara un run nuevo.
+
+Un mismatch de familia genera una advertencia operativa, no bloquea por si solo.
+
+## Compatibilidad desconocida u offline
+
+Si `agent models` o `codex debug models` no puede confirmar soporte, `ai_dev_loop` distingue `unknown` de incompatibilidad confirmada. Un resultado `unknown` no dispara el updater ni bloquea como una incompatibilidad confirmada, y no afirma que haya un update disponible.
+
+Revisa conectividad/autenticacion y ejecuta los probes manualmente. `--update-tools` solo actua sobre incompatibilidades detectadas; `--allow-incompatible-tools` autoriza continuar cuando la incompatibilidad si fue confirmada.
 
 ## Falta SessionStart context
 

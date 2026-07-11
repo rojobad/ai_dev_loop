@@ -67,7 +67,16 @@ These contracts preserve the product's safety model across implementation phases
 - Never use `codex exec` without `resume` for final review.
 - Never use `--last`, guessed session IDs, or subagents as the final reviewer.
 - The resumed Codex session must author any `cursor_fix_prompt`; the orchestrator only validates and forwards it.
+- New Phase 10 runs must freeze the session-captured and effective review model/reasoning at `prepare`, with independent explicit/session provenance, and pass both effective values on every review resume.
+- Do not derive inherited review runtime from WSL `config.toml` or a Codex CLI default.
 - Automated tests must use fake `codex` executables and must not invoke real Codex model activity.
+
+## External Tool Compatibility
+
+- Before launching a model process, `start` and `resume` must classify required Cursor/Codex model support as compatible, incompatible, or unknown.
+- Only explicit CLI policy may authorize `[configured_command, "update"]`; target-repository YAML must never authorize updates.
+- Non-TTY execution must never prompt. After an approved update, re-probe versions and model catalogs before continuing.
+- Abort requests take precedence over updater prompts and updater launches. Updates affect WSL CLI binaries only, never Windows desktop applications.
 
 ## Process Contracts
 

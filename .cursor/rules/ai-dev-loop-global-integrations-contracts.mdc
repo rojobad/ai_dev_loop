@@ -59,6 +59,8 @@ These contracts protect the user-level Codex integration layer for `ai_dev_loop`
 - `integrations sessions remove` removes only the bridge symlink and refuses non-symlink paths.
 - `integrations uninstall` must not remove the session bridge by default.
 - `integrations sessions list` may read rollout filenames only; do not read rollout contents or SQLite state.
+- Phase 10 `prepare` may resolve an exact session UUID through the validated bridge and stream its rollout solely to extract allowlisted `session_meta`, `thread_settings_applied`, and `turn_context` runtime scalars, including supported `event_msg` wrappers.
+- Session runtime extraction must not retain transcript content, arbitrary event payloads, or the absolute rollout path. Ambiguous UUID matches or untrusted roots must fail closed.
 
 ## Skill Contract
 

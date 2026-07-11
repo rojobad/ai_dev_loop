@@ -83,7 +83,7 @@ prompt:
   filename_template: prompt_{plan_stem}.txt
 ```
 
-Por defecto, `review_model` y `review_reasoning_effort` se omiten para heredar el modelo y reasoning de la sesion Codex reanudada. Para overrides explicitos, ver [Configuracion del repositorio](configuracion-repositorio.md).
+Por defecto, `review_model` y `review_reasoning_effort` se omiten. `prepare` captura ambos valores de la sesion Codex exacta, los congela y los pasa explicitamente en cada review. No los toma de `config.toml` ni del default local de Codex CLI. Para overrides independientes, ver [Configuracion del repositorio](configuracion-repositorio.md).
 
 Valida:
 
@@ -104,7 +104,7 @@ ai_dev_loop prepare \
   --output json < docs/plans/prompt_mi-plan.txt
 ```
 
-`prepare` devuelve un `start_command`.
+`prepare` busca el UUID exacto en las sesiones nativas WSL y, si existe, en `sessions/from-desktop`. Solo extrae metadata runtime permitida; no conserva contenido del transcript. Devuelve un `start_command`.
 
 ## 5. Sal de Codex y ejecuta el loop
 
@@ -113,6 +113,8 @@ No ejecutes `start` desde la UI interactiva que posee esa misma sesion.
 ```bash
 ai_dev_loop start <run-id>
 ```
+
+`start` y `resume` comprueban compatibilidad de modelos. En un TTY pueden ofrecer actualizar cada CLI incompatible (respuesta por defecto: no). En ejecucion no interactiva no preguntan: usa `--update-tools` para autorizar los updaters WSL o `--allow-incompatible-tools` para continuar bajo tu responsabilidad.
 
 Si el run se interrumpe:
 

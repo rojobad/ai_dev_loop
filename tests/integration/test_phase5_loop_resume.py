@@ -78,7 +78,7 @@ def test_start_findings_then_no_findings_completes_two_iterations(
 
 
 def test_start_max_iterations_reached_without_extra_cursor_turn(
-    git_repo, isolated_xdg, fake_clis, monkeypatch
+    git_repo, isolated_xdg, fake_clis, monkeypatch, fixture_codex_session
 ) -> None:
     monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
     monkeypatch.setenv("FAKE_CODEX_REVIEW_SEQUENCE", "findings,findings,findings")

@@ -24,9 +24,26 @@ From the target repository root (or with explicit `--repo-path`), run `ai_dev_lo
 - pass `--codex-session-id` with the exact session ID from SessionStart context;
 - prefer `--output json` so the result is easy to parse.
 
+When running under Codex Desktop on Windows with WSL agents, Desktop may propagate
+`CODEX_HOME` as a Windows/DrvFS path under `/mnt/c/...`. Do **not** keep that value
+for prepare: session runtime lookup and the desktop bridge expect the native WSL
+`~/.codex` home. Before invoking prepare, unset an unsafe propagated value, for example:
+
+```bash
+case "${CODEX_HOME:-}" in
+  /mnt/*) unset CODEX_HOME ;;
+esac
+```
+
+`ai_dev_loop prepare` itself also falls back to the native WSL Codex home when it
+detects a DrvFS `CODEX_HOME`, but sanitizing the environment keeps handoff deterministic.
+
 Example shape:
 
 ```bash
+case "${CODEX_HOME:-}" in
+  /mnt/*) unset CODEX_HOME ;;
+esac
 ai_dev_loop prepare \
   --repo-path /path/to/repo \
   --plan-path docs/plans/my-plan.md \

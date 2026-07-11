@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from tests.conftest import write_session_rollout
 from typer.testing import CliRunner
 
 from ai_dev_loop.cli import app
@@ -230,6 +231,9 @@ def test_staged_patch_uses_sensitive_permissions(
     repo = git_repo
     fixture_prompt = Path(__file__).resolve().parents[1] / "fixtures" / "sample_repo"
     prompt = (fixture_prompt / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
+    codex_home = permission_test_root / "codex-home"
+    write_session_rollout(codex_home / "sessions")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
     with patch("sys.stdin", StringIO(prompt)):
         prepared = prepare_run(
             PrepareOptions(

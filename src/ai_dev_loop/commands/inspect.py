@@ -33,8 +33,13 @@ def render_inspect(run_id: str, *, output: str = "text", show_prompts: bool = Fa
             "plan": state.plan.model_dump(),
             "prompt": state.prompt.model_dump(),
             "codex": {
+                "session_model": state.codex.session_model,
+                "session_reasoning_effort": state.codex.session_reasoning_effort,
                 "review_model": state.codex.review_model,
                 "review_reasoning_effort": state.codex.review_reasoning_effort,
+                "review_model_source": state.codex.review_model_source,
+                "review_reasoning_source": state.codex.review_reasoning_source,
+                "model_family_warning": state.codex.model_family_warning,
                 "review_skill": state.codex.review_skill,
                 "sandbox": state.codex.sandbox,
                 "command": state.codex.command,
@@ -63,12 +68,27 @@ def render_inspect(run_id: str, *, output: str = "text", show_prompts: bool = Fa
         f"  sha256: {state.prompt.sha256}",
         "",
         "Codex:",
-        f"  review_model: {format_codex_override(state.codex.review_model)}",
-        f"  review_reasoning_effort: {format_codex_override(state.codex.review_reasoning_effort)}",
+        f"  session_model: {state.codex.session_model or '(unset)'}",
+        f"  session_reasoning_effort: {state.codex.session_reasoning_effort or '(unset)'}",
+        (
+            f"  review_model: {format_codex_override(state.codex.review_model)}"
+            + (f" ({state.codex.review_model_source})" if state.codex.review_model_source else "")
+        ),
+        (
+            f"  review_reasoning_effort: "
+            f"{format_codex_override(state.codex.review_reasoning_effort)}"
+            + (
+                f" ({state.codex.review_reasoning_source})"
+                if state.codex.review_reasoning_source
+                else ""
+            )
+        ),
         f"  review_skill: {state.codex.review_skill}",
         f"  sandbox: {state.codex.sandbox}",
         "",
     ]
+    if state.codex.model_family_warning:
+        lines.insert(-1, f"  model_family_warning: {state.codex.model_family_warning}")
     if state.iterations:
         lines.append("Iterations:")
         for entry in state.iterations:

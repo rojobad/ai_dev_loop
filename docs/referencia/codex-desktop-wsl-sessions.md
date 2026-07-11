@@ -46,6 +46,8 @@ El puente permitido es un symlink anidado:
 
 Esto expone rollouts `.jsonl` por session ID. No expone SQLite ni auth.
 
+Durante `prepare`, `ai_dev_loop` puede buscar el UUID exacto tanto en sesiones nativas WSL como a traves de este puente validado. Lee JSONL en streaming y procesa solo `session_meta`, `thread_settings_applied` y `turn_context`, incluidos wrappers `event_msg`, para obtener modelo y reasoning. No conserva contenido del transcript ni persiste la ruta absoluta del rollout.
+
 Comandos:
 
 ```bash
@@ -68,6 +70,8 @@ Para un review real, `ai_dev_loop` ejecuta:
 ```text
 codex exec ... resume ... <SESSION_ID> -
 ```
+
+En runs nuevos, el comando incluye siempre `--model <modelo-efectivo>` y `-c model_reasoning_effort="<effort-efectivo>"`. La omision en YAML significa usar la captura de sesion realizada en `prepare`, no el default del Codex CLI WSL.
 
 No uses `--last`. El ID debe venir del contexto `SessionStart` o de una recuperacion manual confiable.
 

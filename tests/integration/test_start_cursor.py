@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from tests.conftest import write_session_rollout
 from typer.testing import CliRunner
 
 from ai_dev_loop.cli import app
@@ -99,6 +100,9 @@ def test_start_rejects_missing_model(prepared_run, fake_clis, monkeypatch) -> No
     monkeypatch.setenv("FAKE_AGENT_MODELS", "other-model")
     result = runner.invoke(app, ["start", prepared_run["run_id"]])
     assert result.exit_code == 4
+    state = load_run_state(prepared_run["run_path"] / "state.json")
+    # Compatibility refusal before validating preserves prepared resumability.
+    assert state.status == RunStatus.PREPARED
 
 
 def test_start_records_cursor_failure(prepared_run, fake_clis, monkeypatch) -> None:
@@ -248,7 +252,8 @@ def test_start_missing_cursor_executable_marks_failed(prepared_run, fake_clis, m
     result = runner.invoke(app, ["start", prepared_run["run_id"]])
     assert result.exit_code == 4
     state = load_run_state(prepared_run["run_path"] / "state.json")
-    assert state.status == RunStatus.FAILED
+    # Missing executable is refused before validating so the run stays prepared.
+    assert state.status == RunStatus.PREPARED
     assert "executable not found" in (result.stderr or result.stdout).lower()
 
 
@@ -268,6 +273,9 @@ def test_cursor_artifacts_use_sensitive_permissions(
     monkeypatch.setenv("XDG_CACHE_HOME", str(cache_home))
 
     prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
+    codex_home = permission_test_root / "codex-home"
+    write_session_rollout(codex_home / "sessions")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
     with patch("sys.stdin", StringIO(prompt)):
         prepared = prepare_run(
             PrepareOptions(

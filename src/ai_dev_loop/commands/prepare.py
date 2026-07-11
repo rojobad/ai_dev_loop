@@ -10,7 +10,12 @@ from pathlib import Path
 from ai_dev_loop.config import ConfigOverrides, resolve_effective_config
 from ai_dev_loop.errors import UsageError, ValidationError
 from ai_dev_loop.event_log import append_orchestrator_event
+from ai_dev_loop.integrations.codex.session_runtime import (
+    read_codex_session_runtime,
+    require_codex_session_id,
+)
 from ai_dev_loop.paths import ensure_app_dirs, ensure_dir, run_dir, set_sensitive_file_mode
+from ai_dev_loop.review_runtime import resolve_effective_review_runtime
 from ai_dev_loop.runners.git import (
     GitRepositoryInfo,
     copy_file_atomic,
@@ -70,6 +75,14 @@ class PrepareResult:
     project: str
     start_command: str
     run_directory: Path
+    session_model: str
+    session_reasoning_effort: str
+    review_model: str
+    review_reasoning_effort: str
+    review_model_source: str
+    review_reasoning_source: str
+    model_family_warning: str | None = None
+    model_mismatch_warning: str | None = None
 
 
 def _read_stdin_prompt() -> str:
@@ -97,12 +110,6 @@ def _build_overrides(options: PrepareOptions) -> ConfigOverrides:
     )
 
 
-def _require_codex_session_id(session_id: str | None) -> str:
-    if not session_id or not session_id.strip():
-        raise ValidationError("codex session id is required (--codex-session-id)")
-    return session_id.strip()
-
-
 def _resolve_inputs(options: PrepareOptions, repo_info: GitRepositoryInfo) -> tuple[Path, Path]:
     repo_root = repo_info.root
     if options.plan_path is None:
@@ -125,10 +132,11 @@ def _create_run_layout(base: Path) -> None:
         "cursor/iterations",
         "codex/reviews",
         "codex/events",
-        "git/status",
-        "git/diffs",
+        "preflight",
         "logs",
         "locks",
+        "git/status",
+        "git/diffs",
     ):
         ensure_dir(base / relative)
 
@@ -138,7 +146,7 @@ def prepare_run(options: PrepareOptions) -> PrepareResult:
     prompt_text = _read_stdin_prompt()
     repo_candidate = options.repo_path or Path.cwd()
     repo_info = discover_repository(repo_candidate)
-    effective, source_repo_config, repo_config_path = resolve_effective_config(
+    effective, source_repo_config, _repo_config_path = resolve_effective_config(
         repo_root=repo_info.root,
         config_path=options.config_path,
         overrides=_build_overrides(options),
@@ -151,7 +159,13 @@ def prepare_run(options: PrepareOptions) -> PrepareResult:
         repo_root=repo_info.root,
         require_clean=effective.workflow.require_clean_worktree,
     )
-    session_id = _require_codex_session_id(options.codex_session_id)
+    session_id = require_codex_session_id(options.codex_session_id)
+    session_runtime = read_codex_session_runtime(session_id)
+    review_runtime = resolve_effective_review_runtime(
+        session=session_runtime,
+        configured_review_model=effective.codex.review_model,
+        configured_review_reasoning_effort=effective.codex.review_reasoning_effort,
+    )
 
     now = utc_now()
     run_id = generate_run_id(effective.project.name, now=now)
@@ -181,10 +195,28 @@ def prepare_run(options: PrepareOptions) -> PrepareResult:
     baseline_status_path = destination / "git" / "baseline-status.txt"
     atomic_write_text(baseline_status_path, repo_info.status_porcelain + "\n")
 
+    session_runtime_artifact = {
+        "session_id_prefix": session_id[:8],
+        "model": review_runtime.session_model,
+        "reasoning_effort": review_runtime.session_reasoning_effort,
+        "origin": review_runtime.session_origin,
+        "source_event_type": review_runtime.source_event_type,
+        "source_timestamp": review_runtime.source_timestamp,
+        "review_model": review_runtime.review_model,
+        "review_reasoning_effort": review_runtime.review_reasoning_effort,
+        "review_model_source": review_runtime.review_model_source,
+        "review_reasoning_source": review_runtime.review_reasoning_source,
+        "model_mismatch_warning": review_runtime.model_mismatch_warning,
+        "model_family_warning": review_runtime.model_family_warning,
+    }
+    session_runtime_path = destination / "codex" / "session-runtime.json"
+    atomic_write_json(session_runtime_path, session_runtime_artifact, sensitive=True)
+
     plan_hash = sha256_file(plan_snapshot)
     prompt_hash = sha256_text(prompt_text)
     source_config_hash = sha256_file(source_yaml_path)
     effective_config_hash = sha256_bytes(effective_yaml_path.read_bytes())
+    session_runtime_hash = sha256_file(session_runtime_path)
 
     plan_repo_path = relative_repo_path(repo_info.root, plan_path)
     prompt_repo_path = relative_repo_path(repo_info.root, prompt_source_path)
@@ -216,9 +248,13 @@ def prepare_run(options: PrepareOptions) -> PrepareResult:
         codex=CodexState(
             command=effective.codex.command,
             session_id=session_id,
-            session_model=None,
-            review_model=effective.codex.review_model,
-            review_reasoning_effort=effective.codex.review_reasoning_effort,
+            session_model=review_runtime.session_model,
+            session_reasoning_effort=review_runtime.session_reasoning_effort,
+            review_model=review_runtime.review_model,
+            review_reasoning_effort=review_runtime.review_reasoning_effort,
+            review_model_source=review_runtime.review_model_source,
+            review_reasoning_source=review_runtime.review_reasoning_source,
+            model_family_warning=review_runtime.model_family_warning,
             review_skill=effective.codex.review_skill,
             sandbox=effective.codex.sandbox,
         ),
@@ -252,6 +288,7 @@ def prepare_run(options: PrepareOptions) -> PrepareResult:
             ManifestArtifact(
                 path="git/baseline-status.txt", sha256=sha256_file(baseline_status_path)
             ),
+            ManifestArtifact(path="codex/session-runtime.json", sha256=session_runtime_hash),
         ],
     )
 
@@ -270,9 +307,14 @@ def prepare_run(options: PrepareOptions) -> PrepareResult:
     )
 
     log_path = destination / "logs" / "ai_dev_loop.log"
+    log_lines = [f"{now.isoformat()} prepare completed for run {run_id}"]
+    if review_runtime.model_mismatch_warning:
+        log_lines.append(review_runtime.model_mismatch_warning)
+    if review_runtime.model_family_warning:
+        log_lines.append(review_runtime.model_family_warning)
     atomic_write_text(
         log_path,
-        f"{now.isoformat()} prepare completed for run {run_id}\n",
+        "\n".join(log_lines) + "\n",
         sensitive=True,
     )
     append_orchestrator_event(
@@ -281,7 +323,13 @@ def prepare_run(options: PrepareOptions) -> PrepareResult:
         component="orchestrator",
         event="prepare_completed",
         status=RunStatus.PREPARED.value,
-        detail={"project": effective.project.name},
+        detail={
+            "project": effective.project.name,
+            "review_model_source": review_runtime.review_model_source,
+            "review_reasoning_source": review_runtime.review_reasoning_source,
+            "session_origin": review_runtime.session_origin,
+            "has_model_family_warning": review_runtime.model_family_warning is not None,
+        },
     )
     set_sensitive_file_mode(destination / "state.json")
 
@@ -291,6 +339,14 @@ def prepare_run(options: PrepareOptions) -> PrepareResult:
         project=effective.project.name,
         start_command=start_command,
         run_directory=destination,
+        session_model=review_runtime.session_model,
+        session_reasoning_effort=review_runtime.session_reasoning_effort,
+        review_model=review_runtime.review_model,
+        review_reasoning_effort=review_runtime.review_reasoning_effort,
+        review_model_source=review_runtime.review_model_source,
+        review_reasoning_source=review_runtime.review_reasoning_source,
+        model_family_warning=review_runtime.model_family_warning,
+        model_mismatch_warning=review_runtime.model_mismatch_warning,
     )
 
 
@@ -303,12 +359,29 @@ def render_prepare_output(result: PrepareResult, *, output: str) -> str:
             "project": result.project,
             "start_command": result.start_command,
             "requires_codex_exit": True,
+            "session_model": result.session_model,
+            "session_reasoning_effort": result.session_reasoning_effort,
+            "review_model": result.review_model,
+            "review_reasoning_effort": result.review_reasoning_effort,
+            "review_model_source": result.review_model_source,
+            "review_reasoning_source": result.review_reasoning_source,
+            "model_family_warning": result.model_family_warning,
+            "model_mismatch_warning": result.model_mismatch_warning,
         }
         return json.dumps(payload, indent=2) + "\n"
-    return (
-        f"Prepared run {result.run_id}\n"
-        f"Project: {result.project}\n"
-        f"State directory: {result.run_directory}\n"
-        f"Start command: {result.start_command}\n"
-        "Important: exit the active Codex TUI before running start.\n"
-    )
+    lines = [
+        f"Prepared run {result.run_id}",
+        f"Project: {result.project}",
+        f"State directory: {result.run_directory}",
+        f"Session model: {result.session_model}",
+        f"Session reasoning: {result.session_reasoning_effort}",
+        f"Review model: {result.review_model} ({result.review_model_source})",
+        f"Review reasoning: {result.review_reasoning_effort} ({result.review_reasoning_source})",
+        f"Start command: {result.start_command}",
+        "Important: exit the active Codex TUI before running start.",
+    ]
+    if result.model_mismatch_warning:
+        lines.append(f"Warning: {result.model_mismatch_warning}")
+    if result.model_family_warning:
+        lines.append(f"Warning: {result.model_family_warning}")
+    return "\n".join(lines) + "\n"

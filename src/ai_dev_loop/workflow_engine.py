@@ -48,6 +48,7 @@ from ai_dev_loop.resume_planner import (
     validate_recorded_staged_patch_for_review,
 )
 from ai_dev_loop.review_result import CodexReviewResult
+from ai_dev_loop.review_runtime import is_legacy_phase9_codex_state
 from ai_dev_loop.run_discovery import load_run
 from ai_dev_loop.runners.codex import (
     load_review_result_from_artifacts,
@@ -59,11 +60,22 @@ from ai_dev_loop.runners.codex import (
 from ai_dev_loop.runners.cursor import create_chat, execute_prompt
 from ai_dev_loop.runners.git import validate_correction_pre_cursor
 from ai_dev_loop.runners.probes import (
+    CompatibilityClassification,
+    ModelCompatibilityResult,
     capture_git_status,
     require_probe_success,
     run_start_probes,
+    run_tool_compatibility_probes,
 )
 from ai_dev_loop.runners.staging import run_git_staging
+from ai_dev_loop.runners.tool_updates import (
+    ToolCompatibilityPolicy,
+    ToolUpdatePrompt,
+    UpdateMode,
+    default_policy,
+    manual_update_commands,
+    run_official_updater,
+)
 from ai_dev_loop.state import (
     RunState,
     RunStatus,
@@ -180,9 +192,14 @@ def _fail_run(
     )
 
 
-def start_run(run_id: str) -> WorkflowResult:
+def start_run(
+    run_id: str,
+    *,
+    tool_policy: ToolCompatibilityPolicy | None = None,
+) -> WorkflowResult:
     run_directory, state = load_run(run_id)
     metadata = _lock_metadata(run_id, state)
+    policy = tool_policy or default_policy(stdin_is_tty=False)
     with RunLocks(run_directory, metadata):
         _log_requested(run_directory, run_id, state, event="start_requested")
         try:
@@ -190,6 +207,12 @@ def start_run(run_id: str) -> WorkflowResult:
         except ValidationError as exc:
             raise AiDevLoopError(str(exc), exit_code=exc.exit_code) from exc
 
+        # Compatibility + optional updates happen while status remains prepared so a
+        # declined update does not strand the run in a transient validating status.
+        try:
+            _ensure_tool_compatibility(run_directory, state, policy)
+        except WorkflowAbortedError:
+            return _workflow_aborted_result(run_directory, state, chat_id="")
         begin_validating(state)
         save_run_state(run_directory, state)
         _run_preflight(run_directory, state, from_prepared=True)
@@ -197,11 +220,16 @@ def start_run(run_id: str) -> WorkflowResult:
         return _continue_workflow(run_directory, state)
 
 
-def resume_run(run_id: str) -> WorkflowResult:
+def resume_run(
+    run_id: str,
+    *,
+    tool_policy: ToolCompatibilityPolicy | None = None,
+) -> WorkflowResult:
     from ai_dev_loop.commands.start_preflight import validate_resume_status
 
     run_directory, state = load_run(run_id)
     metadata = _lock_metadata(run_id, state)
+    policy = tool_policy or default_policy(stdin_is_tty=False)
     with RunLocks(run_directory, metadata):
         _log_requested(run_directory, run_id, state, event="resume_requested")
         try:
@@ -213,6 +241,14 @@ def resume_run(run_id: str) -> WorkflowResult:
         if state.status == RunStatus.INTERRUPTED:
             restore_interrupted_checkpoint(state, run_directory)
             save_run_state(run_directory, state)
+
+        if _resume_may_invoke_agents(state):
+            try:
+                _ensure_tool_compatibility(run_directory, state, policy)
+            except WorkflowAbortedError:
+                chat_id = state.cursor.chat_id or ""
+                return _workflow_aborted_result(run_directory, state, chat_id=chat_id)
+
         if from_prepared:
             begin_validating(state)
             save_run_state(run_directory, state)
@@ -299,6 +335,268 @@ def _run_probes(run_directory: Path, state: RunState) -> None:
         event="probes_passed",
         status=state.status.value,
     )
+
+
+def _resume_may_invoke_agents(state: RunState) -> bool:
+    if state.status in TERMINAL_STATUSES:
+        return False
+    return state.status in {
+        RunStatus.PREPARED,
+        RunStatus.WAITING_FOR_CURSOR_FIX,
+        RunStatus.RUNNING_CURSOR,
+        RunStatus.STAGING,
+        RunStatus.REVIEWING,
+        RunStatus.INTERRUPTED,
+        RunStatus.VALIDATING,
+    }
+
+
+def _actionable_compatibility_results(
+    results: list[ModelCompatibilityResult],
+) -> list[ModelCompatibilityResult]:
+    """Return classifications that must not silently continue as success."""
+
+    return [
+        item
+        for item in results
+        if item.classification
+        in {
+            CompatibilityClassification.INCOMPATIBLE_MODEL,
+            CompatibilityClassification.UNKNOWN,
+            CompatibilityClassification.PROBE_FAILED,
+        }
+    ]
+
+
+def _ensure_tool_compatibility(
+    run_directory: Path,
+    state: RunState,
+    policy: ToolCompatibilityPolicy,
+) -> None:
+    if is_abort_requested(run_directory):
+        raise WorkflowAbortedError("abort requested")
+
+    if is_legacy_phase9_codex_state(
+        review_model=state.codex.review_model,
+        review_reasoning_effort=state.codex.review_reasoning_effort,
+        review_model_source=state.codex.review_model_source,
+        review_reasoning_source=state.codex.review_reasoning_source,
+    ):
+        append_run_log(
+            run_directory,
+            "legacy Phase 9 Codex runtime detected; review will omit --model/"
+            "model_reasoning_effort. Re-prepare to capture session runtime metadata.",
+        )
+
+    from ai_dev_loop.runners.probes import executable_probe
+
+    for command, label in (
+        (state.cursor.command, "Cursor"),
+        (state.codex.command, "Codex"),
+    ):
+        missing = executable_probe(command, label=label)
+        if missing is not None:
+            message = missing.detail
+            if state.status in {RunStatus.PREPARED, RunStatus.WAITING_FOR_CURSOR_FIX}:
+                append_run_log(run_directory, message)
+                append_orchestrator_event(
+                    run_directory,
+                    run_id=state.run_id,
+                    component="orchestrator",
+                    event="tool_compatibility_failed",
+                    level=EventLevel.ERROR,
+                    status=state.status.value,
+                    detail={"message": message},
+                )
+                raise ValidationError(message)
+            _fail_run(run_directory, state, message, event_name="tool_compatibility_failed")
+            raise ValidationError(message)
+
+    try:
+        compat_results, version_results = run_tool_compatibility_probes(
+            cursor_command=state.cursor.command,
+            cursor_model=state.cursor.model,
+            codex_command=state.codex.command,
+            codex_model=state.codex.review_model,
+            run_directory=run_directory,
+        )
+    except ValidationError as exc:
+        # Keep prepared/resumable status when possible; only fail when already transient.
+        if state.status not in {RunStatus.PREPARED, RunStatus.WAITING_FOR_CURSOR_FIX}:
+            _fail_run(run_directory, state, str(exc), event_name="compatibility_probe_failed")
+        raise AiDevLoopError(str(exc), exit_code=exc.exit_code) from exc
+
+    versions = {item.tool: item.version for item in version_results}
+    actionable = _actionable_compatibility_results(compat_results)
+    if not actionable:
+        append_run_log(run_directory, "tool compatibility probes passed")
+        append_orchestrator_event(
+            run_directory,
+            run_id=state.run_id,
+            component="orchestrator",
+            event="tool_compatibility_passed",
+            status=state.status.value,
+            detail={
+                "cursor_classification": compat_results[0].classification.value,
+                "codex_classification": compat_results[1].classification.value,
+            },
+        )
+        return
+
+    for item in actionable:
+        if item.classification != CompatibilityClassification.COMPATIBLE:
+            append_run_log(
+                run_directory,
+                f"tool compatibility {item.classification.value} for {item.tool}: {item.detail}",
+            )
+
+    # Probe failures are not evidence that an updater will help; fail unless explicitly allowed.
+    probe_failures = [
+        item
+        for item in actionable
+        if item.classification == CompatibilityClassification.PROBE_FAILED
+    ]
+    update_candidates = [
+        item
+        for item in actionable
+        if item.classification
+        in {
+            CompatibilityClassification.INCOMPATIBLE_MODEL,
+            CompatibilityClassification.UNKNOWN,
+        }
+    ]
+
+    updated_tools: list[str] = []
+    for item in update_candidates:
+        if is_abort_requested(run_directory):
+            raise WorkflowAbortedError("abort requested")
+        should_update = _decide_tool_update(item, policy)
+        if not should_update:
+            continue
+        try:
+            run_official_updater(
+                tool=item.tool,
+                command=item.command,
+                version_before=versions.get(item.tool),
+                run_directory=run_directory,
+                run_id=state.run_id,
+            )
+        except ValidationError as exc:
+            if is_abort_requested(run_directory):
+                raise WorkflowAbortedError("abort requested") from exc
+            raise
+        updated_tools.append(item.tool)
+
+    if updated_tools:
+        if is_abort_requested(run_directory):
+            raise WorkflowAbortedError("abort requested")
+        compat_results, version_results = run_tool_compatibility_probes(
+            cursor_command=state.cursor.command,
+            cursor_model=state.cursor.model,
+            codex_command=state.codex.command,
+            codex_model=state.codex.review_model,
+            run_directory=run_directory,
+        )
+        versions = {item.tool: item.version for item in version_results}
+        actionable = _actionable_compatibility_results(compat_results)
+        probe_failures = [
+            item
+            for item in actionable
+            if item.classification == CompatibilityClassification.PROBE_FAILED
+        ]
+        update_candidates = [
+            item
+            for item in actionable
+            if item.classification
+            in {
+                CompatibilityClassification.INCOMPATIBLE_MODEL,
+                CompatibilityClassification.UNKNOWN,
+            }
+        ]
+
+    if not actionable:
+        append_run_log(run_directory, "tool compatibility probes passed after update")
+        return
+
+    if policy.allow_incompatible:
+        append_run_log(
+            run_directory,
+            "continuing despite non-compatible tool probes because "
+            "--allow-incompatible-tools was set",
+        )
+        append_orchestrator_event(
+            run_directory,
+            run_id=state.run_id,
+            component="orchestrator",
+            event="tool_compatibility_allowed",
+            status=state.status.value,
+            detail={
+                "tools": [item.tool for item in actionable],
+                "classifications": [item.classification.value for item in actionable],
+            },
+        )
+        return
+
+    commands = manual_update_commands(
+        cursor_command=state.cursor.command,
+        codex_command=state.codex.command,
+    )
+    details = "; ".join(
+        f"{item.tool}/{item.classification.value}: {item.detail} "
+        f"(version={versions.get(item.tool) or 'unknown'})"
+        for item in actionable
+    )
+    if probe_failures and not update_candidates:
+        recovery = (
+            "Compatibility probes failed; inspect preflight artifacts. "
+            "Pass --allow-incompatible-tools only if you intentionally want to continue."
+        )
+    else:
+        recovery = (
+            f"Manual recovery: {' | '.join(commands)}. "
+            "Re-run with --update-tools, or pass --allow-incompatible-tools to continue."
+        )
+    message = f"tool compatibility failed: {details}. {recovery}"
+    # Declined/failed compatibility while still prepared should preserve resumability.
+    if state.status in {RunStatus.PREPARED, RunStatus.WAITING_FOR_CURSOR_FIX}:
+        append_run_log(run_directory, message)
+        append_orchestrator_event(
+            run_directory,
+            run_id=state.run_id,
+            component="orchestrator",
+            event="tool_compatibility_failed",
+            level=EventLevel.ERROR,
+            status=state.status.value,
+            detail={
+                "message": message,
+                "tools": [item.tool for item in actionable],
+                "classifications": [item.classification.value for item in actionable],
+            },
+        )
+        raise AiDevLoopError(message, exit_code=4)
+    _fail_run(run_directory, state, message, event_name="tool_compatibility_failed")
+    raise AiDevLoopError(message, exit_code=4)
+
+
+def _decide_tool_update(
+    item: ModelCompatibilityResult,
+    policy: ToolCompatibilityPolicy,
+) -> bool:
+    if policy.update_mode == UpdateMode.ALWAYS:
+        return True
+    if policy.update_mode == UpdateMode.NEVER:
+        return False
+    if policy.ask_callback is None:
+        return False
+    prompt = ToolUpdatePrompt(
+        tool=item.tool,
+        command=item.command,
+        installed_version=item.installed_version,
+        required_model=item.required_model,
+        classification=item.classification.value,
+        detail=item.detail,
+    )
+    return bool(policy.ask_callback(prompt))
 
 
 def _require_cursor_chat(run_directory: Path, state: RunState) -> str:
