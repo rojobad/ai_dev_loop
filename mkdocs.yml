@@ -2,6 +2,7 @@ site_name: ai_dev_loop
 site_description: Orquestador local determinista para loops de desarrollo Codex/Cursor
 
 docs_dir: docs
+dev_addr: 127.0.0.1:8000
 
 theme:
   name: material

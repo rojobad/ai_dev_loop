@@ -8,8 +8,12 @@ Spanish. It is built with MkDocs:
 ```bash
 uv sync --all-extras
 uv run mkdocs build --strict
-uv run mkdocs serve
+uv run mkdocs serve -o
 ```
+
+The dev server speaks plain HTTP only. Open `http://127.0.0.1:8000/` (not `https://localhost:8000`).
+Browsers such as Opera GX may upgrade bare `localhost:8000` to HTTPS and show `ERR_SSL_PROTOCOL_ERROR`.
+Use `-o` to open the correct URL automatically, or type the `http://127.0.0.1:8000/` address explicitly.
 
 Entry points:
 

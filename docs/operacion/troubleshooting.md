@@ -1,5 +1,25 @@
 # Troubleshooting
 
+## MkDocs: `ERR_SSL_PROTOCOL_ERROR` en `localhost:8000`
+
+Sintoma:
+
+- el navegador muestra `ERR_SSL_PROTOCOL_ERROR` o "This site can't provide a secure connection";
+- `uv run mkdocs serve` registra lineas ilegibles con `code 400`.
+
+Causa:
+
+- `mkdocs serve` expone HTTP plano en `http://127.0.0.1:8000/`;
+- algunos navegadores, incluido Opera GX, fuerzan HTTPS cuando escribes `localhost:8000` sin esquema.
+
+Accion:
+
+1. Abre `http://127.0.0.1:8000/` (con `http://`, no `https://`).
+2. O ejecuta `uv run mkdocs serve -o` para abrir la URL correcta automaticamente.
+3. Si el navegador sigue forzando HTTPS, desactiva "Always use secure connections" / HTTPS-First para localhost o borra el estado HSTS de `localhost`.
+
+Los warnings `code 400` con texto binario desaparecen cuando el navegador deja de enviar handshakes TLS al servidor HTTP.
+
 ## `prepare` rechaza el worktree
 
 Causas comunes:
