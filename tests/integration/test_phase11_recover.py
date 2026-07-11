@@ -348,8 +348,13 @@ def test_recover_rejects_toctou_dirty_worktree_under_lock(
     original_analyze = analyze_recovery
     calls = {"count": 0}
 
-    def flaky_analyze(state, run_directory, *, resolve_runtime=True):
-        result = original_analyze(state, run_directory, resolve_runtime=resolve_runtime)
+    def flaky_analyze(state, run_directory, *, resolve_runtime=True, **kwargs):
+        result = original_analyze(
+            state,
+            run_directory,
+            resolve_runtime=resolve_runtime,
+            **kwargs,
+        )
         calls["count"] += 1
         # After the unlocked analysis succeeds, dirty the repo before locked revalidation.
         if calls["count"] == 1 and result.eligible:

@@ -58,7 +58,8 @@ from ai_dev_loop.runners.codex import (
     run_codex_review,
 )
 from ai_dev_loop.runners.cursor import create_chat, execute_prompt
-from ai_dev_loop.runners.git import validate_correction_pre_cursor
+from ai_dev_loop.runners.cursor_output import capture_cursor_output_fingerprint
+from ai_dev_loop.runners.git import validate_correction_pre_cursor, validate_repository_identity
 from ai_dev_loop.runners.probes import (
     CompatibilityClassification,
     ModelCompatibilityResult,
@@ -880,6 +881,37 @@ def _run_cursor_turn(
         )
         raise AiDevLoopError(f"Cursor execution failed: {detail}")
 
+    try:
+        validate_repository_identity(
+            Path(state.repository.root),
+            expected_root=state.repository.root,
+            expected_git_common_dir=state.repository.git_common_dir,
+            expected_git_dir=state.repository.git_dir,
+            expected_branch=state.repository.branch,
+            expected_head=state.repository.initial_head,
+            context="after Cursor",
+        )
+        fingerprint = capture_cursor_output_fingerprint(
+            state,
+            run_directory,
+            iteration_number=iteration_number,
+        )
+        upsert_iteration(
+            state,
+            {
+                "number": iteration_number,
+                "git": {
+                    "status_before_cursor_path": f"git/status/{iteration}-before-cursor.txt",
+                    "status_after_cursor_path": f"git/status/{iteration}-after-cursor.txt",
+                    "cursor_output_fingerprint_path": fingerprint.relative_path,
+                },
+            },
+        )
+        save_run_state(run_directory, state)
+    except ValidationError as exc:
+        _fail_run(run_directory, state, str(exc), event_name="cursor_output_fingerprint_failed")
+        raise AiDevLoopError(str(exc), exit_code=exc.exit_code) from exc
+
     append_orchestrator_event(
         run_directory,
         run_id=state.run_id,
@@ -888,7 +920,10 @@ def _run_cursor_turn(
         status=state.status.value,
         iteration=iteration_number,
         artifact_path=f"cursor/iterations/{iteration}/events.jsonl",
-        detail={"exit_code": execution.process.returncode},
+        detail={
+            "exit_code": execution.process.returncode,
+            "cursor_output_fingerprint_sha256": fingerprint.aggregate_sha256,
+        },
     )
     if is_abort_requested(run_directory):
         raise WorkflowAbortedError(ABORT_RESULT_MESSAGE)
@@ -967,6 +1002,7 @@ def _run_staging_pass(
         status=state.status.value,
         iteration=iteration_number,
         artifact_path=staging.artifacts.patch_path,
+        detail={"cursor_changed_index": staging.cursor_changed_index},
     )
     append_orchestrator_event(
         run_directory,

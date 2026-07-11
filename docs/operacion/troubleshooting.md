@@ -195,13 +195,20 @@ Acciones:
 
 ## `recover` rechaza el run o pide dry-run
 
-`resume` sigue rechazando `failed`. Para fallos elegibles tras Cursor + staging:
+`resume` sigue rechazando `failed`. Para fallos elegibles:
 
 ```bash
 ai_dev_loop recover --dry-run <failed-run-id>
 ```
 
-Si hay blockers (`staged_patch_drift`, `untracked_files`, `branch_mismatch`, etc.), corrigelos o prepara un run nuevo. No mutes el run origen.
+Si el blocker es `post_cursor_fingerprint_missing` y el status actual coincide con `NN-after-cursor.txt`:
+
+```bash
+ai_dev_loop recover --dry-run <failed-run-id> --adopt-current-cursor-output
+ai_dev_loop recover <failed-run-id> --adopt-current-cursor-output
+```
+
+Si hay otros blockers (`staged_patch_drift`, `untracked_files`, `branch_mismatch`, `cursor_output_fingerprint_drift`, etc.), corrigelos o prepara un run nuevo. No mutes el run origen.
 
 Si dry-run es elegible:
 
@@ -211,6 +218,8 @@ ai_dev_loop resume <recovery-run-id> [--update-tools]
 ```
 
 `recover` nunca actualiza CLIs ni invoca agentes. Si un sucesor tambien fallo, recupera ese sucesor (cadena), no el abuelo.
+
+Para staging recovery, el sucesor `resume` ejecuta `git add -A` y Codex sin re-ejecutar Cursor.
 
 ## Pytest falla con temporales en `/mnt/c`
 

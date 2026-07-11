@@ -124,6 +124,12 @@ def test_recovery_state_aligns_with_schema() -> None:
         "reason_code",
     }
     assert RecoveryState.model_fields.keys() == set(recovery_schema["properties"].keys())
+    assert set(recovery_schema["properties"]["recovered_checkpoint"]["enum"]) == {
+        "staging",
+        "reviewing",
+        "process_review",
+    }
+    assert "correction_staging_failed" in recovery_schema["properties"]["reason_code"]["enum"]
 
 
 def test_historical_run_state_without_recovery_loads(tmp_path: Path) -> None:

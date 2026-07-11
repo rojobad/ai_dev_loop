@@ -96,6 +96,8 @@ cursor/iterations/NN/metadata.json
 
 git/status/NN-before-cursor.txt
 git/status/NN-after-cursor.txt
+git/cursor-output/NN.json
+git/cursor-output/NN.post-normalization.json
 git/status/NN-before-staging.txt
 git/status/NN-after-staging.txt
 git/diffs/NN.stat
@@ -109,7 +111,13 @@ codex/reviews/NN.md
 codex/reviews/NN.metadata.json
 ```
 
+`git/cursor-output/NN.json` es un fingerprint sensible post-Cursor (hashes y rutas; sin contenidos de archivo). Se captura despues de Cursor y antes de `git add -A`.
+
+`git/cursor-output/NN.post-normalization.json` se captura inmediatamente despues de un `git add -A` exitoso, antes de persistir el patch staged. Permite recuperar fallos parciales de staging cuando el index ya fue normalizado.
+
 Los patches staged son snapshots acumulativos del index en esa iteracion, no necesariamente diffs incrementales.
+
+Las correcciones envian a Cursor un envelope operacional que embebe byte a byte el `prompts/fixes/NN.txt` exacto; el envelope auditado vive en `prompts/fixes/NN.execution-envelope.txt`.
 
 ## Lineage de recovery
 
@@ -119,8 +127,11 @@ Un sucesor creado por `ai_dev_loop recover` incluye en `state.json` una seccion 
 source_run_id
 source_status                 # failed
 source_iteration
-recovered_checkpoint          # reviewing | process_review
+recovered_checkpoint          # staging | reviewing | process_review
 source_staged_patch_sha256
+cursor_output_fingerprint_sha256   # requerido para staging
+previous_staged_patch_sha256       # requerido para staging
+legacy_cursor_output_adopted       # opcional; adopcion historica
 created_at
 runtime_migration             # none | phase9_session_capture
 reason_code

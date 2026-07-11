@@ -437,6 +437,50 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                     target = os.path.join(workspace, "correction_feature.txt")
                     with open(target, "w", encoding="utf-8") as handle:
                         handle.write("correction feature\\n")
+                elif modify_mode == "correction_stage":
+                    import subprocess
+
+                    target = os.path.join(workspace, "correction_feature.txt")
+                    with open(target, "w", encoding="utf-8") as handle:
+                        handle.write("correction staged\\n")
+                    subprocess.run(["git", "add", "correction_feature.txt"], cwd=workspace, check=False)
+                elif modify_mode == "correction_partial_stage":
+                    import subprocess
+
+                    staged = os.path.join(workspace, "correction_staged.txt")
+                    unstaged = os.path.join(workspace, "ai_dev_loop.yaml")
+                    with open(staged, "w", encoding="utf-8") as handle:
+                        handle.write("staged correction\\n")
+                    subprocess.run(["git", "add", "correction_staged.txt"], cwd=workspace, check=False)
+                    with open(unstaged, "a", encoding="utf-8") as handle:
+                        handle.write("\\n# unstaged correction\\n")
+                elif modify_mode == "correction_ignore_generated":
+                    import subprocess
+
+                    ignore = os.path.join(workspace, ".gitignore")
+                    with open(ignore, "a", encoding="utf-8") as handle:
+                        handle.write("\\ngenerated.out\\n")
+                    generated = os.path.join(workspace, "generated.out")
+                    with open(generated, "w", encoding="utf-8") as handle:
+                        handle.write("generated\\n")
+                    subprocess.run(["git", "add", ".gitignore"], cwd=workspace, check=False)
+                    subprocess.run(
+                        ["git", "rm", "--cached", "-f", "generated.out"],
+                        cwd=workspace,
+                        check=False,
+                    )
+                elif modify_mode == "correction_commit_forbidden":
+                    import subprocess
+
+                    target = os.path.join(workspace, "forbidden.txt")
+                    with open(target, "w", encoding="utf-8") as handle:
+                        handle.write("should not commit\\n")
+                    subprocess.run(["git", "add", "forbidden.txt"], cwd=workspace, check=False)
+                    subprocess.run(
+                        ["git", "commit", "-m", "forbidden cursor commit"],
+                        cwd=workspace,
+                        check=False,
+                    )
                 elif modify_mode == "modify_plan":
                     target = os.path.join(workspace, "docs/plans/sample-plan.md")
                     with open(target, "w", encoding="utf-8") as handle:

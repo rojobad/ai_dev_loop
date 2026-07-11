@@ -357,12 +357,27 @@ def recover_command(
             help="Analyze recoverability without creating a successor run.",
         ),
     ] = False,
+    adopt_current_cursor_output: Annotated[
+        bool,
+        typer.Option(
+            "--adopt-current-cursor-output",
+            help=(
+                "For historical staging failures without a post-Cursor fingerprint, "
+                "explicitly attest that the current repository matches the recorded "
+                "after-cursor status and adopt it for recovery. No TTY prompt substitutes."
+            ),
+        ),
+    ] = False,
     output: OutputOption = DEFAULT_OUTPUT,
 ) -> None:
     """Create a successor run for an eligible terminal failed run."""
 
     def run() -> None:
-        result = recover_run(run_id, dry_run=dry_run)
+        result = recover_run(
+            run_id,
+            dry_run=dry_run,
+            adopt_current_cursor_output=adopt_current_cursor_output,
+        )
         if isinstance(result, RecoveryAnalysis):
             typer.echo(render_recovery_analysis(result, output=output.value), nl=False)
             if not result.eligible:

@@ -214,7 +214,7 @@
         "source_iteration": { "type": "integer", "minimum": 1 },
         "recovered_checkpoint": {
           "type": "string",
-          "enum": ["reviewing", "process_review"]
+          "enum": ["staging", "reviewing", "process_review"]
         },
         "source_staged_patch_sha256": {
           "type": "string",
@@ -230,10 +230,47 @@
           "enum": [
             "codex_review_failed",
             "codex_review_result_invalid",
-            "codex_review_processing_failed"
+            "codex_review_processing_failed",
+            "correction_staging_failed"
           ]
+        },
+        "cursor_output_fingerprint_sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "previous_staged_patch_sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "legacy_cursor_output_adopted": {
+          "type": ["boolean", "null"]
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "recovered_checkpoint": { "const": "staging" } },
+            "required": ["recovered_checkpoint"]
+          },
+          "then": {
+            "required": [
+              "cursor_output_fingerprint_sha256",
+              "previous_staged_patch_sha256"
+            ],
+            "properties": {
+              "reason_code": { "const": "correction_staging_failed" },
+              "cursor_output_fingerprint_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "previous_staged_patch_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

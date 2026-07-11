@@ -142,6 +142,18 @@ Documentado en:
 - [Troubleshooting](../operacion/troubleshooting.md)
 - [Guia rapida](../guia/guia-rapida.md)
 
+## Fase 12
+
+Permite que Cursor mute el index durante correcciones, mantiene el checkpoint estricto pre-Cursor, normaliza siempre con `git add -A`, captura fingerprints post-Cursor, y extiende `recover` al checkpoint `staging` (con `--adopt-current-cursor-output` para historicos sin fingerprint).
+
+Documentado en:
+
+- [Ejecutar runs](../operacion/prepare-start-resume-abort.md)
+- [Seguridad y privacidad](../operacion/seguridad-privacidad.md)
+- [Estado y artefactos](../operacion/estado-artefactos.md)
+- [CLI](cli.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+
 ## Riesgos residuales documentados
 
 - Hook trust sigue siendo `unknown` desde CLI.

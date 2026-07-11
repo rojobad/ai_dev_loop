@@ -137,6 +137,7 @@ def _create_run_layout(base: Path) -> None:
         "locks",
         "git/status",
         "git/diffs",
+        "git/cursor-output",
     ):
         ensure_dir(base / relative)
 

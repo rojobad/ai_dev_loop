@@ -122,12 +122,19 @@ Si el run se interrumpe:
 ai_dev_loop resume <run-id>
 ```
 
-Si un run termina en `failed` despues de Cursor + staging y el staged patch sigue intacto:
+Si un run termina en `failed` tras Cursor + staging, o tras Cursor de correccion con staging incompleto:
 
 ```bash
 ai_dev_loop recover --dry-run <failed-run-id>
 ai_dev_loop recover <failed-run-id>
 ai_dev_loop resume <recovery-run-id>
+```
+
+Para fallos de staging historicos sin fingerprint post-Cursor:
+
+```bash
+ai_dev_loop recover --dry-run <failed-run-id> --adopt-current-cursor-output
+ai_dev_loop recover <failed-run-id> --adopt-current-cursor-output
 ```
 
 `recover` crea un sucesor; no edita el run `failed` original. No lanza agentes ni updaters.

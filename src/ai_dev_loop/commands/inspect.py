@@ -53,6 +53,11 @@ def render_inspect(run_id: str, *, output: str = "text", show_prompts: bool = Fa
                 "source_iteration": state.recovery.source_iteration,
                 "recovered_checkpoint": state.recovery.recovered_checkpoint,
                 "source_staged_patch_sha256": state.recovery.source_staged_patch_sha256,
+                "cursor_output_fingerprint_sha256": (
+                    state.recovery.cursor_output_fingerprint_sha256
+                ),
+                "previous_staged_patch_sha256": state.recovery.previous_staged_patch_sha256,
+                "legacy_cursor_output_adopted": state.recovery.legacy_cursor_output_adopted,
                 "created_at": state.recovery.created_at.isoformat(),
                 "runtime_migration": state.recovery.runtime_migration,
                 "reason_code": state.recovery.reason_code,
@@ -109,6 +114,11 @@ def render_inspect(run_id: str, *, output: str = "text", show_prompts: bool = Fa
             f"  runtime_migration: {state.recovery.runtime_migration}",
             f"  reason_code: {state.recovery.reason_code}",
             f"  source_staged_patch_sha256: {state.recovery.source_staged_patch_sha256}",
+            (
+                f"  cursor_output_fingerprint_sha256: "
+                f"{state.recovery.cursor_output_fingerprint_sha256 or '(none)'}"
+            ),
+            (f"  legacy_cursor_output_adopted: {state.recovery.legacy_cursor_output_adopted}"),
             "",
         ]
     if state.codex.model_family_warning:

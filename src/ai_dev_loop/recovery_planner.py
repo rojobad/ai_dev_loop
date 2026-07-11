@@ -27,6 +27,13 @@ from ai_dev_loop.resume_planner import (
     review_result_available,
 )
 from ai_dev_loop.review_runtime import is_legacy_phase9_codex_state
+from ai_dev_loop.runners.cursor_output import (
+    after_cursor_status_matches,
+    fingerprints_match,
+    load_cursor_output_fingerprint,
+    load_staging_normalization_fingerprint,
+    recompute_cursor_output_fingerprint,
+)
 from ai_dev_loop.runners.git import (
     discover_repository,
     git_status_porcelain,
@@ -76,12 +83,18 @@ class RecoveryAnalysis:
     blockers: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     staged_patch_sha256: str | None = None
+    cursor_output_fingerprint_sha256: str | None = None
+    previous_staged_patch_sha256: str | None = None
+    legacy_cursor_output_adopted: bool = False
+    post_cursor_fingerprint_available: bool = False
+    verified_staging_state: str | None = None
     session_runtime_action: SessionRuntimeAction = SessionRuntimeAction.UNRESOLVED
     reason_code: str | None = None
     resolved_runtime: ResolvedRecoveryRuntime | None = None
     existing_successor_run_id: str | None = None
     existing_successor_status: str | None = None
     reused_existing_successor: bool = False
+    adopted_fingerprint_payload: dict[str, object] | None = None
 
 
 def _add_blocker(blockers: list[str], code: str) -> None:
@@ -116,11 +129,338 @@ def derive_recovery_reason_code(
     checkpoint: str,
     iteration_number: int,
 ) -> str:
+    if checkpoint == "staging":
+        return "correction_staging_failed"
     if checkpoint == "process_review":
         return "codex_review_processing_failed"
     if _has_invalid_review_json(run_directory, iteration_number):
         return "codex_review_result_invalid"
     return "codex_review_failed"
+
+
+def _previous_iteration_patch_hash(
+    state: RunState,
+    run_directory: Path,
+    iteration_number: int,
+) -> str | None:
+    previous = find_iteration(state, iteration_number - 1)
+    if previous is None:
+        return None
+    git_section = previous.get("git")
+    if not isinstance(git_section, dict):
+        return None
+    patch_rel = git_section.get("staged_diff_path")
+    if not isinstance(patch_rel, str):
+        return None
+    patch_path = run_directory / patch_rel
+    if not patch_path.is_file():
+        return None
+    return sha256_file(patch_path)
+
+
+def _analyze_staging_checkpoint(
+    analysis: RecoveryAnalysis,
+    state: RunState,
+    run_directory: Path,
+    *,
+    iteration_number: int,
+    adopt_current_cursor_output: bool,
+) -> None:
+    """Fill staging-checkpoint fields and blockers for a correction staging failure."""
+
+    label = iteration_label(iteration_number)
+    analysis.checkpoint = "staging"
+    analysis.reason_code = "correction_staging_failed"
+
+    if iteration_number < 2:
+        _add_blocker(analysis.blockers, "staging_recovery_requires_correction_iteration")
+        return
+
+    previous_hash = _previous_iteration_patch_hash(state, run_directory, iteration_number)
+    if previous_hash is None:
+        _add_blocker(analysis.blockers, "previous_staged_patch_missing")
+        return
+    analysis.previous_staged_patch_sha256 = previous_hash
+    # Structural compatibility: source_staged_patch_sha256 is the previous completed patch.
+    analysis.staged_patch_sha256 = previous_hash
+
+    fix_prompt = run_directory / f"prompts/fixes/{iteration_label(iteration_number - 1)}.txt"
+    if not fix_prompt.is_file() or not fix_prompt.read_text(encoding="utf-8").strip():
+        _add_blocker(analysis.blockers, "previous_fix_prompt_missing")
+
+    previous_review = run_directory / f"codex/reviews/{iteration_label(iteration_number - 1)}.json"
+    if not previous_review.is_file():
+        _add_blocker(analysis.blockers, "previous_review_missing")
+
+    after_cursor = run_directory / f"git/status/{label}-after-cursor.txt"
+    if not after_cursor.is_file():
+        _add_blocker(analysis.blockers, "after_cursor_status_missing")
+
+    recorded = load_cursor_output_fingerprint(run_directory, iteration_number)
+    analysis.post_cursor_fingerprint_available = recorded is not None
+    recorded_normalization = load_staging_normalization_fingerprint(run_directory, iteration_number)
+
+    try:
+        current = recompute_cursor_output_fingerprint(state, iteration_number=iteration_number)
+    except ValidationError as exc:
+        message = str(exc).lower()
+        if "unsupported" in message or "special" in message or "symlink" in message:
+            _add_blocker(analysis.blockers, "unsupported_special_files")
+        else:
+            _add_blocker(analysis.blockers, "cursor_output_fingerprint_unavailable")
+        return
+
+    if recorded is not None:
+        analysis.cursor_output_fingerprint_sha256 = str(recorded.get("aggregate_sha256") or "")
+        if fingerprints_match(recorded, current):
+            if not analysis.cursor_output_fingerprint_sha256:
+                _add_blocker(analysis.blockers, "post_cursor_fingerprint_invalid")
+            else:
+                analysis.verified_staging_state = "pre_staging"
+            return
+        if recorded_normalization is not None and fingerprints_match(
+            recorded_normalization, current
+        ):
+            # Index already normalized by a prior staging attempt; resume can finish artifacts.
+            if not analysis.cursor_output_fingerprint_sha256:
+                _add_blocker(analysis.blockers, "post_cursor_fingerprint_invalid")
+            else:
+                analysis.verified_staging_state = "post_normalization"
+                analysis.warnings.append(
+                    "staging_normalization_fingerprint_verified; "
+                    "repository matches post-git-add-A state after a partial staging failure"
+                )
+            return
+        _add_blocker(analysis.blockers, "cursor_output_fingerprint_drift")
+        return
+
+    _add_blocker(analysis.blockers, "post_cursor_fingerprint_missing")
+    if not adopt_current_cursor_output:
+        analysis.warnings.append(
+            "historical_staging_checkpoint_requires_explicit_adoption; "
+            "re-run with --adopt-current-cursor-output after confirming the repository "
+            "was not modified since the recorded Cursor turn"
+        )
+        return
+
+    if not after_cursor_status_matches(
+        run_directory,
+        iteration_number=iteration_number,
+        repo_root=Path(state.repository.root),
+    ):
+        _add_blocker(analysis.blockers, "after_cursor_status_mismatch")
+        return
+
+    # Explicit adoption: current fingerprint becomes the attested post-Cursor snapshot.
+    while "post_cursor_fingerprint_missing" in analysis.blockers:
+        analysis.blockers.remove("post_cursor_fingerprint_missing")
+    analysis.legacy_cursor_output_adopted = True
+    analysis.verified_staging_state = "pre_staging"
+    analysis.cursor_output_fingerprint_sha256 = current.aggregate_sha256
+    analysis.adopted_fingerprint_payload = current.payload
+    analysis.warnings.append(
+        "legacy_cursor_output_explicitly_adopted; "
+        "adoption attests the user has not manually modified the repository since "
+        "the recorded Cursor turn (status match only, not cryptographic proof)"
+    )
+
+
+def analyze_recovery(
+    state: RunState,
+    run_directory: Path,
+    *,
+    resolve_runtime: bool = True,
+    adopt_current_cursor_output: bool = False,
+) -> RecoveryAnalysis:
+    """Analyze whether a failed run can safely produce a successor."""
+
+    blockers: list[str] = []
+    warnings: list[str] = []
+    analysis = RecoveryAnalysis(
+        eligible=False,
+        source_run_id=state.run_id,
+        source_status=state.status.value,
+        blockers=blockers,
+        warnings=warnings,
+    )
+
+    if state.status != RunStatus.FAILED:
+        _add_blocker(blockers, "source_status_not_failed")
+        return analysis
+
+    try:
+        validate_timeouts(state)
+    except ValidationError:
+        _add_blocker(blockers, "invalid_timeouts")
+
+    if not state.codex.session_id.strip():
+        _add_blocker(blockers, "missing_codex_session_id")
+
+    active = read_active_process(run_directory)
+    if active is not None:
+        validation = validate_active_process_metadata(
+            run_directory,
+            run_id=state.run_id,
+            metadata=active,
+        )
+        if validation is None:
+            _add_blocker(blockers, "ambiguous_active_process_metadata")
+        elif validation.is_live and not validation.is_stale:
+            _add_blocker(blockers, "active_child_process")
+        elif (validation.is_live and validation.is_stale) or (
+            validation.is_stale and not validation.pgid_checked_live
+        ):
+            _add_blocker(blockers, "ambiguous_active_process_metadata")
+        else:
+            warnings.append("stale_inactive_process_metadata_present")
+
+    try:
+        repo_info = discover_repository(Path(state.repository.root))
+    except ValidationError:
+        _add_blocker(blockers, "repository_unavailable")
+        return analysis
+
+    if repo_info.root.resolve() != Path(state.repository.root).resolve():
+        _add_blocker(blockers, "repository_root_mismatch")
+    if repo_info.git_common_dir.resolve() != Path(state.repository.git_common_dir).resolve():
+        _add_blocker(blockers, "git_common_dir_mismatch")
+    if repo_info.git_dir.resolve() != Path(state.repository.git_dir).resolve():
+        _add_blocker(blockers, "git_dir_mismatch")
+    if repo_info.branch != state.repository.branch:
+        _add_blocker(blockers, "branch_mismatch")
+    if repo_info.head != state.repository.initial_head:
+        _add_blocker(blockers, "head_mismatch")
+
+    try:
+        validate_plan_contract(state, run_directory)
+    except ValidationError:
+        _add_blocker(blockers, "plan_contract_invalid")
+    try:
+        validate_prompt_contract(state, run_directory)
+    except ValidationError:
+        _add_blocker(blockers, "prompt_contract_invalid")
+
+    state_chat_id = state.cursor.chat_id
+    artifact_chat_id = _read_chat_id_from_artifact(run_directory)
+    if not state_chat_id:
+        _add_blocker(blockers, "missing_cursor_chat_id")
+    elif artifact_chat_id is None:
+        _add_blocker(blockers, "missing_cursor_chat_artifact")
+    elif artifact_chat_id != state_chat_id:
+        _add_blocker(blockers, "cursor_chat_id_mismatch")
+
+    iteration_number = max_iteration_number(state)
+    if iteration_number < 1:
+        _add_blocker(blockers, "missing_iteration_metadata")
+        return analysis
+    if find_iteration(state, iteration_number) is None:
+        _add_blocker(blockers, "ambiguous_iteration_metadata")
+        return analysis
+
+    analysis.iteration = iteration_number
+    label = iteration_label(iteration_number)
+
+    if not cursor_turn_complete(run_directory, iteration_number):
+        _add_blocker(blockers, "cursor_turn_incomplete")
+        return analysis
+
+    if not staging_complete_for_iteration(state, run_directory, label):
+        _analyze_staging_checkpoint(
+            analysis,
+            state,
+            run_directory,
+            iteration_number=iteration_number,
+            adopt_current_cursor_output=adopt_current_cursor_output,
+        )
+        if analysis.checkpoint not in RECOVERY_CHECKPOINTS:
+            _add_blocker(blockers, "unsupported_checkpoint")
+        if resolve_runtime and analysis.checkpoint == "staging":
+            try:
+                resolved = resolve_recovery_runtime(state, run_directory)
+                analysis.resolved_runtime = resolved
+                analysis.session_runtime_action = resolved.session_runtime_action
+                if resolved.runtime_migration == "phase9_session_capture":
+                    warnings.append(
+                        "phase9_runtime_captured_at_recovery; "
+                        "values reflect current session metadata, not a prepare-time freeze"
+                    )
+            except ValidationError as exc:
+                message = str(exc).lower()
+                if "session" in message or "rollout" in message or "ambiguous" in message:
+                    _add_blocker(blockers, "session_runtime_unavailable")
+                else:
+                    _add_blocker(blockers, "review_runtime_unresolved")
+                analysis.session_runtime_action = SessionRuntimeAction.UNRESOLVED
+        analysis.eligible = len(blockers) == 0
+        return analysis
+
+    try:
+        patch_rel = iteration_staged_patch_rel_path(state, iteration_number)
+        patch_artifact = run_directory / patch_rel
+        if not patch_artifact.is_file():
+            _add_blocker(blockers, "staged_patch_artifact_missing")
+        else:
+            # Record the source artifact hash even when the live index drifted, so
+            # matching successors remain discoverable for dry-run/diagnostics.
+            analysis.staged_patch_sha256 = sha256_file(patch_artifact)
+            try:
+                validate_staged_patch_matches_artifact(Path(state.repository.root), patch_artifact)
+            except ValidationError:
+                _add_blocker(blockers, "staged_patch_drift")
+    except ValidationError:
+        _add_blocker(blockers, "staged_patch_artifact_missing")
+
+    try:
+        status = git_status_porcelain(Path(state.repository.root))
+        if paths_with_unstaged_changes(status):
+            _add_blocker(blockers, "unstaged_tracked_changes")
+        if paths_with_untracked(status):
+            _add_blocker(blockers, "untracked_files")
+    except ValidationError:
+        _add_blocker(blockers, "git_status_unavailable")
+
+    if review_result_available(run_directory, iteration_number):
+        checkpoint = "process_review"
+        next_kind = WorkflowActionKind.PROCESS_REVIEW
+    else:
+        checkpoint = "reviewing"
+        next_kind = WorkflowActionKind.REVIEW
+
+    if next_kind not in {WorkflowActionKind.REVIEW, WorkflowActionKind.PROCESS_REVIEW}:
+        _add_blocker(blockers, "unsupported_checkpoint")
+        return analysis
+
+    if checkpoint not in RECOVERY_CHECKPOINTS:
+        _add_blocker(blockers, "unsupported_checkpoint")
+        return analysis
+
+    analysis.checkpoint = checkpoint
+    analysis.reason_code = derive_recovery_reason_code(
+        run_directory,
+        checkpoint=checkpoint,
+        iteration_number=iteration_number,
+    )
+
+    if resolve_runtime:
+        try:
+            resolved = resolve_recovery_runtime(state, run_directory)
+            analysis.resolved_runtime = resolved
+            analysis.session_runtime_action = resolved.session_runtime_action
+            if resolved.runtime_migration == "phase9_session_capture":
+                warnings.append(
+                    "phase9_runtime_captured_at_recovery; "
+                    "values reflect current session metadata, not a prepare-time freeze"
+                )
+        except ValidationError as exc:
+            message = str(exc).lower()
+            if "session" in message or "rollout" in message or "ambiguous" in message:
+                _add_blocker(blockers, "session_runtime_unavailable")
+            else:
+                _add_blocker(blockers, "review_runtime_unresolved")
+            analysis.session_runtime_action = SessionRuntimeAction.UNRESOLVED
+
+    analysis.eligible = len(blockers) == 0
+    return analysis
 
 
 def is_phase10_frozen_codex_state(codex: CodexState) -> bool:
@@ -331,178 +671,3 @@ def apply_resolved_runtime_to_codex(
         review_skill=codex.review_skill,
         sandbox=codex.sandbox,
     )
-
-
-def analyze_recovery(
-    state: RunState,
-    run_directory: Path,
-    *,
-    resolve_runtime: bool = True,
-) -> RecoveryAnalysis:
-    """Analyze whether a failed run can safely produce a review-retry successor."""
-
-    blockers: list[str] = []
-    warnings: list[str] = []
-    analysis = RecoveryAnalysis(
-        eligible=False,
-        source_run_id=state.run_id,
-        source_status=state.status.value,
-        blockers=blockers,
-        warnings=warnings,
-    )
-
-    if state.status != RunStatus.FAILED:
-        _add_blocker(blockers, "source_status_not_failed")
-        return analysis
-
-    try:
-        validate_timeouts(state)
-    except ValidationError:
-        _add_blocker(blockers, "invalid_timeouts")
-
-    if not state.codex.session_id.strip():
-        _add_blocker(blockers, "missing_codex_session_id")
-
-    active = read_active_process(run_directory)
-    if active is not None:
-        validation = validate_active_process_metadata(
-            run_directory,
-            run_id=state.run_id,
-            metadata=active,
-        )
-        if validation is None:
-            _add_blocker(blockers, "ambiguous_active_process_metadata")
-        elif validation.is_live and not validation.is_stale:
-            _add_blocker(blockers, "active_child_process")
-        elif (validation.is_live and validation.is_stale) or (
-            validation.is_stale and not validation.pgid_checked_live
-        ):
-            _add_blocker(blockers, "ambiguous_active_process_metadata")
-        else:
-            warnings.append("stale_inactive_process_metadata_present")
-
-    try:
-        repo_info = discover_repository(Path(state.repository.root))
-    except ValidationError:
-        _add_blocker(blockers, "repository_unavailable")
-        return analysis
-
-    if repo_info.root.resolve() != Path(state.repository.root).resolve():
-        _add_blocker(blockers, "repository_root_mismatch")
-    if repo_info.git_common_dir.resolve() != Path(state.repository.git_common_dir).resolve():
-        _add_blocker(blockers, "git_common_dir_mismatch")
-    if repo_info.git_dir.resolve() != Path(state.repository.git_dir).resolve():
-        _add_blocker(blockers, "git_dir_mismatch")
-    if repo_info.branch != state.repository.branch:
-        _add_blocker(blockers, "branch_mismatch")
-    if repo_info.head != state.repository.initial_head:
-        _add_blocker(blockers, "head_mismatch")
-
-    try:
-        validate_plan_contract(state, run_directory)
-    except ValidationError:
-        _add_blocker(blockers, "plan_contract_invalid")
-    try:
-        validate_prompt_contract(state, run_directory)
-    except ValidationError:
-        _add_blocker(blockers, "prompt_contract_invalid")
-
-    state_chat_id = state.cursor.chat_id
-    artifact_chat_id = _read_chat_id_from_artifact(run_directory)
-    if not state_chat_id:
-        _add_blocker(blockers, "missing_cursor_chat_id")
-    elif artifact_chat_id is None:
-        _add_blocker(blockers, "missing_cursor_chat_artifact")
-    elif artifact_chat_id != state_chat_id:
-        _add_blocker(blockers, "cursor_chat_id_mismatch")
-
-    iteration_number = max_iteration_number(state)
-    if iteration_number < 1:
-        _add_blocker(blockers, "missing_iteration_metadata")
-        return analysis
-    if find_iteration(state, iteration_number) is None:
-        _add_blocker(blockers, "ambiguous_iteration_metadata")
-        return analysis
-
-    analysis.iteration = iteration_number
-    label = iteration_label(iteration_number)
-
-    if not cursor_turn_complete(run_directory, iteration_number):
-        _add_blocker(blockers, "cursor_turn_incomplete")
-        _add_blocker(blockers, "phase11_supports_post_staging_only")
-        return analysis
-
-    if not staging_complete_for_iteration(state, run_directory, label):
-        _add_blocker(blockers, "staging_incomplete")
-        _add_blocker(blockers, "phase11_supports_post_staging_only")
-        return analysis
-
-    try:
-        patch_rel = iteration_staged_patch_rel_path(state, iteration_number)
-        patch_artifact = run_directory / patch_rel
-        if not patch_artifact.is_file():
-            _add_blocker(blockers, "staged_patch_artifact_missing")
-        else:
-            # Record the source artifact hash even when the live index drifted, so
-            # matching successors remain discoverable for dry-run/diagnostics.
-            analysis.staged_patch_sha256 = sha256_file(patch_artifact)
-            try:
-                validate_staged_patch_matches_artifact(
-                    Path(state.repository.root), patch_artifact
-                )
-            except ValidationError:
-                _add_blocker(blockers, "staged_patch_drift")
-    except ValidationError:
-        _add_blocker(blockers, "staged_patch_artifact_missing")
-
-    try:
-        status = git_status_porcelain(Path(state.repository.root))
-        if paths_with_unstaged_changes(status):
-            _add_blocker(blockers, "unstaged_tracked_changes")
-        if paths_with_untracked(status):
-            _add_blocker(blockers, "untracked_files")
-    except ValidationError:
-        _add_blocker(blockers, "git_status_unavailable")
-
-    if review_result_available(run_directory, iteration_number):
-        checkpoint = "process_review"
-        next_kind = WorkflowActionKind.PROCESS_REVIEW
-    else:
-        checkpoint = "reviewing"
-        next_kind = WorkflowActionKind.REVIEW
-
-    if next_kind not in {WorkflowActionKind.REVIEW, WorkflowActionKind.PROCESS_REVIEW}:
-        _add_blocker(blockers, "phase11_supports_post_staging_only")
-        return analysis
-
-    if checkpoint not in RECOVERY_CHECKPOINTS:
-        _add_blocker(blockers, "unsupported_checkpoint")
-        return analysis
-
-    analysis.checkpoint = checkpoint
-    analysis.reason_code = derive_recovery_reason_code(
-        run_directory,
-        checkpoint=checkpoint,
-        iteration_number=iteration_number,
-    )
-
-    if resolve_runtime:
-        try:
-            resolved = resolve_recovery_runtime(state, run_directory)
-            analysis.resolved_runtime = resolved
-            analysis.session_runtime_action = resolved.session_runtime_action
-            if resolved.runtime_migration == "phase9_session_capture":
-                warnings.append(
-                    "phase9_runtime_captured_at_recovery; "
-                    "values reflect current session metadata, not a prepare-time freeze"
-                )
-        except ValidationError as exc:
-            message = str(exc).lower()
-            if "session" in message or "rollout" in message or "ambiguous" in message:
-                _add_blocker(blockers, "session_runtime_unavailable")
-            else:
-                _add_blocker(blockers, "review_runtime_unresolved")
-            analysis.session_runtime_action = SessionRuntimeAction.UNRESOLVED
-
-    analysis.eligible = len(blockers) == 0
-    return analysis

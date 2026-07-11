@@ -51,6 +51,10 @@ def render_status(run_id: str, *, output: str = "text") -> str:
                 "recovered_checkpoint": state.recovery.recovered_checkpoint,
                 "runtime_migration": state.recovery.runtime_migration,
                 "reason_code": state.recovery.reason_code,
+                "cursor_output_fingerprint_sha256": (
+                    state.recovery.cursor_output_fingerprint_sha256
+                ),
+                "legacy_cursor_output_adopted": state.recovery.legacy_cursor_output_adopted,
             },
         }
         return json.dumps(payload, indent=2) + "\n"
@@ -151,9 +155,10 @@ def _next_action(state: RunState, run_path: Path) -> str:
         return "Run ai_dev_loop resume <run-id> after inspecting cursor/ and codex/ artifacts."
     if status == "failed":
         return (
-            "Inspect last_error and artifacts. If Cursor and staging completed and the staged "
-            "patch still matches, try: ai_dev_loop recover --dry-run <run-id>, then "
-            "ai_dev_loop recover <run-id>."
+            "Inspect last_error and artifacts. Eligible failed runs may be recovered with "
+            "ai_dev_loop recover --dry-run <run-id> (add --adopt-current-cursor-output for "
+            "historical staging failures missing a post-Cursor fingerprint), then "
+            "ai_dev_loop recover <run-id> and ai_dev_loop resume <recovery-run-id>."
         )
     if status == "aborted":
         return (

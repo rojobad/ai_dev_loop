@@ -14,6 +14,11 @@ from ai_dev_loop.iterations import (
     iteration_label,
     upsert_iteration,
 )
+from ai_dev_loop.runners.cursor_output import (
+    capture_staging_normalization_fingerprint,
+    cursor_output_fingerprint_rel_path,
+    staging_normalization_fingerprint_rel_path,
+)
 from ai_dev_loop.runners.git import (
     discover_repository,
     git_add_all,
@@ -21,11 +26,12 @@ from ai_dev_loop.runners.git import (
     git_diff_cached_patch,
     git_diff_cached_stat,
     git_status_porcelain,
-    normalize_patch_text,
     staged_paths_from_name_only,
+    validate_clean_after_stage_all,
     validate_no_preexisting_staged_paths,
     validate_plan_hash_unchanged,
     validate_prompt_source_unchanged,
+    validate_repository_identity,
     validate_stage_mode,
     validate_staged_paths_safe,
 )
@@ -45,6 +51,7 @@ class GitStagingArtifacts:
 class GitStagingResult:
     artifacts: GitStagingArtifacts
     staged_paths: tuple[str, ...]
+    cursor_changed_index: bool
 
 
 def validate_pre_staging(
@@ -54,34 +61,28 @@ def validate_pre_staging(
     iteration_number: int,
     run_directory: Path,
 ) -> None:
+    """Validate post-Cursor repository contracts before orchestrator `git add -A`.
+
+    Correction iterations intentionally allow Cursor to mutate the index. The previous
+    staged-patch equality check belongs only to the pre-Cursor correction boundary.
+    """
+
+    del run_directory  # retained for call-site compatibility
     validate_stage_mode(state.workflow.stage_mode)
+
+    validate_repository_identity(
+        repo_root,
+        expected_root=state.repository.root,
+        expected_git_common_dir=state.repository.git_common_dir,
+        expected_git_dir=state.repository.git_dir,
+        expected_branch=state.repository.branch,
+        expected_head=state.repository.initial_head,
+        context="before staging",
+    )
 
     repo_info = discover_repository(repo_root)
     if iteration_number == 1:
         validate_no_preexisting_staged_paths(repo_info.staged_paths)
-    else:
-        previous = find_iteration(state, iteration_number - 1)
-        if previous is None:
-            raise ValidationError(
-                f"previous iteration metadata missing before staging iteration "
-                f"{iteration_label(iteration_number)}"
-            )
-        git_section = previous.get("git")
-        if not isinstance(git_section, dict):
-            raise ValidationError("previous iteration git metadata is missing")
-        patch_rel = git_section.get("staged_diff_path")
-        if not isinstance(patch_rel, str):
-            raise ValidationError("previous iteration staged diff path is missing")
-        patch_artifact = run_directory / patch_rel
-        if not patch_artifact.is_file():
-            raise ValidationError(f"previous staged patch artifact missing: {patch_rel}")
-        recorded = normalize_patch_text(patch_artifact.read_text(encoding="utf-8"))
-        current = normalize_patch_text(git_diff_cached_patch(repo_root))
-        if current != recorded:
-            raise ValidationError(
-                "staged index changed before correction staging; "
-                "expected the previous orchestrator-recorded staged patch"
-            )
 
     validate_plan_hash_unchanged(repo_root, state.plan.repository_path, state.plan.sha256)
 
@@ -93,6 +94,65 @@ def validate_pre_staging(
         repo_root=repo_root,
         prompt_source_path=prompt_source,
     )
+
+
+def _index_signature_lines(status: str) -> frozenset[str]:
+    """Return index-only signatures from porcelain v2 status.
+
+    Compares staged membership and index blob identity without worktree-only
+    fields (Y status and mW). Same-path staged content changes still differ via
+    hI; worktree-only edits such as ``M.`` -> ``MM`` do not.
+    """
+
+    signatures: set[str] = set()
+    for line in status.splitlines():
+        signature = _index_only_signature(line)
+        if signature is not None:
+            signatures.add(signature)
+    return frozenset(signatures)
+
+
+def _index_only_signature(line: str) -> str | None:
+    """Parse one porcelain v2 line into an index-only comparison key."""
+
+    if line.startswith("1 "):
+        # 1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>
+        parts = line.split(" ", 8)
+        if len(parts) < 9:
+            return None
+        xy = parts[1]
+        if not xy or xy[0] == ".":
+            return None
+        return "\t".join(("1", xy[0], parts[4], parts[7], parts[8]))
+    if line.startswith("2 "):
+        # 2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path><sep><origPath>
+        parts = line.split(" ", 9)
+        if len(parts) < 10:
+            return None
+        xy = parts[1]
+        if not xy or xy[0] == ".":
+            return None
+        return "\t".join(("2", xy[0], parts[4], parts[7], parts[8], parts[9]))
+    if line.startswith("u "):
+        # u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>
+        parts = line.split(" ", 10)
+        if len(parts) < 11:
+            return None
+        return "\t".join(
+            ("u", parts[1], parts[3], parts[4], parts[5], parts[7], parts[8], parts[9], parts[10])
+        )
+    return None
+
+
+def _cursor_changed_index(repo_root: Path, run_directory: Path, iteration: str) -> bool:
+    before_path = run_directory / f"git/status/{iteration}-before-cursor.txt"
+    after_path = run_directory / f"git/status/{iteration}-after-cursor.txt"
+    if not before_path.is_file() or not after_path.is_file():
+        # Fall back to whether the current index already has entries beyond empty.
+        return bool(_index_signature_lines(git_status_porcelain(repo_root)))
+    before = before_path.read_text(encoding="utf-8")
+    after = after_path.read_text(encoding="utf-8")
+    return _index_signature_lines(before) != _index_signature_lines(after)
 
 
 def run_git_staging(
@@ -125,13 +185,44 @@ def run_git_staging(
     name_only_path = run_directory / name_only_rel
     patch_path = run_directory / patch_rel
 
+    cursor_changed_index = _cursor_changed_index(repo_root, run_directory, iteration)
+
     before_status = git_status_porcelain(repo_root)
     atomic_write_text(before_staging_path, before_status + "\n")
 
+    # Always normalize with configured stage_mode=all, even if Cursor already staged.
     add_result = git_add_all(repo_root)
     if add_result.returncode != 0:
         detail = add_result.stderr.strip() or add_result.stdout.strip() or "git add -A failed"
         raise ValidationError(f"git add -A failed: {detail}")
+
+    validate_repository_identity(
+        repo_root,
+        expected_root=state.repository.root,
+        expected_git_common_dir=state.repository.git_common_dir,
+        expected_git_dir=state.repository.git_dir,
+        expected_branch=state.repository.branch,
+        expected_head=state.repository.initial_head,
+        context="after git add -A",
+    )
+    validate_clean_after_stage_all(repo_root)
+
+    # Persist immediately after successful normalization so recovery can verify
+    # post-add state even if later artifact writes fail.
+    normalization = capture_staging_normalization_fingerprint(
+        state,
+        run_directory,
+        iteration_number=iteration_number,
+    )
+    upsert_iteration(
+        state,
+        {
+            "number": iteration_number,
+            "git": {
+                "staging_normalization_fingerprint_path": normalization.relative_path,
+            },
+        },
+    )
 
     after_status = git_status_porcelain(repo_root)
     atomic_write_text(after_staging_path, after_status + "\n")
@@ -169,8 +260,13 @@ def run_git_staging(
         artifacts=artifacts,
         started_at=cursor_started_at,
         completed_at=utc_now(),
+        normalization_fingerprint_path=normalization.relative_path,
     )
-    return GitStagingResult(artifacts=artifacts, staged_paths=staged_paths)
+    return GitStagingResult(
+        artifacts=artifacts,
+        staged_paths=staged_paths,
+        cursor_changed_index=cursor_changed_index,
+    )
 
 
 def _record_iteration(
@@ -183,6 +279,7 @@ def _record_iteration(
     artifacts: GitStagingArtifacts,
     started_at: datetime,
     completed_at: datetime,
+    normalization_fingerprint_path: str | None = None,
 ) -> None:
     existing = find_iteration(state, iteration_number)
     cursor_section: dict[str, Any] = {
@@ -196,6 +293,25 @@ def _record_iteration(
     if existing and isinstance(existing.get("cursor"), dict):
         cursor_section = {**existing["cursor"], **cursor_section}
 
+    fingerprint_rel = cursor_output_fingerprint_rel_path(iteration_number)
+    norm_rel = normalization_fingerprint_path or staging_normalization_fingerprint_rel_path(
+        iteration_number
+    )
+    git_section: dict[str, Any] = {
+        "status_before_cursor_path": f"git/status/{iteration}-before-cursor.txt",
+        "status_after_cursor_path": f"git/status/{iteration}-after-cursor.txt",
+        "cursor_output_fingerprint_path": fingerprint_rel,
+        "staging_normalization_fingerprint_path": norm_rel,
+        "status_before_staging_path": artifacts.before_staging_path,
+        "status_after_staging_path": artifacts.after_staging_path,
+        "staged_stat_path": artifacts.stat_path,
+        "staged_name_only_path": artifacts.name_only_path,
+        "staged_diff_path": artifacts.patch_path,
+    }
+    if existing and isinstance(existing.get("git"), dict):
+        # Preserve earlier git keys (e.g. fingerprint recorded before staging).
+        git_section = {**existing["git"], **git_section}
+
     entry: dict[str, Any] = {
         "number": iteration_number,
         "kind": iteration_kind(iteration_number),
@@ -206,15 +322,7 @@ def _record_iteration(
         ),
         "completed_at": completed_at.astimezone(UTC).isoformat(),
         "cursor": cursor_section,
-        "git": {
-            "status_before_cursor_path": f"git/status/{iteration}-before-cursor.txt",
-            "status_after_cursor_path": f"git/status/{iteration}-after-cursor.txt",
-            "status_before_staging_path": artifacts.before_staging_path,
-            "status_after_staging_path": artifacts.after_staging_path,
-            "staged_stat_path": artifacts.stat_path,
-            "staged_name_only_path": artifacts.name_only_path,
-            "staged_diff_path": artifacts.patch_path,
-        },
+        "git": git_section,
     }
     upsert_iteration(state, entry)
 

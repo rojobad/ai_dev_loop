@@ -4,7 +4,7 @@
 
 ## Operaciones Git permitidas
 
-Permitido:
+Permitido por el orquestador:
 
 ```bash
 git add -A
@@ -12,6 +12,16 @@ git status
 git diff
 git rev-parse
 ```
+
+Durante una correccion, Cursor puede mutar el index cuando el fix lo requiere:
+
+```bash
+git add
+git restore --staged
+git rm --cached
+```
+
+Cursor no puede commit, amend, reset, checkout/switch, stash, clean, merge, rebase, tag ni push. Tras Cursor, el orquestador siempre normaliza con `git add -A` (`stage_mode: all`) y Codex revisa el snapshot staged acumulativo completo. Solo unstagear un tracked no-ignored no lo excluye del snapshot final; para excluir un generado hay que actualizar `.gitignore` y quitarlo del index.
 
 No permitido por el orquestador:
 
@@ -22,12 +32,11 @@ git tag
 git reset
 git clean
 git stash
-git restore --staged
 ```
 
 El usuario decide manualmente si commitea despues de revisar el resultado final.
 
-`recover` es solo lectura sobre el repositorio: no hace `git add`, no altera el index y no reescribe el working tree.
+`recover` es solo lectura sobre el repositorio: no hace `git add`, no altera el index y no reescribe el working tree. El staging del sucesor ocurre solo con `resume`.
 
 ## Proteccion del contrato preparado
 

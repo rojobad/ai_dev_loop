@@ -392,6 +392,8 @@ def validate_staged_patch_matches_artifact(repo_root: Path, patch_artifact: Path
 
 
 def validate_correction_pre_cursor(repo_root: Path, *, patch_artifact: Path) -> None:
+    """Strict pre-Cursor correction checkpoint: previous staged patch must still match."""
+
     validate_staged_patch_matches_artifact(repo_root, patch_artifact)
     status = git_status_porcelain(repo_root)
     unstaged = paths_with_unstaged_changes(status)
@@ -402,6 +404,47 @@ def validate_correction_pre_cursor(repo_root: Path, *, patch_artifact: Path) -> 
     if untracked:
         joined = ", ".join(sorted(untracked))
         raise ValidationError(f"untracked files detected before correction: {joined}")
+
+
+def validate_repository_identity(
+    repo_root: Path,
+    *,
+    expected_root: str,
+    expected_git_common_dir: str,
+    expected_git_dir: str,
+    expected_branch: str,
+    expected_head: str,
+    context: str,
+) -> None:
+    """Require HEAD, branch, and repository identity to match the prepared run."""
+
+    repo_info = discover_repository(repo_root)
+    if repo_info.root.resolve() != Path(expected_root).resolve():
+        raise ValidationError(f"repository root changed {context}")
+    if repo_info.git_common_dir.resolve() != Path(expected_git_common_dir).resolve():
+        raise ValidationError(f"git common directory changed {context}")
+    if repo_info.git_dir.resolve() != Path(expected_git_dir).resolve():
+        raise ValidationError(f"git directory changed {context}")
+    if repo_info.branch != expected_branch:
+        raise ValidationError(
+            f"repository branch changed {context}: expected {expected_branch}, found {repo_info.branch}"
+        )
+    if repo_info.head != expected_head:
+        raise ValidationError(f"repository HEAD changed {context}")
+
+
+def validate_clean_after_stage_all(repo_root: Path) -> None:
+    """After `git add -A`, require no tracked unstaged or untracked non-ignored paths."""
+
+    status = git_status_porcelain(repo_root)
+    unstaged = paths_with_unstaged_changes(status)
+    if unstaged:
+        joined = ", ".join(sorted(unstaged))
+        raise ValidationError(f"tracked unstaged changes remain after git add -A: {joined}")
+    untracked = paths_with_untracked(status)
+    if untracked:
+        joined = ", ".join(sorted(untracked))
+        raise ValidationError(f"untracked files remain after git add -A: {joined}")
 
 
 def validate_staged_paths_safe(

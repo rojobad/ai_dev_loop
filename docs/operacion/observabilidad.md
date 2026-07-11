@@ -21,7 +21,7 @@ Muestra:
 - proceso activo si existe;
 - ultimo error;
 - siguiente accion segura;
-- si es sucesor de recovery: run origen y checkpoint recuperado.
+- si es sucesor de recovery: run origen, checkpoint recuperado (`staging` | `reviewing` | `process_review`), y si aplica fingerprint verificado o adopcion historica.
 
 `status` debe seguir funcionando aunque el run lock este tomado por un `start` o `resume` activo.
 

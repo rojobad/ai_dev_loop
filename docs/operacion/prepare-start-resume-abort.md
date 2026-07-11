@@ -63,7 +63,7 @@ Luego coordina:
 2. `ai_dev_loop` ejecuta staging controlado con `git add -A`.
 3. Codex revisa staged changes reanudando la sesion exacta.
 4. Si hay findings, Codex devuelve un `cursor_fix_prompt`.
-5. Cursor corrige usando el mismo chat.
+5. Cursor corrige usando el mismo chat (puede mutar el index; el orquestador vuelve a normalizar con `git add -A`).
 6. Se repite hasta no findings o limite de iteraciones.
 
 Estados terminales principales:
@@ -107,26 +107,32 @@ Estados terminales como `completed`, `failed`, `aborted` o `max_iterations_reach
 ```bash
 ai_dev_loop recover --dry-run <failed-run-id>
 ai_dev_loop recover <failed-run-id>
+ai_dev_loop recover --dry-run <failed-run-id> --adopt-current-cursor-output
+ai_dev_loop recover <failed-run-id> --adopt-current-cursor-output
 ```
 
-`recover` no edita el run terminal de origen. Crea un run sucesor distinto cuando el fallo es recuperable tras Cursor + staging.
+`recover` no edita el run terminal de origen. Crea un run sucesor distinto cuando el fallo es recuperable.
 
-Requisitos de elegibilidad (Fase 11):
+Checkpoints elegibles:
+
+- `reviewing` / `process_review`: Cursor + staging completos; staged patch actual coincide; sin unstaged/untracked.
+- `staging`: correccion con Cursor completo y staging incompleto; fingerprint post-Cursor verificado, o adopcion explicita historica.
+
+Requisitos comunes:
 
 - el origen esta exactamente en `failed`;
-- Cursor itero y staging terminaron con artefactos durables;
-- el staged patch actual coincide byte a byte con el artefacto registrado;
-- no hay cambios unstaged tracked ni untracked;
 - coinciden root/Git dirs/branch/HEAD del origen;
 - el chat ID de Cursor y el session ID de Codex estan presentes y coherentes;
-- la siguiente accion segura es review Codex o procesamiento de un review ya valido;
 - no hay proceso hijo activo o metadata ambigua.
+
+Para staging historico sin `git/cursor-output/NN.json`, `--adopt-current-cursor-output` exige que el status porcelain actual coincida exactamente con `NN-after-cursor.txt`. Es una atestacion del usuario (no prueba criptografica del intervalo historico).
 
 No recupera:
 
 - `completed`, `completed_with_residual_risk`, `max_iterations_reached`, `aborted`;
-- fallos de Cursor o staging en esta fase;
-- drift de plan/prompt/branch/HEAD/index;
+- turns de Cursor incompletos;
+- drift de plan/prompt/branch/HEAD;
+- fingerprint post-Cursor divergente (salvo adopcion valida);
 - sesiones o chats faltantes.
 
 Comportamiento:
@@ -136,12 +142,12 @@ Comportamiento:
 - preserva exactamente `codex.session_id` y `cursor.chat_id`;
 - runs Phase 10 conservan runtime congelado; Phase 9 legacy puede capturar runtime de la sesion exacta (`phase9_session_capture`);
 - no lanza Cursor, Codex ni updaters;
-- devuelve `ai_dev_loop resume <recovery-run-id>`;
+- para checkpoint `staging`, `resume` ejecuta staging y luego Codex sin re-ejecutar Cursor;
 - el origen permanece `failed` e inmutable byte a byte.
 
 Si un sucesor previo fallo, recupera ese sucesor (cadena), no saltes generaciones. Si el sucesor ya completo, no se crea otro para el mismo checkpoint.
 
-Ejemplo sanitizado:
+Ejemplo sanitizado (review):
 
 ```text
 Source run: sample-project-20260711T010911Z-abcdef
@@ -152,6 +158,18 @@ Session runtime: gpt-5.6-sol / high
 Runtime migration: phase9_session_capture
 Repository and staged patch: verified
 Next command: ai_dev_loop resume sample-project-20260711T011500Z-fedcba
+```
+
+Ejemplo sanitizado (staging con adopcion historica):
+
+```text
+Source run: sample-project-20260711T133243Z-d32b0c
+Recovery run: sample-project-20260711T140000Z-abcdef
+Recovered checkpoint: staging, iteration 2
+Cursor output: explicitly adopted from matching historical after-cursor status
+Repository identity: verified
+Git mutation performed by recover: none
+Next command: ai_dev_loop resume <recovery-run-id>
 ```
 
 Pasa `--update-tools` a `resume` solo si la compatibilidad de CLI lo requiere. `recover` nunca actualiza herramientas.

@@ -61,6 +61,8 @@ class RecoveryResult:
     reused_existing_successor: bool
     reason_code: str
     staged_patch_sha256: str
+    cursor_output_fingerprint_sha256: str | None = None
+    legacy_cursor_output_adopted: bool = False
 
 
 def _shorten_id(value: str) -> str:
@@ -81,6 +83,7 @@ def _create_run_layout(base: Path) -> None:
         "locks",
         "git/status",
         "git/diffs",
+        "git/cursor-output",
     ):
         ensure_dir(base / relative)
 
@@ -117,6 +120,12 @@ def _should_copy_source_relative(
     if rel.startswith("prompts/fixes/"):
         # Keep fix prompts from earlier reviews only.
         name = Path(rel).name
+        if name.endswith(".execution-envelope.txt"):
+            try:
+                prompt_iteration = int(name.removesuffix(".execution-envelope.txt"))
+            except ValueError:
+                return False
+            return prompt_iteration < iteration
         if not name.endswith(".txt"):
             return False
         try:
@@ -133,6 +142,21 @@ def _should_copy_source_relative(
         except ValueError:
             return False
         return iter_num <= iteration
+    if rel.startswith("git/cursor-output/"):
+        name = Path(rel).name
+        if name.endswith(".post-normalization.json"):
+            try:
+                iter_num = int(name.removesuffix(".post-normalization.json"))
+            except ValueError:
+                return False
+            return iter_num <= iteration
+        if not name.endswith(".json"):
+            return False
+        try:
+            iter_num = int(name.removesuffix(".json"))
+        except ValueError:
+            return False
+        return iter_num <= iteration
     if rel.startswith("git/status/") or rel.startswith("git/diffs/"):
         name = Path(rel).name
         prefix = name.split(".", 1)[0].split("-", 1)[0]
@@ -140,7 +164,17 @@ def _should_copy_source_relative(
             iter_num = int(prefix)
         except ValueError:
             return False
-        return iter_num <= iteration
+        if iter_num < iteration:
+            return True
+        if iter_num > iteration:
+            return False
+        if checkpoint == "staging":
+            # Current iteration: copy Cursor status evidence; omit incomplete staging diffs.
+            if rel.startswith("git/diffs/"):
+                return False
+            # Allow before/after-cursor and before-staging diagnostics; skip after-staging.
+            return "-after-staging" not in name
+        return True
     if rel.startswith("codex/reviews/") or rel.startswith("codex/events/"):
         name = Path(rel).name
         prefix = name.split(".", 1)[0]
@@ -190,6 +224,24 @@ def _sanitize_iterations_for_successor(
             cloned.pop("codex", None)
             cloned.pop("review", None)
             cloned.pop("completed_at", None)
+        if number == iteration and checkpoint == "staging":
+            cloned.pop("codex", None)
+            cloned.pop("review", None)
+            cloned.pop("completed_at", None)
+            git_section = cloned.get("git")
+            if isinstance(git_section, dict):
+                cleaned_git = {
+                    key: value
+                    for key, value in git_section.items()
+                    if key
+                    in {
+                        "status_before_cursor_path",
+                        "status_after_cursor_path",
+                        "cursor_output_fingerprint_path",
+                        "staging_normalization_fingerprint_path",
+                    }
+                }
+                cloned["git"] = cleaned_git
         sanitized.append(cloned)
     return sanitized
 
@@ -222,6 +274,8 @@ def _find_matching_successors(
     iteration: int,
     checkpoint: str,
     staged_patch_sha256: str,
+    cursor_output_fingerprint_sha256: str | None = None,
+    legacy_cursor_output_adopted: bool = False,
 ) -> list[tuple[Path, RunState]]:
     matches: list[tuple[Path, RunState]] = []
     for path, state in list_run_directories(project=project):
@@ -236,6 +290,12 @@ def _find_matching_successors(
             continue
         if recovery.source_staged_patch_sha256 != staged_patch_sha256:
             continue
+        if checkpoint == "staging":
+            if recovery.cursor_output_fingerprint_sha256 != cursor_output_fingerprint_sha256:
+                continue
+            adopted = bool(recovery.legacy_cursor_output_adopted)
+            if adopted != bool(legacy_cursor_output_adopted):
+                continue
         matches.append((path, state))
     return matches
 
@@ -334,6 +394,32 @@ def _validate_successor_for_reuse(
         raise ValidationError(
             f"matching successor is missing a completed Cursor turn for iteration {label}"
         )
+
+    if checkpoint == "staging":
+        if staging_complete_for_iteration(successor, successor_dir, label):
+            raise ValidationError(
+                f"matching staging successor unexpectedly has completed staging for {label}"
+            )
+        fingerprint_path = successor_dir / f"git/cursor-output/{label}.json"
+        if not fingerprint_path.is_file():
+            raise ValidationError(
+                f"matching staging successor is missing cursor output fingerprint for {label}"
+            )
+        try:
+            payload = json.loads(fingerprint_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeError) as exc:
+            raise ValidationError(
+                "matching successor cursor output fingerprint is unreadable"
+            ) from exc
+        if (
+            not isinstance(payload, dict)
+            or payload.get("aggregate_sha256") != recovery.cursor_output_fingerprint_sha256
+        ):
+            raise ValidationError(
+                "matching successor cursor output fingerprint no longer matches recovery lineage"
+            )
+        return
+
     if not staging_complete_for_iteration(successor, successor_dir, label):
         raise ValidationError(
             f"matching successor is missing completed staging artifacts for iteration {label}"
@@ -416,6 +502,8 @@ def _handle_existing_successors(
             reused_existing_successor=True,
             reason_code=recovery.reason_code,
             staged_patch_sha256=recovery.source_staged_patch_sha256,
+            cursor_output_fingerprint_sha256=recovery.cursor_output_fingerprint_sha256,
+            legacy_cursor_output_adopted=bool(recovery.legacy_cursor_output_adopted),
         )
     if successor.status == RunStatus.FAILED:
         raise ValidationError(
@@ -446,6 +534,8 @@ def _annotate_existing_successors_for_analysis(
         iteration=analysis.iteration,
         checkpoint=analysis.checkpoint,
         staged_patch_sha256=analysis.staged_patch_sha256,
+        cursor_output_fingerprint_sha256=analysis.cursor_output_fingerprint_sha256,
+        legacy_cursor_output_adopted=analysis.legacy_cursor_output_adopted,
     )
     if not matches:
         return
@@ -548,16 +638,24 @@ def _create_successor_run(
         atomic_write_json(session_runtime_path, session_runtime_payload, sensitive=True)
 
         successor_codex = apply_resolved_runtime_to_codex(source.codex, resolved)
-        recovery = RecoveryState(
-            source_run_id=source.run_id,
-            source_status=RunStatus.FAILED.value,
-            source_iteration=analysis.iteration,
-            recovered_checkpoint=analysis.checkpoint,
-            source_staged_patch_sha256=analysis.staged_patch_sha256,
-            created_at=now,
-            runtime_migration=resolved.runtime_migration,
-            reason_code=analysis.reason_code,
-        )
+        recovery_kwargs: dict[str, object] = {
+            "source_run_id": source.run_id,
+            "source_status": RunStatus.FAILED.value,
+            "source_iteration": analysis.iteration,
+            "recovered_checkpoint": analysis.checkpoint,
+            "source_staged_patch_sha256": analysis.staged_patch_sha256,
+            "created_at": now,
+            "runtime_migration": resolved.runtime_migration,
+            "reason_code": analysis.reason_code,
+        }
+        if analysis.checkpoint == "staging":
+            recovery_kwargs["cursor_output_fingerprint_sha256"] = (
+                analysis.cursor_output_fingerprint_sha256
+            )
+            recovery_kwargs["previous_staged_patch_sha256"] = analysis.previous_staged_patch_sha256
+            if analysis.legacy_cursor_output_adopted:
+                recovery_kwargs["legacy_cursor_output_adopted"] = True
+        recovery = RecoveryState(**recovery_kwargs)  # type: ignore[arg-type]
         iterations = _sanitize_iterations_for_successor(
             source.iterations,
             iteration=analysis.iteration,
@@ -585,6 +683,28 @@ def _create_successor_run(
             last_error=None,
             recovery=recovery,
         )
+
+        # Persist an adopted fingerprint into the successor when the source lacked one.
+        if (
+            analysis.checkpoint == "staging"
+            and analysis.legacy_cursor_output_adopted
+            and analysis.adopted_fingerprint_payload is not None
+        ):
+            fingerprint_rel = f"git/cursor-output/{iteration_label(analysis.iteration)}.json"
+            atomic_write_json(
+                temp_dir / fingerprint_rel,
+                analysis.adopted_fingerprint_payload,
+                sensitive=True,
+            )
+            if fingerprint_rel not in copied:
+                copied.append(fingerprint_rel)
+            # Record fingerprint path on the current iteration git section.
+            for entry in successor.iterations:
+                if entry.get("number") == analysis.iteration:
+                    git_section = entry.setdefault("git", {})
+                    if isinstance(git_section, dict):
+                        git_section["cursor_output_fingerprint_path"] = fingerprint_rel
+                    break
 
         manifest_artifacts: list[ManifestArtifact] = []
         for rel in copied:
@@ -657,13 +777,25 @@ def _create_successor_run(
         reused_existing_successor=False,
         reason_code=analysis.reason_code,
         staged_patch_sha256=analysis.staged_patch_sha256,
+        cursor_output_fingerprint_sha256=analysis.cursor_output_fingerprint_sha256,
+        legacy_cursor_output_adopted=analysis.legacy_cursor_output_adopted,
     )
 
 
-def recover_run(run_id: str, *, dry_run: bool = False) -> RecoveryAnalysis | RecoveryResult:
+def recover_run(
+    run_id: str,
+    *,
+    dry_run: bool = False,
+    adopt_current_cursor_output: bool = False,
+) -> RecoveryAnalysis | RecoveryResult:
     source_dir, source = load_run(run_id)
     # Structural analysis first so idempotent reuse does not depend on live rollouts.
-    analysis = analyze_recovery(source, source_dir, resolve_runtime=False)
+    analysis = analyze_recovery(
+        source,
+        source_dir,
+        resolve_runtime=False,
+        adopt_current_cursor_output=adopt_current_cursor_output,
+    )
     _annotate_existing_successors_for_analysis(
         analysis,
         project=source.project.name,
@@ -709,7 +841,12 @@ def recover_run(run_id: str, *, dry_run: bool = False) -> RecoveryAnalysis | Rec
     # Lock order matches start/resume/abort: source run lock, then repository lock.
     with RunLocks(source_dir, metadata):
         source = load_run_state(source_dir / "state.json")
-        analysis = analyze_recovery(source, source_dir, resolve_runtime=False)
+        analysis = analyze_recovery(
+            source,
+            source_dir,
+            resolve_runtime=False,
+            adopt_current_cursor_output=adopt_current_cursor_output,
+        )
         if not analysis.eligible:
             joined = "; ".join(analysis.blockers) if analysis.blockers else "unknown"
             raise ValidationError(f"run is not recoverable under lock: {joined}")
@@ -722,6 +859,10 @@ def recover_run(run_id: str, *, dry_run: bool = False) -> RecoveryAnalysis | Rec
                 "; ".join(analysis.blockers) if analysis.blockers else "missing_checkpoint_fields"
             )
             raise ValidationError(f"run is not recoverable under lock: {joined}")
+        if analysis.checkpoint == "staging" and not analysis.cursor_output_fingerprint_sha256:
+            raise ValidationError(
+                "run is not recoverable under lock: missing_cursor_output_fingerprint"
+            )
         checkpoint = analysis.checkpoint
         iteration = analysis.iteration
         staged_patch_sha256 = analysis.staged_patch_sha256
@@ -732,6 +873,8 @@ def recover_run(run_id: str, *, dry_run: bool = False) -> RecoveryAnalysis | Rec
             iteration=iteration,
             checkpoint=checkpoint,
             staged_patch_sha256=staged_patch_sha256,
+            cursor_output_fingerprint_sha256=analysis.cursor_output_fingerprint_sha256,
+            legacy_cursor_output_adopted=analysis.legacy_cursor_output_adopted,
         )
         reused = _handle_existing_successors(analysis, matches, source=source)
         if reused is not None:
@@ -748,6 +891,16 @@ def recover_run(run_id: str, *, dry_run: bool = False) -> RecoveryAnalysis | Rec
         )
 
 
+def _checkpoint_label(checkpoint: str) -> str:
+    if checkpoint == "staging":
+        return "staging"
+    if checkpoint == "reviewing":
+        return "Codex review"
+    if checkpoint == "process_review":
+        return "Codex review processing"
+    return checkpoint
+
+
 def render_recovery_analysis(analysis: RecoveryAnalysis, *, output: str = "text") -> str:
     if output == "json":
         payload = {
@@ -761,6 +914,11 @@ def render_recovery_analysis(analysis: RecoveryAnalysis, *, output: str = "text"
             "blockers": list(analysis.blockers),
             "warnings": list(analysis.warnings),
             "staged_patch_sha256": analysis.staged_patch_sha256,
+            "cursor_output_fingerprint_sha256": analysis.cursor_output_fingerprint_sha256,
+            "previous_staged_patch_sha256": analysis.previous_staged_patch_sha256,
+            "post_cursor_fingerprint_available": analysis.post_cursor_fingerprint_available,
+            "legacy_cursor_output_adopted": analysis.legacy_cursor_output_adopted,
+            "verified_staging_state": analysis.verified_staging_state,
             "session_runtime_action": analysis.session_runtime_action.value,
             "reason_code": analysis.reason_code,
             "existing_successor_run_id": analysis.existing_successor_run_id,
@@ -786,8 +944,10 @@ def render_recovery_analysis(analysis: RecoveryAnalysis, *, output: str = "text"
         f"Eligible: {'yes' if analysis.eligible else 'no'}",
     ]
     if analysis.checkpoint is not None:
-        label = "Codex review" if analysis.checkpoint == "reviewing" else "Codex review processing"
-        lines.append(f"Recovered checkpoint: {label}, iteration {analysis.iteration}")
+        lines.append(
+            f"Recovered checkpoint: {_checkpoint_label(analysis.checkpoint)}, "
+            f"iteration {analysis.iteration}"
+        )
     if analysis.reason_code:
         lines.append(f"Reason code: {analysis.reason_code}")
     if analysis.session_runtime_action != SessionRuntimeAction.UNRESOLVED:
@@ -799,7 +959,22 @@ def render_recovery_analysis(analysis: RecoveryAnalysis, *, output: str = "text"
             f"{analysis.resolved_runtime.session_reasoning_effort}"
         )
         lines.append(f"Runtime migration: {analysis.resolved_runtime.runtime_migration}")
-    if analysis.staged_patch_sha256:
+    if analysis.checkpoint == "staging":
+        if analysis.legacy_cursor_output_adopted:
+            lines.append(
+                "Cursor output: explicitly adopted from matching historical after-cursor status"
+            )
+        elif analysis.verified_staging_state == "post_normalization":
+            lines.append("Cursor output: post-normalization fingerprint verified")
+        elif analysis.post_cursor_fingerprint_available:
+            lines.append("Cursor output fingerprint: verified")
+        else:
+            lines.append("Cursor output fingerprint: missing (explicit adoption required)")
+        if analysis.previous_staged_patch_sha256:
+            lines.append("Previous staged patch: verified")
+        lines.append("Repository identity: checked")
+        lines.append("Git mutation performed by recover: none")
+    elif analysis.staged_patch_sha256:
         lines.append("Repository and staged patch: verified")
     if analysis.existing_successor_run_id:
         lines.append(f"Existing successor: {analysis.existing_successor_run_id}")
@@ -837,22 +1012,34 @@ def render_recovery_result(result: RecoveryResult, *, output: str = "text") -> s
             "reused_existing_successor": result.reused_existing_successor,
             "reason_code": result.reason_code,
             "staged_patch_sha256": result.staged_patch_sha256,
+            "cursor_output_fingerprint_sha256": result.cursor_output_fingerprint_sha256,
+            "legacy_cursor_output_adopted": result.legacy_cursor_output_adopted,
         }
         return json.dumps(payload, indent=2) + "\n"
 
-    checkpoint_label = (
-        "Codex review" if result.checkpoint == "reviewing" else "Codex review processing"
-    )
     lines = [
         f"Source run: {result.source_run_id}",
         f"Recovery run: {result.recovery_run_id}",
-        f"Recovered checkpoint: {checkpoint_label}, iteration {result.iteration}",
+        (
+            f"Recovered checkpoint: {_checkpoint_label(result.checkpoint)}, "
+            f"iteration {result.iteration}"
+        ),
         f"Cursor chat: {result.cursor_chat_id_short}",
         f"Session runtime: {result.session_model} / {result.session_reasoning_effort}",
         f"Runtime migration: {result.runtime_migration}",
-        "Repository and staged patch: verified",
-        f"Next command: {result.resume_command}",
     ]
+    if result.checkpoint == "staging":
+        if result.legacy_cursor_output_adopted:
+            lines.append(
+                "Cursor output: explicitly adopted from matching historical after-cursor status"
+            )
+        else:
+            lines.append("Cursor output fingerprint: verified")
+        lines.append("Repository identity: verified")
+        lines.append("Git mutation performed by recover: none")
+    else:
+        lines.append("Repository and staged patch: verified")
+    lines.append(f"Next command: {result.resume_command}")
     if result.reused_existing_successor:
         lines.insert(2, "Reused existing matching successor: yes")
     if result.recommended_resume_command:

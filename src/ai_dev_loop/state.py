@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ai_dev_loop.config import (
     normalize_optional_review_model,
@@ -199,9 +199,10 @@ RECOVERY_REASON_CODES = frozenset(
         "codex_review_failed",
         "codex_review_result_invalid",
         "codex_review_processing_failed",
+        "correction_staging_failed",
     }
 )
-RECOVERY_CHECKPOINTS = frozenset({"reviewing", "process_review"})
+RECOVERY_CHECKPOINTS = frozenset({"staging", "reviewing", "process_review"})
 
 
 class RecoveryState(BaseModel):
@@ -217,6 +218,9 @@ class RecoveryState(BaseModel):
     created_at: datetime
     runtime_migration: str
     reason_code: str
+    cursor_output_fingerprint_sha256: str | None = None
+    previous_staged_patch_sha256: str | None = None
+    legacy_cursor_output_adopted: bool | None = None
 
     @field_validator("source_run_id")
     @classmethod
@@ -255,12 +259,50 @@ class RecoveryState(BaseModel):
             raise ValueError(f"reason_code must be one of: {sorted(RECOVERY_REASON_CODES)}")
         return value
 
-    @field_validator("source_staged_patch_sha256")
+    @field_validator(
+        "source_staged_patch_sha256",
+        "cursor_output_fingerprint_sha256",
+        "previous_staged_patch_sha256",
+    )
     @classmethod
-    def validate_patch_hash(cls, value: str) -> str:
+    def validate_patch_hash(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
         if not re.fullmatch(r"[a-f0-9]{64}", value):
-            raise ValueError("source_staged_patch_sha256 must be a lowercase sha256 hex digest")
+            raise ValueError("hash fields must be lowercase sha256 hex digests")
         return value
+
+    @model_validator(mode="after")
+    def validate_checkpoint_fields(self) -> RecoveryState:
+        if self.recovered_checkpoint == "staging":
+            if not self.cursor_output_fingerprint_sha256:
+                raise ValueError(
+                    "cursor_output_fingerprint_sha256 is required for staging recovery checkpoints"
+                )
+            if self.previous_staged_patch_sha256 is None:
+                raise ValueError(
+                    "previous_staged_patch_sha256 is required for staging recovery checkpoints"
+                )
+            if self.previous_staged_patch_sha256 != self.source_staged_patch_sha256:
+                raise ValueError(
+                    "for staging recovery, source_staged_patch_sha256 must equal "
+                    "previous_staged_patch_sha256 (previous completed iteration patch)"
+                )
+            if self.reason_code != "correction_staging_failed":
+                raise ValueError("staging recovery reason_code must be correction_staging_failed")
+        elif self.legacy_cursor_output_adopted:
+            raise ValueError(
+                "legacy_cursor_output_adopted is only valid for staging recovery checkpoints"
+            )
+        elif self.cursor_output_fingerprint_sha256 is not None:
+            raise ValueError(
+                "cursor_output_fingerprint_sha256 is only valid for staging recovery checkpoints"
+            )
+        elif self.previous_staged_patch_sha256 is not None:
+            raise ValueError(
+                "previous_staged_patch_sha256 is only valid for staging recovery checkpoints"
+            )
+        return self
 
 
 class RunState(BaseModel):
