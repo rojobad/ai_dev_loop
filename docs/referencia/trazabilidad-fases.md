@@ -120,7 +120,7 @@ Documentado en:
 
 ## Fase 10
 
-Implemento captura segura del modelo/reasoning de la sesion exacta durante `prepare`, procedencia independiente y paso explicito de ambos valores en cada review. Tambien agrego probes de compatibilidad y politica de updates para las CLIs WSL en `start`/`resume`.
+Implemento captura segura del modelo/reasoning de la sesion exacta durante `prepare`, procedencia independiente y paso explicito de ambos valores en cada review. Tambien agrega probes de compatibilidad y politica de updates para las CLIs WSL en `start`/`resume`.
 
 Documentado en:
 
@@ -129,6 +129,18 @@ Documentado en:
 - [Estado y artefactos](../operacion/estado-artefactos.md)
 - [Seguridad y privacidad](../operacion/seguridad-privacidad.md)
 - [Troubleshooting](../operacion/troubleshooting.md)
+
+## Fase 11
+
+Implemento `ai_dev_loop recover` para crear sucesores auditables de runs `failed` elegibles tras Cursor + staging, sin mutar el origen ni el repositorio. Incluye dry-run, lineage, migracion Phase 9 vs runtime congelado Phase 10, e idempotencia.
+
+Documentado en:
+
+- [Ejecutar runs](../operacion/prepare-start-resume-abort.md)
+- [CLI](cli.md)
+- [Estado y artefactos](../operacion/estado-artefactos.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+- [Guia rapida](../guia/guia-rapida.md)
 
 ## Riesgos residuales documentados
 

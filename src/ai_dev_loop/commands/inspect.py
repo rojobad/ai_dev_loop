@@ -45,6 +45,18 @@ def render_inspect(run_id: str, *, output: str = "text", show_prompts: bool = Fa
                 "command": state.codex.command,
             },
             "workflow": state.workflow.model_dump(),
+            "recovery": None
+            if state.recovery is None
+            else {
+                "source_run_id": state.recovery.source_run_id,
+                "source_status": state.recovery.source_status,
+                "source_iteration": state.recovery.source_iteration,
+                "recovered_checkpoint": state.recovery.recovered_checkpoint,
+                "source_staged_patch_sha256": state.recovery.source_staged_patch_sha256,
+                "created_at": state.recovery.created_at.isoformat(),
+                "runtime_migration": state.recovery.runtime_migration,
+                "reason_code": state.recovery.reason_code,
+            },
         }
         if show_prompts:
             payload["prompt_preview"] = (run_path / state.prompt.snapshot_path).read_text(
@@ -87,6 +99,18 @@ def render_inspect(run_id: str, *, output: str = "text", show_prompts: bool = Fa
         f"  sandbox: {state.codex.sandbox}",
         "",
     ]
+    if state.recovery is not None:
+        lines[3:3] = [
+            "Recovery lineage:",
+            f"  source_run_id: {state.recovery.source_run_id}",
+            f"  source_status: {state.recovery.source_status}",
+            f"  source_iteration: {state.recovery.source_iteration}",
+            f"  recovered_checkpoint: {state.recovery.recovered_checkpoint}",
+            f"  runtime_migration: {state.recovery.runtime_migration}",
+            f"  reason_code: {state.recovery.reason_code}",
+            f"  source_staged_patch_sha256: {state.recovery.source_staged_patch_sha256}",
+            "",
+        ]
     if state.codex.model_family_warning:
         lines.insert(-1, f"  model_family_warning: {state.codex.model_family_warning}")
     if state.iterations:

@@ -32,10 +32,16 @@ from ai_dev_loop.commands.integrations import (
 from ai_dev_loop.commands.list_runs import render_list
 from ai_dev_loop.commands.logs import render_logs
 from ai_dev_loop.commands.prepare import PrepareOptions, prepare_run, render_prepare_output
+from ai_dev_loop.commands.recover import (
+    recover_run,
+    render_recovery_analysis,
+    render_recovery_result,
+)
 from ai_dev_loop.commands.resume import render_resume_output, resume_run
 from ai_dev_loop.commands.start import CODEX_TUI_WARNING, render_start_output, start_run
 from ai_dev_loop.commands.status import render_status
 from ai_dev_loop.errors import AiDevLoopError
+from ai_dev_loop.recovery_planner import RecoveryAnalysis
 
 app = typer.Typer(
     name="ai_dev_loop",
@@ -337,6 +343,32 @@ def resume_command(
         typer.echo(CODEX_TUI_WARNING)
         result = resume_run(run_id, tool_policy=policy)
         typer.echo(render_resume_output(result), nl=False)
+
+    _handle(run)
+
+
+@app.command("recover")
+def recover_command(
+    run_id: Annotated[str, typer.Argument(help="Failed run identifier to recover.")],
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Analyze recoverability without creating a successor run.",
+        ),
+    ] = False,
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Create a successor run for an eligible terminal failed run."""
+
+    def run() -> None:
+        result = recover_run(run_id, dry_run=dry_run)
+        if isinstance(result, RecoveryAnalysis):
+            typer.echo(render_recovery_analysis(result, output=output.value), nl=False)
+            if not result.eligible:
+                raise typer.Exit(code=4)
+            return
+        typer.echo(render_recovery_result(result, output=output.value), nl=False)
 
     _handle(run)
 

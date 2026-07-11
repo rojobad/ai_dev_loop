@@ -194,6 +194,46 @@
     },
     "iterations": { "type": "array" },
     "result": { "type": ["string", "null"] },
-    "last_error": { "type": ["string", "null"] }
+    "last_error": { "type": ["string", "null"] },
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_run_id",
+        "source_status",
+        "source_iteration",
+        "recovered_checkpoint",
+        "source_staged_patch_sha256",
+        "created_at",
+        "runtime_migration",
+        "reason_code"
+      ],
+      "properties": {
+        "source_run_id": { "type": "string", "minLength": 1 },
+        "source_status": { "type": "string", "const": "failed" },
+        "source_iteration": { "type": "integer", "minimum": 1 },
+        "recovered_checkpoint": {
+          "type": "string",
+          "enum": ["reviewing", "process_review"]
+        },
+        "source_staged_patch_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "created_at": { "type": "string", "format": "date-time" },
+        "runtime_migration": {
+          "type": "string",
+          "enum": ["none", "phase9_session_capture"]
+        },
+        "reason_code": {
+          "type": "string",
+          "enum": [
+            "codex_review_failed",
+            "codex_review_result_invalid",
+            "codex_review_processing_failed"
+          ]
+        }
+      }
+    }
   }
 }

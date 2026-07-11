@@ -193,6 +193,25 @@ Acciones:
 - revisa el index actual con `git diff --cached`;
 - decide manualmente si debes abandonar el run o preparar uno nuevo.
 
+## `recover` rechaza el run o pide dry-run
+
+`resume` sigue rechazando `failed`. Para fallos elegibles tras Cursor + staging:
+
+```bash
+ai_dev_loop recover --dry-run <failed-run-id>
+```
+
+Si hay blockers (`staged_patch_drift`, `untracked_files`, `branch_mismatch`, etc.), corrigelos o prepara un run nuevo. No mutes el run origen.
+
+Si dry-run es elegible:
+
+```bash
+ai_dev_loop recover <failed-run-id>
+ai_dev_loop resume <recovery-run-id> [--update-tools]
+```
+
+`recover` nunca actualiza CLIs ni invoca agentes. Si un sucesor tambien fallo, recupera ese sucesor (cadena), no el abuelo.
+
 ## Pytest falla con temporales en `/mnt/c`
 
 Usa temporales nativos WSL:

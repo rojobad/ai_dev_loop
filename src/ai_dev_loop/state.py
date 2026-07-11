@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import tempfile
 from datetime import UTC, datetime
@@ -192,6 +193,76 @@ class WorkflowState(BaseModel):
     codex_timeout_minutes: int
 
 
+RECOVERY_RUNTIME_MIGRATIONS = frozenset({"none", "phase9_session_capture"})
+RECOVERY_REASON_CODES = frozenset(
+    {
+        "codex_review_failed",
+        "codex_review_result_invalid",
+        "codex_review_processing_failed",
+    }
+)
+RECOVERY_CHECKPOINTS = frozenset({"reviewing", "process_review"})
+
+
+class RecoveryState(BaseModel):
+    """Lineage for a successor run created by `ai_dev_loop recover`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_run_id: str = Field(min_length=1)
+    source_status: str
+    source_iteration: int = Field(ge=1)
+    recovered_checkpoint: str
+    source_staged_patch_sha256: str
+    created_at: datetime
+    runtime_migration: str
+    reason_code: str
+
+    @field_validator("source_run_id")
+    @classmethod
+    def validate_source_run_id(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("source_run_id must be a non-empty string")
+        return value
+
+    @field_validator("source_status")
+    @classmethod
+    def validate_source_status(cls, value: str) -> str:
+        if value != RunStatus.FAILED.value:
+            raise ValueError("recovery source_status must be failed")
+        return value
+
+    @field_validator("recovered_checkpoint")
+    @classmethod
+    def validate_recovered_checkpoint(cls, value: str) -> str:
+        if value not in RECOVERY_CHECKPOINTS:
+            raise ValueError(f"recovered_checkpoint must be one of: {sorted(RECOVERY_CHECKPOINTS)}")
+        return value
+
+    @field_validator("runtime_migration")
+    @classmethod
+    def validate_runtime_migration(cls, value: str) -> str:
+        if value not in RECOVERY_RUNTIME_MIGRATIONS:
+            raise ValueError(
+                f"runtime_migration must be one of: {sorted(RECOVERY_RUNTIME_MIGRATIONS)}"
+            )
+        return value
+
+    @field_validator("reason_code")
+    @classmethod
+    def validate_reason_code(cls, value: str) -> str:
+        if value not in RECOVERY_REASON_CODES:
+            raise ValueError(f"reason_code must be one of: {sorted(RECOVERY_REASON_CODES)}")
+        return value
+
+    @field_validator("source_staged_patch_sha256")
+    @classmethod
+    def validate_patch_hash(cls, value: str) -> str:
+        if not re.fullmatch(r"[a-f0-9]{64}", value):
+            raise ValueError("source_staged_patch_sha256 must be a lowercase sha256 hex digest")
+        return value
+
+
 class RunState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -210,6 +281,7 @@ class RunState(BaseModel):
     iterations: list[dict[str, Any]] = Field(default_factory=list)
     result: str | None = None
     last_error: str | None = None
+    recovery: RecoveryState | None = None
 
 
 class ManifestArtifact(BaseModel):

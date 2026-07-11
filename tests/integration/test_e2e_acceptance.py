@@ -211,3 +211,84 @@ def test_e2e_acceptance_with_fake_clis_and_disposable_fixtures(
 
     integration_install.uninstall_integrations(home=hermetic_home)
     assert not integration_paths.skill_path(hermetic_home).is_file()
+
+
+def test_e2e_recover_failed_review_without_rerunning_cursor(
+    hermetic_tmp_path: Path,
+    hermetic_home: Path,
+    hermetic_xdg: Path,
+    hermetic_codex_env: Path,
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sanitized E2E: fail Codex review, recover successor, resume without Cursor rerun."""
+
+    from ai_dev_loop.commands.recover import recover_run
+    from ai_dev_loop.commands.resume import resume_run
+    from ai_dev_loop.errors import AiDevLoopError
+
+    repo = hermetic_tmp_path / "recover-target"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    for relative in (
+        "ai_dev_loop.yaml",
+        "docs/plans/sample-plan.md",
+        "docs/plans/prompt_sample-plan.txt",
+    ):
+        source = FIXTURE_REPO / relative
+        destination = repo / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "seed"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    write_session_rollout(hermetic_codex_env / "sessions")
+
+    prompt_text = (repo / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
+    with patch("sys.stdin", StringIO(prompt_text)):
+        prepared = prepare_run(
+            PrepareOptions(
+                repo_path=repo,
+                plan_path=Path("docs/plans/sample-plan.md"),
+                prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
+                codex_session_id=CODEX_SESSION_ID,
+            )
+        )
+
+    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "fail")
+    with pytest.raises(AiDevLoopError, match="Codex review failed"):
+        start_run(prepared.run_id)
+
+    source_state = load_run_state(prepared.run_directory / "state.json")
+    assert source_state.status == RunStatus.FAILED
+    agent_before = fake_clis["agent_log"].read_text(encoding="utf-8")
+
+    dry = runner.invoke(app, ["recover", prepared.run_id, "--dry-run", "--output", "json"])
+    assert dry.exit_code == 0, dry.output
+    assert json.loads(dry.stdout)["eligible"] is True
+    assert load_run_state(prepared.run_directory / "state.json").status == RunStatus.FAILED
+
+    recovered = recover_run(prepared.run_id)
+    monkeypatch.delenv("FAKE_CODEX_REVIEW_MODE", raising=False)
+    resumed = resume_run(recovered.recovery_run_id)
+    assert resumed.status == "completed"
+    assert fake_clis["agent_log"].read_text(encoding="utf-8") == agent_before
+    assert source_state.cursor.chat_id == resumed.chat_id
+    assert load_run_state(prepared.run_directory / "state.json").status == RunStatus.FAILED

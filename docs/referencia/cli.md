@@ -80,6 +80,19 @@ Continua un run checkpointed o interrumpido si el siguiente paso seguro puede de
 
 Aplica la misma politica de compatibilidad y updates que `start`. Tras un update se vuelven a consultar version y catalogos (`agent models`, `codex debug models`). Un abort pendiente tiene prioridad.
 
+## `recover`
+
+```bash
+ai_dev_loop recover <run-id> [--dry-run] [--output text|json]
+```
+
+Analiza un run `failed` y, si es elegible tras Cursor + staging, crea un run sucesor `interrupted` sin mutar el origen ni el repositorio.
+
+- `--dry-run`: solo reporta elegibilidad, checkpoint, blockers y migracion de runtime.
+- Sin `--dry-run`: crea o reutiliza el sucesor y imprime `resume_command`.
+- No lanza agentes ni updaters; pasa `--update-tools` a `resume` si hace falta.
+- JSON incluye `recovery_run_id`, `checkpoint`, `runtime_migration` y `reused_existing_successor`.
+
 ## `abort`
 
 ```bash

@@ -24,6 +24,10 @@ def render_list(
                     "status": state.status.value,
                     "created_at": state.created_at.isoformat(),
                     "repository": state.repository.root,
+                    "is_recovery_successor": state.recovery is not None,
+                    "recovery_source_run_id": (
+                        None if state.recovery is None else state.recovery.source_run_id
+                    ),
                 }
                 for _, state in runs
             ],
@@ -32,9 +36,11 @@ def render_list(
 
     if not runs:
         return "No runs found.\n"
-    lines = ["run_id\tstatus\tproject\tcreated_at"]
+    lines = ["run_id\tstatus\tproject\tcreated_at\trecovery"]
     for _, state in runs:
+        recovery = "successor" if state.recovery is not None else "-"
         lines.append(
-            f"{state.run_id}\t{state.status.value}\t{state.project.name}\t{state.created_at.isoformat()}"
+            f"{state.run_id}\t{state.status.value}\t{state.project.name}\t"
+            f"{state.created_at.isoformat()}\t{recovery}"
         )
     return "\n".join(lines) + "\n"

@@ -27,6 +27,8 @@ git restore --staged
 
 El usuario decide manualmente si commitea despues de revisar el resultado final.
 
+`recover` es solo lectura sobre el repositorio: no hace `git add`, no altera el index y no reescribe el working tree.
+
 ## Proteccion del contrato preparado
 
 `prepare` captura:

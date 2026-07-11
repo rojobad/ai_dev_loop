@@ -79,7 +79,24 @@ These contracts protect the complete stage-review-fix loop and explicit resume b
 - `interrupted` resume must derive the real checkpoint from durable artifacts, then restore to `running_cursor`, `staging`, or `reviewing` as appropriate. Do not blindly route `interrupted` through `validating`.
 - If retrying an interrupted Cursor or Codex turn, preserve existing partial artifacts before writing new attempt artifacts.
 - If the next safe action is ambiguous, fail with a diagnostic and do not mutate the repository.
-- Terminal states remain terminal unless a future explicit phase defines a safe no-op behavior.
+- Terminal source runs remain terminal and immutable. Ordinary `resume` still rejects `failed`, `aborted`, `completed`, `completed_with_residual_risk`, and `max_iterations_reached`.
+- Explicit `recover <failed-run-id>` may create a distinct successor run; it must never transition the source run out of `failed` or edit source artifacts.
+
+## Failed-Run Recovery Discipline
+
+- Recoverability is checkpoint- and artifact-driven. Do not classify eligibility by parsing `last_error` strings.
+- Phase 11 recovers only post-staging failures whose next proven action is Codex review or review-result processing. Reject Cursor or staging retries in this release.
+- Require exact preservation of `codex.session_id` and `cursor.chat_id`. Never use `--last`, a new Codex session, or a replacement Cursor chat.
+- Require repository root, Git common directory, Git directory, branch, and initial HEAD to match the source run.
+- Require the current staged patch to match the recorded artifact byte-for-byte, and reject unstaged tracked changes or untracked files.
+- The target repository and index are read-only to `recover`. Do not commit, reset, clean, stash, unstage, or apply patches.
+- Phase 10 sources with non-null effective runtime and provenance preserve frozen values exactly; do not reread the session and alter them.
+- Eligible Phase 9 legacy sources may capture exact-session runtime during recovery, record `runtime_migration: phase9_session_capture`, and never use WSL `config.toml` defaults.
+- Create successors transactionally (temporary sibling directory plus atomic rename). A partial failure must leave no discoverable runnable successor.
+- Successor lineage lives only on the successor (`recovery` section). Do not mutate the source run to record child IDs.
+- Idempotent recovery reuses a matching non-terminal successor for the same source checkpoint and staged-patch hash. A failed successor must itself be selected for the next recovery; do not skip generations.
+- `recover --dry-run` is strictly read-only. `recover` never launches Cursor, Codex, or updaters; update flags belong to the returned `resume` command.
+- Successor `resume` must derive the review/process-review checkpoint from copied durable artifacts and must not rerun completed Cursor work.
 
 ## Tool Compatibility And Updates
 
@@ -112,3 +129,9 @@ These contracts protect the complete stage-review-fix loop and explicit resume b
 - Test correction staging rejects drift in the previously recorded staged patch.
 - Test correction staging rejects an emptied index when a previous staged patch was recorded.
 - Test status, logs, and inspect output across multiple iterations without leaking sensitive content.
+- Test `recover` creates an immutable-source successor for eligible post-staging failures.
+- Test successor `resume` continues Codex review without rerunning completed Cursor work.
+- Test Phase 9 recovery runtime migration and Phase 10 frozen-runtime preservation.
+- Test dry-run recoverability analysis mutates neither source run nor repository.
+- Test idempotent successor reuse and failed-successor chain recovery.
+- Test recover rejects status, identity, staged-patch, worktree, and active-process blockers.

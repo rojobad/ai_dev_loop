@@ -42,6 +42,16 @@ def render_status(run_id: str, *, output: str = "text") -> str:
             "next_safe_action": next_action,
             "iteration_count": len(state.iterations),
             "abort_control": control,
+            "recovery": None
+            if state.recovery is None
+            else {
+                "source_run_id": state.recovery.source_run_id,
+                "source_status": state.recovery.source_status,
+                "source_iteration": state.recovery.source_iteration,
+                "recovered_checkpoint": state.recovery.recovered_checkpoint,
+                "runtime_migration": state.recovery.runtime_migration,
+                "reason_code": state.recovery.reason_code,
+            },
         }
         return json.dumps(payload, indent=2) + "\n"
 
@@ -73,6 +83,15 @@ def render_status(run_id: str, *, output: str = "text") -> str:
         f"Run directory: {run_path}",
         f"Next safe action: {next_action}",
     ]
+    if state.recovery is not None:
+        lines.insert(
+            2,
+            (
+                f"Recovery successor of: {state.recovery.source_run_id} "
+                f"(checkpoint={state.recovery.recovered_checkpoint}, "
+                f"iteration={state.recovery.source_iteration})"
+            ),
+        )
     if state.codex.model_family_warning:
         lines.append(f"Model family warning: {state.codex.model_family_warning}")
     if control["abort_requested"]:
@@ -124,12 +143,21 @@ def _next_action(state: RunState, run_path: Path) -> str:
     if status in {"running_cursor", "validating"}:
         return "Wait for start/resume to finish or inspect logs if the run appears stuck."
     if status == "interrupted":
+        if state.recovery is not None:
+            return (
+                "Recovery successor ready. Run ai_dev_loop resume <run-id> "
+                "(add --update-tools only if tool compatibility requires it)."
+            )
         return "Run ai_dev_loop resume <run-id> after inspecting cursor/ and codex/ artifacts."
     if status == "failed":
-        return "Inspect last_error, codex/, and cursor artifacts before preparing a new run."
+        return (
+            "Inspect last_error and artifacts. If Cursor and staging completed and the staged "
+            "patch still matches, try: ai_dev_loop recover --dry-run <run-id>, then "
+            "ai_dev_loop recover <run-id>."
+        )
     if status == "aborted":
         return (
             "Run was aborted. Inspect cursor/, codex/, and git/ artifacts. "
             "Repository contents and staged changes were preserved."
         )
-    return "Inspect artifacts or wait for a later-phase recovery command."
+    return "Inspect artifacts manually."

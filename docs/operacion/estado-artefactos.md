@@ -111,6 +111,23 @@ codex/reviews/NN.metadata.json
 
 Los patches staged son snapshots acumulativos del index en esa iteracion, no necesariamente diffs incrementales.
 
+## Lineage de recovery
+
+Un sucesor creado por `ai_dev_loop recover` incluye en `state.json` una seccion opcional `recovery`:
+
+```text
+source_run_id
+source_status                 # failed
+source_iteration
+recovered_checkpoint          # reviewing | process_review
+source_staged_patch_sha256
+created_at
+runtime_migration             # none | phase9_session_capture
+reason_code
+```
+
+El run origen permanece terminal e inmutable. El sucesor copia snapshots/artefactos necesarios para continuar (plan, prompt, chat, Cursor/git hasta la iteracion recuperada, reviews previos, y el review valido solo si el checkpoint es `process_review`). Los intentos Codex fallidos quedan en el origen.
+
 ## Locks
 
 `ai_dev_loop` usa:

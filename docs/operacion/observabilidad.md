@@ -20,7 +20,8 @@ Muestra:
 - Codex session ID acortado;
 - proceso activo si existe;
 - ultimo error;
-- siguiente accion segura.
+- siguiente accion segura;
+- si es sucesor de recovery: run origen y checkpoint recuperado.
 
 `status` debe seguir funcionando aunque el run lock este tomado por un `start` o `resume` activo.
 
@@ -31,7 +32,7 @@ ai_dev_loop inspect <run-id>
 ai_dev_loop inspect <run-id> --output json
 ```
 
-Muestra rutas de artefactos, resumen de iteraciones, paths de reportes y diagnosticos de abort.
+Muestra rutas de artefactos, resumen de iteraciones, paths de reportes, diagnosticos de abort y lineage de recovery cuando existe.
 
 Por defecto no imprime prompts completos.
 
@@ -77,7 +78,7 @@ ai_dev_loop list --status completed
 ai_dev_loop list --output json
 ```
 
-Lista runs recientes encontrados en XDG state. Es util cuando no recuerdas el `run-id`.
+Lista runs recientes encontrados en XDG state. Marca sucesores de recovery sin exponer session IDs. Es util cuando no recuerdas el `run-id`.
 
 ## Doctor
 

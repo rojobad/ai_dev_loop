@@ -29,6 +29,7 @@ These contracts preserve the product's safety model across implementation phases
 - Do not mutate run status outside the explicit state machine.
 - Preserve enough artifacts to recover manually after crashes, timeouts, or interrupted writes.
 - Phase boundary state must distinguish completed checkpoints from future work. Do not set statuses, results, or iteration fields that imply an unimplemented later phase ran.
+- Explicit `recover` may create a new interrupted successor with optional `recovery` lineage. It must not rewrite a terminal source run or mutate the target repository Git state.
 
 ## Git Contracts
 

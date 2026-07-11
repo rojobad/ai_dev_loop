@@ -81,6 +81,6 @@ Antes de borrar, considera que ahi viven:
 - reportes de review;
 - logs;
 - metadata de sesiones;
-- evidencia para recovery.
+- evidencia para recovery (incluidos runs origen `failed` y sucesores).
 
-No borres estado si necesitas auditar o reanudar runs.
+No borres estado si necesitas auditar, recuperar con `recover`, o reanudar runs.

@@ -1,12 +1,13 @@
 # Ejecutar runs
 
-Un run pasa por cuatro comandos principales:
+Un run pasa por cinco comandos principales:
 
 ```bash
 ai_dev_loop prepare
 ai_dev_loop start <run-id>
 ai_dev_loop resume <run-id>
 ai_dev_loop abort <run-id>
+ai_dev_loop recover <failed-run-id>
 ```
 
 ## `prepare`
@@ -99,7 +100,61 @@ Checkpoints soportados:
 - `reviewing`;
 - `interrupted`.
 
-Estados terminales como `completed`, `failed`, `aborted` o `max_iterations_reached` no se reanudan.
+Estados terminales como `completed`, `failed`, `aborted` o `max_iterations_reached` no se reanudan con `resume`. Para ciertos `failed` elegibles, usa `recover` (abajo).
+
+## `recover`
+
+```bash
+ai_dev_loop recover --dry-run <failed-run-id>
+ai_dev_loop recover <failed-run-id>
+```
+
+`recover` no edita el run terminal de origen. Crea un run sucesor distinto cuando el fallo es recuperable tras Cursor + staging.
+
+Requisitos de elegibilidad (Fase 11):
+
+- el origen esta exactamente en `failed`;
+- Cursor itero y staging terminaron con artefactos durables;
+- el staged patch actual coincide byte a byte con el artefacto registrado;
+- no hay cambios unstaged tracked ni untracked;
+- coinciden root/Git dirs/branch/HEAD del origen;
+- el chat ID de Cursor y el session ID de Codex estan presentes y coherentes;
+- la siguiente accion segura es review Codex o procesamiento de un review ya valido;
+- no hay proceso hijo activo o metadata ambigua.
+
+No recupera:
+
+- `completed`, `completed_with_residual_risk`, `max_iterations_reached`, `aborted`;
+- fallos de Cursor o staging en esta fase;
+- drift de plan/prompt/branch/HEAD/index;
+- sesiones o chats faltantes.
+
+Comportamiento:
+
+- `--dry-run` solo analiza (sin locks persistentes, sin directorios nuevos, sin Git mutation);
+- sin `--dry-run`, crea un sucesor `interrupted` con lineage `recovery` o reutiliza uno activo equivalente;
+- preserva exactamente `codex.session_id` y `cursor.chat_id`;
+- runs Phase 10 conservan runtime congelado; Phase 9 legacy puede capturar runtime de la sesion exacta (`phase9_session_capture`);
+- no lanza Cursor, Codex ni updaters;
+- devuelve `ai_dev_loop resume <recovery-run-id>`;
+- el origen permanece `failed` e inmutable byte a byte.
+
+Si un sucesor previo fallo, recupera ese sucesor (cadena), no saltes generaciones. Si el sucesor ya completo, no se crea otro para el mismo checkpoint.
+
+Ejemplo sanitizado:
+
+```text
+Source run: sample-project-20260711T010911Z-abcdef
+Recovery run: sample-project-20260711T011500Z-fedcba
+Recovered checkpoint: Codex review, iteration 1
+Cursor chat: 1c9d071f…
+Session runtime: gpt-5.6-sol / high
+Runtime migration: phase9_session_capture
+Repository and staged patch: verified
+Next command: ai_dev_loop resume sample-project-20260711T011500Z-fedcba
+```
+
+Pasa `--update-tools` a `resume` solo si la compatibilidad de CLI lo requiere. `recover` nunca actualiza herramientas.
 
 ## `abort`
 
