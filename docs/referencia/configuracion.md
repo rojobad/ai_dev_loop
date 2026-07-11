@@ -14,6 +14,8 @@ version: 1
 
 ## Schema
 
+Herencia recomendada (sin overrides de modelo ni reasoning):
+
 ```yaml
 version: 1
 
@@ -30,7 +32,6 @@ cursor:
 
 codex:
   command: codex
-  review_model: gpt-5.5
   review_skill: review-staged-cursor-execution
   sandbox: workspace-write
 
@@ -44,6 +45,17 @@ workflow:
 prompt:
   directory: docs/plans
   filename_template: prompt_{plan_stem}.txt
+```
+
+Overrides explicitos e independientes:
+
+```yaml
+codex:
+  command: codex
+  review_model: gpt-5.6-terra
+  review_reasoning_effort: high
+  review_skill: review-staged-cursor-execution
+  sandbox: workspace-write
 ```
 
 ## `project`
@@ -85,12 +97,15 @@ agent -p --force --trust --workspace <repo> --resume <chat-id> --model <model> -
 
 El prompt se pasa como argumento posicional, no por stdin.
 
+No uses IDs de modelo de Cursor Agent (por ejemplo `gpt-5.6-terra-high`) como `codex.review_model`. En Codex, modelo y reasoning effort son campos separados.
+
 ## `codex`
 
 | Campo | Default | Descripcion |
 | --- | --- | --- |
 | `command` | `codex` | Ejecutable Codex CLI en WSL. |
-| `review_model` | Requerido | Modelo de review disponible para la cuenta. |
+| `review_model` | `null` (hereda) | Override opcional del modelo de review. Omitido o `null` usa el modelo de la sesion reanudada. |
+| `review_reasoning_effort` | `null` (hereda) | Override opcional de reasoning. Omitido o `null` usa la configuracion de reasoning de la sesion. |
 | `review_skill` | `review-staged-cursor-execution` | Skill que Codex debe invocar para revisar staged changes. |
 | `sandbox` | `workspace-write` | Sandbox para `codex exec`. |
 
@@ -102,13 +117,39 @@ workspace-write
 danger-full-access
 ```
 
-La forma de review esperada es:
+Valores soportados de `review_reasoning_effort`:
+
+```text
+minimal
+low
+medium
+high
+xhigh
+```
+
+Los overrides son independientes: puedes fijar solo el modelo, solo el reasoning, ambos, o ninguno. No existe un setting inventado de "normal speed"; la velocidad normal es no enviar override de reasoning.
+
+`prepare` congela los valores efectivos en el run. Cambiar `ai_dev_loop.yaml` despues de `prepare` no altera un run ya preparado; prepara un run nuevo.
+
+Formas de review esperadas (argv separados, sin shell):
+
+```text
+codex exec --cd <repo> --sandbox <sandbox> resume --json --output-schema <schema> --output-last-message <result.json> <session-id> -
+```
 
 ```text
 codex exec --cd <repo> --sandbox <sandbox> resume --model <model> --json --output-schema <schema> --output-last-message <result.json> <session-id> -
 ```
 
-`--cd` y `--sandbox` van antes de `resume` para la version de Codex validada.
+```text
+codex exec --cd <repo> --sandbox <sandbox> resume -c model_reasoning_effort="high" --json --output-schema <schema> --output-last-message <result.json> <session-id> -
+```
+
+```text
+codex exec --cd <repo> --sandbox <sandbox> resume --model <model> -c model_reasoning_effort="high" --json --output-schema <schema> --output-last-message <result.json> <session-id> -
+```
+
+`--cd` y `--sandbox` van antes de `resume` para la version de Codex validada. `--model` y `-c` solo aparecen cuando hay override preparado.
 
 ## `workflow`
 
@@ -143,6 +184,8 @@ Si Review 3 aun tiene findings, el estado final es `max_iterations_reached`.
 
 ## Validacion
 
+Inspecciona la configuracion efectiva antes de `prepare`:
+
 ```bash
 ai_dev_loop config validate --repo /path/al/repo
 ```
@@ -152,3 +195,5 @@ Salida JSON:
 ```bash
 ai_dev_loop config validate --repo /path/al/repo --output json
 ```
+
+La salida muestra si `review_model` y `review_reasoning_effort` son explicitos o `inherited from session`.

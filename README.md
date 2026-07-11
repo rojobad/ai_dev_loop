@@ -36,12 +36,20 @@ uv tool install .
 ai_dev_loop --help
 ```
 
+Reinstall the current local build in WSL after validation:
+
+```bash
+uv tool install --force .
+which ai_dev_loop
+ai_dev_loop --version
+```
+
 ## Basic Workflow
 
 1. Install the matching Codex integration:
    - `wsl-cli` when Codex runs inside WSL.
    - `codex-desktop-wsl` when Codex Desktop runs on Windows and agents run in WSL.
-2. Configure `ai_dev_loop.yaml` in the target repository.
+2. Configure `ai_dev_loop.yaml` in the target repository. Omit `codex.review_model` and `codex.review_reasoning_effort` to inherit both from the exact resumed Codex session, or set either override independently.
 3. From the original Codex session, run `ai_dev_loop prepare` with the exact Cursor prompt on stdin.
 4. Exit or stop using the active Codex UI for that session.
 5. Run `ai_dev_loop start <run-id>` from WSL.

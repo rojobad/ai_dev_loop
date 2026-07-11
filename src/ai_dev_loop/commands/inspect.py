@@ -10,6 +10,7 @@ from ai_dev_loop.abort_control import (
     ACTIVE_PROCESS_REL_PATH,
     abort_control_summary,
 )
+from ai_dev_loop.config import format_codex_override
 from ai_dev_loop.run_discovery import load_run
 
 
@@ -31,6 +32,13 @@ def render_inspect(run_id: str, *, output: str = "text", show_prompts: bool = Fa
             ],
             "plan": state.plan.model_dump(),
             "prompt": state.prompt.model_dump(),
+            "codex": {
+                "review_model": state.codex.review_model,
+                "review_reasoning_effort": state.codex.review_reasoning_effort,
+                "review_skill": state.codex.review_skill,
+                "sandbox": state.codex.sandbox,
+                "command": state.codex.command,
+            },
             "workflow": state.workflow.model_dump(),
         }
         if show_prompts:
@@ -53,6 +61,12 @@ def render_inspect(run_id: str, *, output: str = "text", show_prompts: bool = Fa
         f"  source_repository_path: {state.prompt.source_repository_path}",
         f"  snapshot_path: {state.prompt.snapshot_path}",
         f"  sha256: {state.prompt.sha256}",
+        "",
+        "Codex:",
+        f"  review_model: {format_codex_override(state.codex.review_model)}",
+        f"  review_reasoning_effort: {format_codex_override(state.codex.review_reasoning_effort)}",
+        f"  review_skill: {state.codex.review_skill}",
+        f"  sandbox: {state.codex.sandbox}",
         "",
     ]
     if state.iterations:

@@ -13,8 +13,12 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from ai_dev_loop.config import (
+    normalize_optional_review_model,
+    normalize_optional_review_reasoning_effort,
+)
 from ai_dev_loop.paths import set_sensitive_file_mode
 
 
@@ -125,9 +129,22 @@ class CodexState(BaseModel):
     command: str
     session_id: str
     session_model: str | None = None
-    review_model: str
+    # Required and nullable: prepare always writes it; historical runs include it;
+    # omit is invalid, null means inherit from the resumed session.
+    review_model: str | None
+    review_reasoning_effort: str | None = None
     review_skill: str
     sandbox: str
+
+    @field_validator("review_model")
+    @classmethod
+    def validate_review_model(cls, value: str | None) -> str | None:
+        return normalize_optional_review_model(value)
+
+    @field_validator("review_reasoning_effort")
+    @classmethod
+    def validate_review_reasoning_effort(cls, value: str | None) -> str | None:
+        return normalize_optional_review_reasoning_effort(value)
 
 
 class CursorState(BaseModel):

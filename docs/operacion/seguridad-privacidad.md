@@ -49,6 +49,8 @@ El usuario decide manualmente si commitea despues de revisar el resultado final.
 - Nunca se usa `--last`.
 - El orquestador no adivina session IDs.
 - El orquestador no crea una sesion nueva de Codex para review.
+- Por defecto, el review hereda modelo y reasoning de esa sesion exacta; solo se envian `--model` o `-c model_reasoning_effort="..."` cuando el run preparado tiene overrides explicitos.
+- No uses la UI interactiva original de esa sesion en paralelo con `start`/`resume`.
 
 ## Prompts y findings
 

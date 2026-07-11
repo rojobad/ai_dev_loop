@@ -37,6 +37,15 @@ uv tool install .
 ai_dev_loop --help
 ```
 
+Para reinstalar un build local actualizado en WSL despues de cambios:
+
+```bash
+uv tool install --force .
+which ai_dev_loop
+ai_dev_loop --version
+ai_dev_loop prepare --help
+```
+
 Desde un wheel:
 
 ```bash

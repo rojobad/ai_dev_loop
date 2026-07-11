@@ -74,13 +74,21 @@ Configura `cursor.model` con el identificador exacto, por ejemplo `composer-2.5-
 
 Sintoma comun:
 
-- `codex exec resume` falla con error HTTP/modelo no disponible.
+- `codex exec resume` falla con error HTTP/modelo no disponible cuando hay un override explicito.
 
 Accion:
 
 1. Verifica modelos disponibles para tu cuenta.
-2. Cambia `codex.review_model` en `ai_dev_loop.yaml`.
-3. En esta workstation, `gpt-5.5` funciono para smoke validation; `o4-mini` fallo en una cuenta enlazada a ChatGPT.
+2. Prefiere omitir `codex.review_model` para heredar el modelo de la sesion reanudada.
+3. Si necesitas un override, cambia `codex.review_model` en `ai_dev_loop.yaml` o pasa `--codex-review-model` en `prepare`.
+4. Prepara un run nuevo; un run ya preparado no toma cambios posteriores del YAML.
+5. En esta workstation, un override `o4-mini` fallo en una cuenta enlazada a ChatGPT; la herencia de sesion o un modelo disponible como `gpt-5.5` evita ese fallo.
+
+Para reasoning:
+
+- Omite `review_reasoning_effort` para heredar la configuracion de la sesion.
+- Si fijas un valor, usa solo `minimal`, `low`, `medium`, `high` o `xhigh`.
+- No inventes un setting de "normal speed"; la velocidad normal es no enviar override.
 
 ## Falta SessionStart context
 

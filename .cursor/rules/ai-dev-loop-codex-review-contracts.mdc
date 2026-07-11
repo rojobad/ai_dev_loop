@@ -23,8 +23,28 @@ These contracts protect the automated review boundary of `ai_dev_loop`. They app
 
 - Use the locally probed Codex CLI option order unless an explicit later probe proves otherwise.
 - Root `codex exec` options such as `--cd` and `--sandbox` must appear before `resume`.
-- Resume-specific options such as `--model`, `--json`, `--output-schema`, and `--output-last-message` must appear after `resume`.
-- The command shape should remain equivalent to:
+- Resume-specific options such as optional `--model`, optional `-c model_reasoning_effort="..."`, `--json`, `--output-schema`, and `--output-last-message` must appear after `resume`.
+- `codex.review_model` and `codex.review_reasoning_effort` are independent optional overrides. Absence or `null` means inherit from the exact resumed session; do not invent a second source of truth from rollout files or `session_model`.
+- Emit `--model <review-model>` only when a prepared `review_model` override is present.
+- Emit `-c model_reasoning_effort="<effort>"` only when a prepared `review_reasoning_effort` override is present. Pass the TOML assignment as one argv entry with `shell=False`; never shell-interpolate it.
+- When neither override is present, omit both fragments so the resumed session supplies model and reasoning.
+- The command shape should remain equivalent to one of:
+
+```text
+codex exec
+--cd
+<repo-root>
+--sandbox
+<codex-sandbox>
+resume
+--json
+--output-schema
+<codex-review-result-v1.json>
+--output-last-message
+<codex/reviews/NN.json>
+<session-id>
+-
+```
 
 ```text
 codex exec
@@ -35,6 +55,44 @@ codex exec
 resume
 --model
 <review-model>
+--json
+--output-schema
+<codex-review-result-v1.json>
+--output-last-message
+<codex/reviews/NN.json>
+<session-id>
+-
+```
+
+```text
+codex exec
+--cd
+<repo-root>
+--sandbox
+<codex-sandbox>
+resume
+-c
+model_reasoning_effort="<effort>"
+--json
+--output-schema
+<codex-review-result-v1.json>
+--output-last-message
+<codex/reviews/NN.json>
+<session-id>
+-
+```
+
+```text
+codex exec
+--cd
+<repo-root>
+--sandbox
+<codex-sandbox>
+resume
+--model
+<review-model>
+-c
+model_reasoning_effort="<effort>"
 --json
 --output-schema
 <codex-review-result-v1.json>

@@ -50,6 +50,12 @@ def test_config_validate(git_repo: Path, isolated_xdg) -> None:
     payload = json.loads(result.stdout)
     assert payload["status"] == "valid"
     assert payload["project"] == "fixture-project"
+    assert payload["codex_review_model"] is None
+    assert payload["codex_review_reasoning_effort"] is None
+
+    text = runner.invoke(app, ["config", "validate", "--repo", str(git_repo)])
+    assert text.exit_code == 0
+    assert "inherited from session" in text.stdout
 
 
 def test_prepare_rejects_empty_stdin(git_repo: Path, isolated_xdg) -> None:
@@ -87,6 +93,8 @@ def test_prepare_json_creates_artifacts(git_repo: Path, isolated_xdg) -> None:
     assert state.plan.sha256
     assert state.prompt.sha256
     assert state.codex.session_id == "019abc00-0000-0000-0000-000000000000"
+    assert state.codex.review_model is None
+    assert state.codex.review_reasoning_effort is None
     assert (run_path / "prompts" / "cursor-initial.txt").read_text(encoding="utf-8") == prompt
     assert len(manifest.artifacts) >= 4
     source_entry = next(a for a in manifest.artifacts if a.path == "source-config.yaml")
@@ -107,6 +115,16 @@ def test_prepare_json_creates_artifacts(git_repo: Path, isolated_xdg) -> None:
     assert cli_result.exit_code == 0
     status_payload = json.loads(cli_result.stdout)
     assert status_payload["run_id"] == result.run_id
+    assert status_payload["codex_review_model"] is None
+    assert status_payload["codex_review_reasoning_effort"] is None
+
+    status_text = runner.invoke(app, ["status", result.run_id])
+    assert status_text.exit_code == 0
+    assert "inherited from session" in status_text.stdout
+
+    inspect_text = runner.invoke(app, ["inspect", result.run_id])
+    assert inspect_text.exit_code == 0
+    assert "inherited from session" in inspect_text.stdout
 
 
 def test_logs_rejects_invalid_component(git_repo: Path, isolated_xdg) -> None:
@@ -137,3 +155,33 @@ def test_schemas_are_valid_json() -> None:
     ):
         payload = json.loads((schema_root / name).read_text(encoding="utf-8"))
         assert "$schema" in payload
+
+
+def test_prepare_persists_explicit_codex_overrides(git_repo: Path, isolated_xdg) -> None:
+    prompt = "Implement the approved plan.\n"
+    with patch("sys.stdin", StringIO(prompt)):
+        result = prepare_run(
+            PrepareOptions(
+                repo_path=git_repo,
+                plan_path=Path("docs/plans/sample-plan.md"),
+                prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
+                codex_session_id="019abc00-0000-0000-0000-000000000000",
+                codex_review_model="gpt-5.5",
+                codex_review_reasoning_effort="high",
+            )
+        )
+    state = load_run_state(run_dir("fixture-project", result.run_id) / "state.json")
+    assert state.codex.review_model == "gpt-5.5"
+    assert state.codex.review_reasoning_effort == "high"
+
+
+def test_prepare_help_lists_reasoning_override() -> None:
+    result = runner.invoke(
+        app,
+        ["prepare", "--help"],
+        env={"COLUMNS": "200", "LINES": "80", "TERM": "dumb"},
+    )
+    assert result.exit_code == 0
+    combined = result.stdout + result.stderr
+    assert "--codex-review-model" in combined
+    assert "--codex-review-reasoning-effort" in combined

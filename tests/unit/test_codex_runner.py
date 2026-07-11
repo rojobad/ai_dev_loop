@@ -80,18 +80,33 @@ def _sample_state() -> RunState:
     )
 
 
-def test_build_codex_review_args_option_order(tmp_path: Path) -> None:
+def _build_args(
+    tmp_path: Path,
+    *,
+    review_model: str | None = "o4-mini",
+    review_reasoning_effort: str | None = None,
+) -> list[str]:
     schema = tmp_path / "codex-review-result-v1.json"
     schema.write_text("{}", encoding="utf-8")
     result = tmp_path / "review.json"
-    codex = _sample_state().codex
-    args = build_codex_review_args(
+    state = _sample_state()
+    codex = state.codex.model_copy(
+        update={
+            "review_model": review_model,
+            "review_reasoning_effort": review_reasoning_effort,
+        }
+    )
+    return build_codex_review_args(
         codex,
         repo_root="/tmp/repo",
         session_id=codex.session_id,
         schema_file=schema,
         result_file=result,
     )
+
+
+def test_build_codex_review_args_option_order(tmp_path: Path) -> None:
+    args = _build_args(tmp_path)
     assert args[:4] == ["codex", "exec", "--cd", "/tmp/repo"]
     assert args[4:6] == ["--sandbox", "workspace-write"]
     assert args[6] == "resume"
@@ -101,8 +116,50 @@ def test_build_codex_review_args_option_order(tmp_path: Path) -> None:
     assert "--output-schema" in args
     assert "--output-last-message" in args
     assert "--last" not in args
-    assert args[-2] == codex.session_id
+    assert args[-2] == "019abc00-0000-0000-0000-000000000000"
     assert args[-1] == "-"
+
+
+def test_build_codex_review_args_inherits_model_and_reasoning(tmp_path: Path) -> None:
+    args = _build_args(tmp_path, review_model=None, review_reasoning_effort=None)
+    resume_index = args.index("resume")
+    assert args[resume_index + 1] == "--json"
+    assert "--model" not in args
+    assert "-c" not in args
+    assert "model_reasoning_effort" not in " ".join(args)
+    assert "--last" not in args
+    assert args[-2] == "019abc00-0000-0000-0000-000000000000"
+
+
+def test_build_codex_review_args_model_only(tmp_path: Path) -> None:
+    args = _build_args(tmp_path, review_model="gpt-5.5", review_reasoning_effort=None)
+    resume_index = args.index("resume")
+    assert args[resume_index + 1 : resume_index + 4] == ["--model", "gpt-5.5", "--json"]
+    assert "-c" not in args
+
+
+def test_build_codex_review_args_reasoning_only(tmp_path: Path) -> None:
+    args = _build_args(tmp_path, review_model=None, review_reasoning_effort="high")
+    resume_index = args.index("resume")
+    assert args[resume_index + 1 : resume_index + 4] == [
+        "-c",
+        'model_reasoning_effort="high"',
+        "--json",
+    ]
+    assert "--model" not in args
+
+
+def test_build_codex_review_args_model_and_reasoning(tmp_path: Path) -> None:
+    args = _build_args(tmp_path, review_model="gpt-5.5", review_reasoning_effort="high")
+    resume_index = args.index("resume")
+    assert args[resume_index + 1 : resume_index + 6] == [
+        "--model",
+        "gpt-5.5",
+        "-c",
+        'model_reasoning_effort="high"',
+        "--json",
+    ]
+    assert "--last" not in args
 
 
 def test_redact_codex_args_replaces_stdin_marker() -> None:

@@ -107,9 +107,20 @@ Documentado en:
 - [Instalacion](../guia/instalacion.md)
 - [Troubleshooting](../operacion/troubleshooting.md)
 
+## Fase 9
+
+Hago opcionales `codex.review_model` y `codex.review_reasoning_effort`. Por omision/`null`, el review hereda modelo y reasoning de la sesion Codex exacta; los overrides son independientes y se congelan en `prepare`.
+
+Documentado en:
+
+- [Referencia de configuracion](configuracion.md)
+- [Configuracion del repositorio](../guia/configuracion-repositorio.md)
+- [CLI](cli.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+
 ## Riesgos residuales documentados
 
 - Hook trust sigue siendo `unknown` desde CLI.
-- `o4-mini` puede no estar disponible para todas las cuentas; elegir modelo soportado.
+- El default de review hereda modelo/reasoning de la sesion; un override explicito como `o4-mini` puede no estar disponible para todas las cuentas.
 - Temporales DrvFS pueden romper pytest capture.
 - No hay comando destructivo de cleanup; limpieza es manual.

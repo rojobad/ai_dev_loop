@@ -172,6 +172,115 @@ def test_codex_command_uses_cd_and_sandbox_before_resume(
     resume_index = args.index("resume")
     assert cd_index < resume_index
     assert sandbox_index < resume_index
+    assert "--model" not in args
+    assert "-c" not in args
+    assert "--last" not in args
+
+
+def test_inherited_codex_review_omits_model_and_reasoning(
+    prepared_run, fake_clis, monkeypatch
+) -> None:
+    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    state = load_run_state(prepared_run["run_path"] / "state.json")
+    assert state.codex.review_model is None
+    assert state.codex.review_reasoning_effort is None
+    start_run(prepared_run["run_id"])
+    codex_log = fake_clis["codex_log"].read_text(encoding="utf-8")
+    args_line = next(line for line in codex_log.splitlines() if line.startswith("ARGS:"))
+    args = eval(args_line.removeprefix("ARGS:"))  # noqa: S307
+    assert "--model" not in args
+    assert "-c" not in args
+    assert not any("model_reasoning_effort" in str(item) for item in args)
+
+
+def test_explicit_codex_overrides_reach_fake_executable(
+    git_repo, isolated_xdg, fake_clis, monkeypatch
+) -> None:
+    from io import StringIO
+    from unittest.mock import patch
+
+    from ai_dev_loop.commands.prepare import PrepareOptions, prepare_run
+
+    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    prompt = Path(__file__).resolve().parents[1] / "fixtures" / "sample_repo"
+    prompt_text = (prompt / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
+    with patch("sys.stdin", StringIO(prompt_text)):
+        prepared = prepare_run(
+            PrepareOptions(
+                repo_path=git_repo,
+                plan_path=Path("docs/plans/sample-plan.md"),
+                prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
+                codex_session_id="019abc00-0000-0000-0000-000000000000",
+                codex_review_model="gpt-5.5",
+                codex_review_reasoning_effort="high",
+            )
+        )
+    start_run(prepared.run_id)
+    codex_log = fake_clis["codex_log"].read_text(encoding="utf-8")
+    args_line = next(line for line in codex_log.splitlines() if line.startswith("ARGS:"))
+    args = eval(args_line.removeprefix("ARGS:"))  # noqa: S307
+    resume_index = args.index("resume")
+    assert args[resume_index + 1 : resume_index + 5] == [
+        "--model",
+        "gpt-5.5",
+        "-c",
+        'model_reasoning_effort="high"',
+    ]
+    assert "--last" not in args
+    assert args[-2] == "019abc00-0000-0000-0000-000000000000"
+
+
+def test_prepared_codex_overrides_ignore_later_yaml_edits(
+    git_repo, isolated_xdg, fake_clis, monkeypatch
+) -> None:
+    from io import StringIO
+    from unittest.mock import patch
+
+    from ai_dev_loop.commands.prepare import PrepareOptions, prepare_run
+    from ai_dev_loop.paths import run_dir
+    from ai_dev_loop.runners.git import discover_repository
+
+    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    prompt = Path(__file__).resolve().parents[1] / "fixtures" / "sample_repo"
+    prompt_text = (prompt / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
+    with patch("sys.stdin", StringIO(prompt_text)):
+        prepared = prepare_run(
+            PrepareOptions(
+                repo_path=git_repo,
+                plan_path=Path("docs/plans/sample-plan.md"),
+                prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
+                codex_session_id="019abc00-0000-0000-0000-000000000000",
+                codex_review_model="prepared-model",
+                codex_review_reasoning_effort="low",
+            )
+        )
+    run_path = run_dir("fixture-project", prepared.run_id)
+    (git_repo / "ai_dev_loop.yaml").write_text(
+        (git_repo / "ai_dev_loop.yaml")
+        .read_text(encoding="utf-8")
+        .replace(
+            "codex:\n  command: codex\n  review_skill:",
+            "codex:\n  command: codex\n  review_model: yaml-after-prepare\n"
+            "  review_reasoning_effort: xhigh\n  review_skill:",
+        ),
+        encoding="utf-8",
+    )
+    # Keep baseline aligned so this test isolates prepared-state freeze, not dirty-tree refusal.
+    current_status = discover_repository(git_repo).status_porcelain
+    (run_path / "git/baseline-status.txt").write_text(current_status + "\n", encoding="utf-8")
+
+    state_before = load_run_state(run_path / "state.json")
+    assert state_before.codex.review_model == "prepared-model"
+    assert state_before.codex.review_reasoning_effort == "low"
+
+    start_run(prepared.run_id)
+    codex_log = fake_clis["codex_log"].read_text(encoding="utf-8")
+    args_line = next(line for line in codex_log.splitlines() if line.startswith("ARGS:"))
+    args = eval(args_line.removeprefix("ARGS:"))  # noqa: S307
+    assert "prepared-model" in args
+    assert 'model_reasoning_effort="low"' in args
+    assert "yaml-after-prepare" not in args
+    assert 'model_reasoning_effort="xhigh"' not in args
 
 
 def test_events_jsonl_does_not_contain_full_prompt(prepared_run, fake_clis, monkeypatch) -> None:

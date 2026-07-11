@@ -16,7 +16,34 @@ PROJECT_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 CURSOR_OUTPUT_FORMATS = frozenset({"stream-json", "json", "text"})
 CURSOR_SANDBOX_VALUES = frozenset({"enabled", "disabled"})
 CODEX_SANDBOX_VALUES = frozenset({"read-only", "workspace-write", "danger-full-access"})
+CODEX_REVIEW_REASONING_EFFORTS = frozenset({"minimal", "low", "medium", "high", "xhigh"})
 STAGE_MODES = frozenset({"all"})
+INHERITED_FROM_SESSION = "inherited from session"
+
+
+def normalize_optional_review_model(value: str | None) -> str | None:
+    """Validate an optional Codex review model override."""
+
+    if value is None:
+        return None
+    if not value.strip():
+        raise ValueError("codex.review_model must not be empty")
+    return value
+
+
+def normalize_optional_review_reasoning_effort(value: str | None) -> str | None:
+    """Validate an optional Codex review reasoning-effort override."""
+
+    if value is None:
+        return None
+    if not value.strip():
+        raise ValueError("codex.review_reasoning_effort must not be empty")
+    if value not in CODEX_REVIEW_REASONING_EFFORTS:
+        raise ValueError(
+            "codex.review_reasoning_effort must be one of: "
+            f"{sorted(CODEX_REVIEW_REASONING_EFFORTS)}"
+        )
+    return value
 
 
 class ProjectSection(BaseModel):
@@ -70,16 +97,27 @@ class CodexSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     command: str = "codex"
-    review_model: str
+    review_model: str | None = None
+    review_reasoning_effort: str | None = None
     review_skill: str = "review-staged-cursor-execution"
     sandbox: str = "workspace-write"
 
-    @field_validator("command", "review_model", "review_skill")
+    @field_validator("command", "review_skill")
     @classmethod
     def non_empty(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("must not be empty")
         return value
+
+    @field_validator("review_model")
+    @classmethod
+    def validate_review_model(cls, value: str | None) -> str | None:
+        return normalize_optional_review_model(value)
+
+    @field_validator("review_reasoning_effort")
+    @classmethod
+    def validate_review_reasoning_effort(cls, value: str | None) -> str | None:
+        return normalize_optional_review_reasoning_effort(value)
 
     @field_validator("sandbox")
     @classmethod
@@ -87,6 +125,12 @@ class CodexSection(BaseModel):
         if value not in CODEX_SANDBOX_VALUES:
             raise ValueError(f"codex.sandbox must be one of: {sorted(CODEX_SANDBOX_VALUES)}")
         return value
+
+
+def format_codex_override(value: str | None) -> str:
+    """Human-readable label for optional Codex model/reasoning overrides."""
+
+    return value if value is not None else INHERITED_FROM_SESSION
 
 
 class WorkflowSection(BaseModel):
@@ -160,6 +204,7 @@ class ConfigOverrides(BaseModel):
     cursor_output_format: str | None = None
     codex_command: str | None = None
     codex_review_model: str | None = None
+    codex_review_reasoning_effort: str | None = None
     review_skill: str | None = None
     max_review_iterations: int | None = None
     cursor_timeout_minutes: int | None = None
@@ -200,7 +245,8 @@ def default_config_dict() -> dict[str, Any]:
         },
         "codex": {
             "command": "codex",
-            "review_model": "o4-mini",
+            "review_model": None,
+            "review_reasoning_effort": None,
             "review_skill": "review-staged-cursor-execution",
             "sandbox": "workspace-write",
         },
@@ -250,8 +296,10 @@ def resolve_effective_config(
     layers: list[dict[str, Any]] = [default_config_dict()]
     global_config = load_optional_global_config()
     if global_config is not None:
-        layers.append(global_config.model_dump(by_alias=True))
-    layers.append(source_repo_config.model_dump(by_alias=True))
+        # Only merge fields that were explicitly present so omitted optional
+        # values do not wipe earlier layers. Explicit YAML null remains set.
+        layers.append(global_config.model_dump(by_alias=True, exclude_unset=True))
+    layers.append(source_repo_config.model_dump(by_alias=True, exclude_unset=True))
 
     merged: dict[str, Any] = {}
     for layer in layers:
@@ -274,6 +322,10 @@ def resolve_effective_config(
             merged.setdefault("codex", {})["command"] = overrides.codex_command
         if overrides.codex_review_model is not None:
             merged.setdefault("codex", {})["review_model"] = overrides.codex_review_model
+        if overrides.codex_review_reasoning_effort is not None:
+            merged.setdefault("codex", {})["review_reasoning_effort"] = (
+                overrides.codex_review_reasoning_effort
+            )
         if overrides.review_skill is not None:
             merged.setdefault("codex", {})["review_skill"] = overrides.review_skill
         if overrides.max_review_iterations is not None:

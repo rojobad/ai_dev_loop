@@ -13,7 +13,6 @@ cursor:
 
 codex:
   command: codex
-  review_model: o4-mini
   review_skill: review-staged-cursor-execution
   sandbox: workspace-write
 

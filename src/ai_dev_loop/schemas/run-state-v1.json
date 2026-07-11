@@ -105,7 +105,21 @@
         "command": { "type": "string", "minLength": 1 },
         "session_id": { "type": "string", "minLength": 1 },
         "session_model": { "type": ["string", "null"] },
-        "review_model": { "type": "string", "minLength": 1 },
+        "review_model": {
+          "anyOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "null" }
+          ]
+        },
+        "review_reasoning_effort": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": ["minimal", "low", "medium", "high", "xhigh"]
+            },
+            { "type": "null" }
+          ]
+        },
         "review_skill": { "type": "string", "minLength": 1 },
         "sandbox": { "type": "string", "minLength": 1 }
       }

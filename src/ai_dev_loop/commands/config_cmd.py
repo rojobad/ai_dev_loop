@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ai_dev_loop.config import load_project_config, resolve_effective_config
+from ai_dev_loop.config import format_codex_override, load_project_config, resolve_effective_config
 from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.runners.git import discover_repository
 
@@ -37,12 +37,17 @@ def validate_config(
         "config_path": str(repo_config_path),
         "source_project_name": source.project.name,
         "effective_project_name": effective.project.name,
+        "codex_review_model": effective.codex.review_model,
+        "codex_review_reasoning_effort": effective.codex.review_reasoning_effort,
     }
     if output == "json":
         return json.dumps(payload, indent=2) + "\n"
     return (
         f"Configuration is valid for project '{effective.project.name}'.\n"
         f"Config path: {repo_config_path}\n"
+        f"Codex review model: {format_codex_override(effective.codex.review_model)}\n"
+        "Codex review reasoning: "
+        f"{format_codex_override(effective.codex.review_reasoning_effort)}\n"
     )
 
 

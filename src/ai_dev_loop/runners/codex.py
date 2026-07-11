@@ -87,7 +87,7 @@ def build_codex_review_args(
     schema_file: Path,
     result_file: Path,
 ) -> list[str]:
-    return [
+    args = [
         codex.command,
         "exec",
         "--cd",
@@ -95,16 +95,24 @@ def build_codex_review_args(
         "--sandbox",
         codex.sandbox,
         "resume",
-        "--model",
-        codex.review_model,
-        "--json",
-        "--output-schema",
-        str(schema_file),
-        "--output-last-message",
-        str(result_file),
-        session_id,
-        "-",
     ]
+    if codex.review_model is not None:
+        args.extend(["--model", codex.review_model])
+    if codex.review_reasoning_effort is not None:
+        # Pass as one argv entry; Codex parses the value as TOML.
+        args.extend(["-c", f'model_reasoning_effort="{codex.review_reasoning_effort}"'])
+    args.extend(
+        [
+            "--json",
+            "--output-schema",
+            str(schema_file),
+            "--output-last-message",
+            str(result_file),
+            session_id,
+            "-",
+        ]
+    )
+    return args
 
 
 def redact_codex_args(args: list[str]) -> list[str]:
@@ -301,6 +309,8 @@ def run_codex_review(
         "timed_out": process.timed_out,
         "session_id": state.codex.session_id,
         "review_skill": state.codex.review_skill,
+        "review_model": state.codex.review_model,
+        "review_reasoning_effort": state.codex.review_reasoning_effort,
     }
     atomic_write_json(metadata_path, metadata_payload, sensitive=True)
     set_sensitive_file_mode(metadata_path)

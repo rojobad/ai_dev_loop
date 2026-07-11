@@ -35,12 +35,15 @@ Opciones principales:
 --cursor-output-format TEXT
 --codex-command TEXT
 --codex-review-model TEXT
+--codex-review-reasoning-effort TEXT
 --review-skill TEXT
 --max-review-iterations INTEGER
 --cursor-timeout-minutes INTEGER
 --codex-timeout-minutes INTEGER
 --output [text|json]
 ```
+
+`--codex-review-model` y `--codex-review-reasoning-effort` son overrides opcionales e independientes. Si no se pasan, se conserva el valor del YAML/default (incluyendo herencia por omision/`null`). No hay flag de CLI en esta fase para limpiar un override del YAML; configura herencia en YAML antes de `prepare`.
 
 Ejemplo:
 

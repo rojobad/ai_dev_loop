@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from ai_dev_loop.abort_control import abort_control_summary
+from ai_dev_loop.config import format_codex_override
 from ai_dev_loop.run_discovery import load_run
 from ai_dev_loop.runners.staging import staging_complete_for_iteration
 from ai_dev_loop.state import RunState, shorten_session_id
@@ -28,6 +29,8 @@ def render_status(run_id: str, *, output: str = "text") -> str:
             "max_review_iterations": state.workflow.max_review_iterations,
             "cursor_chat_id": state.cursor.chat_id,
             "codex_session_id": state.codex.session_id,
+            "codex_review_model": state.codex.review_model,
+            "codex_review_reasoning_effort": state.codex.review_reasoning_effort,
             "last_error": state.last_error,
             "result": state.result,
             "run_directory": str(run_path),
@@ -48,6 +51,8 @@ def render_status(run_id: str, *, output: str = "text") -> str:
         f"Recorded iterations: {len(state.iterations)}",
         f"Cursor chat: {state.cursor.chat_id or '(not created)'}",
         f"Codex session: {shorten_session_id(state.codex.session_id)}",
+        f"Codex review model: {format_codex_override(state.codex.review_model)}",
+        f"Codex review reasoning: {format_codex_override(state.codex.review_reasoning_effort)}",
         f"Run directory: {run_path}",
         f"Next safe action: {next_action}",
     ]

@@ -68,7 +68,6 @@ cursor:
 
 codex:
   command: codex
-  review_model: gpt-5.5
   review_skill: review-staged-cursor-execution
   sandbox: workspace-write
 
@@ -83,6 +82,8 @@ prompt:
   directory: docs/plans
   filename_template: prompt_{plan_stem}.txt
 ```
+
+Por defecto, `review_model` y `review_reasoning_effort` se omiten para heredar el modelo y reasoning de la sesion Codex reanudada. Para overrides explicitos, ver [Configuracion del repositorio](configuracion-repositorio.md).
 
 Valida:
 

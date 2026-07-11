@@ -49,10 +49,24 @@
     "codex": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["command", "review_model", "review_skill", "sandbox"],
+      "required": ["command", "review_skill", "sandbox"],
       "properties": {
         "command": { "type": "string", "minLength": 1 },
-        "review_model": { "type": "string", "minLength": 1 },
+        "review_model": {
+          "anyOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "null" }
+          ]
+        },
+        "review_reasoning_effort": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": ["minimal", "low", "medium", "high", "xhigh"]
+            },
+            { "type": "null" }
+          ]
+        },
         "review_skill": { "type": "string", "minLength": 1 },
         "sandbox": {
           "type": "string",

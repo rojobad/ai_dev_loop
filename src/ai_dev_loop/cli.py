@@ -161,6 +161,13 @@ def prepare_command(
         str | None,
         typer.Option("--codex-review-model", help="Override codex.review_model."),
     ] = None,
+    codex_review_reasoning_effort: Annotated[
+        str | None,
+        typer.Option(
+            "--codex-review-reasoning-effort",
+            help="Override codex.review_reasoning_effort.",
+        ),
+    ] = None,
     review_skill: Annotated[
         str | None,
         typer.Option("--review-skill", help="Override codex.review_skill."),
@@ -194,6 +201,7 @@ def prepare_command(
             cursor_output_format=cursor_output_format,
             codex_command=codex_command,
             codex_review_model=codex_review_model,
+            codex_review_reasoning_effort=codex_review_reasoning_effort,
             review_skill=review_skill,
             max_review_iterations=max_review_iterations,
             cursor_timeout_minutes=cursor_timeout_minutes,

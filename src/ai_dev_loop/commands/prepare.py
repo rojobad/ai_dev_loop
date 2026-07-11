@@ -56,6 +56,7 @@ class PrepareOptions:
     cursor_output_format: str | None = None
     codex_command: str | None = None
     codex_review_model: str | None = None
+    codex_review_reasoning_effort: str | None = None
     review_skill: str | None = None
     max_review_iterations: int | None = None
     cursor_timeout_minutes: int | None = None
@@ -88,6 +89,7 @@ def _build_overrides(options: PrepareOptions) -> ConfigOverrides:
         cursor_output_format=options.cursor_output_format,
         codex_command=options.codex_command,
         codex_review_model=options.codex_review_model,
+        codex_review_reasoning_effort=options.codex_review_reasoning_effort,
         review_skill=options.review_skill,
         max_review_iterations=options.max_review_iterations,
         cursor_timeout_minutes=options.cursor_timeout_minutes,
@@ -216,6 +218,7 @@ def prepare_run(options: PrepareOptions) -> PrepareResult:
             session_id=session_id,
             session_model=None,
             review_model=effective.codex.review_model,
+            review_reasoning_effort=effective.codex.review_reasoning_effort,
             review_skill=effective.codex.review_skill,
             sandbox=effective.codex.sandbox,
         ),
