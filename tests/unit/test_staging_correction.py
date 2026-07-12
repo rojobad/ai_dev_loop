@@ -8,10 +8,12 @@ from pathlib import Path
 import pytest
 
 from ai_dev_loop.errors import ValidationError
+from ai_dev_loop.runners.cursor_output import capture_usage_limit_failure_fingerprint
 from ai_dev_loop.runners.git import (
     validate_correction_pre_cursor,
     validate_no_preexisting_staged_paths,
     validate_staged_patch_matches_artifact,
+    validate_usage_limit_recovery_correction_pre_cursor,
 )
 from ai_dev_loop.runners.staging import run_git_staging, validate_pre_staging
 from ai_dev_loop.state import (
@@ -310,3 +312,111 @@ def test_gitignore_plus_rm_cached_keeps_path_out_of_final_patch(
     assert "generated.out" not in result.staged_paths or "deleted" in (
         run_directory / "git/diffs/02.patch"
     ).read_text(encoding="utf-8")
+
+
+def test_usage_limit_recovery_correction_preflight_allows_partial_work(
+    tiny_repo: Path, tmp_path: Path
+) -> None:
+    target = tiny_repo / "feature.txt"
+    target.write_text("feature\n", encoding="utf-8")
+    _git(tiny_repo, "add", "feature.txt")
+    patch_artifact = tmp_path / "01.patch"
+    atomic_write_text(
+        patch_artifact,
+        subprocess.run(
+            ["git", "diff", "--cached"],
+            cwd=tiny_repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout,
+    )
+    target.write_text("partial tracked change\n", encoding="utf-8")
+    (tiny_repo / "partial_untracked.txt").write_text("partial untracked\n", encoding="utf-8")
+
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    state = _sample_state(tiny_repo)
+    capture_usage_limit_failure_fingerprint(state, run_directory, iteration_number=2)
+
+    with pytest.raises(ValidationError, match="unstaged tracked changes"):
+        validate_correction_pre_cursor(tiny_repo, patch_artifact=patch_artifact)
+
+    validate_usage_limit_recovery_correction_pre_cursor(
+        state,
+        run_directory,
+        iteration_number=2,
+        patch_artifact=patch_artifact,
+    )
+
+
+def test_usage_limit_recovery_correction_preflight_allows_partial_index_mutation(
+    tiny_repo: Path, tmp_path: Path
+) -> None:
+    target = tiny_repo / "feature.txt"
+    target.write_text("feature\n", encoding="utf-8")
+    _git(tiny_repo, "add", "feature.txt")
+    patch_artifact = tmp_path / "01.patch"
+    atomic_write_text(
+        patch_artifact,
+        subprocess.run(
+            ["git", "diff", "--cached"],
+            cwd=tiny_repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout,
+    )
+
+    staged_correction = tiny_repo / "correction_staged.txt"
+    staged_correction.write_text("staged correction\n", encoding="utf-8")
+    _git(tiny_repo, "add", "correction_staged.txt")
+
+    with pytest.raises(ValidationError, match="staged index no longer matches"):
+        validate_staged_patch_matches_artifact(tiny_repo, patch_artifact)
+
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    state = _sample_state(tiny_repo)
+    capture_usage_limit_failure_fingerprint(state, run_directory, iteration_number=2)
+
+    validate_usage_limit_recovery_correction_pre_cursor(
+        state,
+        run_directory,
+        iteration_number=2,
+        patch_artifact=patch_artifact,
+    )
+
+
+def test_usage_limit_recovery_correction_preflight_rejects_fingerprint_drift(
+    tiny_repo: Path, tmp_path: Path
+) -> None:
+    target = tiny_repo / "feature.txt"
+    target.write_text("feature\n", encoding="utf-8")
+    _git(tiny_repo, "add", "feature.txt")
+    patch_artifact = tmp_path / "01.patch"
+    atomic_write_text(
+        patch_artifact,
+        subprocess.run(
+            ["git", "diff", "--cached"],
+            cwd=tiny_repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout,
+    )
+    target.write_text("partial tracked change\n", encoding="utf-8")
+
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    state = _sample_state(tiny_repo)
+    capture_usage_limit_failure_fingerprint(state, run_directory, iteration_number=2)
+    target.write_text("drifted content\n", encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="content drifted"):
+        validate_usage_limit_recovery_correction_pre_cursor(
+            state,
+            run_directory,
+            iteration_number=2,
+            patch_artifact=patch_artifact,
+        )

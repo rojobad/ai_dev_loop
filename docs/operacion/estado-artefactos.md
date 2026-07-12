@@ -38,6 +38,7 @@ $XDG_STATE_HOME/ai_dev_loop/runs/<project>/<run-id>/
 │   └── metadata.json
 ├── prompts/
 │   ├── cursor-initial.txt
+│   ├── cursor-recovery/
 │   └── fixes/
 ├── cursor/
 │   ├── chat.json
@@ -115,6 +116,10 @@ codex/reviews/NN.metadata.json
 
 `git/cursor-output/NN.post-normalization.json` se captura inmediatamente despues de un `git add -A` exitoso, antes de persistir el patch staged. Permite recuperar fallos parciales de staging cuando el index ya fue normalizado.
 
+`git/cursor-output/NN.usage-limit-failure.json` captura un fingerprint de trabajo parcial tras un fallo clasificado como limite de uso de Cursor. Se usa para validar que el repositorio no cambio antes de `recover`.
+
+`prompts/cursor-recovery/NN.usage-limit-continuation.txt` es el envelope de continuacion que embebe el prompt exacto previo para retomar el mismo chat en el sucesor.
+
 Los patches staged son snapshots acumulativos del index en esa iteracion, no necesariamente diffs incrementales.
 
 Las correcciones envian a Cursor un envelope operacional que embebe byte a byte el `prompts/fixes/NN.txt` exacto; el envelope auditado vive en `prompts/fixes/NN.execution-envelope.txt`.
@@ -127,14 +132,22 @@ Un sucesor creado por `ai_dev_loop recover` incluye en `state.json` una seccion 
 source_run_id
 source_status                 # failed
 source_iteration
-recovered_checkpoint          # staging | reviewing | process_review
+recovered_checkpoint          # staging | reviewing | process_review | cursor
 source_staged_patch_sha256
 cursor_output_fingerprint_sha256   # requerido para staging
 previous_staged_patch_sha256       # requerido para staging
 legacy_cursor_output_adopted       # opcional; adopcion historica
+source_cursor_model                # checkpoint cursor
+cursor_model_fallback              # checkpoint cursor; congelado por --cursor-model
+source_prompt_path                   # checkpoint cursor
+source_prompt_sha256               # checkpoint cursor
+usage_limit_fingerprint_path       # checkpoint cursor
+usage_limit_fingerprint_sha256     # checkpoint cursor
+continuation_envelope_path         # checkpoint cursor
+continuation_envelope_sha256       # checkpoint cursor
 created_at
 runtime_migration             # none | phase9_session_capture
-reason_code
+reason_code                   # incluye cursor_usage_limit
 ```
 
 El run origen permanece terminal e inmutable. El sucesor copia snapshots/artefactos necesarios para continuar (plan, prompt, chat, Cursor/git hasta la iteracion recuperada, reviews previos, y el review valido solo si el checkpoint es `process_review`). Los intentos Codex fallidos quedan en el origen.

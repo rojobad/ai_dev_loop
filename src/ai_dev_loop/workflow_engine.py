@@ -24,13 +24,14 @@ from ai_dev_loop.commands.start_preflight import (
     run_start_preflight_checks,
     validate_start_status,
 )
-from ai_dev_loop.errors import AiDevLoopError, ValidationError
+from ai_dev_loop.errors import AiDevLoopError, CursorUsageLimitError, ValidationError
 from ai_dev_loop.event_log import EventLevel, append_orchestrator_event
 from ai_dev_loop.iterations import (
     cursor_prompt_path,
     iteration_label,
     max_iteration_number,
     read_cursor_prompt,
+    source_prompt_for_usage_limit_recovery,
     upsert_iteration,
 )
 from ai_dev_loop.locking import LockMetadata, RunLocks
@@ -57,9 +58,17 @@ from ai_dev_loop.runners.codex import (
     result_message_for_review,
     run_codex_review,
 )
-from ai_dev_loop.runners.cursor import create_chat, execute_prompt
-from ai_dev_loop.runners.cursor_output import capture_cursor_output_fingerprint
-from ai_dev_loop.runners.git import validate_correction_pre_cursor, validate_repository_identity
+from ai_dev_loop.runners.cursor import CursorExecutionResult, create_chat, execute_prompt
+from ai_dev_loop.runners.cursor_failure import SAFE_USAGE_LIMIT_SUMMARY
+from ai_dev_loop.runners.cursor_output import (
+    capture_cursor_output_fingerprint,
+    capture_usage_limit_failure_fingerprint,
+)
+from ai_dev_loop.runners.git import (
+    validate_correction_pre_cursor,
+    validate_repository_identity,
+    validate_usage_limit_recovery_correction_pre_cursor,
+)
 from ai_dev_loop.runners.probes import (
     CompatibilityClassification,
     ModelCompatibilityResult,
@@ -84,6 +93,7 @@ from ai_dev_loop.state import (
     atomic_write_json,
     atomic_write_text,
     save_run_state,
+    sha256_file,
 )
 
 
@@ -111,6 +121,21 @@ class WorkflowResult:
 ABORT_RESULT_MESSAGE = (
     "Run aborted by user request. Repository contents and staged changes were preserved."
 )
+
+
+def _is_cursor_usage_limit_recovery_resume(state: RunState, iteration_number: int) -> bool:
+    recovery = state.recovery
+    return (
+        recovery is not None
+        and recovery.recovered_checkpoint == "cursor"
+        and recovery.source_iteration == iteration_number
+    )
+
+
+def _cursor_metadata_errors(execution: CursorExecutionResult) -> list[str]:
+    if execution.failure.is_usage_limit:
+        return []
+    return list(execution.parse.errors)
 
 
 class WorkflowAbortedError(Exception):
@@ -752,10 +777,19 @@ def _run_cursor_turn(
             patch_rel = previous_iteration_git_patch_path(state, iteration_number)
             if patch_rel is None:
                 raise ValidationError("previous staged patch metadata is missing for correction")
-            validate_correction_pre_cursor(
-                Path(state.repository.root),
-                patch_artifact=run_directory / patch_rel,
-            )
+            patch_artifact = run_directory / patch_rel
+            if _is_cursor_usage_limit_recovery_resume(state, iteration_number):
+                validate_usage_limit_recovery_correction_pre_cursor(
+                    state,
+                    run_directory,
+                    iteration_number=iteration_number,
+                    patch_artifact=patch_artifact,
+                )
+            else:
+                validate_correction_pre_cursor(
+                    Path(state.repository.root),
+                    patch_artifact=patch_artifact,
+                )
         except ValidationError as exc:
             _fail_run(run_directory, state, str(exc), event_name="correction_preflight_failed")
             raise AiDevLoopError(str(exc), exit_code=exc.exit_code) from exc
@@ -825,8 +859,11 @@ def _run_cursor_turn(
             "elapsed_seconds": execution.process.elapsed_seconds,
             "timed_out": execution.process.timed_out,
             "parse_ok": execution.parse.parse_ok,
-            "errors": list(execution.parse.errors),
+            "errors": _cursor_metadata_errors(execution),
         }
+        if execution.failure.is_usage_limit:
+            metadata_payload["failure_code"] = execution.failure.code.value
+            metadata_payload["failure_summary"] = SAFE_USAGE_LIMIT_SUMMARY
         atomic_write_json(iteration_dir / "metadata.json", metadata_payload, sensitive=True)
         if execution.parse.final_text:
             atomic_write_text(
@@ -866,8 +903,123 @@ def _run_cursor_turn(
         raise AiDevLoopError("Cursor execution timed out")
 
     if execution.process.returncode != 0:
-        detail = execution.process.stderr.strip() or "Cursor execution failed"
-        mark_failed(state, detail)
+        after_status_text = after_status_path.read_text(encoding="utf-8")
+        metadata_payload = {
+            "args": execution.metadata_args,
+            "exit_code": execution.process.returncode,
+            "elapsed_seconds": execution.process.elapsed_seconds,
+            "timed_out": execution.process.timed_out,
+            "parse_ok": execution.parse.parse_ok,
+            "errors": _cursor_metadata_errors(execution),
+        }
+        if execution.failure.is_usage_limit:
+            metadata_payload["failure_code"] = execution.failure.code.value
+            metadata_payload["failure_summary"] = SAFE_USAGE_LIMIT_SUMMARY
+            try:
+                validate_repository_identity(
+                    Path(state.repository.root),
+                    expected_root=state.repository.root,
+                    expected_git_common_dir=state.repository.git_common_dir,
+                    expected_git_dir=state.repository.git_dir,
+                    expected_branch=state.repository.branch,
+                    expected_head=state.repository.initial_head,
+                    context="after Cursor usage-limit failure",
+                )
+                fingerprint = capture_usage_limit_failure_fingerprint(
+                    state,
+                    run_directory,
+                    iteration_number=iteration_number,
+                    status_text=after_status_text,
+                )
+                source_prompt_rel, _source_prompt = source_prompt_for_usage_limit_recovery(
+                    state,
+                    run_directory,
+                    iteration_number,
+                )
+                source_prompt_hash = sha256_file(run_directory / source_prompt_rel)
+                atomic_write_json(
+                    iteration_dir / "metadata.json",
+                    metadata_payload,
+                    sensitive=True,
+                )
+                upsert_iteration(
+                    state,
+                    {
+                        "number": iteration_number,
+                        "cursor": {
+                            "prompt_path": prompt_rel,
+                            "failure_code": execution.failure.code.value,
+                            "failure_summary": SAFE_USAGE_LIMIT_SUMMARY,
+                            "source_prompt_path": source_prompt_rel,
+                            "source_prompt_sha256": source_prompt_hash,
+                            "exit_code": execution.process.returncode,
+                        },
+                        "git": {
+                            "status_before_cursor_path": (
+                                f"git/status/{iteration}-before-cursor.txt"
+                            ),
+                            "status_after_cursor_path": (
+                                f"git/status/{iteration}-after-cursor.txt"
+                            ),
+                            "usage_limit_fingerprint_path": fingerprint.relative_path,
+                            "usage_limit_fingerprint_sha256": fingerprint.aggregate_sha256,
+                        },
+                    },
+                )
+                mark_failed(state, SAFE_USAGE_LIMIT_SUMMARY)
+                save_run_state(run_directory, state)
+                append_orchestrator_event(
+                    run_directory,
+                    run_id=state.run_id,
+                    component="cursor",
+                    event="cursor_usage_limit_detected",
+                    level=EventLevel.ERROR,
+                    status=state.status.value,
+                    iteration=iteration_number,
+                    detail={
+                        "exit_code": execution.process.returncode,
+                        "failure_code": execution.failure.code.value,
+                        "usage_limit_fingerprint_sha256": fingerprint.aggregate_sha256,
+                    },
+                )
+                raise CursorUsageLimitError(
+                    SAFE_USAGE_LIMIT_SUMMARY,
+                    run_id=state.run_id,
+                )
+            except CursorUsageLimitError:
+                raise
+            except (ValidationError, OSError, AiDevLoopError) as exc:
+                # Fingerprint/identity capture failed: keep ordinary non-recoverable failure.
+                atomic_write_json(
+                    iteration_dir / "metadata.json",
+                    {
+                        **metadata_payload,
+                        "failure_code": execution.failure.code.value,
+                        "failure_summary": SAFE_USAGE_LIMIT_SUMMARY,
+                        "recoverable": False,
+                        "recovery_capture_error": type(exc).__name__,
+                    },
+                    sensitive=True,
+                )
+                mark_failed(state, SAFE_USAGE_LIMIT_SUMMARY)
+                save_run_state(run_directory, state)
+                append_orchestrator_event(
+                    run_directory,
+                    run_id=state.run_id,
+                    component="cursor",
+                    event="execution_failed",
+                    level=EventLevel.ERROR,
+                    status=state.status.value,
+                    iteration=iteration_number,
+                    detail={
+                        "exit_code": execution.process.returncode,
+                        "failure_code": execution.failure.code.value,
+                        "recoverable": False,
+                    },
+                )
+                raise AiDevLoopError(SAFE_USAGE_LIMIT_SUMMARY) from exc
+
+        mark_failed(state, "Cursor execution failed")
         save_run_state(run_directory, state)
         append_orchestrator_event(
             run_directory,
@@ -879,7 +1031,7 @@ def _run_cursor_turn(
             iteration=iteration_number,
             detail={"exit_code": execution.process.returncode},
         )
-        raise AiDevLoopError(f"Cursor execution failed: {detail}")
+        raise AiDevLoopError("Cursor execution failed")
 
     try:
         validate_repository_identity(
@@ -900,6 +1052,12 @@ def _run_cursor_turn(
             state,
             {
                 "number": iteration_number,
+                "cursor": {
+                    "prompt_path": prompt_rel,
+                    "failure_code": None,
+                    "failure_summary": None,
+                    "exit_code": execution.process.returncode,
+                },
                 "git": {
                     "status_before_cursor_path": f"git/status/{iteration}-before-cursor.txt",
                     "status_after_cursor_path": f"git/status/{iteration}-after-cursor.txt",

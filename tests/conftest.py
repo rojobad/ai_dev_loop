@@ -318,7 +318,7 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
     codex_version_file = tmp_path / "codex_version.txt"
     agent_models_file = tmp_path / "agent_models.txt"
     codex_models_file = tmp_path / "codex_models.json"
-    agent_models_file.write_text("composer-2.5-fast\n", encoding="utf-8")
+    agent_models_file.write_text("composer-2.5-fast\nauto\n", encoding="utf-8")
     codex_models_file.write_text(
         json.dumps(
             {
@@ -401,17 +401,91 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
             sys.exit(0)
         if "-p" in args:
             log("ARGS:" + repr(args))
-            mode = os.environ.get("FAKE_AGENT_RUN_MODE", "success")
+            sequence = os.environ.get("FAKE_AGENT_RUN_SEQUENCE", "").strip()
+            sequence_counter = None
+            if sequence:
+                counter_file = os.environ.get(
+                    "FAKE_AGENT_RUN_COUNTER",
+                    os.path.join(os.path.dirname(log_path), "agent_run_counter.txt"),
+                )
+                try:
+                    with open(counter_file, encoding="utf-8") as handle:
+                        sequence_counter = int(handle.read().strip() or "0")
+                except (OSError, ValueError):
+                    sequence_counter = 0
+                modes = [item.strip() for item in sequence.split(",") if item.strip()]
+                mode = modes[min(sequence_counter, len(modes) - 1)]
+                with open(counter_file, "w", encoding="utf-8") as handle:
+                    handle.write(str(sequence_counter + 1))
+            else:
+                mode = os.environ.get("FAKE_AGENT_RUN_MODE", "success")
+            modify_sequence = os.environ.get("FAKE_AGENT_MODIFY_SEQUENCE", "").strip()
+            if modify_sequence and sequence_counter is not None:
+                modify_modes = [item.strip() for item in modify_sequence.split(",") if item.strip()]
+                modify_mode = modify_modes[min(sequence_counter, len(modify_modes) - 1)]
+            else:
+                modify_mode = os.environ.get("FAKE_AGENT_MODIFY_MODE", "tracked")
             if mode == "sleep":
                 time.sleep(float(os.environ.get("FAKE_AGENT_SLEEP_SECONDS", "5")))
                 sys.exit(0)
             if mode == "fail":
                 print("agent failed", file=sys.stderr)
                 sys.exit(2)
+            if mode == "usage_limit":
+                if modify_mode != "none" and "--workspace" in args:
+                    workspace = args[args.index("--workspace") + 1]
+                    if modify_mode == "tracked":
+                        target = os.path.join(workspace, "ai_dev_loop.yaml")
+                        with open(target, "a", encoding="utf-8") as handle:
+                            handle.write("\\n# modified by fake agent before usage limit\\n")
+                    elif modify_mode == "untracked":
+                        target = os.path.join(workspace, "new_feature.txt")
+                        with open(target, "w", encoding="utf-8") as handle:
+                            handle.write("partial feature\\n")
+                    elif modify_mode == "partial_both":
+                        tracked = os.path.join(workspace, "ai_dev_loop.yaml")
+                        with open(tracked, "a", encoding="utf-8") as handle:
+                            handle.write("\\n# partial tracked\\n")
+                        untracked = os.path.join(workspace, "partial_untracked.txt")
+                        with open(untracked, "w", encoding="utf-8") as handle:
+                            handle.write("partial untracked\\n")
+                    elif modify_mode == "correction_stage":
+                        import subprocess
+
+                        target = os.path.join(workspace, "correction_feature.txt")
+                        with open(target, "w", encoding="utf-8") as handle:
+                            handle.write("correction staged\\n")
+                        subprocess.run(
+                            ["git", "add", "correction_feature.txt"],
+                            cwd=workspace,
+                            check=False,
+                        )
+                print(
+                    "ActionRequiredError: You've hit your usage limit for this model. "
+                    "Switch to Auto or another model to continue.",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+            if mode == "usage_limit_structured":
+                if modify_mode != "none" and "--workspace" in args:
+                    workspace = args[args.index("--workspace") + 1]
+                    if modify_mode == "partial_both":
+                        tracked = os.path.join(workspace, "ai_dev_loop.yaml")
+                        with open(tracked, "a", encoding="utf-8") as handle:
+                            handle.write("\\n# partial tracked\\n")
+                        untracked = os.path.join(workspace, "partial_untracked.txt")
+                        with open(untracked, "w", encoding="utf-8") as handle:
+                            handle.write("partial untracked\\n")
+                structured = (
+                    "ActionRequiredError: You've hit your usage limit for this model. "
+                    "Switch to Auto or another model to continue. "
+                    "Resets on 2026-08-01. Billing amount: $20."
+                )
+                print(json.dumps({{"type": "error", "message": structured}}))
+                sys.exit(2)
             if mode == "unparseable":
                 print("not-json")
                 sys.exit(0)
-            modify_mode = os.environ.get("FAKE_AGENT_MODIFY_MODE", "tracked")
             if modify_mode != "none" and "--workspace" in args:
                 workspace = args[args.index("--workspace") + 1]
                 if modify_mode == "tracked":
@@ -422,6 +496,13 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                     target = os.path.join(workspace, "new_feature.txt")
                     with open(target, "w", encoding="utf-8") as handle:
                         handle.write("new feature\\n")
+                elif modify_mode == "partial_both":
+                    tracked = os.path.join(workspace, "ai_dev_loop.yaml")
+                    with open(tracked, "a", encoding="utf-8") as handle:
+                        handle.write("\\n# partial tracked\\n")
+                    untracked = os.path.join(workspace, "partial_untracked.txt")
+                    with open(untracked, "w", encoding="utf-8") as handle:
+                        handle.write("partial untracked\\n")
                 elif modify_mode == "stage_self":
                     import subprocess
 
@@ -643,6 +724,7 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
     _write_executable(bin_dir / "codex", codex_script)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("FAKE_CODEX_REVIEW_COUNTER", str(tmp_path / "codex_review_counter.txt"))
+    monkeypatch.setenv("FAKE_AGENT_RUN_COUNTER", str(tmp_path / "agent_run_counter.txt"))
     monkeypatch.setenv("FAKE_AGENT_VERSION_FILE", str(agent_version_file))
     monkeypatch.setenv("FAKE_CODEX_VERSION_FILE", str(codex_version_file))
     monkeypatch.setenv("FAKE_AGENT_MODELS_FILE", str(agent_models_file))

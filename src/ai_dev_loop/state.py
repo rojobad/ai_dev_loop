@@ -200,9 +200,10 @@ RECOVERY_REASON_CODES = frozenset(
         "codex_review_result_invalid",
         "codex_review_processing_failed",
         "correction_staging_failed",
+        "cursor_usage_limit",
     }
 )
-RECOVERY_CHECKPOINTS = frozenset({"staging", "reviewing", "process_review"})
+RECOVERY_CHECKPOINTS = frozenset({"staging", "reviewing", "process_review", "cursor"})
 
 
 class RecoveryState(BaseModel):
@@ -214,13 +215,21 @@ class RecoveryState(BaseModel):
     source_status: str
     source_iteration: int = Field(ge=1)
     recovered_checkpoint: str
-    source_staged_patch_sha256: str
+    source_staged_patch_sha256: str | None = None
     created_at: datetime
     runtime_migration: str
     reason_code: str
     cursor_output_fingerprint_sha256: str | None = None
     previous_staged_patch_sha256: str | None = None
     legacy_cursor_output_adopted: bool | None = None
+    source_cursor_model: str | None = None
+    cursor_model_fallback: str | None = None
+    source_prompt_path: str | None = None
+    source_prompt_sha256: str | None = None
+    usage_limit_fingerprint_sha256: str | None = None
+    usage_limit_fingerprint_path: str | None = None
+    continuation_envelope_path: str | None = None
+    continuation_envelope_sha256: str | None = None
 
     @field_validator("source_run_id")
     @classmethod
@@ -263,6 +272,9 @@ class RecoveryState(BaseModel):
         "source_staged_patch_sha256",
         "cursor_output_fingerprint_sha256",
         "previous_staged_patch_sha256",
+        "source_prompt_sha256",
+        "usage_limit_fingerprint_sha256",
+        "continuation_envelope_sha256",
     )
     @classmethod
     def validate_patch_hash(cls, value: str | None) -> str | None:
@@ -272,8 +284,84 @@ class RecoveryState(BaseModel):
             raise ValueError("hash fields must be lowercase sha256 hex digests")
         return value
 
+    @field_validator(
+        "source_cursor_model",
+        "cursor_model_fallback",
+        "source_prompt_path",
+        "usage_limit_fingerprint_path",
+        "continuation_envelope_path",
+    )
+    @classmethod
+    def validate_nonempty_optional_str(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        if not value.strip():
+            raise ValueError("optional string recovery fields must be non-empty when set")
+        return value
+
     @model_validator(mode="after")
     def validate_checkpoint_fields(self) -> RecoveryState:
+        cursor_only = (
+            self.source_cursor_model,
+            self.cursor_model_fallback,
+            self.source_prompt_path,
+            self.source_prompt_sha256,
+            self.usage_limit_fingerprint_sha256,
+            self.usage_limit_fingerprint_path,
+            self.continuation_envelope_path,
+            self.continuation_envelope_sha256,
+        )
+        if self.recovered_checkpoint == "cursor":
+            if self.reason_code != "cursor_usage_limit":
+                raise ValueError("cursor recovery reason_code must be cursor_usage_limit")
+            if self.source_staged_patch_sha256 is not None:
+                raise ValueError(
+                    "source_staged_patch_sha256 must be null for cursor recovery checkpoints"
+                )
+            if self.cursor_output_fingerprint_sha256 is not None:
+                raise ValueError(
+                    "cursor_output_fingerprint_sha256 is only valid for staging recovery checkpoints"
+                )
+            if self.previous_staged_patch_sha256 is not None:
+                raise ValueError(
+                    "previous_staged_patch_sha256 is only valid for staging recovery checkpoints"
+                )
+            if self.legacy_cursor_output_adopted:
+                raise ValueError(
+                    "legacy_cursor_output_adopted is only valid for staging recovery checkpoints"
+                )
+            if not self.cursor_model_fallback or not self.cursor_model_fallback.strip():
+                raise ValueError(
+                    "cursor_model_fallback is required for cursor recovery checkpoints"
+                )
+            if not self.source_cursor_model or not self.source_cursor_model.strip():
+                raise ValueError("source_cursor_model is required for cursor recovery checkpoints")
+            if not self.source_prompt_path or not self.source_prompt_sha256:
+                raise ValueError(
+                    "source_prompt_path and source_prompt_sha256 are required for "
+                    "cursor recovery checkpoints"
+                )
+            if not self.usage_limit_fingerprint_sha256 or not self.usage_limit_fingerprint_path:
+                raise ValueError(
+                    "usage_limit fingerprint path and sha256 are required for "
+                    "cursor recovery checkpoints"
+                )
+            if not self.continuation_envelope_path or not self.continuation_envelope_sha256:
+                raise ValueError(
+                    "continuation_envelope_path and continuation_envelope_sha256 are "
+                    "required for cursor recovery checkpoints"
+                )
+            return self
+
+        if any(value is not None for value in cursor_only):
+            raise ValueError(
+                "cursor recovery fields are only valid for cursor recovery checkpoints"
+            )
+        if self.source_staged_patch_sha256 is None:
+            raise ValueError(
+                "source_staged_patch_sha256 is required for staging and review recovery checkpoints"
+            )
+
         if self.recovered_checkpoint == "staging":
             if not self.cursor_output_fingerprint_sha256:
                 raise ValueError(

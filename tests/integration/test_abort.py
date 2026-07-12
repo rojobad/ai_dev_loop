@@ -285,6 +285,7 @@ def test_child_sigterm_without_abort_request_is_not_treated_as_abort(
     from ai_dev_loop import workflow_engine
     from ai_dev_loop.process import StreamingProcessResult
     from ai_dev_loop.runners.cursor import CursorExecutionResult, CursorParseResult
+    from ai_dev_loop.runners.cursor_failure import classify_cursor_failure_text
 
     monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "none")
 
@@ -297,10 +298,17 @@ def test_child_sigterm_without_abort_request_is_not_treated_as_abort(
             timed_out=False,
             elapsed_seconds=0.1,
         )
+        parse = CursorParseResult(final_text=None, errors=(), parse_ok=False)
         return CursorExecutionResult(
             process=process,
-            parse=CursorParseResult(final_text=None, errors=(), parse_ok=False),
+            parse=parse,
             metadata_args=["agent", "<prompt-redacted>"],
+            failure=classify_cursor_failure_text(
+                returncode=process.returncode,
+                timed_out=process.timed_out,
+                stderr=process.stderr,
+                structured_errors=parse.errors,
+            ),
         )
 
     monkeypatch.setattr(workflow_engine, "execute_prompt", killed_cursor)

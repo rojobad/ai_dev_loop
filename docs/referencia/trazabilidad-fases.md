@@ -154,6 +154,22 @@ Documentado en:
 - [CLI](cli.md)
 - [Troubleshooting](../operacion/troubleshooting.md)
 
+## Fase 13
+
+Implemento recovery de limite de uso de Cursor: clasificacion conservadora desde stderr protegido, fingerprint de contenido parcial, sucesor con el mismo chat ID, modelo fallback congelado (`--cursor-model auto`), envelope de continuacion con el prompt exacto previo, y prompt interactivo opcional en TTY tras fallos de `start`/`resume`.
+
+Documentado en:
+
+- [Ejecutar runs](../operacion/prepare-start-resume-abort.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+- [Referencia CLI](cli.md)
+- [Seguridad y privacidad](../operacion/seguridad-privacidad.md)
+- [Estado, logs e inspeccion](../operacion/observabilidad.md)
+- [Guia rapida](../guia/guia-rapida.md)
+- [Flujo de handoff](../guia/flujo-handoff.md)
+- [Referencia de configuracion](configuracion.md)
+- [Estado y artefactos](../operacion/estado-artefactos.md)
+
 ## Riesgos residuales documentados
 
 - Hook trust sigue siendo `unknown` desde CLI.

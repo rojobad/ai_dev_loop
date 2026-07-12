@@ -38,6 +38,14 @@ El usuario decide manualmente si commitea despues de revisar el resultado final.
 
 `recover` es solo lectura sobre el repositorio: no hace `git add`, no altera el index y no reescribe el working tree. El staging del sucesor ocurre solo con `resume`.
 
+## Clasificacion de limite de uso de Cursor
+
+- La clasificacion usa stderr crudo capturado en artefactos protegidos (`cursor/iterations/NN/stderr.txt`), no el texto de `last_error`.
+- Solo coincide la senal conservadora `ActionRequiredError` con marcadores de limite de uso y cambio de modelo; fallos genericos no califican.
+- `status`, `inspect` y eventos estructurados usan codigos seguros (`cursor_usage_limit`) y resumenes breves; no incluyen detalles de facturacion ni stderr completo en salida normal.
+- `recover` valida el fingerprint de contenido parcial (`git/cursor-output/NN.usage-limit-failure.json`) contra el worktree actual antes de crear un sucesor.
+- El run origen permanece `failed` e inmutable; el sucesor conserva el chat ID y congela el modelo fallback solicitado con `--cursor-model`.
+
 ## Proteccion del contrato preparado
 
 `prepare` captura:

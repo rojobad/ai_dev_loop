@@ -75,3 +75,9 @@ Los runs historicos de Fase 9 con ambos valores `null` y sin procedencia conserv
 ## Regla de control de sesion
 
 No ejecutes `start` ni `resume` desde la misma UI interactiva que posee la sesion original. El proceso automatizado reanudara esa sesion mediante `codex exec resume <session-id>` para escribir turns de review. Usar la UI simultaneamente puede mezclar contexto y romper la auditabilidad del run.
+
+## Continuidad del chat Cursor y limite de uso
+
+Un run usa un unico Cursor chat ID para implementacion y correcciones. Si Cursor alcanza el limite de uso del modelo configurado, el run origen queda `failed` e inmutable; la continuacion requiere `recover --cursor-model auto` y luego `resume` del sucesor con el mismo chat.
+
+En TTY, `start`/`resume` pueden ofrecer crear ese sucesor automaticamente; la respuesta por defecto es no. No edites ni descartes manualmente trabajo parcial unstaged/untracked antes de `recover`, salvo que decidas abandonar el run y preparar uno nuevo.

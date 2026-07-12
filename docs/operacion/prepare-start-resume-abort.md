@@ -109,6 +109,8 @@ ai_dev_loop recover --dry-run <failed-run-id>
 ai_dev_loop recover <failed-run-id>
 ai_dev_loop recover --dry-run <failed-run-id> --adopt-current-cursor-output
 ai_dev_loop recover <failed-run-id> --adopt-current-cursor-output
+ai_dev_loop recover --dry-run <failed-run-id> --cursor-model auto
+ai_dev_loop recover <failed-run-id> --cursor-model auto
 ```
 
 `recover` no edita el run terminal de origen. Crea un run sucesor distinto cuando el fallo es recuperable.
@@ -117,6 +119,7 @@ Checkpoints elegibles:
 
 - `reviewing` / `process_review`: Cursor + staging completos; staged patch actual coincide; sin unstaged/untracked.
 - `staging`: correccion con Cursor completo y staging incompleto; fingerprint post-Cursor verificado, o adopcion explicita historica.
+- `cursor`: turno Cursor interrumpido por limite de uso del modelo configurado; fingerprint de contenido parcial verificado; requiere `--cursor-model <modelo>` (por ejemplo `auto`).
 
 Requisitos comunes:
 
@@ -173,6 +176,29 @@ Next command: ai_dev_loop resume <recovery-run-id>
 ```
 
 Pasa `--update-tools` a `resume` solo si la compatibilidad de CLI lo requiere. `recover` nunca actualiza herramientas.
+
+### Recovery por limite de uso de Cursor
+
+Cuando Cursor falla con la condicion reconocida de limite de uso (`cursor_usage_limit`), el run origen queda en `failed` e inmutable. No uses `resume` sobre el origen.
+
+Comportamiento:
+
+- el origen conserva el mismo `cursor.chat_id`; el sucesor lo reutiliza sin crear chat nuevo;
+- `--cursor-model` congela el modelo fallback solicitado en el sucesor (por ejemplo `auto`); no se infiere desde YAML;
+- `recover` escribe un envelope de continuacion con el prompt exacto previo y valida el fingerprint de trabajo parcial;
+- tras un Cursor exitoso en el sucesor, el flujo normal continua con staging (`git add -A`) y Codex review.
+
+Recuperacion explicita:
+
+```bash
+ai_dev_loop recover --dry-run <failed-run-id> --cursor-model auto
+ai_dev_loop recover <failed-run-id> --cursor-model auto
+ai_dev_loop resume <recovery-run-id>
+```
+
+En TTY, si `start` o `resume` detectan este fallo durable, pueden ofrecer crear el sucesor con `--cursor-model auto` y continuar con `resume`. La respuesta por defecto es no.
+
+En non-TTY nunca se cambia de modelo automaticamente: imprime el comando `recover` explicito y termina con error.
 
 ## `abort`
 

@@ -1,0 +1,28 @@
+Implement the approved plan in `plan-13-cursor-usage-limit-auto-recovery.md` completely.
+
+Read the entire plan first, then read every required-context file, applicable Cursor
+rules, existing recovery/workflow tests, and relevant documentation before editing. This
+is a change to the `ai_dev_loop` orchestrator, not to a target application.
+
+The required behavior is a safe recovery path for the narrowly classified Cursor
+usage-limit failure: preserve the exact existing Cursor chat, create an immutable
+successor run, use an explicit fallback model such as `auto`, give Cursor a deterministic
+continuation prompt that includes the exact previous task/findings prompt, and require it
+to inspect and preserve partial unstaged/untracked work. Do not create a new Cursor chat,
+do not mutate a failed source run, and do not make automatic fallback decisions in
+non-interactive execution.
+
+Keep the existing staging and Codex-review boundaries intact. `recover` must never mutate
+the target repository or invoke agents. Use structured durable metadata and fingerprints,
+not fuzzy parsing of `last_error`, to establish recovery eligibility. Preserve all existing
+Phase 11/12 recovery behavior and schema compatibility.
+
+The motivating real run `crypto-sentinel-20260712T205916Z-b2d828` is evidence only. Do
+not recover, resume, inspect sensitive content from, stage, or mutate it. Use sanitized
+fixtures and fake CLIs for every test.
+
+Implement code, schemas, tests, rules, user documentation, package build, and WSL
+installation exactly as the plan requires. Run the full validation suite and report the
+files changed, the recovery contract, test/build/docs results, and installed WSL command
+path/version. Do not perform real Cursor/Codex model calls, tool updates, commits, pushes,
+or releases during validation.

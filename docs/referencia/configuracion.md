@@ -97,6 +97,8 @@ agent -p --force --trust --workspace <repo> --resume <chat-id> --model <model> -
 
 El prompt se pasa como argumento posicional, no por stdin.
 
+`cursor.model` en YAML fija el modelo del run preparado. No configura el fallback de recovery por limite de uso: ese valor se congela solo en el sucesor via `recover --cursor-model <modelo>`. `auto` es una solicitud de enrutamiento de Cursor, no un modelo de proveedor fijado en YAML.
+
 No uses IDs de modelo de Cursor Agent (por ejemplo `gpt-5.6-terra-high`) como `codex.review_model`. En Codex, modelo y reasoning effort son campos separados.
 
 ## `codex`

@@ -55,6 +55,7 @@ ai_dev_loop --version
 5. Run `ai_dev_loop start <run-id>` from WSL.
 6. Inspect the staged changes and review artifacts.
 7. If a run fails after Cursor + staging with an intact staged patch, use `ai_dev_loop recover --dry-run <run-id>` then `recover` / `resume` on the successor. Do not expect ordinary `resume` to reopen a terminal `failed` run.
+8. If Cursor fails with a usage limit on its configured model, recover with the same chat via `ai_dev_loop recover <run-id> --cursor-model auto` then `resume` on the successor. In a TTY, `start`/`resume` may offer this recovery after the failure; non-TTY runs require the explicit recover command.
 
 `start` and `resume` probe WSL Cursor/Codex CLI model compatibility. In a TTY they may offer each incompatible tool's official updater; non-interactive runs require explicit `--update-tools` or `--allow-incompatible-tools`. These updates do not update Windows desktop applications.
 

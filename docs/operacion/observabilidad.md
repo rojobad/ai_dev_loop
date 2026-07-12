@@ -21,7 +21,8 @@ Muestra:
 - proceso activo si existe;
 - ultimo error;
 - siguiente accion segura;
-- si es sucesor de recovery: run origen, checkpoint recuperado (`staging` | `reviewing` | `process_review`), y si aplica fingerprint verificado o adopcion historica.
+- si es sucesor de recovery: run origen, checkpoint recuperado (`staging` | `reviewing` | `process_review` | `cursor`), y si aplica fingerprint verificado, adopcion historica, o modelo fallback congelado;
+- para runs `failed` por limite de uso: siguiente accion con `recover --cursor-model auto` cuando el analisis lo marca elegible.
 
 `status` debe seguir funcionando aunque el run lock este tomado por un `start` o `resume` activo.
 
@@ -33,6 +34,14 @@ ai_dev_loop inspect <run-id> --output json
 ```
 
 Muestra rutas de artefactos, resumen de iteraciones, paths de reportes, diagnosticos de abort y lineage de recovery cuando existe.
+
+Para checkpoint `cursor` (limite de uso), `inspect` puede listar:
+
+- `git/cursor-output/NN.usage-limit-failure.json` (fingerprint de trabajo parcial);
+- `prompts/cursor-recovery/NN.usage-limit-continuation.txt` (envelope de continuacion);
+- en el sucesor, `recovery.cursor_model_fallback`, `recovery.source_cursor_model` y hashes de fingerprint/envelope (sin contenido sensible en salida por defecto).
+
+Eventos estructurados relevantes incluyen `cursor_usage_limit_detected` en el origen y `cursor_usage_limit_recovery_successor_created` en el sucesor.
 
 Por defecto no imprime prompts completos.
 

@@ -25,6 +25,10 @@ def cursor_output_fingerprint_rel_path(iteration_number: int) -> str:
     return f"git/cursor-output/{iteration_label(iteration_number)}.json"
 
 
+def usage_limit_failure_fingerprint_rel_path(iteration_number: int) -> str:
+    return f"git/cursor-output/{iteration_label(iteration_number)}.usage-limit-failure.json"
+
+
 def staging_normalization_fingerprint_rel_path(iteration_number: int) -> str:
     return f"git/cursor-output/{iteration_label(iteration_number)}.post-normalization.json"
 
@@ -181,6 +185,41 @@ def capture_cursor_output_fingerprint(
         relative_path=relative_path,
         payload=payload,
         aggregate_sha256=str(payload["aggregate_sha256"]),
+    )
+
+
+def capture_usage_limit_failure_fingerprint(
+    state: RunState,
+    run_directory: Path,
+    *,
+    iteration_number: int,
+    status_text: str | None = None,
+) -> CursorOutputFingerprint:
+    """Capture content evidence after a classified usage-limit Cursor failure."""
+
+    payload = _compute_fingerprint_payload(
+        state,
+        iteration_number=iteration_number,
+        context="after Cursor usage-limit failure",
+        status_text=status_text,
+        kind="usage_limit_failure",
+    )
+    relative_path = usage_limit_failure_fingerprint_rel_path(iteration_number)
+    atomic_write_json(run_directory / relative_path, payload, sensitive=True)
+    return CursorOutputFingerprint(
+        relative_path=relative_path,
+        payload=payload,
+        aggregate_sha256=str(payload["aggregate_sha256"]),
+    )
+
+
+def load_usage_limit_failure_fingerprint(
+    run_directory: Path,
+    iteration_number: int,
+) -> dict[str, Any] | None:
+    return load_fingerprint_artifact(
+        run_directory,
+        usage_limit_failure_fingerprint_rel_path(iteration_number),
     )
 
 

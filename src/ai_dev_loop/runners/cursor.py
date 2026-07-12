@@ -16,6 +16,10 @@ from ai_dev_loop.process import (
     run_process_streaming,
 )
 from ai_dev_loop.redaction import redact_text
+from ai_dev_loop.runners.cursor_failure import (
+    CursorFailureClassification,
+    classify_cursor_failure_text,
+)
 from ai_dev_loop.state import CursorState
 
 CHAT_ID_PATTERN = re.compile(
@@ -36,6 +40,15 @@ class CursorExecutionResult:
     process: StreamingProcessResult
     parse: CursorParseResult
     metadata_args: list[str]
+    failure: CursorFailureClassification
+
+    @property
+    def failure_code(self) -> str | None:
+        if self.process.returncode == 0 or self.process.timed_out:
+            return None
+        if self.failure.code.value == "unknown":
+            return None
+        return self.failure.code.value
 
 
 def create_chat(cursor_command: str) -> str:
@@ -123,10 +136,17 @@ def execute_prompt(
         active_process=active_process,
     )
     parse = parse_stream_json(process.stdout)
+    failure = classify_cursor_failure_text(
+        returncode=process.returncode,
+        timed_out=process.timed_out,
+        stderr=process.stderr,
+        structured_errors=parse.errors,
+    )
     return CursorExecutionResult(
         process=process,
         parse=parse,
         metadata_args=redact_cursor_args(args),
+        failure=failure,
     )
 
 

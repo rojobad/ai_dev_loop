@@ -55,6 +55,10 @@ def render_status(run_id: str, *, output: str = "text") -> str:
                     state.recovery.cursor_output_fingerprint_sha256
                 ),
                 "legacy_cursor_output_adopted": state.recovery.legacy_cursor_output_adopted,
+                "source_cursor_model": state.recovery.source_cursor_model,
+                "cursor_model_fallback": state.recovery.cursor_model_fallback,
+                "continuation_envelope_path": state.recovery.continuation_envelope_path,
+                "usage_limit_fingerprint_sha256": state.recovery.usage_limit_fingerprint_sha256,
             },
         }
         return json.dumps(payload, indent=2) + "\n"
@@ -154,10 +158,28 @@ def _next_action(state: RunState, run_path: Path) -> str:
             )
         return "Run ai_dev_loop resume <run-id> after inspecting cursor/ and codex/ artifacts."
     if status == "failed":
+        # Prefer structured usage-limit evidence over last_error prose.
+        from ai_dev_loop.recovery_planner import analyze_recovery
+
+        try:
+            analysis = analyze_recovery(state, run_path, resolve_runtime=False)
+        except Exception:
+            analysis = None
+        if (
+            analysis is not None
+            and analysis.checkpoint == "cursor"
+            and analysis.reason_code == "cursor_usage_limit"
+        ):
+            return (
+                "Cursor reached the usage limit for its configured model. "
+                f"Recover with ai_dev_loop recover {state.run_id} --cursor-model auto, "
+                "then ai_dev_loop resume <recovery-run-id>."
+            )
         return (
             "Inspect last_error and artifacts. Eligible failed runs may be recovered with "
             "ai_dev_loop recover --dry-run <run-id> (add --adopt-current-cursor-output for "
-            "historical staging failures missing a post-Cursor fingerprint), then "
+            "historical staging failures missing a post-Cursor fingerprint; add "
+            "--cursor-model auto for Cursor usage-limit failures), then "
             "ai_dev_loop recover <run-id> and ai_dev_loop resume <recovery-run-id>."
         )
     if status == "aborted":

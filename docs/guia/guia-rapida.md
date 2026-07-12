@@ -139,6 +139,16 @@ ai_dev_loop recover <failed-run-id> --adopt-current-cursor-output
 
 `recover` crea un sucesor; no edita el run `failed` original. No lanza agentes ni updaters.
 
+Si Cursor falla por limite de uso del modelo configurado:
+
+```bash
+ai_dev_loop recover --dry-run <failed-run-id> --cursor-model auto
+ai_dev_loop recover <failed-run-id> --cursor-model auto
+ai_dev_loop resume <recovery-run-id>
+```
+
+El sucesor reutiliza el mismo chat ID. En TTY, `start`/`resume` pueden ofrecer esta recovery; confirma solo si quieres continuar con modelo `auto`. No descartes trabajo parcial unstaged/untracked antes de `recover` salvo que abandones el run.
+
 Si necesitas cancelar:
 
 ```bash

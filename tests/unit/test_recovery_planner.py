@@ -17,6 +17,8 @@ from ai_dev_loop.recovery_planner import (
 )
 from ai_dev_loop.review_runtime import is_legacy_phase9_codex_state
 from ai_dev_loop.state import (
+    RECOVERY_CHECKPOINTS,
+    RECOVERY_REASON_CODES,
     CodexState,
     CursorState,
     PlanState,
@@ -124,12 +126,12 @@ def test_recovery_state_aligns_with_schema() -> None:
         "reason_code",
     }
     assert RecoveryState.model_fields.keys() == set(recovery_schema["properties"].keys())
-    assert set(recovery_schema["properties"]["recovered_checkpoint"]["enum"]) == {
-        "staging",
-        "reviewing",
-        "process_review",
-    }
-    assert "correction_staging_failed" in recovery_schema["properties"]["reason_code"]["enum"]
+    assert set(recovery_schema["properties"]["recovered_checkpoint"]["enum"]) == set(
+        RECOVERY_CHECKPOINTS
+    )
+    assert "cursor" in RECOVERY_CHECKPOINTS
+    assert set(recovery_schema["properties"]["reason_code"]["enum"]) == set(RECOVERY_REASON_CODES)
+    assert "cursor_usage_limit" in RECOVERY_REASON_CODES
 
 
 def test_historical_run_state_without_recovery_loads(tmp_path: Path) -> None:
@@ -190,6 +192,71 @@ def test_historical_run_state_without_recovery_loads(tmp_path: Path) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
     state = load_run_state(path)
     assert state.recovery is None
+
+
+def test_recovery_state_accepts_cursor_checkpoint_with_required_fields() -> None:
+    now = datetime.now(tz=UTC)
+    recovery = RecoveryState(
+        source_run_id="source-run",
+        source_status="failed",
+        source_iteration=1,
+        recovered_checkpoint="cursor",
+        source_staged_patch_sha256=None,
+        created_at=now,
+        runtime_migration="none",
+        reason_code="cursor_usage_limit",
+        source_cursor_model="composer-2.5-fast",
+        cursor_model_fallback="auto",
+        source_prompt_path="prompts/cursor-initial.txt",
+        source_prompt_sha256="b" * 64,
+        usage_limit_fingerprint_sha256="c" * 64,
+        usage_limit_fingerprint_path="git/cursor-output/01.usage-limit-failure.json",
+        continuation_envelope_path="prompts/cursor-recovery/01.usage-limit-continuation.txt",
+        continuation_envelope_sha256="d" * 64,
+    )
+    assert recovery.recovered_checkpoint == "cursor"
+    assert recovery.source_staged_patch_sha256 is None
+
+
+def test_recovery_state_cursor_checkpoint_rejects_missing_cursor_model_fallback() -> None:
+    now = datetime.now(tz=UTC)
+    with pytest.raises(PydanticValidationError, match="cursor_model_fallback"):
+        RecoveryState(
+            source_run_id="source-run",
+            source_status="failed",
+            source_iteration=1,
+            recovered_checkpoint="cursor",
+            source_staged_patch_sha256=None,
+            created_at=now,
+            runtime_migration="none",
+            reason_code="cursor_usage_limit",
+            source_cursor_model="composer-2.5-fast",
+            cursor_model_fallback=None,
+            source_prompt_path="prompts/cursor-initial.txt",
+            source_prompt_sha256="b" * 64,
+            usage_limit_fingerprint_sha256="c" * 64,
+            usage_limit_fingerprint_path="git/cursor-output/01.usage-limit-failure.json",
+            continuation_envelope_path="prompts/cursor-recovery/01.usage-limit-continuation.txt",
+            continuation_envelope_sha256="d" * 64,
+        )
+
+
+def test_recovery_state_staging_checkpoint_rejects_cursor_only_fields() -> None:
+    now = datetime.now(tz=UTC)
+    with pytest.raises(PydanticValidationError, match="cursor recovery fields"):
+        RecoveryState(
+            source_run_id="source-run",
+            source_status="failed",
+            source_iteration=2,
+            recovered_checkpoint="staging",
+            source_staged_patch_sha256="a" * 64,
+            created_at=now,
+            runtime_migration="none",
+            reason_code="correction_staging_failed",
+            cursor_output_fingerprint_sha256="e" * 64,
+            previous_staged_patch_sha256="a" * 64,
+            source_cursor_model="composer-2.5-fast",
+        )
 
 
 def test_recovery_state_rejects_empty_source_run_id() -> None:

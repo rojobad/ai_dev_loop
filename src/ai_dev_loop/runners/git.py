@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.process import ProcessResult, require_success, run_process
-from ai_dev_loop.state import sha256_file
+from ai_dev_loop.state import RunState, sha256_file
 
 
 @dataclass(frozen=True)
@@ -404,6 +404,55 @@ def validate_correction_pre_cursor(repo_root: Path, *, patch_artifact: Path) -> 
     if untracked:
         joined = ", ".join(sorted(untracked))
         raise ValidationError(f"untracked files detected before correction: {joined}")
+
+
+def validate_usage_limit_recovery_correction_pre_cursor(
+    state: RunState,
+    run_directory: Path,
+    *,
+    iteration_number: int,
+    patch_artifact: Path,
+) -> None:
+    """Pre-Cursor checkpoint for cursor-recovery correction iterations.
+
+    Requires the previous staged patch artifact to exist as lineage evidence and
+    the recorded usage-limit fingerprint to match the current repository state.
+    Verified partial tracked, untracked, and index mutations are allowed.
+    """
+
+    from ai_dev_loop.runners.cursor_output import (
+        fingerprints_match,
+        load_usage_limit_failure_fingerprint,
+        recompute_cursor_output_fingerprint,
+    )
+
+    if not patch_artifact.is_file():
+        raise ValidationError(
+            f"previous staged patch lineage artifact missing: {patch_artifact}"
+        )
+
+    recorded = load_usage_limit_failure_fingerprint(run_directory, iteration_number)
+    if recorded is None:
+        raise ValidationError(
+            "usage-limit fingerprint missing for recovery correction preflight"
+        )
+
+    recovery = state.recovery
+    if recovery and recovery.usage_limit_fingerprint_sha256:
+        recorded_hash = recorded.get("aggregate_sha256")
+        if recorded_hash != recovery.usage_limit_fingerprint_sha256:
+            raise ValidationError(
+                "usage-limit fingerprint does not match recovery lineage"
+            )
+
+    try:
+        current = recompute_cursor_output_fingerprint(state, iteration_number=iteration_number)
+    except ValidationError:
+        raise
+    if not fingerprints_match(recorded, current):
+        raise ValidationError(
+            "repository content drifted since the recorded usage-limit failure"
+        )
 
 
 def validate_repository_identity(

@@ -34,3 +34,18 @@ class NotImplementedCommandError(AiDevLoopError):
 
 class LockError(AiDevLoopError):
     exit_code = EXIT_GENERAL_ERROR
+
+
+class CursorUsageLimitError(AiDevLoopError):
+    """Typed handoff after a durable cursor_usage_limit source failure.
+
+    Raised only after the source run has been marked failed and locks released
+    so the CLI can offer interactive recovery without holding workflow locks.
+    """
+
+    exit_code = EXIT_GENERAL_ERROR
+    failure_code = "cursor_usage_limit"
+
+    def __init__(self, message: str, *, run_id: str) -> None:
+        super().__init__(message)
+        self.run_id = run_id

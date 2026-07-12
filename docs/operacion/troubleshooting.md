@@ -221,6 +221,42 @@ ai_dev_loop resume <recovery-run-id> [--update-tools]
 
 Para staging recovery, el sucesor `resume` ejecuta `git add -A` y Codex sin re-ejecutar Cursor.
 
+## Cursor alcanzo el limite de uso del modelo
+
+Sintoma:
+
+- el run termina en `failed` durante un turno Cursor;
+- `status` o la salida de `start`/`resume` indican limite de uso del modelo configurado;
+- existe `git/cursor-output/NN.usage-limit-failure.json` en el run origen.
+
+Por que `resume` no reabre el origen:
+
+- `failed` es terminal; `resume` rechaza runs terminales;
+- el origen queda inmutable para auditoria; la continuacion requiere un sucesor via `recover`.
+
+Accion:
+
+```bash
+ai_dev_loop recover --dry-run <failed-run-id> --cursor-model auto
+ai_dev_loop recover <failed-run-id> --cursor-model auto
+ai_dev_loop resume <recovery-run-id>
+```
+
+En TTY, `start`/`resume` pueden ofrecer crear el sucesor con el mismo chat y modelo `auto`. En scripts o CI, debes pasar `--cursor-model auto` explicitamente; no hay cambio automatico de modelo.
+
+Trabajo parcial:
+
+- no descartes manualmente cambios unstaged/untracked antes de `recover`; el fingerprint captura el contenido parcial al fallo;
+- el envelope de continuacion embebe el prompt exacto previo para que Cursor retome el mismo chat;
+- evita editar el worktree salvo que abandones el run y prepares uno nuevo.
+
+Casos que `recover` rechaza:
+
+- drift del fingerprint (`usage_limit_fingerprint_drift`);
+- fingerprint ausente o invalido (`usage_limit_fingerprint_missing`, `usage_limit_fingerprint_invalid`);
+- fallos Cursor ordinarios (timeout, auth, exit distinto) no clasificados como `cursor_usage_limit`;
+- drift de branch/HEAD/plan/prompt, chat ID faltante, o proceso hijo activo.
+
 ## Pytest falla con temporales en `/mnt/c`
 
 Usa temporales nativos WSL:

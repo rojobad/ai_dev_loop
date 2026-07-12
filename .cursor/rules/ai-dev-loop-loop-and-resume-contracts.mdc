@@ -107,6 +107,17 @@ These contracts protect the complete stage-review-fix loop and explicit resume b
 - `recover --dry-run` is strictly read-only. `recover` never launches Cursor, Codex, or updaters; update flags belong to the returned `resume` command.
 - Successor `resume` must derive the review/process-review checkpoint from copied durable artifacts and must not rerun completed Cursor work.
 
+## Cursor Usage-Limit Recovery
+
+- Classify usage-limit failures only from contemporaneous Cursor process evidence (`failure_code == cursor_usage_limit` in protected metadata), never from fuzzy `last_error` parsing.
+- Require nonzero Cursor exit plus the specific `ActionRequiredError` usage-limit and model-switch markers. Unknown or partial matches remain ordinary failed Cursor executions.
+- Persist a binary-safe usage-limit fingerprint (`git/cursor-output/NN.usage-limit-failure.json`) covering cached, worktree, and untracked content before marking the source recoverable.
+- Recover into an immutable successor that preserves the exact `cursor.chat_id`, freezes the requested fallback model in `successor.cursor.model`, and never creates a new Cursor chat.
+- `--cursor-model` is required for the `cursor` checkpoint and invalid for staging/review checkpoints. Interactive `start`/`resume` may offer `auto` only on a TTY after the source failure is durable and unlocked; non-interactive callers require explicit recovery.
+- The continuation envelope embeds the exact previous orchestrator prompt (initial snapshot or exact Codex findings file) and instructs Cursor to inspect and preserve partial unstaged/untracked work.
+- Partial unstaged/untracked work is expected evidence for this checkpoint. Normal `git add -A` staging and Codex review resume only after the recovered Cursor turn succeeds.
+- Idempotent reuse keys on source run, incomplete iteration, failure fingerprint, source prompt hash, and requested fallback model. Do not create parallel active successors with different fallback models for the same checkpoint.
+
 ## Tool Compatibility And Updates
 
 - `start` and `resume` accept `--update-tools`, `--skip-tool-update`, and `--allow-incompatible-tools`; update and skip are mutually exclusive.
@@ -144,3 +155,6 @@ These contracts protect the complete stage-review-fix loop and explicit resume b
 - Test dry-run recoverability analysis mutates neither source run nor repository.
 - Test idempotent successor reuse and failed-successor chain recovery.
 - Test recover rejects status, identity, staged-patch, worktree, and active-process blockers.
+- Test Cursor usage-limit classification requires ActionRequiredError plus usage-limit and model-switch markers.
+- Test usage-limit recovery preserves the exact Cursor chat ID, freezes the requested fallback model, embeds the exact source prompt in the continuation envelope, and resumes staging/Codex only after Cursor succeeds.
+- Test non-TTY start/resume never auto-selects a fallback model and prints the explicit `recover --cursor-model` command.

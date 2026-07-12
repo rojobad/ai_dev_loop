@@ -6,7 +6,7 @@ import sys
 from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -40,8 +40,9 @@ from ai_dev_loop.commands.recover import (
 from ai_dev_loop.commands.resume import render_resume_output, resume_run
 from ai_dev_loop.commands.start import CODEX_TUI_WARNING, render_start_output, start_run
 from ai_dev_loop.commands.status import render_status
-from ai_dev_loop.errors import AiDevLoopError
+from ai_dev_loop.errors import AiDevLoopError, CursorUsageLimitError
 from ai_dev_loop.recovery_planner import RecoveryAnalysis
+from ai_dev_loop.runners.cursor_failure import SAFE_USAGE_LIMIT_SUMMARY
 
 app = typer.Typer(
     name="ai_dev_loop",
@@ -104,6 +105,74 @@ def _handle(fn: Callable[[], None]) -> None:
     except AiDevLoopError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=exc.exit_code) from exc
+
+
+def _tool_update_ask_callback() -> Callable[[Any], bool]:
+    from ai_dev_loop.runners.tool_updates import ToolUpdatePrompt
+
+    def ask_callback(prompt: ToolUpdatePrompt) -> bool:
+        typer.echo(
+            f"{prompt.tool} CLI may be incompatible with required model "
+            f"{prompt.required_model or '(unknown)'} "
+            f"(version={prompt.installed_version or 'unknown'}). "
+            f"{prompt.detail}"
+        )
+        return typer.confirm(
+            f"Run `{prompt.command} update` now?",
+            default=False,
+        )
+
+    return ask_callback
+
+
+def _maybe_offer_usage_limit_recovery(
+    *,
+    run_id: str,
+    tool_policy: Any,
+) -> bool:
+    """Offer interactive usage-limit recovery after locks are released.
+
+    Returns True when a successor was created and resume was attempted.
+    """
+
+    if not sys.stdin.isatty():
+        typer.echo(
+            f"{SAFE_USAGE_LIMIT_SUMMARY}\n"
+            f"Recover explicitly with:\n"
+            f"  ai_dev_loop recover {run_id} --cursor-model auto\n"
+            f"  ai_dev_loop resume <recovery-run-id>",
+            err=True,
+        )
+        return False
+
+    typer.echo(SAFE_USAGE_LIMIT_SUMMARY)
+    try:
+        approved = typer.confirm(
+            "Create a recovery successor that continues the same Cursor chat using model `auto`?",
+            default=False,
+        )
+    except (EOFError, KeyboardInterrupt):
+        approved = False
+
+    if not approved:
+        typer.echo(
+            "Recovery declined. Recover explicitly with:\n"
+            f"  ai_dev_loop recover {run_id} --cursor-model auto\n"
+            f"  ai_dev_loop resume <recovery-run-id>",
+            err=True,
+        )
+        return False
+
+    result = recover_run(run_id, cursor_model="auto")
+    if isinstance(result, RecoveryAnalysis):
+        typer.echo(render_recovery_analysis(result), nl=False)
+        raise AiDevLoopError("usage-limit recovery did not create a successor")
+
+    typer.echo(render_recovery_result(result), nl=False)
+    typer.echo(CODEX_TUI_WARNING)
+    resumed = resume_run(result.recovery_run_id, tool_policy=tool_policy)
+    typer.echo(render_resume_output(resumed), nl=False)
+    return True
 
 
 def version_callback(value: bool) -> None:
@@ -251,21 +320,8 @@ def start_command(
     def run() -> None:
         from ai_dev_loop.runners.tool_updates import (
             ToolUpdateFlags,
-            ToolUpdatePrompt,
             policy_from_flags,
         )
-
-        def ask_callback(prompt: ToolUpdatePrompt) -> bool:
-            typer.echo(
-                f"{prompt.tool} CLI may be incompatible with required model "
-                f"{prompt.required_model or '(unknown)'} "
-                f"(version={prompt.installed_version or 'unknown'}). "
-                f"{prompt.detail}"
-            )
-            return typer.confirm(
-                f"Run `{prompt.command} update` now?",
-                default=False,
-            )
 
         flags = ToolUpdateFlags(
             update_tools=update_tools,
@@ -275,10 +331,16 @@ def start_command(
         policy = policy_from_flags(
             flags,
             stdin_is_tty=sys.stdin.isatty(),
-            ask_callback=ask_callback,
+            ask_callback=_tool_update_ask_callback(),
         )
         typer.echo(CODEX_TUI_WARNING)
-        result = start_run(run_id, tool_policy=policy)
+        try:
+            result = start_run(run_id, tool_policy=policy)
+        except CursorUsageLimitError as exc:
+            typer.echo(str(exc), err=True)
+            if _maybe_offer_usage_limit_recovery(run_id=exc.run_id, tool_policy=policy):
+                return
+            raise typer.Exit(code=exc.exit_code) from exc
         typer.echo(render_start_output(result), nl=False)
 
     _handle(run)
@@ -314,21 +376,8 @@ def resume_command(
     def run() -> None:
         from ai_dev_loop.runners.tool_updates import (
             ToolUpdateFlags,
-            ToolUpdatePrompt,
             policy_from_flags,
         )
-
-        def ask_callback(prompt: ToolUpdatePrompt) -> bool:
-            typer.echo(
-                f"{prompt.tool} CLI may be incompatible with required model "
-                f"{prompt.required_model or '(unknown)'} "
-                f"(version={prompt.installed_version or 'unknown'}). "
-                f"{prompt.detail}"
-            )
-            return typer.confirm(
-                f"Run `{prompt.command} update` now?",
-                default=False,
-            )
 
         flags = ToolUpdateFlags(
             update_tools=update_tools,
@@ -338,10 +387,16 @@ def resume_command(
         policy = policy_from_flags(
             flags,
             stdin_is_tty=sys.stdin.isatty(),
-            ask_callback=ask_callback,
+            ask_callback=_tool_update_ask_callback(),
         )
         typer.echo(CODEX_TUI_WARNING)
-        result = resume_run(run_id, tool_policy=policy)
+        try:
+            result = resume_run(run_id, tool_policy=policy)
+        except CursorUsageLimitError as exc:
+            typer.echo(str(exc), err=True)
+            if _maybe_offer_usage_limit_recovery(run_id=exc.run_id, tool_policy=policy):
+                return
+            raise typer.Exit(code=exc.exit_code) from exc
         typer.echo(render_resume_output(result), nl=False)
 
     _handle(run)
@@ -368,6 +423,17 @@ def recover_command(
             ),
         ),
     ] = False,
+    cursor_model: Annotated[
+        str | None,
+        typer.Option(
+            "--cursor-model",
+            help=(
+                "Required for cursor usage-limit recovery. Freezes the requested fallback "
+                "Cursor model on the successor (for example auto). Invalid for staging/review "
+                "checkpoints. Not an implicit default."
+            ),
+        ),
+    ] = None,
     output: OutputOption = DEFAULT_OUTPUT,
 ) -> None:
     """Create a successor run for an eligible terminal failed run."""
@@ -377,6 +443,7 @@ def recover_command(
             run_id,
             dry_run=dry_run,
             adopt_current_cursor_output=adopt_current_cursor_output,
+            cursor_model=cursor_model,
         )
         if isinstance(result, RecoveryAnalysis):
             typer.echo(render_recovery_analysis(result, output=output.value), nl=False)

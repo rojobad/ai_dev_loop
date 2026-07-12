@@ -20,6 +20,7 @@ from ai_dev_loop.iterations import (
     iteration_label,
     iteration_staged_patch_rel_path,
     max_iteration_number,
+    source_prompt_for_usage_limit_recovery,
 )
 from ai_dev_loop.resume_planner import (
     WorkflowActionKind,
@@ -27,12 +28,15 @@ from ai_dev_loop.resume_planner import (
     review_result_available,
 )
 from ai_dev_loop.review_runtime import is_legacy_phase9_codex_state
+from ai_dev_loop.runners.cursor_failure import FAILURE_CODE_USAGE_LIMIT
 from ai_dev_loop.runners.cursor_output import (
     after_cursor_status_matches,
     fingerprints_match,
     load_cursor_output_fingerprint,
     load_staging_normalization_fingerprint,
+    load_usage_limit_failure_fingerprint,
     recompute_cursor_output_fingerprint,
+    usage_limit_failure_fingerprint_rel_path,
 )
 from ai_dev_loop.runners.git import (
     discover_repository,
@@ -95,6 +99,14 @@ class RecoveryAnalysis:
     existing_successor_status: str | None = None
     reused_existing_successor: bool = False
     adopted_fingerprint_payload: dict[str, object] | None = None
+    requested_cursor_model: str | None = None
+    source_cursor_model: str | None = None
+    source_prompt_path: str | None = None
+    source_prompt_sha256: str | None = None
+    usage_limit_fingerprint_sha256: str | None = None
+    usage_limit_fingerprint_path: str | None = None
+    continuation_envelope_path: str | None = None
+    continuation_envelope_sha256: str | None = None
 
 
 def _add_blocker(blockers: list[str], code: str) -> None:
@@ -129,6 +141,8 @@ def derive_recovery_reason_code(
     checkpoint: str,
     iteration_number: int,
 ) -> str:
+    if checkpoint == "cursor":
+        return "cursor_usage_limit"
     if checkpoint == "staging":
         return "correction_staging_failed"
     if checkpoint == "process_review":
@@ -136,6 +150,129 @@ def derive_recovery_reason_code(
     if _has_invalid_review_json(run_directory, iteration_number):
         return "codex_review_result_invalid"
     return "codex_review_failed"
+
+
+def _read_iteration_metadata(
+    run_directory: Path, iteration_number: int
+) -> dict[str, object] | None:
+    path = run_directory / f"cursor/iterations/{iteration_label(iteration_number)}/metadata.json"
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _analyze_cursor_usage_limit_checkpoint(
+    analysis: RecoveryAnalysis,
+    state: RunState,
+    run_directory: Path,
+    *,
+    iteration_number: int,
+) -> None:
+    """Fill cursor-checkpoint fields for a classified usage-limit Cursor failure."""
+
+    label = iteration_label(iteration_number)
+    metadata = _read_iteration_metadata(run_directory, iteration_number)
+    if metadata is None:
+        _add_blocker(analysis.blockers, "cursor_turn_incomplete")
+        return
+
+    exit_code = metadata.get("exit_code")
+    timed_out = metadata.get("timed_out")
+    failure_code = metadata.get("failure_code")
+    if timed_out is True:
+        _add_blocker(analysis.blockers, "cursor_turn_incomplete")
+        return
+    if not isinstance(exit_code, int) or exit_code == 0:
+        _add_blocker(analysis.blockers, "cursor_turn_incomplete")
+        return
+    if failure_code != FAILURE_CODE_USAGE_LIMIT:
+        _add_blocker(analysis.blockers, "cursor_turn_incomplete")
+        return
+
+    analysis.checkpoint = "cursor"
+    analysis.reason_code = "cursor_usage_limit"
+    analysis.source_cursor_model = state.cursor.model
+
+    entry = find_iteration(state, iteration_number)
+    if entry is None:
+        _add_blocker(analysis.blockers, "ambiguous_iteration_metadata")
+        return
+
+    cursor_raw = entry.get("cursor")
+    git_raw = entry.get("git")
+    cursor_section: dict[str, object] = cursor_raw if isinstance(cursor_raw, dict) else {}
+    git_section: dict[str, object] = git_raw if isinstance(git_raw, dict) else {}
+
+    try:
+        source_prompt_rel, _text = source_prompt_for_usage_limit_recovery(
+            state, run_directory, iteration_number
+        )
+    except ValidationError:
+        _add_blocker(analysis.blockers, "source_prompt_missing")
+        return
+
+    prompt_path = run_directory / source_prompt_rel
+    recorded_prompt_path = cursor_section.get("source_prompt_path")
+    recorded_prompt_hash = cursor_section.get("source_prompt_sha256")
+    if isinstance(recorded_prompt_path, str) and recorded_prompt_path != source_prompt_rel:
+        _add_blocker(analysis.blockers, "source_prompt_path_mismatch")
+    current_prompt_hash = sha256_file(prompt_path)
+    if isinstance(recorded_prompt_hash, str) and recorded_prompt_hash != current_prompt_hash:
+        _add_blocker(analysis.blockers, "source_prompt_hash_mismatch")
+    analysis.source_prompt_path = source_prompt_rel
+    analysis.source_prompt_sha256 = current_prompt_hash
+
+    after_cursor = run_directory / f"git/status/{label}-after-cursor.txt"
+    if not after_cursor.is_file():
+        _add_blocker(analysis.blockers, "after_cursor_status_missing")
+
+    recorded = load_usage_limit_failure_fingerprint(run_directory, iteration_number)
+    fingerprint_rel = usage_limit_failure_fingerprint_rel_path(iteration_number)
+    recorded_path = git_section.get("usage_limit_fingerprint_path")
+    if isinstance(recorded_path, str) and recorded_path != fingerprint_rel:
+        _add_blocker(analysis.blockers, "usage_limit_fingerprint_path_mismatch")
+    if recorded is None:
+        _add_blocker(analysis.blockers, "usage_limit_fingerprint_missing")
+        return
+
+    recorded_hash = recorded.get("aggregate_sha256")
+    if not isinstance(recorded_hash, str) or not recorded_hash:
+        _add_blocker(analysis.blockers, "usage_limit_fingerprint_invalid")
+        return
+    analysis.usage_limit_fingerprint_path = fingerprint_rel
+    analysis.usage_limit_fingerprint_sha256 = recorded_hash
+
+    try:
+        current = recompute_cursor_output_fingerprint(state, iteration_number=iteration_number)
+    except ValidationError as exc:
+        message = str(exc).lower()
+        if "unsupported" in message or "special" in message or "symlink" in message:
+            _add_blocker(analysis.blockers, "unsupported_special_files")
+        else:
+            _add_blocker(analysis.blockers, "usage_limit_fingerprint_unavailable")
+        return
+
+    if not fingerprints_match(recorded, current):
+        _add_blocker(analysis.blockers, "usage_limit_fingerprint_drift")
+        return
+
+    # Corrections also require the prior review/fix-prompt/staged-patch evidence.
+    if iteration_number >= 2:
+        previous_hash = _previous_iteration_patch_hash(state, run_directory, iteration_number)
+        if previous_hash is None:
+            _add_blocker(analysis.blockers, "previous_staged_patch_missing")
+        fix_prompt = run_directory / f"prompts/fixes/{iteration_label(iteration_number - 1)}.txt"
+        if not fix_prompt.is_file() or not fix_prompt.read_text(encoding="utf-8").strip():
+            _add_blocker(analysis.blockers, "previous_fix_prompt_missing")
+        previous_review = (
+            run_directory / f"codex/reviews/{iteration_label(iteration_number - 1)}.json"
+        )
+        if not previous_review.is_file():
+            _add_blocker(analysis.blockers, "previous_review_missing")
 
 
 def _previous_iteration_patch_hash(
@@ -361,7 +498,36 @@ def analyze_recovery(
     label = iteration_label(iteration_number)
 
     if not cursor_turn_complete(run_directory, iteration_number):
-        _add_blocker(blockers, "cursor_turn_incomplete")
+        _analyze_cursor_usage_limit_checkpoint(
+            analysis,
+            state,
+            run_directory,
+            iteration_number=iteration_number,
+        )
+        if analysis.checkpoint != "cursor":
+            _add_blocker(blockers, "cursor_turn_incomplete")
+            return analysis
+        if analysis.checkpoint not in RECOVERY_CHECKPOINTS:
+            _add_blocker(blockers, "unsupported_checkpoint")
+        if resolve_runtime and analysis.checkpoint == "cursor":
+            # Preserve frozen Codex runtime unchanged; do not migrate solely for Cursor.
+            try:
+                resolved = resolve_recovery_runtime(state, run_directory)
+                analysis.resolved_runtime = resolved
+                analysis.session_runtime_action = resolved.session_runtime_action
+                if resolved.runtime_migration == "phase9_session_capture":
+                    warnings.append(
+                        "phase9_runtime_captured_at_recovery; "
+                        "values reflect current session metadata, not a prepare-time freeze"
+                    )
+            except ValidationError as exc:
+                message = str(exc).lower()
+                if "session" in message or "rollout" in message or "ambiguous" in message:
+                    _add_blocker(blockers, "session_runtime_unavailable")
+                else:
+                    _add_blocker(blockers, "review_runtime_unresolved")
+                analysis.session_runtime_action = SessionRuntimeAction.UNRESOLVED
+        analysis.eligible = len(blockers) == 0
         return analysis
 
     if not staging_complete_for_iteration(state, run_directory, label):
