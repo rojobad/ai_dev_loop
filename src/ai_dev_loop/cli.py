@@ -417,9 +417,9 @@ def recover_command(
         typer.Option(
             "--adopt-current-cursor-output",
             help=(
-                "For historical staging failures without a post-Cursor fingerprint, "
-                "explicitly attest that the current repository matches the recorded "
-                "after-cursor status and adopt it for recovery. No TTY prompt substitutes."
+                "Explicitly attest to matching current output for historical staging failures "
+                "or historical Cursor usage-limit failures that lack a contemporaneous "
+                "fingerprint. No TTY prompt substitutes."
             ),
         ),
     ] = False,

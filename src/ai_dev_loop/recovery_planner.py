@@ -28,7 +28,10 @@ from ai_dev_loop.resume_planner import (
     review_result_available,
 )
 from ai_dev_loop.review_runtime import is_legacy_phase9_codex_state
-from ai_dev_loop.runners.cursor_failure import FAILURE_CODE_USAGE_LIMIT
+from ai_dev_loop.runners.cursor_failure import (
+    FAILURE_CODE_USAGE_LIMIT,
+    classify_cursor_failure_text,
+)
 from ai_dev_loop.runners.cursor_output import (
     after_cursor_status_matches,
     fingerprints_match,
@@ -36,6 +39,7 @@ from ai_dev_loop.runners.cursor_output import (
     load_staging_normalization_fingerprint,
     load_usage_limit_failure_fingerprint,
     recompute_cursor_output_fingerprint,
+    usage_limit_adopted_fingerprint_rel_path,
     usage_limit_failure_fingerprint_rel_path,
 )
 from ai_dev_loop.runners.git import (
@@ -90,6 +94,7 @@ class RecoveryAnalysis:
     cursor_output_fingerprint_sha256: str | None = None
     previous_staged_patch_sha256: str | None = None
     legacy_cursor_output_adopted: bool = False
+    legacy_cursor_usage_limit_adopted: bool = False
     post_cursor_fingerprint_available: bool = False
     verified_staging_state: str | None = None
     session_runtime_action: SessionRuntimeAction = SessionRuntimeAction.UNRESOLVED
@@ -99,6 +104,7 @@ class RecoveryAnalysis:
     existing_successor_status: str | None = None
     reused_existing_successor: bool = False
     adopted_fingerprint_payload: dict[str, object] | None = None
+    adopted_usage_limit_payload: dict[str, object] | None = None
     requested_cursor_model: str | None = None
     source_cursor_model: str | None = None
     source_prompt_path: str | None = None
@@ -165,14 +171,64 @@ def _read_iteration_metadata(
     return payload if isinstance(payload, dict) else None
 
 
-def _analyze_cursor_usage_limit_checkpoint(
+def _read_protected_legacy_stderr(run_directory: Path, iteration_number: int) -> str | None:
+    path = run_directory / f"cursor/iterations/{iteration_label(iteration_number)}/stderr.txt"
+    if not path.is_file():
+        return None
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+
+
+def _classify_legacy_usage_limit_stderr(
+    *,
+    exit_code: int,
+    timed_out: bool,
+    stderr: str,
+    metadata: dict[str, object],
+) -> bool:
+    structured_errors: list[str] = []
+    errors = metadata.get("errors")
+    if isinstance(errors, list):
+        structured_errors = [item for item in errors if isinstance(item, str)]
+    return classify_cursor_failure_text(
+        returncode=exit_code,
+        timed_out=timed_out,
+        stderr=stderr,
+        structured_errors=structured_errors,
+    ).is_usage_limit
+
+
+def _validate_correction_usage_limit_prerequisites(
     analysis: RecoveryAnalysis,
     state: RunState,
     run_directory: Path,
     *,
     iteration_number: int,
 ) -> None:
-    """Fill cursor-checkpoint fields for a classified usage-limit Cursor failure."""
+    if iteration_number < 2:
+        return
+    previous_hash = _previous_iteration_patch_hash(state, run_directory, iteration_number)
+    if previous_hash is None:
+        _add_blocker(analysis.blockers, "previous_staged_patch_missing")
+    fix_prompt = run_directory / f"prompts/fixes/{iteration_label(iteration_number - 1)}.txt"
+    if not fix_prompt.is_file() or not fix_prompt.read_text(encoding="utf-8").strip():
+        _add_blocker(analysis.blockers, "previous_fix_prompt_missing")
+    previous_review = run_directory / f"codex/reviews/{iteration_label(iteration_number - 1)}.json"
+    if not previous_review.is_file():
+        _add_blocker(analysis.blockers, "previous_review_missing")
+
+
+def _analyze_normal_phase13_cursor_usage_limit(
+    analysis: RecoveryAnalysis,
+    state: RunState,
+    run_directory: Path,
+    *,
+    iteration_number: int,
+    adopt_current_cursor_output: bool,
+) -> None:
+    """Phase 13 path requiring structured failure code and contemporaneous fingerprint."""
 
     label = iteration_label(iteration_number)
     metadata = _read_iteration_metadata(run_directory, iteration_number)
@@ -196,6 +252,9 @@ def _analyze_cursor_usage_limit_checkpoint(
     analysis.checkpoint = "cursor"
     analysis.reason_code = "cursor_usage_limit"
     analysis.source_cursor_model = state.cursor.model
+
+    if adopt_current_cursor_output:
+        _add_blocker(analysis.blockers, "redundant_legacy_adoption_for_phase13_usage_limit")
 
     entry = find_iteration(state, iteration_number)
     if entry is None:
@@ -260,19 +319,186 @@ def _analyze_cursor_usage_limit_checkpoint(
         _add_blocker(analysis.blockers, "usage_limit_fingerprint_drift")
         return
 
-    # Corrections also require the prior review/fix-prompt/staged-patch evidence.
-    if iteration_number >= 2:
-        previous_hash = _previous_iteration_patch_hash(state, run_directory, iteration_number)
-        if previous_hash is None:
-            _add_blocker(analysis.blockers, "previous_staged_patch_missing")
-        fix_prompt = run_directory / f"prompts/fixes/{iteration_label(iteration_number - 1)}.txt"
-        if not fix_prompt.is_file() or not fix_prompt.read_text(encoding="utf-8").strip():
-            _add_blocker(analysis.blockers, "previous_fix_prompt_missing")
-        previous_review = (
-            run_directory / f"codex/reviews/{iteration_label(iteration_number - 1)}.json"
+    _validate_correction_usage_limit_prerequisites(
+        analysis, state, run_directory, iteration_number=iteration_number
+    )
+
+
+def _analyze_legacy_cursor_usage_limit(
+    analysis: RecoveryAnalysis,
+    state: RunState,
+    run_directory: Path,
+    *,
+    iteration_number: int,
+    adopt_current_cursor_output: bool,
+) -> None:
+    """Historical usage-limit path requiring protected stderr and explicit user adoption."""
+
+    label = iteration_label(iteration_number)
+    metadata = _read_iteration_metadata(run_directory, iteration_number)
+    if metadata is None:
+        _add_blocker(analysis.blockers, "cursor_turn_incomplete")
+        return
+
+    exit_code = metadata.get("exit_code")
+    timed_out = metadata.get("timed_out")
+    if timed_out is True:
+        _add_blocker(analysis.blockers, "cursor_turn_incomplete")
+        return
+    if not isinstance(exit_code, int) or exit_code == 0:
+        _add_blocker(analysis.blockers, "cursor_turn_incomplete")
+        return
+
+    stderr = _read_protected_legacy_stderr(run_directory, iteration_number)
+    if stderr is None:
+        _add_blocker(analysis.blockers, "legacy_usage_limit_stderr_missing")
+        return
+    if not _classify_legacy_usage_limit_stderr(
+        exit_code=exit_code,
+        timed_out=bool(timed_out),
+        stderr=stderr,
+        metadata=metadata,
+    ):
+        _add_blocker(analysis.blockers, "cursor_turn_incomplete")
+        return
+
+    analysis.checkpoint = "cursor"
+    analysis.reason_code = "cursor_usage_limit"
+    analysis.source_cursor_model = state.cursor.model
+
+    entry = find_iteration(state, iteration_number)
+    if entry is None:
+        _add_blocker(analysis.blockers, "ambiguous_iteration_metadata")
+        return
+
+    cursor_raw = entry.get("cursor")
+    cursor_section: dict[str, object] = cursor_raw if isinstance(cursor_raw, dict) else {}
+
+    try:
+        source_prompt_rel, _text = source_prompt_for_usage_limit_recovery(
+            state, run_directory, iteration_number
         )
-        if not previous_review.is_file():
-            _add_blocker(analysis.blockers, "previous_review_missing")
+    except ValidationError:
+        _add_blocker(analysis.blockers, "source_prompt_missing")
+        return
+
+    prompt_path = run_directory / source_prompt_rel
+    recorded_prompt_path = cursor_section.get("source_prompt_path")
+    recorded_prompt_hash = cursor_section.get("source_prompt_sha256")
+    if isinstance(recorded_prompt_path, str) and recorded_prompt_path != source_prompt_rel:
+        _add_blocker(analysis.blockers, "source_prompt_path_mismatch")
+    current_prompt_hash = sha256_file(prompt_path)
+    if isinstance(recorded_prompt_hash, str) and recorded_prompt_hash != current_prompt_hash:
+        _add_blocker(analysis.blockers, "source_prompt_hash_mismatch")
+    analysis.source_prompt_path = source_prompt_rel
+    analysis.source_prompt_sha256 = current_prompt_hash
+
+    after_cursor = run_directory / f"git/status/{label}-after-cursor.txt"
+    if not after_cursor.is_file():
+        _add_blocker(analysis.blockers, "after_cursor_status_missing")
+        return
+    if not after_cursor_status_matches(
+        run_directory,
+        iteration_number=iteration_number,
+        repo_root=Path(state.repository.root),
+    ):
+        _add_blocker(analysis.blockers, "after_cursor_status_mismatch")
+        return
+
+    _validate_correction_usage_limit_prerequisites(
+        analysis, state, run_directory, iteration_number=iteration_number
+    )
+
+    try:
+        current = recompute_cursor_output_fingerprint(state, iteration_number=iteration_number)
+    except ValidationError as exc:
+        message = str(exc).lower()
+        if "unsupported" in message or "special" in message or "symlink" in message:
+            _add_blocker(analysis.blockers, "unsupported_special_files")
+        else:
+            _add_blocker(analysis.blockers, "usage_limit_fingerprint_unavailable")
+        return
+
+    if not adopt_current_cursor_output:
+        _add_blocker(analysis.blockers, "legacy_cursor_usage_limit_requires_explicit_adoption")
+        analysis.warnings.append(
+            "legacy_cursor_usage_limit_requires_explicit_adoption; "
+            "re-run with --adopt-current-cursor-output and --cursor-model <model> "
+            "after confirming the repository was not modified since Cursor stopped"
+        )
+        return
+
+    metadata_rel = f"cursor/iterations/{label}/metadata.json"
+    stderr_rel = f"cursor/iterations/{label}/stderr.txt"
+    status_rel = f"git/status/{label}-after-cursor.txt"
+    adopted_rel = usage_limit_adopted_fingerprint_rel_path(iteration_number)
+    analysis.legacy_cursor_usage_limit_adopted = True
+    analysis.usage_limit_fingerprint_path = adopted_rel
+    analysis.usage_limit_fingerprint_sha256 = current.aggregate_sha256
+    analysis.adopted_fingerprint_payload = current.payload
+    analysis.adopted_usage_limit_payload = {
+        "iteration_number": iteration_number,
+        "source_run_id": state.run_id,
+        "source_iteration": iteration_number,
+        "source_metadata_path": metadata_rel,
+        "source_metadata_sha256": sha256_file(run_directory / metadata_rel),
+        "source_stderr_path": stderr_rel,
+        "source_stderr_sha256": sha256_file(run_directory / stderr_rel),
+        "source_after_cursor_status_path": status_rel,
+        "source_after_cursor_status_sha256": sha256_file(after_cursor),
+        "source_prompt_path": source_prompt_rel,
+        "source_prompt_sha256": current_prompt_hash,
+        "content_fingerprint_payload": current.payload,
+        "aggregate_sha256": current.aggregate_sha256,
+    }
+    analysis.warnings.append(
+        "legacy_usage_limit_adoption; "
+        "current repository status matches recorded after-Cursor status; "
+        "current content fingerprint captured at recovery time; "
+        "historical content fingerprint unavailable; explicit user adoption recorded"
+    )
+
+
+def _analyze_cursor_usage_limit_checkpoint(
+    analysis: RecoveryAnalysis,
+    state: RunState,
+    run_directory: Path,
+    *,
+    iteration_number: int,
+    adopt_current_cursor_output: bool = False,
+) -> None:
+    """Fill cursor-checkpoint fields for a classified usage-limit Cursor failure."""
+
+    metadata = _read_iteration_metadata(run_directory, iteration_number)
+    if metadata is None:
+        _add_blocker(analysis.blockers, "cursor_turn_incomplete")
+        return
+
+    failure_code = metadata.get("failure_code")
+    # Structured Phase 13 failure code keeps the strict Phase 13 path even when
+    # the contemporaneous fingerprint artifact is missing or corrupt. Legacy
+    # adoption applies only when that structured code is absent.
+    if failure_code == FAILURE_CODE_USAGE_LIMIT:
+        _analyze_normal_phase13_cursor_usage_limit(
+            analysis,
+            state,
+            run_directory,
+            iteration_number=iteration_number,
+            adopt_current_cursor_output=adopt_current_cursor_output,
+        )
+        return
+
+    if failure_code is not None:
+        _add_blocker(analysis.blockers, "cursor_turn_incomplete")
+        return
+
+    _analyze_legacy_cursor_usage_limit(
+        analysis,
+        state,
+        run_directory,
+        iteration_number=iteration_number,
+        adopt_current_cursor_output=adopt_current_cursor_output,
+    )
 
 
 def _previous_iteration_patch_hash(
@@ -408,6 +634,7 @@ def analyze_recovery(
     *,
     resolve_runtime: bool = True,
     adopt_current_cursor_output: bool = False,
+    requested_cursor_model: str | None = None,
 ) -> RecoveryAnalysis:
     """Analyze whether a failed run can safely produce a successor."""
 
@@ -503,6 +730,7 @@ def analyze_recovery(
             state,
             run_directory,
             iteration_number=iteration_number,
+            adopt_current_cursor_output=adopt_current_cursor_output,
         )
         if analysis.checkpoint != "cursor":
             _add_blocker(blockers, "cursor_turn_incomplete")

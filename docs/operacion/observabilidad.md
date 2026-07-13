@@ -37,7 +37,8 @@ Muestra rutas de artefactos, resumen de iteraciones, paths de reportes, diagnost
 
 Para checkpoint `cursor` (limite de uso), `inspect` puede listar:
 
-- `git/cursor-output/NN.usage-limit-failure.json` (fingerprint de trabajo parcial);
+- `git/cursor-output/NN.usage-limit-failure.json` (fingerprint de trabajo parcial en fallo);
+- `git/cursor-output/NN.usage-limit-adopted.json` (metadata segura de adopcion historica explicita);
 - `prompts/cursor-recovery/NN.usage-limit-continuation.txt` (envelope de continuacion);
 - en el sucesor, `recovery.cursor_model_fallback`, `recovery.source_cursor_model` y hashes de fingerprint/envelope (sin contenido sensible en salida por defecto).
 

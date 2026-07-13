@@ -55,6 +55,7 @@ def render_status(run_id: str, *, output: str = "text") -> str:
                     state.recovery.cursor_output_fingerprint_sha256
                 ),
                 "legacy_cursor_output_adopted": state.recovery.legacy_cursor_output_adopted,
+                "legacy_cursor_usage_limit_adopted": state.recovery.legacy_cursor_usage_limit_adopted,
                 "source_cursor_model": state.recovery.source_cursor_model,
                 "cursor_model_fallback": state.recovery.cursor_model_fallback,
                 "continuation_envelope_path": state.recovery.continuation_envelope_path,
@@ -170,6 +171,16 @@ def _next_action(state: RunState, run_path: Path) -> str:
             and analysis.checkpoint == "cursor"
             and analysis.reason_code == "cursor_usage_limit"
         ):
+            if analysis.legacy_cursor_usage_limit_adopted or (
+                not analysis.eligible
+                and "legacy_cursor_usage_limit_requires_explicit_adoption" in analysis.warnings
+            ):
+                return (
+                    "Historical Cursor usage-limit failure lacks a contemporaneous fingerprint. "
+                    f"After confirming the repository was not modified since Cursor stopped, run "
+                    f"ai_dev_loop recover {state.run_id} --dry-run "
+                    "--adopt-current-cursor-output --cursor-model auto, then recover and resume."
+                )
             return (
                 "Cursor reached the usage limit for its configured model. "
                 f"Recover with ai_dev_loop recover {state.run_id} --cursor-model auto, "

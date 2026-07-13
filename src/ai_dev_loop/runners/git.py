@@ -406,6 +406,59 @@ def validate_correction_pre_cursor(repo_root: Path, *, patch_artifact: Path) -> 
         raise ValidationError(f"untracked files detected before correction: {joined}")
 
 
+def validate_usage_limit_recovery_pre_cursor(
+    state: RunState,
+    run_directory: Path,
+    *,
+    iteration_number: int,
+) -> None:
+    """Pre-Cursor checkpoint for any cursor usage-limit recovery successor.
+
+    Validates that the recorded usage-limit fingerprint (failure-time or
+    adoption-time) still matches the current repository content. Applies to
+    initial iteration and correction iterations alike. Verified partial
+    tracked, untracked, and index mutations captured in the fingerprint are
+    allowed.
+    """
+
+    from ai_dev_loop.runners.cursor_output import (
+        extract_usage_limit_content_fingerprint,
+        fingerprints_match,
+        load_usage_limit_fingerprint_from_path,
+        recompute_cursor_output_fingerprint,
+        usage_limit_failure_fingerprint_rel_path,
+    )
+
+    recovery = state.recovery
+    fingerprint_rel: str | None = None
+    if recovery and recovery.usage_limit_fingerprint_path:
+        fingerprint_rel = recovery.usage_limit_fingerprint_path
+    if fingerprint_rel is None:
+        fingerprint_rel = usage_limit_failure_fingerprint_rel_path(iteration_number)
+
+    recorded = load_usage_limit_fingerprint_from_path(run_directory, fingerprint_rel)
+    if recorded is None:
+        raise ValidationError("usage-limit fingerprint missing for recovery preflight")
+
+    content_fingerprint = extract_usage_limit_content_fingerprint(recorded)
+    if content_fingerprint is None:
+        raise ValidationError(
+            "usage-limit fingerprint artifact is missing embedded content evidence"
+        )
+
+    if recovery and recovery.usage_limit_fingerprint_sha256:
+        recorded_hash = recorded.get("aggregate_sha256")
+        if recorded_hash != recovery.usage_limit_fingerprint_sha256:
+            raise ValidationError("usage-limit fingerprint does not match recovery lineage")
+
+    try:
+        current = recompute_cursor_output_fingerprint(state, iteration_number=iteration_number)
+    except ValidationError:
+        raise
+    if not fingerprints_match(content_fingerprint, current):
+        raise ValidationError("repository content drifted since the recorded usage-limit failure")
+
+
 def validate_usage_limit_recovery_correction_pre_cursor(
     state: RunState,
     run_directory: Path,
@@ -420,39 +473,13 @@ def validate_usage_limit_recovery_correction_pre_cursor(
     Verified partial tracked, untracked, and index mutations are allowed.
     """
 
-    from ai_dev_loop.runners.cursor_output import (
-        fingerprints_match,
-        load_usage_limit_failure_fingerprint,
-        recompute_cursor_output_fingerprint,
-    )
-
     if not patch_artifact.is_file():
-        raise ValidationError(
-            f"previous staged patch lineage artifact missing: {patch_artifact}"
-        )
-
-    recorded = load_usage_limit_failure_fingerprint(run_directory, iteration_number)
-    if recorded is None:
-        raise ValidationError(
-            "usage-limit fingerprint missing for recovery correction preflight"
-        )
-
-    recovery = state.recovery
-    if recovery and recovery.usage_limit_fingerprint_sha256:
-        recorded_hash = recorded.get("aggregate_sha256")
-        if recorded_hash != recovery.usage_limit_fingerprint_sha256:
-            raise ValidationError(
-                "usage-limit fingerprint does not match recovery lineage"
-            )
-
-    try:
-        current = recompute_cursor_output_fingerprint(state, iteration_number=iteration_number)
-    except ValidationError:
-        raise
-    if not fingerprints_match(recorded, current):
-        raise ValidationError(
-            "repository content drifted since the recorded usage-limit failure"
-        )
+        raise ValidationError(f"previous staged patch lineage artifact missing: {patch_artifact}")
+    validate_usage_limit_recovery_pre_cursor(
+        state,
+        run_directory,
+        iteration_number=iteration_number,
+    )
 
 
 def validate_repository_identity(

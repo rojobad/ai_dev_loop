@@ -91,7 +91,7 @@ Analiza un run `failed` y, si es elegible, crea un run sucesor `interrupted` sin
 Checkpoints: `reviewing`, `process_review`, `staging` (Cursor completo / staging incompleto), y `cursor` (limite de uso de Cursor con turno incompleto).
 
 - `--dry-run`: solo reporta elegibilidad, checkpoint, blockers y migracion de runtime.
-- `--adopt-current-cursor-output`: adopcion explicita para fallos de staging historicos sin fingerprint post-Cursor, cuando el status actual coincide con `NN-after-cursor.txt`.
+- `--adopt-current-cursor-output`: atestacion explicita para fallos de staging historicos sin fingerprint post-Cursor, o para fallos historicos de limite de uso de Cursor sin fingerprint contemporaneo, cuando el status actual coincide con `NN-after-cursor.txt`. Para checkpoint `cursor` tambien requiere `--cursor-model`.
 - `--cursor-model`: obligatorio para checkpoint `cursor`. Congela el modelo fallback solicitado en el sucesor (por ejemplo `auto`). Invalido para checkpoints `staging`/`reviewing`/`process_review`. No es un default implicito ni se lee desde YAML.
 - Sin `--dry-run`: crea o reutiliza el sucesor y imprime `resume_command`.
 - No lanza agentes ni updaters; pasa `--update-tools` a `resume` si hace falta.
@@ -107,6 +107,8 @@ Ejemplo de limite de uso:
 ```bash
 ai_dev_loop recover --dry-run <failed-run-id> --cursor-model auto
 ai_dev_loop recover <failed-run-id> --cursor-model auto
+ai_dev_loop recover --dry-run <failed-run-id> --adopt-current-cursor-output --cursor-model auto
+ai_dev_loop recover <failed-run-id> --adopt-current-cursor-output --cursor-model auto
 ai_dev_loop resume <recovery-run-id>
 ```
 

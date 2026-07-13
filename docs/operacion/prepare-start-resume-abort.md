@@ -111,6 +111,8 @@ ai_dev_loop recover --dry-run <failed-run-id> --adopt-current-cursor-output
 ai_dev_loop recover <failed-run-id> --adopt-current-cursor-output
 ai_dev_loop recover --dry-run <failed-run-id> --cursor-model auto
 ai_dev_loop recover <failed-run-id> --cursor-model auto
+ai_dev_loop recover --dry-run <failed-run-id> --adopt-current-cursor-output --cursor-model auto
+ai_dev_loop recover <failed-run-id> --adopt-current-cursor-output --cursor-model auto
 ```
 
 `recover` no edita el run terminal de origen. Crea un run sucesor distinto cuando el fallo es recuperable.
@@ -119,7 +121,7 @@ Checkpoints elegibles:
 
 - `reviewing` / `process_review`: Cursor + staging completos; staged patch actual coincide; sin unstaged/untracked.
 - `staging`: correccion con Cursor completo y staging incompleto; fingerprint post-Cursor verificado, o adopcion explicita historica.
-- `cursor`: turno Cursor interrumpido por limite de uso del modelo configurado; fingerprint de contenido parcial verificado; requiere `--cursor-model <modelo>` (por ejemplo `auto`).
+- `cursor`: turno Cursor interrumpido por limite de uso del modelo configurado; fingerprint de contenido parcial verificado en origen Phase 13, o adopcion explicita historica cuando falta el fingerprint contemporaneo; requiere `--cursor-model <modelo>` (por ejemplo `auto`).
 
 Requisitos comunes:
 
@@ -129,6 +131,8 @@ Requisitos comunes:
 - no hay proceso hijo activo o metadata ambigua.
 
 Para staging historico sin `git/cursor-output/NN.json`, `--adopt-current-cursor-output` exige que el status porcelain actual coincida exactamente con `NN-after-cursor.txt`. Es una atestacion del usuario (no prueba criptografica del intervalo historico).
+
+Para fallos historicos de limite de uso de Cursor sin `git/cursor-output/NN.usage-limit-failure.json` ni `failure_code: cursor_usage_limit`, la misma bandera junto con `--cursor-model <modelo>` habilita una adopcion explicita (`legacy_cursor_usage_limit_adopted`). El clasificador usa `cursor/iterations/NN/stderr.txt` protegido, no `last_error`. El sucesor escribe `git/cursor-output/NN.usage-limit-adopted.json` con hashes seguros capturados en el momento del `recover`; no afirma que el contenido historico fue verificado antes de esa recuperacion.
 
 No recupera:
 

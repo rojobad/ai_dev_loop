@@ -39,7 +39,7 @@ only-include = ["src/ai_dev_loop", "tests", "scripts", "README.md", "LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 
 [tool.ruff]
 line-length = 100

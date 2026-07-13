@@ -29,6 +29,10 @@ def usage_limit_failure_fingerprint_rel_path(iteration_number: int) -> str:
     return f"git/cursor-output/{iteration_label(iteration_number)}.usage-limit-failure.json"
 
 
+def usage_limit_adopted_fingerprint_rel_path(iteration_number: int) -> str:
+    return f"git/cursor-output/{iteration_label(iteration_number)}.usage-limit-adopted.json"
+
+
 def staging_normalization_fingerprint_rel_path(iteration_number: int) -> str:
     return f"git/cursor-output/{iteration_label(iteration_number)}.post-normalization.json"
 
@@ -221,6 +225,86 @@ def load_usage_limit_failure_fingerprint(
         run_directory,
         usage_limit_failure_fingerprint_rel_path(iteration_number),
     )
+
+
+def load_usage_limit_adopted_fingerprint(
+    run_directory: Path,
+    iteration_number: int,
+) -> dict[str, Any] | None:
+    return load_fingerprint_artifact(
+        run_directory,
+        usage_limit_adopted_fingerprint_rel_path(iteration_number),
+    )
+
+
+def load_usage_limit_fingerprint_from_path(
+    run_directory: Path,
+    relative_path: str,
+) -> dict[str, Any] | None:
+    """Load a usage-limit fingerprint artifact by its recorded relative path."""
+
+    return load_fingerprint_artifact(run_directory, relative_path)
+
+
+def build_usage_limit_adopted_payload(
+    *,
+    iteration_number: int,
+    source_run_id: str,
+    source_iteration: int,
+    source_metadata_path: str,
+    source_metadata_sha256: str,
+    source_stderr_path: str,
+    source_stderr_sha256: str,
+    source_after_cursor_status_path: str,
+    source_after_cursor_status_sha256: str,
+    source_prompt_path: str,
+    source_prompt_sha256: str,
+    cursor_model_fallback: str,
+    content_fingerprint_payload: dict[str, Any],
+    aggregate_sha256: str,
+) -> dict[str, Any]:
+    """Build safe adoption metadata without copying stderr, prompts, or file contents."""
+
+    return {
+        "schema_version": 1,
+        "kind": "usage_limit_adopted",
+        "iteration": iteration_number,
+        "captured_at": utc_now().isoformat(),
+        "legacy_cursor_usage_limit_adopted": True,
+        "aggregate_sha256": aggregate_sha256,
+        "source_run_id": source_run_id,
+        "source_iteration": source_iteration,
+        "source_metadata_path": source_metadata_path,
+        "source_metadata_sha256": source_metadata_sha256,
+        "source_stderr_path": source_stderr_path,
+        "source_stderr_sha256": source_stderr_sha256,
+        "source_after_cursor_status_path": source_after_cursor_status_path,
+        "source_after_cursor_status_sha256": source_after_cursor_status_sha256,
+        "source_prompt_path": source_prompt_path,
+        "source_prompt_sha256": source_prompt_sha256,
+        "cursor_model_fallback": cursor_model_fallback,
+        "content_fingerprint": content_fingerprint_payload,
+    }
+
+
+def extract_usage_limit_content_fingerprint(
+    adopted_or_failure_payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return the embedded content fingerprint payload from a usage-limit artifact."""
+
+    if adopted_or_failure_payload.get("kind") == "usage_limit_adopted":
+        nested = adopted_or_failure_payload.get("content_fingerprint")
+        return nested if isinstance(nested, dict) else None
+    if adopted_or_failure_payload.get("kind") in {
+        "usage_limit_failure",
+        "post_cursor",
+        "recomputed",
+    }:
+        return adopted_or_failure_payload
+    aggregate = adopted_or_failure_payload.get("aggregate_sha256")
+    if isinstance(aggregate, str) and aggregate:
+        return adopted_or_failure_payload
+    return None
 
 
 def capture_staging_normalization_fingerprint(

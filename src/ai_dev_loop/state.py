@@ -222,6 +222,7 @@ class RecoveryState(BaseModel):
     cursor_output_fingerprint_sha256: str | None = None
     previous_staged_patch_sha256: str | None = None
     legacy_cursor_output_adopted: bool | None = None
+    legacy_cursor_usage_limit_adopted: bool | None = None
     source_cursor_model: str | None = None
     cursor_model_fallback: str | None = None
     source_prompt_path: str | None = None
@@ -330,6 +331,19 @@ class RecoveryState(BaseModel):
                 raise ValueError(
                     "legacy_cursor_output_adopted is only valid for staging recovery checkpoints"
                 )
+            if self.legacy_cursor_usage_limit_adopted is True:
+                if (
+                    self.usage_limit_fingerprint_path is None
+                    or not self.usage_limit_fingerprint_path.endswith(".usage-limit-adopted.json")
+                ):
+                    raise ValueError(
+                        "legacy cursor usage-limit adoption requires a usage-limit-adopted "
+                        "fingerprint artifact path"
+                    )
+            elif self.legacy_cursor_usage_limit_adopted is not None:
+                raise ValueError(
+                    "legacy_cursor_usage_limit_adopted must be true or null for cursor recovery"
+                )
             if not self.cursor_model_fallback or not self.cursor_model_fallback.strip():
                 raise ValueError(
                     "cursor_model_fallback is required for cursor recovery checkpoints"
@@ -381,6 +395,10 @@ class RecoveryState(BaseModel):
         elif self.legacy_cursor_output_adopted:
             raise ValueError(
                 "legacy_cursor_output_adopted is only valid for staging recovery checkpoints"
+            )
+        elif self.legacy_cursor_usage_limit_adopted:
+            raise ValueError(
+                "legacy_cursor_usage_limit_adopted is only valid for cursor recovery checkpoints"
             )
         elif self.cursor_output_fingerprint_sha256 is not None:
             raise ValueError(

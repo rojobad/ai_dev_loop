@@ -14,6 +14,7 @@ from ai_dev_loop.runners.git import (
     validate_no_preexisting_staged_paths,
     validate_staged_patch_matches_artifact,
     validate_usage_limit_recovery_correction_pre_cursor,
+    validate_usage_limit_recovery_pre_cursor,
 )
 from ai_dev_loop.runners.staging import run_git_staging, validate_pre_staging
 from ai_dev_loop.state import (
@@ -386,6 +387,27 @@ def test_usage_limit_recovery_correction_preflight_allows_partial_index_mutation
         iteration_number=2,
         patch_artifact=patch_artifact,
     )
+
+
+def test_usage_limit_recovery_preflight_rejects_initial_iteration_content_drift(
+    tiny_repo: Path, tmp_path: Path
+) -> None:
+    target = tiny_repo / "feature.txt"
+    target.write_text("feature\n", encoding="utf-8")
+    (tiny_repo / "partial_untracked.txt").write_text("partial untracked\n", encoding="utf-8")
+
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    state = _sample_state(tiny_repo)
+    capture_usage_limit_failure_fingerprint(state, run_directory, iteration_number=1)
+    target.write_text("drifted content\n", encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="content drifted"):
+        validate_usage_limit_recovery_pre_cursor(
+            state,
+            run_directory,
+            iteration_number=1,
+        )
 
 
 def test_usage_limit_recovery_correction_preflight_rejects_fingerprint_drift(

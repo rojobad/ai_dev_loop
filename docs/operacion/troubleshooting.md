@@ -227,7 +227,7 @@ Sintoma:
 
 - el run termina en `failed` durante un turno Cursor;
 - `status` o la salida de `start`/`resume` indican limite de uso del modelo configurado;
-- existe `git/cursor-output/NN.usage-limit-failure.json` en el run origen.
+- existe `git/cursor-output/NN.usage-limit-failure.json` en el run origen (Phase 13), o evidencia historica compatible con adopcion explicita (`stderr.txt` protegido + status after-cursor + ambos flags).
 
 Por que `resume` no reabre el origen:
 
@@ -239,6 +239,26 @@ Accion:
 ```bash
 ai_dev_loop recover --dry-run <failed-run-id> --cursor-model auto
 ai_dev_loop recover <failed-run-id> --cursor-model auto
+ai_dev_loop resume <recovery-run-id>
+```
+
+Historico sin fingerprint contemporaneo (pre-Phase 13 o evidencia incompleta):
+
+```bash
+ai_dev_loop recover --dry-run <failed-run-id> --adopt-current-cursor-output --cursor-model auto
+ai_dev_loop recover <failed-run-id> --adopt-current-cursor-output --cursor-model auto
+ai_dev_loop resume <recovery-run-id>
+```
+
+No edites manualmente el repositorio entre `--dry-run` y el `recover` real; el segundo revalida status y fingerprint y rechaza drift.
+
+Ejemplo operativo documentado (no ejecutar como validacion de implementacion):
+
+```bash
+ai_dev_loop recover --dry-run crypto-sentinel-20260712T205916Z-b2d828 \
+  --adopt-current-cursor-output --cursor-model auto
+ai_dev_loop recover crypto-sentinel-20260712T205916Z-b2d828 \
+  --adopt-current-cursor-output --cursor-model auto
 ai_dev_loop resume <recovery-run-id>
 ```
 

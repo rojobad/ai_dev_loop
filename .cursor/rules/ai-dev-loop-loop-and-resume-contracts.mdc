@@ -118,6 +118,15 @@ These contracts protect the complete stage-review-fix loop and explicit resume b
 - Partial unstaged/untracked work is expected evidence for this checkpoint. Normal `git add -A` staging and Codex review resume only after the recovered Cursor turn succeeds.
 - Idempotent reuse keys on source run, incomplete iteration, failure fingerprint, source prompt hash, and requested fallback model. Do not create parallel active successors with different fallback models for the same checkpoint.
 
+## Legacy Cursor Usage-Limit Adoption
+
+- Normal Phase 13 recovery remains strict: it requires `failure_code == cursor_usage_limit` and a contemporaneous `git/cursor-output/NN.usage-limit-failure.json` fingerprint match. Reject redundant `--adopt-current-cursor-output` on those sources.
+- Historical adoption applies only when protected `cursor/iterations/NN/stderr.txt` classifies as usage-limit, `git/status/NN-after-cursor.txt` matches current porcelain exactly, and the user supplies both `--adopt-current-cursor-output` and `--cursor-model <model>`.
+- Never use `last_error` as adoption evidence. Matching status is a prerequisite to explicit user attestation, not proof of matching file contents before recovery time.
+- Write only safe adoption metadata in the successor (`git/cursor-output/NN.usage-limit-adopted.json`) with hashes and paths, never stderr/prompt/chat/billing contents.
+- Record `legacy_cursor_usage_limit_adopted: true` in recovery lineage; do not overload Phase 12 `legacy_cursor_output_adopted`.
+- `recover` stays read-only to the target repository and source run; only successor `resume` invokes Cursor and normal staging/Codex boundaries.
+
 ## Tool Compatibility And Updates
 
 - `start` and `resume` accept `--update-tools`, `--skip-tool-update`, and `--allow-incompatible-tools`; update and skip are mutually exclusive.
@@ -158,3 +167,5 @@ These contracts protect the complete stage-review-fix loop and explicit resume b
 - Test Cursor usage-limit classification requires ActionRequiredError plus usage-limit and model-switch markers.
 - Test usage-limit recovery preserves the exact Cursor chat ID, freezes the requested fallback model, embeds the exact source prompt in the continuation envelope, and resumes staging/Codex only after Cursor succeeds.
 - Test non-TTY start/resume never auto-selects a fallback model and prints the explicit `recover --cursor-model` command.
+- Test legacy cursor usage-limit adoption requires both explicit flags, protected stderr classification, status match, and writes only safe adoption artifacts in the successor.
+- Test normal Phase 13 usage-limit recovery rejects redundant adoption and remains strict without adoption.

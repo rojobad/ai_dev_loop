@@ -68,6 +68,7 @@ from ai_dev_loop.runners.git import (
     validate_correction_pre_cursor,
     validate_repository_identity,
     validate_usage_limit_recovery_correction_pre_cursor,
+    validate_usage_limit_recovery_pre_cursor,
 )
 from ai_dev_loop.runners.probes import (
     CompatibilityClassification,
@@ -770,15 +771,17 @@ def _run_cursor_turn(
     iteration_dir = run_directory / "cursor" / "iterations" / iteration
     iteration_dir.mkdir(parents=True, exist_ok=True)
 
-    if iteration_number > 1:
-        from ai_dev_loop.iterations import previous_iteration_git_patch_path
-
+    if _is_cursor_usage_limit_recovery_resume(state, iteration_number):
         try:
-            patch_rel = previous_iteration_git_patch_path(state, iteration_number)
-            if patch_rel is None:
-                raise ValidationError("previous staged patch metadata is missing for correction")
-            patch_artifact = run_directory / patch_rel
-            if _is_cursor_usage_limit_recovery_resume(state, iteration_number):
+            if iteration_number > 1:
+                from ai_dev_loop.iterations import previous_iteration_git_patch_path
+
+                patch_rel = previous_iteration_git_patch_path(state, iteration_number)
+                if patch_rel is None:
+                    raise ValidationError(
+                        "previous staged patch metadata is missing for correction"
+                    )
+                patch_artifact = run_directory / patch_rel
                 validate_usage_limit_recovery_correction_pre_cursor(
                     state,
                     run_directory,
@@ -786,10 +789,26 @@ def _run_cursor_turn(
                     patch_artifact=patch_artifact,
                 )
             else:
-                validate_correction_pre_cursor(
-                    Path(state.repository.root),
-                    patch_artifact=patch_artifact,
+                validate_usage_limit_recovery_pre_cursor(
+                    state,
+                    run_directory,
+                    iteration_number=iteration_number,
                 )
+        except ValidationError as exc:
+            _fail_run(run_directory, state, str(exc), event_name="correction_preflight_failed")
+            raise AiDevLoopError(str(exc), exit_code=exc.exit_code) from exc
+    elif iteration_number > 1:
+        from ai_dev_loop.iterations import previous_iteration_git_patch_path
+
+        try:
+            patch_rel = previous_iteration_git_patch_path(state, iteration_number)
+            if patch_rel is None:
+                raise ValidationError("previous staged patch metadata is missing for correction")
+            patch_artifact = run_directory / patch_rel
+            validate_correction_pre_cursor(
+                Path(state.repository.root),
+                patch_artifact=patch_artifact,
+            )
         except ValidationError as exc:
             _fail_run(run_directory, state, str(exc), event_name="correction_preflight_failed")
             raise AiDevLoopError(str(exc), exit_code=exc.exit_code) from exc

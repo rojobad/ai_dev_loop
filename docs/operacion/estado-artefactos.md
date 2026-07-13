@@ -116,7 +116,9 @@ codex/reviews/NN.metadata.json
 
 `git/cursor-output/NN.post-normalization.json` se captura inmediatamente despues de un `git add -A` exitoso, antes de persistir el patch staged. Permite recuperar fallos parciales de staging cuando el index ya fue normalizado.
 
-`git/cursor-output/NN.usage-limit-failure.json` captura un fingerprint de trabajo parcial tras un fallo clasificado como limite de uso de Cursor. Se usa para validar que el repositorio no cambio antes de `recover`.
+`git/cursor-output/NN.usage-limit-failure.json` captura un fingerprint de trabajo parcial tras un fallo clasificado como limite de uso de Cursor (Phase 13). Se usa para validar que el repositorio no cambio antes de `recover`.
+
+`git/cursor-output/NN.usage-limit-adopted.json` registra metadata segura de una adopcion explicita historica cuando el origen carecia de fingerprint contemporaneo. Contiene hashes del stderr protegido, status after-cursor, prompt y fingerprint de contenido capturado en el momento del `recover`, no en el fallo original.
 
 `prompts/cursor-recovery/NN.usage-limit-continuation.txt` es el envelope de continuacion que embebe el prompt exacto previo para retomar el mismo chat en el sucesor.
 
@@ -136,7 +138,8 @@ recovered_checkpoint          # staging | reviewing | process_review | cursor
 source_staged_patch_sha256
 cursor_output_fingerprint_sha256   # requerido para staging
 previous_staged_patch_sha256       # requerido para staging
-legacy_cursor_output_adopted       # opcional; adopcion historica
+legacy_cursor_output_adopted       # opcional; adopcion historica de staging
+legacy_cursor_usage_limit_adopted  # opcional; adopcion historica de limite de uso Cursor
 source_cursor_model                # checkpoint cursor
 cursor_model_fallback              # checkpoint cursor; congelado por --cursor-model
 source_prompt_path                   # checkpoint cursor

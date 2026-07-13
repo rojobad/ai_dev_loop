@@ -211,9 +211,7 @@ def _read_verified_continuation_envelope(
         raise ValidationError("cursor recovery continuation envelope hash is missing")
     actual_hash = sha256_file(envelope_file)
     if actual_hash != expected_sha256:
-        raise ValidationError(
-            f"cursor recovery continuation envelope hash mismatch: {rel_path}"
-        )
+        raise ValidationError(f"cursor recovery continuation envelope hash mismatch: {rel_path}")
     text = _read_text_exact(envelope_file)
     if not text.strip():
         raise ValidationError(f"cursor recovery continuation envelope is empty: {rel_path}")

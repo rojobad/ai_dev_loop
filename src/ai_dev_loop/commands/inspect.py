@@ -58,6 +58,7 @@ def render_inspect(run_id: str, *, output: str = "text", show_prompts: bool = Fa
                 ),
                 "previous_staged_patch_sha256": state.recovery.previous_staged_patch_sha256,
                 "legacy_cursor_output_adopted": state.recovery.legacy_cursor_output_adopted,
+                "legacy_cursor_usage_limit_adopted": state.recovery.legacy_cursor_usage_limit_adopted,
                 "source_cursor_model": state.recovery.source_cursor_model,
                 "cursor_model_fallback": state.recovery.cursor_model_fallback,
                 "source_prompt_path": state.recovery.source_prompt_path,
@@ -127,6 +128,10 @@ def render_inspect(run_id: str, *, output: str = "text", show_prompts: bool = Fa
                 f"{state.recovery.cursor_output_fingerprint_sha256 or '(none)'}"
             ),
             (f"  legacy_cursor_output_adopted: {state.recovery.legacy_cursor_output_adopted}"),
+            (
+                f"  legacy_cursor_usage_limit_adopted: "
+                f"{state.recovery.legacy_cursor_usage_limit_adopted}"
+            ),
             f"  source_cursor_model: {state.recovery.source_cursor_model or '(none)'}",
             f"  cursor_model_fallback: {state.recovery.cursor_model_fallback or '(none)'}",
             (

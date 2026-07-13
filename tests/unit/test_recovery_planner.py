@@ -218,6 +218,30 @@ def test_recovery_state_accepts_cursor_checkpoint_with_required_fields() -> None
     assert recovery.source_staged_patch_sha256 is None
 
 
+def test_recovery_state_accepts_legacy_cursor_usage_limit_adoption() -> None:
+    now = datetime.now(tz=UTC)
+    recovery = RecoveryState(
+        source_run_id="source-run",
+        source_status="failed",
+        source_iteration=1,
+        recovered_checkpoint="cursor",
+        source_staged_patch_sha256=None,
+        created_at=now,
+        runtime_migration="none",
+        reason_code="cursor_usage_limit",
+        legacy_cursor_usage_limit_adopted=True,
+        source_cursor_model="composer-2.5-fast",
+        cursor_model_fallback="auto",
+        source_prompt_path="prompts/cursor-initial.txt",
+        source_prompt_sha256="b" * 64,
+        usage_limit_fingerprint_sha256="c" * 64,
+        usage_limit_fingerprint_path="git/cursor-output/01.usage-limit-adopted.json",
+        continuation_envelope_path="prompts/cursor-recovery/01.usage-limit-continuation.txt",
+        continuation_envelope_sha256="d" * 64,
+    )
+    assert recovery.legacy_cursor_usage_limit_adopted is True
+
+
 def test_recovery_state_cursor_checkpoint_rejects_missing_cursor_model_fallback() -> None:
     now = datetime.now(tz=UTC)
     with pytest.raises(PydanticValidationError, match="cursor_model_fallback"):

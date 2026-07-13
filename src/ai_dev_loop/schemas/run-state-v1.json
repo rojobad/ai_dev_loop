@@ -246,6 +246,9 @@
         "legacy_cursor_output_adopted": {
           "type": ["boolean", "null"]
         },
+        "legacy_cursor_usage_limit_adopted": {
+          "type": ["boolean", "null"]
+        },
         "source_cursor_model": { "type": ["string", "null"], "minLength": 1 },
         "cursor_model_fallback": { "type": ["string", "null"], "minLength": 1 },
         "source_prompt_path": { "type": ["string", "null"], "minLength": 1 },

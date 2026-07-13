@@ -33,6 +33,10 @@ from ai_dev_loop.resume_planner import (
     review_result_available,
 )
 from ai_dev_loop.run_discovery import list_run_directories, load_run
+from ai_dev_loop.runners.cursor_output import (
+    build_usage_limit_adopted_payload,
+    usage_limit_adopted_fingerprint_rel_path,
+)
 from ai_dev_loop.runners.staging import staging_complete_for_iteration
 from ai_dev_loop.state import (
     ManifestArtifact,
@@ -67,6 +71,7 @@ class RecoveryResult:
     staged_patch_sha256: str | None
     cursor_output_fingerprint_sha256: str | None = None
     legacy_cursor_output_adopted: bool = False
+    legacy_cursor_usage_limit_adopted: bool = False
     requested_cursor_model: str | None = None
     source_cursor_model: str | None = None
     usage_limit_fingerprint_sha256: str | None = None
@@ -168,6 +173,8 @@ def _should_copy_source_relative(
             except ValueError:
                 return False
             return iter_num <= iteration
+        if name.endswith(".usage-limit-adopted.json"):
+            return False
         if not name.endswith(".json"):
             return False
         try:
@@ -301,6 +308,7 @@ def _find_matching_successors(
     staged_patch_sha256: str | None,
     cursor_output_fingerprint_sha256: str | None = None,
     legacy_cursor_output_adopted: bool = False,
+    legacy_cursor_usage_limit_adopted: bool = False,
     usage_limit_fingerprint_sha256: str | None = None,
     source_prompt_sha256: str | None = None,
     cursor_model_fallback: str | None = None,
@@ -322,6 +330,9 @@ def _find_matching_successors(
             if recovery.source_prompt_sha256 != source_prompt_sha256:
                 continue
             if recovery.cursor_model_fallback != cursor_model_fallback:
+                continue
+            adopted = bool(recovery.legacy_cursor_usage_limit_adopted)
+            if adopted != bool(legacy_cursor_usage_limit_adopted):
                 continue
             matches.append((path, state))
             continue
@@ -345,6 +356,7 @@ def _find_conflicting_cursor_successors(
     usage_limit_fingerprint_sha256: str,
     source_prompt_sha256: str,
     cursor_model_fallback: str,
+    legacy_cursor_usage_limit_adopted: bool = False,
 ) -> list[tuple[Path, RunState]]:
     """Find active cursor successors for the same checkpoint with a different model."""
 
@@ -364,6 +376,9 @@ def _find_conflicting_cursor_successors(
         if recovery.source_prompt_sha256 != source_prompt_sha256:
             continue
         if recovery.cursor_model_fallback == cursor_model_fallback:
+            continue
+        adopted = bool(recovery.legacy_cursor_usage_limit_adopted)
+        if adopted != legacy_cursor_usage_limit_adopted:
             continue
         if state.status in TERMINAL_STATUSES:
             continue
@@ -435,6 +450,12 @@ def _validate_successor_for_reuse(
             raise ValidationError(
                 "matching successor fallback Cursor model does not match the requested model"
             )
+        if bool(recovery.legacy_cursor_usage_limit_adopted) != bool(
+            analysis.legacy_cursor_usage_limit_adopted
+        ):
+            raise ValidationError(
+                "matching successor legacy adoption state does not match current recovery analysis"
+            )
         if successor.cursor.model != analysis.requested_cursor_model:
             raise ValidationError(
                 "matching successor frozen Cursor model does not match the requested fallback"
@@ -495,7 +516,7 @@ def _validate_successor_for_reuse(
             raise ValidationError(
                 f"matching cursor successor unexpectedly has a completed Cursor turn for {label}"
             )
-        fingerprint_path = successor_dir / f"git/cursor-output/{label}.usage-limit-failure.json"
+        fingerprint_path = successor_dir / str(recovery.usage_limit_fingerprint_path)
         if not fingerprint_path.is_file():
             raise ValidationError(
                 f"matching cursor successor is missing usage-limit fingerprint for {label}"
@@ -506,13 +527,10 @@ def _validate_successor_for_reuse(
         if not envelope_path.is_file():
             raise ValidationError("matching cursor successor is missing continuation envelope")
         if not recovery.continuation_envelope_sha256:
-            raise ValidationError(
-                "matching cursor successor is missing continuation envelope hash"
-            )
+            raise ValidationError("matching cursor successor is missing continuation envelope hash")
         if sha256_file(envelope_path) != recovery.continuation_envelope_sha256:
             raise ValidationError(
-                "matching cursor successor continuation envelope no longer matches "
-                "recovery lineage"
+                "matching cursor successor continuation envelope no longer matches recovery lineage"
             )
         return
 
@@ -630,6 +648,7 @@ def _handle_existing_successors(
             staged_patch_sha256=recovery.source_staged_patch_sha256,
             cursor_output_fingerprint_sha256=recovery.cursor_output_fingerprint_sha256,
             legacy_cursor_output_adopted=bool(recovery.legacy_cursor_output_adopted),
+            legacy_cursor_usage_limit_adopted=bool(recovery.legacy_cursor_usage_limit_adopted),
             requested_cursor_model=recovery.cursor_model_fallback,
             source_cursor_model=recovery.source_cursor_model,
             usage_limit_fingerprint_sha256=recovery.usage_limit_fingerprint_sha256,
@@ -670,6 +689,7 @@ def _annotate_existing_successors_for_analysis(
             usage_limit_fingerprint_sha256=analysis.usage_limit_fingerprint_sha256,
             source_prompt_sha256=analysis.source_prompt_sha256,
             cursor_model_fallback=analysis.requested_cursor_model,
+            legacy_cursor_usage_limit_adopted=analysis.legacy_cursor_usage_limit_adopted,
         )
     else:
         if analysis.staged_patch_sha256 is None:
@@ -682,6 +702,7 @@ def _annotate_existing_successors_for_analysis(
             staged_patch_sha256=analysis.staged_patch_sha256,
             cursor_output_fingerprint_sha256=analysis.cursor_output_fingerprint_sha256,
             legacy_cursor_output_adopted=analysis.legacy_cursor_output_adopted,
+            legacy_cursor_usage_limit_adopted=analysis.legacy_cursor_usage_limit_adopted,
         )
     if not matches:
         return
@@ -829,18 +850,19 @@ def _create_successor_run(
                 source_prompt=source_prompt_text,
             )
             copied.append(continuation_rel)
-            recovery_kwargs.update(
-                {
-                    "source_cursor_model": analysis.source_cursor_model or source.cursor.model,
-                    "cursor_model_fallback": analysis.requested_cursor_model,
-                    "source_prompt_path": analysis.source_prompt_path,
-                    "source_prompt_sha256": analysis.source_prompt_sha256,
-                    "usage_limit_fingerprint_sha256": analysis.usage_limit_fingerprint_sha256,
-                    "usage_limit_fingerprint_path": analysis.usage_limit_fingerprint_path,
-                    "continuation_envelope_path": continuation_rel,
-                    "continuation_envelope_sha256": continuation_hash,
-                }
-            )
+            recovery_cursor_kwargs: dict[str, object] = {
+                "source_cursor_model": analysis.source_cursor_model or source.cursor.model,
+                "cursor_model_fallback": analysis.requested_cursor_model,
+                "source_prompt_path": analysis.source_prompt_path,
+                "source_prompt_sha256": analysis.source_prompt_sha256,
+                "usage_limit_fingerprint_sha256": analysis.usage_limit_fingerprint_sha256,
+                "usage_limit_fingerprint_path": analysis.usage_limit_fingerprint_path,
+                "continuation_envelope_path": continuation_rel,
+                "continuation_envelope_sha256": continuation_hash,
+            }
+            if analysis.legacy_cursor_usage_limit_adopted:
+                recovery_cursor_kwargs["legacy_cursor_usage_limit_adopted"] = True
+            recovery_kwargs.update(recovery_cursor_kwargs)
             analysis.continuation_envelope_path = continuation_rel
             analysis.continuation_envelope_sha256 = continuation_hash
 
@@ -905,6 +927,51 @@ def _create_successor_run(
                     if isinstance(git_section, dict):
                         git_section["cursor_output_fingerprint_path"] = fingerprint_rel
                     break
+        if (
+            analysis.checkpoint == "cursor"
+            and analysis.legacy_cursor_usage_limit_adopted
+            and analysis.adopted_usage_limit_payload is not None
+            and analysis.requested_cursor_model is not None
+        ):
+            adopted_payload = analysis.adopted_usage_limit_payload
+            adopted_rel = usage_limit_adopted_fingerprint_rel_path(analysis.iteration)
+            content_payload = adopted_payload["content_fingerprint_payload"]
+            if not isinstance(content_payload, dict):
+                raise ValidationError(
+                    "legacy adoption analysis is missing content fingerprint payload"
+                )
+            adopted_artifact = build_usage_limit_adopted_payload(
+                iteration_number=analysis.iteration,
+                source_run_id=str(adopted_payload["source_run_id"]),
+                source_iteration=int(str(adopted_payload["source_iteration"])),
+                source_metadata_path=str(adopted_payload["source_metadata_path"]),
+                source_metadata_sha256=str(adopted_payload["source_metadata_sha256"]),
+                source_stderr_path=str(adopted_payload["source_stderr_path"]),
+                source_stderr_sha256=str(adopted_payload["source_stderr_sha256"]),
+                source_after_cursor_status_path=str(
+                    adopted_payload["source_after_cursor_status_path"]
+                ),
+                source_after_cursor_status_sha256=str(
+                    adopted_payload["source_after_cursor_status_sha256"]
+                ),
+                source_prompt_path=str(adopted_payload["source_prompt_path"]),
+                source_prompt_sha256=str(adopted_payload["source_prompt_sha256"]),
+                cursor_model_fallback=analysis.requested_cursor_model,
+                content_fingerprint_payload=content_payload,
+                aggregate_sha256=str(adopted_payload["aggregate_sha256"]),
+            )
+            atomic_write_json(temp_dir / adopted_rel, adopted_artifact, sensitive=True)
+            if adopted_rel not in copied:
+                copied.append(adopted_rel)
+            for entry in successor.iterations:
+                if entry.get("number") == analysis.iteration:
+                    git_section = entry.setdefault("git", {})
+                    if isinstance(git_section, dict):
+                        git_section["usage_limit_fingerprint_path"] = adopted_rel
+                        git_section["usage_limit_fingerprint_sha256"] = str(
+                            adopted_payload["aggregate_sha256"]
+                        )
+                    break
 
         manifest_artifacts: list[ManifestArtifact] = []
         for rel in copied:
@@ -950,7 +1017,10 @@ def _create_successor_run(
         if analysis.checkpoint == "cursor":
             event_detail["cursor_model_fallback"] = analysis.requested_cursor_model
             event_detail["usage_limit_fingerprint_sha256"] = analysis.usage_limit_fingerprint_sha256
-            event_name = "cursor_usage_limit_recovery_successor_created"
+            if analysis.legacy_cursor_usage_limit_adopted:
+                event_name = "cursor_usage_limit_legacy_output_adopted"
+            else:
+                event_name = "cursor_usage_limit_recovery_successor_created"
         else:
             event_name = "recover_created"
         append_orchestrator_event(
@@ -987,11 +1057,31 @@ def _create_successor_run(
         staged_patch_sha256=analysis.staged_patch_sha256,
         cursor_output_fingerprint_sha256=analysis.cursor_output_fingerprint_sha256,
         legacy_cursor_output_adopted=analysis.legacy_cursor_output_adopted,
+        legacy_cursor_usage_limit_adopted=analysis.legacy_cursor_usage_limit_adopted,
         requested_cursor_model=analysis.requested_cursor_model,
         source_cursor_model=analysis.source_cursor_model or source.cursor.model,
         usage_limit_fingerprint_sha256=analysis.usage_limit_fingerprint_sha256,
         continuation_envelope_path=continuation_rel,
     )
+
+
+def _allows_omitting_cursor_model(
+    analysis: RecoveryAnalysis,
+    *,
+    dry_run: bool,
+    adopt_current_cursor_output: bool,
+) -> bool:
+    """Permit missing --cursor-model only for legacy prospective dry-run inspection.
+
+    Normal Phase 13 cursor checkpoints always require an explicit fallback model,
+    including dry-run. Historical usage-limit candidates may omit the model on
+    dry-run without adoption so operators can inspect the explicit-adoption
+    blocker before choosing a fallback.
+    """
+
+    if not dry_run or adopt_current_cursor_output:
+        return False
+    return "legacy_cursor_usage_limit_requires_explicit_adoption" in analysis.blockers
 
 
 def recover_run(
@@ -1018,7 +1108,11 @@ def recover_run(
                 "--cursor-model is only valid for cursor usage-limit recovery checkpoints"
             )
         analysis.requested_cursor_model = cleaned_model
-    elif analysis.checkpoint == "cursor":
+    elif analysis.checkpoint == "cursor" and not _allows_omitting_cursor_model(
+        analysis,
+        dry_run=dry_run,
+        adopt_current_cursor_output=adopt_current_cursor_output,
+    ):
         raise ValidationError(
             "cursor usage-limit recovery requires --cursor-model <model> "
             "(for example --cursor-model auto)"
@@ -1115,6 +1209,7 @@ def recover_run(
                 usage_limit_fingerprint_sha256=analysis.usage_limit_fingerprint_sha256,
                 source_prompt_sha256=analysis.source_prompt_sha256,
                 cursor_model_fallback=analysis.requested_cursor_model,
+                legacy_cursor_usage_limit_adopted=analysis.legacy_cursor_usage_limit_adopted,
             )
             if conflicts:
                 ids = ", ".join(state.run_id for _, state in conflicts)
@@ -1144,6 +1239,7 @@ def recover_run(
             usage_limit_fingerprint_sha256=analysis.usage_limit_fingerprint_sha256,
             source_prompt_sha256=analysis.source_prompt_sha256,
             cursor_model_fallback=analysis.requested_cursor_model,
+            legacy_cursor_usage_limit_adopted=analysis.legacy_cursor_usage_limit_adopted,
         )
         reused = _handle_existing_successors(analysis, matches, source=source)
         if reused is not None:
@@ -1172,6 +1268,16 @@ def _checkpoint_label(checkpoint: str) -> str:
     return checkpoint
 
 
+def _recovery_mode_label(analysis: RecoveryAnalysis) -> str | None:
+    if analysis.checkpoint != "cursor":
+        return None
+    if analysis.legacy_cursor_usage_limit_adopted:
+        return "legacy_usage_limit_adoption"
+    if analysis.eligible or analysis.usage_limit_fingerprint_sha256:
+        return "phase13_usage_limit_recovery"
+    return None
+
+
 def render_recovery_analysis(analysis: RecoveryAnalysis, *, output: str = "text") -> str:
     if output == "json":
         payload = {
@@ -1189,6 +1295,7 @@ def render_recovery_analysis(analysis: RecoveryAnalysis, *, output: str = "text"
             "previous_staged_patch_sha256": analysis.previous_staged_patch_sha256,
             "post_cursor_fingerprint_available": analysis.post_cursor_fingerprint_available,
             "legacy_cursor_output_adopted": analysis.legacy_cursor_output_adopted,
+            "legacy_cursor_usage_limit_adopted": analysis.legacy_cursor_usage_limit_adopted,
             "verified_staging_state": analysis.verified_staging_state,
             "session_runtime_action": analysis.session_runtime_action.value,
             "reason_code": analysis.reason_code,
@@ -1200,6 +1307,7 @@ def render_recovery_analysis(analysis: RecoveryAnalysis, *, output: str = "text"
             "usage_limit_fingerprint_sha256": analysis.usage_limit_fingerprint_sha256,
             "source_prompt_sha256": analysis.source_prompt_sha256,
             "continuation_envelope_path": analysis.continuation_envelope_path,
+            "recovery_mode": _recovery_mode_label(analysis),
             "runtime": None
             if analysis.resolved_runtime is None
             else {
@@ -1236,12 +1344,21 @@ def render_recovery_analysis(analysis: RecoveryAnalysis, *, output: str = "text"
         )
         lines.append(f"Runtime migration: {analysis.resolved_runtime.runtime_migration}")
     if analysis.checkpoint == "cursor":
+        mode = _recovery_mode_label(analysis)
+        if mode:
+            lines.append(f"Recovery mode: {mode}")
         if analysis.source_cursor_model:
             lines.append(f"Source Cursor model: {analysis.source_cursor_model}")
         if analysis.requested_cursor_model:
             lines.append(f"Requested fallback Cursor model: {analysis.requested_cursor_model}")
-        if analysis.usage_limit_fingerprint_sha256:
-            lines.append("Usage-limit fingerprint: verified")
+        if analysis.legacy_cursor_usage_limit_adopted:
+            lines.append("Current repository status: matches recorded after-Cursor status")
+            lines.append("Current content fingerprint: captured at recovery time")
+            lines.append(
+                "Historical content fingerprint: unavailable; explicit user adoption recorded"
+            )
+        elif analysis.usage_limit_fingerprint_sha256 and analysis.eligible:
+            lines.append("Usage-limit fingerprint: verified at failure time")
         if analysis.source_prompt_sha256:
             lines.append("Source prompt: verified")
         lines.append("Repository identity: checked")
@@ -1302,6 +1419,7 @@ def render_recovery_result(result: RecoveryResult, *, output: str = "text") -> s
             "staged_patch_sha256": result.staged_patch_sha256,
             "cursor_output_fingerprint_sha256": result.cursor_output_fingerprint_sha256,
             "legacy_cursor_output_adopted": result.legacy_cursor_output_adopted,
+            "legacy_cursor_usage_limit_adopted": result.legacy_cursor_usage_limit_adopted,
             "requested_cursor_model": result.requested_cursor_model,
             "source_cursor_model": result.source_cursor_model,
             "usage_limit_fingerprint_sha256": result.usage_limit_fingerprint_sha256,
@@ -1321,13 +1439,22 @@ def render_recovery_result(result: RecoveryResult, *, output: str = "text") -> s
         f"Runtime migration: {result.runtime_migration}",
     ]
     if result.checkpoint == "cursor":
+        if result.legacy_cursor_usage_limit_adopted:
+            lines.append("Recovery mode: legacy_usage_limit_adoption")
+            lines.append("Current repository status: matches recorded after-Cursor status")
+            lines.append("Current content fingerprint: captured at recovery time")
+            lines.append(
+                "Historical content fingerprint: unavailable; explicit user adoption recorded"
+            )
+        else:
+            lines.append("Recovery mode: phase13_usage_limit_recovery")
+            lines.append("Usage-limit fingerprint: verified at failure time")
         if result.source_cursor_model:
             lines.append(f"Source Cursor model: {result.source_cursor_model}")
         if result.requested_cursor_model:
             lines.append(f"Fallback Cursor model: {result.requested_cursor_model}")
         if result.continuation_envelope_path:
             lines.append(f"Continuation envelope: {result.continuation_envelope_path}")
-        lines.append("Usage-limit fingerprint: verified")
         lines.append("Repository identity: verified")
         lines.append("Git mutation performed by recover: none")
     elif result.checkpoint == "staging":

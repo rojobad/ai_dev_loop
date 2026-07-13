@@ -1,0 +1,35 @@
+Implement the approved plan in `plan-13.5-legacy-cursor-usage-limit-adoption.md` completely.
+
+Read the entire plan first. Then read every required-context file, the applicable
+repository rules/skills, current Phase 13 recovery implementation, existing Phase 11-13
+tests, and the affected user documentation before making edits. This task is limited to
+the `ai_dev_loop` orchestrator; do not modify, defer, or combine any Phase 14 work.
+
+Implement only the explicit, user-attested adoption path for historical Cursor
+usage-limit failures that predate Phase 13's structured failure code and contemporaneous
+fingerprint. Preserve the exact Cursor chat, freeze the explicit fallback model in the
+successor, generate the existing continuation envelope, and retain normal staging and
+Codex review boundaries after Cursor successfully continues.
+
+Keep normal Phase 13 recovery strict. It must still require its structured failure code
+and failure-time fingerprint and must reject redundant adoption. Never use `last_error`
+as eligibility evidence. Use protected source stderr plus exact metadata/status/prompt/
+chat/repository checks only for the narrowly classified legacy adoption, and require both
+`--adopt-current-cursor-output` and `--cursor-model <model>`. Clearly record that this is
+an explicit historical attestation, not proof that current content matched before
+recovery time.
+
+`recover` must remain read-only to the target repository and source run. Do not create a
+new Cursor chat, invoke agents/updaters from recover, weaken existing Phase 11/12 paths,
+or expose raw stderr, prompt content, chat IDs, account/billing details, or sensitive
+artifacts in normal output.
+
+The motivating run `crypto-sentinel-20260712T205916Z-b2d828` is evidence only. Do not
+recover, resume, inspect sensitive contents from, stage, or mutate it during
+implementation or validation. Use only sanitized fixtures and fake CLIs in tests.
+
+Implement code, schemas, tests, rules, documentation, package build, and WSL installation
+as specified by the plan. Run the full validation suite and report changed files, the
+legacy-adoption contract, focused/full test results, build/docs results, and the installed
+WSL command path/version. Do not perform real Cursor/Codex model calls, real run recovery
+or resume, tool updates, commits, pushes, or releases during validation.

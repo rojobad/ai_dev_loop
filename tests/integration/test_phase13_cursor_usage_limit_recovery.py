@@ -122,7 +122,21 @@ def test_analyze_recovery_rejects_missing_fingerprint(prepared_run, fake_clis, m
 
     analysis = analyze_recovery(failed["state"], failed["run_path"])
     assert analysis.eligible is False
+    assert analysis.checkpoint == "cursor"
     assert "usage_limit_fingerprint_missing" in analysis.blockers
+    assert "legacy_cursor_usage_limit_requires_explicit_adoption" not in analysis.blockers
+
+    # Phase 13 structured failure code must not downgrade to legacy adoption.
+    analysis_adopt = analyze_recovery(
+        failed["state"],
+        failed["run_path"],
+        adopt_current_cursor_output=True,
+    )
+    assert analysis_adopt.eligible is False
+    assert "usage_limit_fingerprint_missing" in analysis_adopt.blockers
+    assert "redundant_legacy_adoption_for_phase13_usage_limit" in analysis_adopt.blockers
+    assert analysis_adopt.legacy_cursor_usage_limit_adopted is False
+    assert analysis_adopt.checkpoint == "cursor"
 
 
 def test_analyze_recovery_rejects_ordinary_cursor_fail(
@@ -167,6 +181,12 @@ def test_recover_without_cursor_model_raises_validation_error(
     failed = _failed_usage_limit_run(prepared_run, fake_clis, monkeypatch)
     with pytest.raises(ValidationError, match="requires --cursor-model"):
         recover_run(str(failed["run_id"]))
+
+
+def test_phase13_dry_run_requires_cursor_model(prepared_run, fake_clis, monkeypatch) -> None:
+    failed = _failed_usage_limit_run(prepared_run, fake_clis, monkeypatch)
+    with pytest.raises(ValidationError, match="requires --cursor-model"):
+        recover_run(str(failed["run_id"]), dry_run=True)
 
 
 def test_recover_cursor_model_rejected_for_reviewing_failure(
