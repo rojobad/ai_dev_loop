@@ -25,8 +25,10 @@ def test_cli_help() -> None:
     for command in (
         "prepare",
         "start",
+        "launch",
         "resume",
         "status",
+        "controller",
         "list",
         "logs",
         "inspect",

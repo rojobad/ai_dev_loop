@@ -18,13 +18,29 @@ Muestra:
 - iteracion actual y maximo;
 - Cursor chat ID;
 - Codex session ID acortado;
-- proceso activo si existe;
+- proceso hijo activo si existe;
 - ultimo error;
 - siguiente accion segura;
 - si es sucesor de recovery: run origen, checkpoint recuperado (`staging` | `reviewing` | `process_review` | `cursor`), y si aplica fingerprint verificado, adopcion historica, o modelo fallback congelado;
 - para runs `failed` por limite de uso: siguiente accion con `recover --cursor-model auto` cuando el analisis lo marca elegible.
 
-`status` debe seguir funcionando aunque el run lock este tomado por un `start` o `resume` activo.
+`status` debe seguir funcionando aunque el run lock este tomado por un `start`, `resume` o worker de `launch` activo.
+
+## Controller status
+
+```bash
+ai_dev_loop controller status \
+  --controller-session-id "<exact-controller-session-id>" \
+  --repo-path /path/al/repo \
+  [--run-id <run-id>] \
+  [--output text|json]
+```
+
+Lookup read-only para runs A/B: no muta estado, no adquiere locks de mutacion y no llama Cursor/Codex.
+
+Ademas del resumen seguro del run, reporta liveness del worker detachado (`launcher_live` / stale) y la siguiente accion segura. Ante 0 o N coincidencias, no elige un run por timestamp; usa `--run-id` para desambiguar.
+
+Session IDs de controller y reviewer salen acortados en texto y como prefijos en JSON.
 
 ## Inspect
 

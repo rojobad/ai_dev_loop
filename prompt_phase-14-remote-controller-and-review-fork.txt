@@ -1,0 +1,18 @@
+Please implement the plan in `plan-14-remote-controller-and-review-fork.md`.
+
+Follow every Cursor rule and skill listed in the plan, especially the global
+integration, state/schema, orchestrator, Codex-review, loop/resume, abort, and docs
+acceptance contracts. Preserve the A/B identity boundary: A is the controller, B is
+the exact inactive review session resumed by the worker. Do not infer session IDs,
+use `--last`, create a Codex session from Python, expose sensitive artifacts, or
+weaken existing locking, abort, recovery, Git, Desktop/WSL bridge, or model-probing
+behavior.
+
+Implement the packaged controller skill and updated handoff skill together with the
+typed state, detached launcher, controller status lookup, multi-skill installer,
+documentation, and automated tests required by the plan. Use fake agent/Codex CLIs;
+do not run real models or install into the real user home. Stop if an OpenQuestions
+item becomes unresolved before a dependent change, then report it instead of guessing.
+
+Run the focused tests and the full validation commands specified in the plan when
+available.

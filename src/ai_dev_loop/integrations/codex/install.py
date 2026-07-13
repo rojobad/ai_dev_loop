@@ -61,9 +61,18 @@ class AssetInstallResult:
 
 
 @dataclass(frozen=True)
+class SkillAssetResult:
+    directory_name: str
+    path: Path
+    action: AssetAction
+    matches_package: bool = False
+
+
+@dataclass(frozen=True)
 class InstallResult:
     target: CodexIntegrationTarget
     skill: AssetInstallResult
+    skills: tuple[SkillAssetResult, ...]
     hook_script: AssetInstallResult
     hooks_json: AssetInstallResult
     hooks_json_backup: Path | None
@@ -76,6 +85,7 @@ class InstallResult:
 class UninstallResult:
     target: CodexIntegrationTarget
     skill: AssetInstallResult
+    skills: tuple[SkillAssetResult, ...]
     hook_script: AssetInstallResult
     hooks_json: AssetInstallResult
     hooks_json_backup: Path | None
@@ -92,6 +102,7 @@ class IntegrationStatus:
     skill_path: Path
     skill_installed: bool
     skill_matches_package: bool
+    skills: tuple[SkillAssetResult, ...]
     hook_script_path: Path
     hook_script_installed: bool
     hook_script_matches_package: bool
@@ -211,11 +222,23 @@ def install_integrations(
         )
     )
 
-    skill_destination = paths.skill_path(context.skill_home)
+    skill_results: list[SkillAssetResult] = []
+    for descriptor in assets.OWNED_SKILLS:
+        destination = paths.skill_path_for(descriptor, context.skill_home)
+        content = assets.load_skill_content(descriptor)
+        action = _install_text_file(destination, content)
+        skill_results.append(
+            SkillAssetResult(
+                directory_name=descriptor.directory_name,
+                path=destination,
+                action=action,
+                matches_package=True,
+            )
+        )
+    handoff_skill = next(
+        item for item in skill_results if item.directory_name == assets.SKILL_DIRECTORY_NAME
+    )
     hooks_destination = context.hooks_json_path
-    skill_content = assets.load_skill_content()
-
-    skill_action = _install_text_file(skill_destination, skill_content)
     hook_result = _install_wsl_hook_script(context)
 
     if context.target == CodexIntegrationTarget.CODEX_DESKTOP_WSL:
@@ -275,7 +298,8 @@ def install_integrations(
 
     return InstallResult(
         target=context.target,
-        skill=AssetInstallResult(skill_destination, skill_action),
+        skill=AssetInstallResult(handoff_skill.path, handoff_skill.action),
+        skills=tuple(skill_results),
         hook_script=hook_result,
         hooks_json=AssetInstallResult(hooks_destination, hooks_action),
         hooks_json_backup=backup_path,
@@ -312,7 +336,7 @@ def uninstall_integrations(
         )
     )
 
-    skill_destination = paths.skill_path(context.skill_home)
+    skill_results: list[SkillAssetResult] = []
     hooks_destination = context.hooks_json_path
 
     hooks_action = AssetAction.NOT_FOUND
@@ -332,13 +356,30 @@ def uninstall_integrations(
             hooks_update = updated
             hooks_action = AssetAction.UPDATED
 
-    if skill_destination.is_file():
-        skill_destination.unlink()
-        with suppress(OSError):
-            skill_destination.parent.rmdir()
-        skill_result = AssetInstallResult(skill_destination, AssetAction.REMOVED)
-    else:
-        skill_result = AssetInstallResult(skill_destination, AssetAction.NOT_FOUND)
+    for descriptor in assets.OWNED_SKILLS:
+        destination = paths.skill_path_for(descriptor, context.skill_home)
+        if destination.is_file():
+            destination.unlink()
+            with suppress(OSError):
+                destination.parent.rmdir()
+            skill_results.append(
+                SkillAssetResult(
+                    directory_name=descriptor.directory_name,
+                    path=destination,
+                    action=AssetAction.REMOVED,
+                )
+            )
+        else:
+            skill_results.append(
+                SkillAssetResult(
+                    directory_name=descriptor.directory_name,
+                    path=destination,
+                    action=AssetAction.NOT_FOUND,
+                )
+            )
+    handoff_skill = next(
+        item for item in skill_results if item.directory_name == assets.SKILL_DIRECTORY_NAME
+    )
 
     if context.target == CodexIntegrationTarget.WSL_CLI:
         if context.hook_script_path.is_file():
@@ -354,7 +395,8 @@ def uninstall_integrations(
 
     return UninstallResult(
         target=context.target,
-        skill=skill_result,
+        skill=AssetInstallResult(handoff_skill.path, handoff_skill.action),
+        skills=tuple(skill_results),
         hook_script=hook_result,
         hooks_json=AssetInstallResult(hooks_destination, hooks_action),
         hooks_json_backup=backup_path,
@@ -417,6 +459,20 @@ def collect_integration_status(
             ),
             skill_installed=False,
             skill_matches_package=False,
+            skills=tuple(
+                SkillAssetResult(
+                    directory_name=descriptor.directory_name,
+                    path=paths.skill_path_for(
+                        descriptor,
+                        windows_codex_home.parent
+                        if target == CodexIntegrationTarget.CODEX_DESKTOP_WSL and windows_codex_home
+                        else wsl_home,
+                    ),
+                    action=AssetAction.NOT_FOUND,
+                    matches_package=False,
+                )
+                for descriptor in assets.OWNED_SKILLS
+            ),
             hook_script_path=paths.hook_script_path(wsl_home),
             hook_script_installed=False,
             hook_script_matches_package=False,
@@ -440,6 +496,29 @@ def collect_integration_status(
 
     skill_content = assets.load_skill_content()
     hook_content = assets.load_hook_script_content()
+
+    skill_statuses: list[SkillAssetResult] = []
+    any_skill_missing = False
+    for descriptor in assets.OWNED_SKILLS:
+        destination = paths.skill_path_for(descriptor, context.skill_home)
+        expected = assets.load_skill_content(descriptor)
+        installed = destination.is_file()
+        matches = assets.content_matches_package(destination, expected_text=expected)
+        if not installed:
+            any_skill_missing = True
+        if installed and not matches:
+            remediation_items.append(
+                f"Skill {descriptor.directory_name} differs from package content; "
+                "reinstall to update."
+            )
+        skill_statuses.append(
+            SkillAssetResult(
+                directory_name=descriptor.directory_name,
+                path=destination,
+                action=AssetAction.CURRENT if installed else AssetAction.NOT_FOUND,
+                matches_package=matches,
+            )
+        )
 
     skill_installed = skill_destination.is_file()
     hook_installed = hook_destination.is_file()
@@ -466,10 +545,20 @@ def collect_integration_status(
             hooks_valid = False
 
     install_cmd = f"ai_dev_loop integrations install --target {context.target.value}"
-    if not skill_installed or not hook_installed or not registration_present or not hooks_valid:
+    if (
+        not skill_installed
+        or any_skill_missing
+        or not hook_installed
+        or not registration_present
+        or not hooks_valid
+    ):
         remediation_items.append(f"Run: {install_cmd}")
-    if skill_installed and not assets.content_matches_package(
-        skill_destination, expected_text=skill_content
+    if (
+        skill_installed
+        and not assets.content_matches_package(skill_destination, expected_text=skill_content)
+        and not any(
+            item.startswith("Skill ai-dev-loop-handoff differs") for item in remediation_items
+        )
     ):
         remediation_items.append(
             "Skill file differs from current package content; reinstall to update."
@@ -504,6 +593,7 @@ def collect_integration_status(
         skill_matches_package=assets.content_matches_package(
             skill_destination, expected_text=skill_content
         ),
+        skills=tuple(skill_statuses),
         hook_script_path=hook_destination,
         hook_script_installed=hook_installed,
         hook_script_matches_package=assets.content_matches_package(
@@ -551,6 +641,15 @@ def integration_status_payload(
         "skill_installed": status.skill_installed,
         "skill_path": str(status.skill_path),
         "skill_matches_package": status.skill_matches_package,
+        "skills": [
+            {
+                "directory_name": skill.directory_name,
+                "path": str(skill.path),
+                "installed": skill.action != AssetAction.NOT_FOUND,
+                "matches_package": skill.matches_package,
+            }
+            for skill in status.skills
+        ],
         "hook_script_installed": status.hook_script_installed,
         "hook_script_path": str(status.hook_script_path),
         "hook_script_matches_package": status.hook_script_matches_package,
@@ -624,6 +723,15 @@ def render_integrations_status(
         [
             f"Skill installed: {status.skill_installed} ({status.skill_path})",
             f"Skill matches package: {status.skill_matches_package}",
+        ]
+    )
+    for skill in status.skills:
+        lines.append(
+            f"Skill {skill.directory_name}: installed={skill.action != AssetAction.NOT_FOUND} "
+            f"matches_package={skill.matches_package} ({skill.path})"
+        )
+    lines.extend(
+        [
             f"Hook script installed: {status.hook_script_installed} ({status.hook_script_path})",
             f"Hook script matches package: {status.hook_script_matches_package}",
             f"hooks.json present: {status.hooks_json_exists} ({status.hooks_json_path})",
@@ -667,6 +775,14 @@ def render_install_output(result: InstallResult, *, output: str = "text") -> str
             "target": result.target.value,
             "status": "installed",
             "skill": {"path": str(result.skill.path), "action": result.skill.action.value},
+            "skills": [
+                {
+                    "directory_name": skill.directory_name,
+                    "path": str(skill.path),
+                    "action": skill.action.value,
+                }
+                for skill in result.skills
+            ],
             "hook_script": {
                 "path": str(result.hook_script.path),
                 "action": result.hook_script.action.value,
@@ -691,10 +807,15 @@ def render_install_output(result: InstallResult, *, output: str = "text") -> str
     lines = [
         "ai_dev_loop integrations install",
         f"Target: {result.target.value}",
-        f"Skill: {result.skill.action.value} ({result.skill.path})",
-        f"Hook script: {result.hook_script.action.value} ({result.hook_script.path})",
-        f"hooks.json: {result.hooks_json.action.value} ({result.hooks_json.path})",
     ]
+    for skill in result.skills:
+        lines.append(f"Skill {skill.directory_name}: {skill.action.value} ({skill.path})")
+    lines.extend(
+        [
+            f"Hook script: {result.hook_script.action.value} ({result.hook_script.path})",
+            f"hooks.json: {result.hooks_json.action.value} ({result.hooks_json.path})",
+        ]
+    )
     if result.hooks_json_backup is not None:
         lines.append(f"hooks.json backup: {result.hooks_json_backup}")
     if result.session_bridge_status is not None:
@@ -716,6 +837,14 @@ def render_uninstall_output(result: UninstallResult, *, output: str = "text") ->
             "target": result.target.value,
             "status": "uninstalled",
             "skill": {"path": str(result.skill.path), "action": result.skill.action.value},
+            "skills": [
+                {
+                    "directory_name": skill.directory_name,
+                    "path": str(skill.path),
+                    "action": skill.action.value,
+                }
+                for skill in result.skills
+            ],
             "hook_script": {
                 "path": str(result.hook_script.path),
                 "action": result.hook_script.action.value,
@@ -733,10 +862,15 @@ def render_uninstall_output(result: UninstallResult, *, output: str = "text") ->
     lines = [
         "ai_dev_loop integrations uninstall",
         f"Target: {result.target.value}",
-        f"Skill: {result.skill.action.value} ({result.skill.path})",
-        f"Hook script: {result.hook_script.action.value} ({result.hook_script.path})",
-        f"hooks.json: {result.hooks_json.action.value} ({result.hooks_json.path})",
     ]
+    for skill in result.skills:
+        lines.append(f"Skill {skill.directory_name}: {skill.action.value} ({skill.path})")
+    lines.extend(
+        [
+            f"Hook script: {result.hook_script.action.value} ({result.hook_script.path})",
+            f"hooks.json: {result.hooks_json.action.value} ({result.hooks_json.path})",
+        ]
+    )
     if result.hooks_json_backup is not None:
         lines.append(f"hooks.json backup: {result.hooks_json_backup}")
     return "\n".join(lines) + "\n"
@@ -765,6 +899,15 @@ def doctor_integration_checks(
                 f"matches_package={status.skill_matches_package}"
             ),
         )
+        for skill in status.skills:
+            add(
+                f"{prefix}_skill_{skill.directory_name.replace('-', '_')}",
+                skill.action != AssetAction.NOT_FOUND and skill.matches_package,
+                (
+                    f"{skill.path} installed={skill.action != AssetAction.NOT_FOUND} "
+                    f"matches_package={skill.matches_package}"
+                ),
+            )
         add(
             f"{prefix}_hook_script",
             status.hook_script_installed and status.hook_script_matches_package,
@@ -818,6 +961,15 @@ def doctor_integration_checks(
                     f"matches_package={desktop_status.skill_matches_package}"
                 ),
             )
+            for skill in desktop_status.skills:
+                add(
+                    f"{prefix}_skill_{skill.directory_name.replace('-', '_')}",
+                    skill.action != AssetAction.NOT_FOUND and skill.matches_package,
+                    (
+                        f"{skill.path} installed={skill.action != AssetAction.NOT_FOUND} "
+                        f"matches_package={skill.matches_package}"
+                    ),
+                )
             add(
                 f"{prefix}_hook_script",
                 desktop_status.hook_script_installed and desktop_status.hook_script_matches_package,

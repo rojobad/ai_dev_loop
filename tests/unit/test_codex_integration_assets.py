@@ -10,10 +10,16 @@ from ai_dev_loop.integrations.codex import assets
 
 def test_load_skill_and_hook_assets() -> None:
     skill = assets.load_skill_content()
+    controller = assets.load_skill_content(assets.CONTROLLER_SKILL)
     hook = assets.load_hook_script_content()
     assert "name: ai-dev-loop-handoff" in skill
+    assert "name: ai-dev-loop-controller" in controller
     assert "ai_dev_loop prepare" in skill
-    assert "Never" in skill and "ai_dev_loop start" in skill
+    assert "--controller-session-id" in skill
+    assert "ai_dev_loop start" in skill
+    assert "ai_dev_loop launch" in controller
+    assert "controller status" in controller
+    assert "--last" in skill
     assert "hookSpecificOutput" in hook
     assert "transcript_path" in hook
     assert "ai_dev_loop" in hook
@@ -21,6 +27,7 @@ def test_load_skill_and_hook_assets() -> None:
 
 def test_package_assets_exist_on_disk() -> None:
     assert assets.skill_package_path().is_file()
+    assert assets.skill_package_path(assets.CONTROLLER_SKILL).is_file()
     assert assets.hook_script_package_path().is_file()
 
 
@@ -39,4 +46,18 @@ def test_built_wheel_includes_integration_assets(tmp_path: Path) -> None:
     with zipfile.ZipFile(wheels[-1]) as archive:
         names = archive.namelist()
     assert any("integrations/codex/skill/SKILL.md" in name for name in names)
+    assert any("integrations/codex/controller_skill/SKILL.md" in name for name in names)
     assert any("integrations/codex/session_start.py" in name for name in names)
+
+
+def test_skill_guardrail_text_regression() -> None:
+    handoff = assets.load_skill_content()
+    controller = assets.load_skill_content(assets.CONTROLLER_SKILL)
+    for text in (handoff, controller):
+        assert "--last" in text
+        assert "exact" in text.lower()
+    assert "inactive" in handoff.lower() or "untouched" in handoff.lower()
+    assert "**Do not** run `ai_dev_loop start`" in handoff
+    assert "controller status" in controller
+    assert "existing read-only" in controller
+    assert "staged patches" in controller or "review Markdown" in controller

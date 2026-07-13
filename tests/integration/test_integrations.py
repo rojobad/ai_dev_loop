@@ -21,9 +21,18 @@ runner = CliRunner()
 def test_first_time_install(isolated_integrations: Path, isolated_xdg: Path) -> None:
     result = integration_install.install_integrations(home=isolated_integrations)
     assert result.skill.action.value == "created"
+    assert len(result.skills) == 2
+    assert {skill.directory_name for skill in result.skills} == {
+        "ai-dev-loop-handoff",
+        "ai-dev-loop-controller",
+    }
+    assert all(skill.action.value == "created" for skill in result.skills)
     assert result.hook_script.action.value == "created"
     assert result.hooks_json.action.value == "created"
     assert integration_paths.skill_path(isolated_integrations).is_file()
+    assert integration_paths.skill_path(
+        isolated_integrations, directory_name="ai-dev-loop-controller"
+    ).is_file()
     assert integration_paths.hook_script_path(isolated_integrations).is_file()
     assert integration_paths.hooks_json_path(isolated_integrations).is_file()
 
@@ -32,6 +41,7 @@ def test_idempotent_second_install(isolated_integrations: Path, isolated_xdg: Pa
     integration_install.install_integrations(home=isolated_integrations)
     second = integration_install.install_integrations(home=isolated_integrations)
     assert second.skill.action.value == "current"
+    assert all(skill.action.value == "current" for skill in second.skills)
     assert second.hook_script.action.value == "current"
     assert second.hooks_json.action.value == "current"
 
@@ -82,6 +92,9 @@ def test_invalid_hooks_json_uninstall_leaves_installed_files(
     integration_install.install_integrations(home=isolated_integrations)
     hooks_path = integration_paths.hooks_json_path(isolated_integrations)
     skill_path = integration_paths.skill_path(isolated_integrations)
+    controller_path = integration_paths.skill_path(
+        isolated_integrations, directory_name="ai-dev-loop-controller"
+    )
     hook_path = integration_paths.hook_script_path(isolated_integrations)
     hooks_path.write_text("{bad", encoding="utf-8")
 
@@ -89,6 +102,7 @@ def test_invalid_hooks_json_uninstall_leaves_installed_files(
         integration_install.uninstall_integrations(home=isolated_integrations)
 
     assert skill_path.is_file()
+    assert controller_path.is_file()
     assert hook_path.is_file()
     assert hooks_path.read_text(encoding="utf-8") == "{bad"
 
@@ -106,9 +120,13 @@ def test_uninstall_preserves_unrelated_hooks(
 
     result = integration_install.uninstall_integrations(home=isolated_integrations)
     assert result.skill.action.value == "removed"
+    assert all(skill.action.value == "removed" for skill in result.skills)
     assert result.hook_script.action.value == "removed"
     assert result.hooks_json.action.value == "updated"
     assert not integration_paths.skill_path(isolated_integrations).is_file()
+    assert not integration_paths.skill_path(
+        isolated_integrations, directory_name="ai-dev-loop-controller"
+    ).is_file()
     assert not integration_paths.hook_script_path(isolated_integrations).is_file()
     remaining = hooks_json.load_hooks_document(hooks_path)
     assert "PreToolUse" in remaining["hooks"]
@@ -124,6 +142,7 @@ def test_status_json_after_install_and_uninstall(
     payload = json.loads(installed.stdout)
     assert payload["target"] == "wsl-cli"
     assert payload["skill_installed"] is True
+    assert len(payload["skills"]) == 2
     assert payload["hook_registration_present"] is True
     assert payload["hook_trust_status"] == "unknown"
 
@@ -132,6 +151,7 @@ def test_status_json_after_install_and_uninstall(
     payload = json.loads(removed.stdout)
     assert payload["skill_installed"] is False
     assert payload["hook_registration_present"] is False
+    assert all(not skill["installed"] for skill in payload["skills"])
 
 
 def test_cli_install_and_uninstall(isolated_integrations: Path, isolated_xdg: Path) -> None:

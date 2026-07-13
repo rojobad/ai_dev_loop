@@ -138,6 +138,38 @@ Luego:
 
 Para Desktop, recuerda que la confianza se hace en Codex Desktop, no en WSL.
 
+## Controller: 0 o N coincidencias
+
+`controller status` resuelve por session ID exacto de controller y raiz del repo. No elige el run mas reciente.
+
+- 0 matches no terminales: confirma el ID exacto de A, el `--repo-path` y que el prepare fue A/B; usa `--run-id` o `--include-terminal` solo si conoces el run.
+- N matches: pasa `--run-id` con uno de los candidatos listados. No adivines por timestamp.
+
+## Reviewer B activo o usado tras prepare
+
+Sintoma: A lanzo el run pero B sigue recibiendo prompts o se usa la UI de B en paralelo.
+
+Accion: deja B intacta. Todo review reanuda solo B. Si B se uso tras prepare, el contexto puede contaminarse; aborta si hace falta, inspecciona artefactos y prepara un run nuevo si el contrato ya no es confiable.
+
+## Worker / launcher stale
+
+`controller status` y `launch` verifican identidad del worker (PID vivo + PGID +
+`/proc` starttime cuando esta disponible), no solo que el PID exista. Un PID
+reutilizado o un registro `running` huerfano se trata como stale: no bloquea un
+nuevo `launch` y no autoriza senalizacion. Inspecciona `locks/launcher.json` y
+los logs del launcher si necesitas diagnostico manual.
+
+Accion: conserva diagnosticos; usa `abort` (persiste el abort request) o
+`status`/`inspect`/`logs`. No mates PIDs a mano por un registro dudoso. Si el
+worker fallo tras progreso durable, usa `recover`/`resume` solo cuando la
+elegibilidad lo permita.
+
+## Falta capacidad de fork o mensaje A↔B
+
+Los skills A/B dependen de capacidades de la app Codex (fork same-directory y mensaje autorizado de B a A).
+
+Si faltan: los skills se detienen con explicacion acotada. No uses `--last`, no inventes session IDs y no scrapees rollouts para inferir parentesco. Completa handoff cuando la capacidad este disponible, o usa el flujo legacy sin `--controller-session-id` desde WSL.
+
 ## WSL distro ambiguo
 
 Pasa el distro explicitamente:

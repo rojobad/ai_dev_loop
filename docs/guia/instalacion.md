@@ -101,3 +101,29 @@ codex update
 ```
 
 Una actualizacion puede agregar soporte, pero no se presume que exista una version nueva. Despues se repiten los probes. Este flujo actualiza solo binarios CLI dentro de WSL, no Cursor Desktop ni Codex Desktop en Windows.
+
+## Integraciones Codex (skills y hook)
+
+Tras instalar el paquete, instala la integracion del target que uses:
+
+```bash
+ai_dev_loop integrations install --target wsl-cli
+# o
+ai_dev_loop integrations install --target codex-desktop-wsl --wsl-distro Ubuntu-22.04
+```
+
+El instalador coloca:
+
+- `ai-dev-loop-handoff/SKILL.md`
+- `ai-dev-loop-controller/SKILL.md`
+- el script `SessionStart` `ai_dev_loop_session_start.py`
+- el registro del hook en el `hooks.json` visible para ese target
+
+No hace, por defecto:
+
+- confiar el hook en Codex (sigue siendo paso manual en `/hooks`);
+- crear el puente `sessions/from-desktop` (salvo `--install-session-bridge` o `integrations sessions install`);
+- abrir una sesion Codex nueva;
+- enviar notificaciones automaticas.
+
+Ver [Confianza de hooks](../integraciones/confianza-hooks.md) y [Codex Desktop + WSL](../integraciones/codex-desktop-wsl.md).

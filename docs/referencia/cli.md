@@ -30,6 +30,7 @@ Opciones principales:
 --plan-path PATH
 --prompt-source-path PATH
 --codex-session-id TEXT
+--controller-session-id TEXT
 --cursor-command TEXT
 --cursor-model TEXT
 --cursor-output-format TEXT
@@ -45,16 +46,54 @@ Opciones principales:
 
 `--codex-review-model` y `--codex-review-reasoning-effort` son overrides opcionales e independientes. Si no se pasan y YAML omite/usa `null`, `prepare` captura el campo correspondiente de la sesion exacta. No hay flag para limpiar un override del YAML; configura herencia antes de `prepare`.
 
-Ejemplo:
+`--controller-session-id` es opcional. En el flujo A/B (skill handoff) es el session ID exacto del controller A y debe diferir de `--codex-session-id` (reviewer B). Con controller: `requires_codex_exit` es `false`, `reviewer_must_remain_inactive` es `true` y `launch_command` queda disponible. Sin controller: comportamiento legacy con `requires_codex_exit: true` y `start`.
+
+Ejemplo A/B:
 
 ```bash
 ai_dev_loop prepare \
   --repo-path /path/al/repo \
   --plan-path docs/plans/mi-plan.md \
   --prompt-source-path docs/plans/prompt_mi-plan.txt \
-  --codex-session-id "<session-id-exacto>" \
+  --codex-session-id "<exact-reviewer-session-id>" \
+  --controller-session-id "<exact-controller-session-id>" \
   --output json < docs/plans/prompt_mi-plan.txt
 ```
+
+Ejemplo legacy:
+
+```bash
+ai_dev_loop prepare \
+  --repo-path /path/al/repo \
+  --plan-path docs/plans/mi-plan.md \
+  --prompt-source-path docs/plans/prompt_mi-plan.txt \
+  --codex-session-id "<exact-codex-session-id>" \
+  --output json < docs/plans/prompt_mi-plan.txt
+```
+
+## `launch`
+
+```bash
+ai_dev_loop launch <run-id> --controller-session-id TEXT [--repo-path PATH] \
+  [--update-tools|--skip-tool-update] [--allow-incompatible-tools] [--output text|json]
+```
+
+Lanza un run A/B preparado en un worker local detachado. Requiere el controller session ID exacto del prepare. Es idempotente si el worker ya esta vivo. No sustituye `start` para runs legacy sin controller.
+
+Los flags de compatibilidad de herramientas son los mismos que en `start`/`resume`, pero el worker es siempre non-interactive: nunca pregunta. `--update-tools` autoriza updaters; `--skip-tool-update` (o la omision) no actualiza; `--allow-incompatible-tools` permite continuar ante incompatibilidad confirmada. `--update-tools` y `--skip-tool-update` son mutuamente excluyentes.
+
+## `controller status`
+
+```bash
+ai_dev_loop controller status \
+  --controller-session-id TEXT \
+  --repo-path PATH \
+  [--run-id TEXT] \
+  [--include-terminal] \
+  [--output text|json]
+```
+
+Lookup read-only por controller session ID y repositorio. Ante ambiguedad (0 o N matches) no elige por timestamp; usa `--run-id` para desambiguar. Incluye liveness del worker en la respuesta.
 
 ## `start`
 

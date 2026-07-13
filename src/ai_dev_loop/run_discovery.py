@@ -6,6 +6,7 @@ from pathlib import Path
 
 from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.paths import runs_dir
+from ai_dev_loop.resume_planner import TERMINAL_STATUSES
 from ai_dev_loop.state import RunState, load_run_state
 
 
@@ -55,3 +56,29 @@ def list_run_directories(
                 continue
             results.append((run_path, state))
     return results
+
+
+def find_runs_for_controller(
+    *,
+    controller_session_id: str,
+    repository_root: Path,
+    include_terminal: bool = False,
+) -> list[tuple[Path, RunState]]:
+    """Return runs whose persisted controller ID and repository root match exactly.
+
+    Never selects by timestamp. Callers must handle zero or multiple matches.
+    """
+
+    repo_root = repository_root.resolve()
+    matches: list[tuple[Path, RunState]] = []
+    for run_path, state in list_run_directories():
+        if state.controller is None:
+            continue
+        if state.controller.controller_session_id != controller_session_id:
+            continue
+        if Path(state.repository.root).resolve() != repo_root:
+            continue
+        if not include_terminal and state.status in TERMINAL_STATUSES:
+            continue
+        matches.append((run_path, state))
+    return matches

@@ -1,25 +1,30 @@
 # Ejecutar runs
 
-Un run pasa por cinco comandos principales:
+Un run pasa por estos comandos principales:
 
 ```bash
 ai_dev_loop prepare
+ai_dev_loop launch <run-id> --controller-session-id <exact-controller-session-id>
 ai_dev_loop start <run-id>
 ai_dev_loop resume <run-id>
 ai_dev_loop abort <run-id>
 ai_dev_loop recover <failed-run-id>
+ai_dev_loop controller status --controller-session-id <exact-controller-session-id> --repo-path /path/al/repo
 ```
+
+`launch` y `controller status` aplican a runs preparados con A/B (`--controller-session-id`). `start` sigue siendo el camino legacy sin controller.
 
 ## `prepare`
 
-`prepare` se ejecuta desde la sesion original de Codex cuando el plan y el prompt ya fueron aprobados.
+`prepare` crea el run cuando el plan y el prompt ya fueron aprobados. En el flujo A/B lo ejecuta la sesion reviewer B.
 
 ```bash
 ai_dev_loop prepare \
   --repo-path /path/al/repo \
   --plan-path docs/plans/mi-plan.md \
   --prompt-source-path docs/plans/prompt_mi-plan.txt \
-  --codex-session-id "<session-id-exacto>" \
+  --codex-session-id "<exact-reviewer-session-id>" \
+  --controller-session-id "<exact-controller-session-id>" \
   --output json < docs/plans/prompt_mi-plan.txt
 ```
 
@@ -34,14 +39,65 @@ Hace esto:
 - copia snapshots del plan y prompt;
 - calcula hashes SHA-256;
 - crea `state.json`, `manifest.json`, configuracion efectiva y baseline Git;
-- devuelve `start_command`;
+- con `--controller-session-id`, persiste metadata de controller (A distinto de B);
 - no ejecuta Cursor ni Codex.
+
+Prepare A/B valido:
+
+- `requires_codex_exit: false`
+- `reviewer_must_remain_inactive: true`
+- `launch_command` presente para el controller
+
+Prepare legacy (sin `--controller-session-id`):
+
+- `requires_codex_exit: true`
+- usa `start_command` tras salir de la UI Codex
 
 Si el plan o prompt cambian despues de `prepare`, prepara un nuevo run.
 
+## `launch`
+
+```bash
+ai_dev_loop launch <run-id> \
+  --controller-session-id "<exact-controller-session-id>" \
+  [--update-tools|--skip-tool-update] \
+  [--allow-incompatible-tools]
+```
+
+`launch` arranca un worker local detachado que invoca el mismo camino de `start` para un run A/B preparado.
+
+Antes de spawn:
+
+- exige metadata de controller y que el ID coincida;
+- exige que controller y reviewer sean distintos;
+- rechaza estados terminales;
+- toma un lock de launch dedicado (validacion/spawn/registro atomicos);
+- es idempotente si un worker vivo con identidad verificada ya posee el mismo run.
+
+El worker usa locks normales de run/repositorio. La politica de herramientas es explicita y non-interactive: se pueden pasar `--update-tools`, `--skip-tool-update` y `--allow-incompatible-tools`, pero el worker nunca pregunta en TTY. B debe permanecer inactiva.
+
+## `controller status`
+
+```bash
+ai_dev_loop controller status \
+  --controller-session-id "<exact-controller-session-id>" \
+  --repo-path /path/al/repo \
+  [--run-id <run-id>] \
+  [--include-terminal] \
+  [--output text|json]
+```
+
+Lookup read-only por session ID de controller y raiz del repo. No adquiere locks de mutacion ni llama Cursor/Codex.
+
+- 0 coincidencias no terminales: reporta accion segura; no adivina.
+- N coincidencias: pide `--run-id`; no elige por timestamp.
+- 1 coincidencia: resume estado, iteracion, liveness del worker, error/resultado seguro y siguiente accion.
+
+La salida humana acorta session IDs.
+
 ## `start`
 
-`start` ejecuta el loop completo:
+`start` ejecuta el loop completo (flujo legacy o reanudacion local sin `launch`):
 
 ```bash
 ai_dev_loop start <run-id>
@@ -55,13 +111,13 @@ Antes de invocar agentes:
 - verifica autenticacion cuando es seguro;
 - verifica modelo Cursor;
 - exige el session ID Codex capturado;
-- advierte que no uses la UI interactiva original.
+- advierte quietud de la sesion reviewer (A/B) o de la UI original (legacy).
 
 Luego coordina:
 
 1. Cursor implementa en el chat del run.
 2. `ai_dev_loop` ejecuta staging controlado con `git add -A`.
-3. Codex revisa staged changes reanudando la sesion exacta.
+3. Codex revisa staged changes reanudando la sesion exacta del reviewer.
 4. Si hay findings, Codex devuelve un `cursor_fix_prompt`.
 5. Cursor corrige usando el mismo chat (puede mutar el index; el orquestador vuelve a normalizar con `git add -A`).
 6. Se repite hasta no findings o limite de iteraciones.
@@ -210,7 +266,7 @@ En non-TTY nunca se cambia de modelo automaticamente: imprime el comando `recove
 ai_dev_loop abort <run-id>
 ```
 
-`abort` solicita cancelacion de un run no terminal.
+`abort` solicita cancelacion de un run no terminal, incluido un run lanzado con `launch`.
 
 Hace esto:
 
@@ -228,6 +284,7 @@ No hace:
 - `git commit`;
 - `git push`;
 - unstaging;
-- borrado de artefactos.
+- borrado de artefactos;
+- senalizacion ciega de un worker stale o ambiguo.
 
 Si metadata de proceso es ambigua, falla de forma conservadora y deja diagnosticos.

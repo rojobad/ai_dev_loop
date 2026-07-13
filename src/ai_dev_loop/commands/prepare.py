@@ -26,6 +26,7 @@ from ai_dev_loop.runners.git import (
 )
 from ai_dev_loop.state import (
     CodexState,
+    ControllerState,
     CursorState,
     ManifestArtifact,
     PlanState,
@@ -56,6 +57,7 @@ class PrepareOptions:
     plan_path: Path | None = None
     prompt_source_path: Path | None = None
     codex_session_id: str | None = None
+    controller_session_id: str | None = None
     cursor_command: str | None = None
     cursor_model: str | None = None
     cursor_output_format: str | None = None
@@ -74,6 +76,7 @@ class PrepareResult:
     run_id: str
     project: str
     start_command: str
+    launch_command: str | None
     run_directory: Path
     session_model: str
     session_reasoning_effort: str
@@ -81,6 +84,9 @@ class PrepareResult:
     review_reasoning_effort: str
     review_model_source: str
     review_reasoning_source: str
+    controller_session_id: str | None = None
+    requires_codex_exit: bool = True
+    reviewer_must_remain_inactive: bool = False
     model_family_warning: str | None = None
     model_mismatch_warning: str | None = None
 
@@ -161,6 +167,14 @@ def prepare_run(options: PrepareOptions) -> PrepareResult:
         require_clean=effective.workflow.require_clean_worktree,
     )
     session_id = require_codex_session_id(options.codex_session_id)
+    controller_session_id: str | None = None
+    if options.controller_session_id is not None:
+        controller_session_id = require_codex_session_id(options.controller_session_id)
+        if controller_session_id == session_id:
+            raise ValidationError(
+                "controller session id must differ from the reviewer Codex session id; "
+                "refusing equal A/B identities"
+            )
     session_runtime = read_codex_session_runtime(session_id)
     review_runtime = resolve_effective_review_runtime(
         session=session_runtime,
@@ -275,6 +289,9 @@ def prepare_run(options: PrepareOptions) -> PrepareResult:
             cursor_timeout_minutes=effective.workflow.cursor_timeout_minutes,
             codex_timeout_minutes=effective.workflow.codex_timeout_minutes,
         ),
+        controller=None
+        if controller_session_id is None
+        else ControllerState(controller_session_id=controller_session_id),
     )
 
     manifest = RunManifest(
@@ -330,15 +347,23 @@ def prepare_run(options: PrepareOptions) -> PrepareResult:
             "review_reasoning_source": review_runtime.review_reasoning_source,
             "session_origin": review_runtime.session_origin,
             "has_model_family_warning": review_runtime.model_family_warning is not None,
+            "has_controller": controller_session_id is not None,
         },
     )
     set_sensitive_file_mode(destination / "state.json")
 
     start_command = f"ai_dev_loop start {run_id}"
+    is_ab = controller_session_id is not None
+    launch_command = (
+        f"ai_dev_loop launch {run_id} --controller-session-id {controller_session_id}"
+        if is_ab
+        else None
+    )
     return PrepareResult(
         run_id=run_id,
         project=effective.project.name,
         start_command=start_command,
+        launch_command=launch_command,
         run_directory=destination,
         session_model=review_runtime.session_model,
         session_reasoning_effort=review_runtime.session_reasoning_effort,
@@ -346,6 +371,9 @@ def prepare_run(options: PrepareOptions) -> PrepareResult:
         review_reasoning_effort=review_runtime.review_reasoning_effort,
         review_model_source=review_runtime.review_model_source,
         review_reasoning_source=review_runtime.review_reasoning_source,
+        controller_session_id=controller_session_id,
+        requires_codex_exit=not is_ab,
+        reviewer_must_remain_inactive=is_ab,
         model_family_warning=review_runtime.model_family_warning,
         model_mismatch_warning=review_runtime.model_mismatch_warning,
     )
@@ -359,7 +387,10 @@ def render_prepare_output(result: PrepareResult, *, output: str) -> str:
             "run_id": result.run_id,
             "project": result.project,
             "start_command": result.start_command,
-            "requires_codex_exit": True,
+            "launch_command": result.launch_command,
+            "requires_codex_exit": result.requires_codex_exit,
+            "reviewer_must_remain_inactive": result.reviewer_must_remain_inactive,
+            "controller_session_id_present": result.controller_session_id is not None,
             "session_model": result.session_model,
             "session_reasoning_effort": result.session_reasoning_effort,
             "review_model": result.review_model,
@@ -379,8 +410,16 @@ def render_prepare_output(result: PrepareResult, *, output: str) -> str:
         f"Review model: {result.review_model} ({result.review_model_source})",
         f"Review reasoning: {result.review_reasoning_effort} ({result.review_reasoning_source})",
         f"Start command: {result.start_command}",
-        "Important: exit the active Codex TUI before running start.",
     ]
+    if result.reviewer_must_remain_inactive:
+        lines.append(
+            "A/B prepare: leave the reviewer Codex session inactive. "
+            "Launch only from the distinct controller session after B is untouched."
+        )
+        if result.launch_command:
+            lines.append(f"Launch command: {result.launch_command}")
+    else:
+        lines.append("Important: exit the active Codex TUI before running start.")
     if result.model_mismatch_warning:
         lines.append(f"Warning: {result.model_mismatch_warning}")
     if result.model_family_warning:

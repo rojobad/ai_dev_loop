@@ -119,6 +119,12 @@ def render_status(run_id: str, *, output: str = "text") -> str:
 def _next_action(state: RunState, run_path: Path) -> str:
     status = state.status.value
     if status == "prepared":
+        if state.controller is not None:
+            return (
+                "Leave the reviewer Codex session inactive, then from the controller "
+                "session run ai_dev_loop launch <run-id> --controller-session-id <exact-id> "
+                "(or use the ai-dev-loop-controller skill)."
+            )
         return "Exit Codex TUI, then run ai_dev_loop start <run-id>."
     if status == "staging":
         iteration = f"{state.workflow.current_review_iteration:02d}"

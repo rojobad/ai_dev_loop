@@ -170,6 +170,22 @@ Documentado en:
 - [Referencia de configuracion](configuracion.md)
 - [Estado y artefactos](../operacion/estado-artefactos.md)
 
+## Fase 14
+
+Implemento controller remoto y sesion reviewer aislada (A/B): `prepare --controller-session-id`, `launch` con worker local detachado, `controller status` read-only, skills `ai-dev-loop-handoff` y `ai-dev-loop-controller`, sin notificaciones automaticas y sin cambios al YAML del repo objetivo.
+
+Documentado en:
+
+- [Flujo de handoff](../guia/flujo-handoff.md)
+- [Ejecutar runs](../operacion/prepare-start-resume-abort.md)
+- [Codex Desktop + WSL](../integraciones/codex-desktop-wsl.md)
+- [Instalacion](../guia/instalacion.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+- [Seguridad y privacidad](../operacion/seguridad-privacidad.md)
+- [Estado, logs e inspeccion](../operacion/observabilidad.md)
+- [Referencia CLI](cli.md)
+- [Referencia de configuracion](configuracion.md)
+
 ## Riesgos residuales documentados
 
 - Hook trust sigue siendo `unknown` desde CLI.
@@ -177,3 +193,5 @@ Documentado en:
 - Cambiar entre familias GPT-5.5 y GPT-5.6 puede intentar compactacion previa en versiones validadas; no ocurre universalmente.
 - Temporales DrvFS pueden romper pytest capture.
 - No hay comando destructivo de cleanup; limpieza es manual.
+- Capacidades de fork/mensaje A↔B dependen de la app Codex; si faltan, el handoff A/B se detiene sin inventar IDs.
+- No hay notificaciones push automaticas desde el worker; el estado se consulta bajo demanda desde A.

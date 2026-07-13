@@ -411,6 +411,19 @@ class RecoveryState(BaseModel):
         return self
 
 
+class ControllerState(BaseModel):
+    """Optional A/B controller identity for remote launch and status lookup.
+
+    Reviewer identity remains ``codex.session_id``. Historical runs omit this
+    section entirely and keep the legacy start/resume workflow.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: int = Field(default=1, alias="schema_version")
+    controller_session_id: str
+
+
 class RunState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -430,6 +443,7 @@ class RunState(BaseModel):
     result: str | None = None
     last_error: str | None = None
     recovery: RecoveryState | None = None
+    controller: ControllerState | None = None
 
 
 class ManifestArtifact(BaseModel):

@@ -25,6 +25,7 @@ El target desktop instala:
 
 ```text
 /mnt/c/Users/<usuario>/.agents/skills/ai-dev-loop-handoff/SKILL.md
+/mnt/c/Users/<usuario>/.agents/skills/ai-dev-loop-controller/SKILL.md
 /home/<usuario>/.codex/hooks/ai_dev_loop_session_start.py
 /mnt/c/Users/<usuario>/.codex/hooks.json
 ```
@@ -36,6 +37,21 @@ wsl.exe -d Ubuntu-22.04 --exec python3 /home/<usuario>/.codex/hooks/ai_dev_loop_
 ```
 
 El hook escribe metadata minima en el XDG state de WSL, no en estado de Windows.
+
+El instalador no confia el hook automaticamente, no crea el puente de sesiones, no abre una sesion Codex nueva y no envia notificaciones.
+
+## Control remoto / movil (A/B)
+
+Con Desktop (incluido ChatGPT movil sobre la misma conversacion de planificacion):
+
+1. En la sesion controller A, usa `ai-dev-loop-handoff` tras aprobar plan y prompt.
+2. A crea un fork same-directory a B; B prepara el run y devuelve la identidad a A.
+3. B queda inactiva.
+4. Desde A, `ai-dev-loop-controller` lanza, consulta estado o aborta.
+
+El estado es bajo demanda (`controller status`). Phase 14 no envia notificaciones push automaticas al movil ni a ChatGPT.
+
+El puente de sesiones y el hook `SessionStart` no cambian de topologia respecto a fases anteriores.
 
 ## Puente de sesiones
 
@@ -84,10 +100,10 @@ ai_dev_loop integrations sessions list
 Para verificar resolucion de un ID desktop desde WSL sin enviar prompt:
 
 ```bash
-codex exec resume <desktop-session-id> --help
+codex exec resume <exact-desktop-session-id> --help
 ```
 
-No uses `--last`. Usa solo el ID exacto de la sesion que preparo el run.
+No uses `--last`. Usa solo el ID exacto de la sesion reviewer que preparo el run.
 
 ## Desinstalar
 
@@ -97,8 +113,9 @@ ai_dev_loop integrations uninstall --target codex-desktop-wsl --wsl-distro Ubunt
 
 La desinstalacion desktop:
 
-- elimina el skill visible para Windows;
+- elimina ambos `SKILL.md` owned (`ai-dev-loop-handoff`, `ai-dev-loop-controller`);
 - elimina la entrada de hook desktop en `hooks.json` de Windows;
 - preserva el hook script WSL cuando puede ser usado por otro target;
 - preserva el puente `from-desktop`;
-- preserva estado XDG y run history.
+- preserva estado XDG y run history;
+- preserva archivos añadidos por el usuario dentro de los directorios de skill owned.

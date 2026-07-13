@@ -195,6 +195,19 @@
     "iterations": { "type": "array" },
     "result": { "type": ["string", "null"] },
     "last_error": { "type": ["string", "null"] },
+    "controller": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "controller_session_id"],
+      "properties": {
+        "schema_version": { "type": "integer", "const": 1 },
+        "controller_session_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        }
+      }
+    },
     "recovery": {
       "type": "object",
       "additionalProperties": false,

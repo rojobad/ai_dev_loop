@@ -13,6 +13,7 @@ import typer
 from ai_dev_loop import __version__
 from ai_dev_loop.commands.abort import render_abort_output, run_abort
 from ai_dev_loop.commands.config_cmd import run_validate_config
+from ai_dev_loop.commands.controller import controller_status, render_controller_status
 from ai_dev_loop.commands.doctor import render_doctor
 from ai_dev_loop.commands.inspect import render_inspect
 from ai_dev_loop.commands.integrations import (
@@ -29,6 +30,7 @@ from ai_dev_loop.commands.integrations import (
     render_uninstall_output,
     uninstall_integrations,
 )
+from ai_dev_loop.commands.launch import launch_run, render_launch_output
 from ai_dev_loop.commands.list_runs import render_list
 from ai_dev_loop.commands.logs import render_logs
 from ai_dev_loop.commands.prepare import PrepareOptions, prepare_run, render_prepare_output
@@ -51,10 +53,12 @@ app = typer.Typer(
     add_completion=False,
 )
 config_app = typer.Typer(help="Configuration commands.")
+controller_app = typer.Typer(help="Controller-session status and control helpers.")
 integrations_app = typer.Typer(help="Global Codex integration commands.")
 sessions_app = typer.Typer(help="Desktop session rollout bridge commands.")
 integrations_app.add_typer(sessions_app, name="sessions")
 app.add_typer(config_app, name="config")
+app.add_typer(controller_app, name="controller")
 app.add_typer(integrations_app, name="integrations")
 
 
@@ -217,6 +221,16 @@ def prepare_command(
         str | None,
         typer.Option("--codex-session-id", help="Exact active Codex session ID."),
     ] = None,
+    controller_session_id: Annotated[
+        str | None,
+        typer.Option(
+            "--controller-session-id",
+            help=(
+                "Exact controller Codex session ID for A/B remote launch "
+                "(must differ from --codex-session-id)."
+            ),
+        ),
+    ] = None,
     cursor_command: Annotated[
         str | None,
         typer.Option("--cursor-command", help="Override cursor.command."),
@@ -272,6 +286,7 @@ def prepare_command(
             plan_path=plan_path,
             prompt_source_path=prompt_source_path,
             codex_session_id=codex_session_id,
+            controller_session_id=controller_session_id,
             cursor_command=cursor_command,
             cursor_model=cursor_model,
             cursor_output_format=cursor_output_format,
@@ -286,6 +301,103 @@ def prepare_command(
         )
         result = prepare_run(options)
         typer.echo(render_prepare_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@app.command("launch")
+def launch_command(
+    run_id: Annotated[str, typer.Argument(help="Prepared A/B run identifier.")],
+    controller_session_id: Annotated[
+        str,
+        typer.Option(
+            "--controller-session-id",
+            help="Exact controller Codex session ID from the prepared run.",
+        ),
+    ],
+    repo_path: Annotated[
+        Path | None,
+        typer.Option("--repo-path", help="Optional repository root identity check."),
+    ] = None,
+    update_tools: Annotated[
+        bool,
+        typer.Option(
+            "--update-tools",
+            help="Run official Cursor/Codex self-updaters for incompatible tools without prompting.",
+        ),
+    ] = False,
+    skip_tool_update: Annotated[
+        bool,
+        typer.Option(
+            "--skip-tool-update",
+            help="Never run CLI self-updaters; fail on incompatible tools unless allowed.",
+        ),
+    ] = False,
+    allow_incompatible_tools: Annotated[
+        bool,
+        typer.Option(
+            "--allow-incompatible-tools",
+            help="Continue even when required models are not listed by the installed CLIs.",
+        ),
+    ] = False,
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Launch a prepared A/B run in a detached local worker."""
+
+    def run() -> None:
+        from ai_dev_loop.runners.tool_updates import ToolUpdateFlags
+
+        result = launch_run(
+            run_id,
+            controller_session_id=controller_session_id,
+            repo_path=repo_path,
+            tool_flags=ToolUpdateFlags(
+                update_tools=update_tools,
+                skip_tool_update=skip_tool_update,
+                allow_incompatible_tools=allow_incompatible_tools,
+            ),
+        )
+        typer.echo(render_launch_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@controller_app.command("status")
+def controller_status_command(
+    controller_session_id: Annotated[
+        str,
+        typer.Option(
+            "--controller-session-id",
+            help="Exact controller Codex session ID.",
+        ),
+    ],
+    repo_path: Annotated[
+        Path,
+        typer.Option("--repo-path", help="Target repository root."),
+    ],
+    run_id: Annotated[
+        str | None,
+        typer.Option("--run-id", help="Optional run ID to disambiguate matches."),
+    ] = None,
+    include_terminal: Annotated[
+        bool,
+        typer.Option(
+            "--include-terminal",
+            help="Include terminal runs when matching by controller session.",
+        ),
+    ] = False,
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Read-only status lookup for runs owned by a controller session."""
+
+    def run() -> None:
+        result = controller_status(
+            controller_session_id=controller_session_id,
+            repo_path=repo_path,
+            run_id=run_id,
+            include_terminal=include_terminal,
+        )
+        typer.echo(render_controller_status(result, output=output.value), nl=False)
 
     _handle(run)
 

@@ -17,7 +17,12 @@ These contracts protect the user-level Codex integration layer for `ai_dev_loop`
 
 ## Installed Paths
 
-- Install the global handoff skill only at `$HOME/.agents/skills/ai-dev-loop-handoff/SKILL.md` for the selected target's Codex-visible home.
+- Install only the package-owned skills at:
+  - `$HOME/.agents/skills/ai-dev-loop-handoff/SKILL.md`
+  - `$HOME/.agents/skills/ai-dev-loop-controller/SKILL.md`
+  for the selected target's Codex-visible home.
+- Those two skill directories are the only package-managed skills. Do not invent
+  additional skill install roots.
 - For `wsl-cli`, the Codex-visible home is the WSL user home.
 - For `codex-desktop-wsl`, the Codex-visible home is the Windows user profile exposed to WSL (for example `/mnt/c/Users/<user>`), not the WSL home.
 - Do not install skills under `~/.codex/skills` or any invented/deprecated skill path.
@@ -64,15 +69,24 @@ These contracts protect the user-level Codex integration layer for `ai_dev_loop`
 
 ## Skill Contract
 
-- The installed skill frontmatter name must be `ai-dev-loop-handoff`.
-- The skill must be generic and reusable across target repositories.
-- The skill must tell Codex to ensure the plan is final and the separate Cursor prompt file exists.
-- The skill must tell Codex to read the target repository's `ai_dev_loop.yaml`.
-- The skill must tell Codex to use the exact session ID supplied by SessionStart context.
-- The skill must tell Codex to run `ai_dev_loop prepare` and pass the exact Cursor prompt through stdin.
-- The skill must tell Codex to parse the prepare result and instruct the user to exit the active TUI before running the returned `ai_dev_loop start <run-id>` command.
-- The skill must not tell Codex to run `ai_dev_loop start` from the active TUI.
-- The skill must not hard-code project names, plan paths, prompt paths, model names, or review skill names.
+- Package-owned skill frontmatter names must be exactly `ai-dev-loop-handoff` and
+  `ai-dev-loop-controller`.
+- The handoff skill orchestrates the A/B workflow: same-directory app fork after
+  explicit plan approval; B prepares with `--controller-session-id <A>` and its own
+  exact SessionStart ID as `--codex-session-id`; B returns the prepared run identity
+  to A through an authorized app message; B then remains inactive.
+- The controller skill is controller-A-only. It may call only `controller status`,
+  `launch`, `abort`, and existing read-only inspection commands. It must refuse when
+  A equals the run's reviewer B.
+- Both skills must tell Codex to use the exact session ID supplied by SessionStart
+  context and must never use `--last` or inferred IDs.
+- The handoff skill must tell Codex to read the target repository's `ai_dev_loop.yaml`.
+- The handoff skill must not tell Codex to run `ai_dev_loop start` or `launch` from
+  reviewer session B.
+- The skills must not hard-code project names, plan paths, prompt paths, model names,
+  or review skill names.
+- If the Codex app fork or cross-thread message capability is unavailable, the skills
+  must stop safely and explain the missing capability.
 
 ## SessionStart Hook Contract
 
@@ -112,7 +126,10 @@ These contracts protect the user-level Codex integration layer for `ai_dev_loop`
 - Validate and parse `hooks.json` before deleting installed files. If `hooks.json` is invalid, leave the skill file, hook script, and hook registration untouched and report the validation error.
 - Do all fallible validation work before destructive or irreversible file operations whenever mutating user-global files.
 - Delete only installed files, such as `SKILL.md` and the installed hook script. Remove an installed asset directory only when it is empty after deleting owned files.
-- Preserve user-added files inside the `ai-dev-loop-handoff` skill directory.
+- Preserve user-added files inside package-owned skill directories
+  (`ai-dev-loop-handoff` and `ai-dev-loop-controller`).
+- Delete only owned `SKILL.md` files on uninstall; remove a skill directory only when
+  empty afterward.
 - Preserve run history, prompts, reviews, staged patches, logs, XDG state, and XDG config by default.
 - Back up `hooks.json` before removing the `ai_dev_loop` hook registration.
 - If `hooks.json` is invalid, fail safely and do not rewrite it.
@@ -178,7 +195,10 @@ These regressions came from Phase 7 staged reviews and must remain covered when 
 - invalid `hooks.json` during uninstall must not delete `SKILL.md` or the installed hook script;
 - install must preserve unrelated same-named hooks unless they carry the documented `ai_dev_loop` ownership signal;
 - uninstall must preserve unrelated same-named hooks by using exact ownership identity;
-- uninstall must preserve user files inside `$HOME/.agents/skills/ai-dev-loop-handoff/`;
+- uninstall must preserve user files inside package-owned skill directories
+  (`ai-dev-loop-handoff` and `ai-dev-loop-controller`);
+- first install must create both owned `SKILL.md` files; uninstall must remove both
+  owned `SKILL.md` files when `hooks.json` validation succeeds;
 - SessionStart hook directory creation must keep the `ai_dev_loop` XDG state root and managed subdirectories user-only.
 
 These regressions came from Phase 7.5 staged reviews and must remain covered when desktop integration or bridge code changes:
