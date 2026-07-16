@@ -132,6 +132,8 @@ def test_recovery_state_aligns_with_schema() -> None:
     assert "cursor" in RECOVERY_CHECKPOINTS
     assert set(recovery_schema["properties"]["reason_code"]["enum"]) == set(RECOVERY_REASON_CODES)
     assert "cursor_usage_limit" in RECOVERY_REASON_CODES
+    assert "initial_staging_failed" in RECOVERY_REASON_CODES
+    assert "correction_staging_failed" in RECOVERY_REASON_CODES
 
 
 def test_historical_run_state_without_recovery_loads(tmp_path: Path) -> None:
@@ -280,6 +282,110 @@ def test_recovery_state_staging_checkpoint_rejects_cursor_only_fields() -> None:
             cursor_output_fingerprint_sha256="e" * 64,
             previous_staged_patch_sha256="a" * 64,
             source_cursor_model="composer-2.5-fast",
+        )
+
+
+def test_recovery_state_accepts_initial_staging_failed() -> None:
+    recovery = RecoveryState(
+        source_run_id="source-run",
+        source_status="failed",
+        source_iteration=1,
+        recovered_checkpoint="staging",
+        source_staged_patch_sha256=None,
+        created_at=datetime.now(tz=UTC),
+        runtime_migration="none",
+        reason_code="initial_staging_failed",
+        cursor_output_fingerprint_sha256="e" * 64,
+        previous_staged_patch_sha256=None,
+    )
+    assert recovery.reason_code == "initial_staging_failed"
+    assert recovery.source_staged_patch_sha256 is None
+    assert recovery.previous_staged_patch_sha256 is None
+
+
+def test_recovery_state_initial_staging_rejects_non_null_patch_hashes() -> None:
+    with pytest.raises(PydanticValidationError, match="source_staged_patch_sha256"):
+        RecoveryState(
+            source_run_id="source-run",
+            source_status="failed",
+            source_iteration=1,
+            recovered_checkpoint="staging",
+            source_staged_patch_sha256="a" * 64,
+            created_at=datetime.now(tz=UTC),
+            runtime_migration="none",
+            reason_code="initial_staging_failed",
+            cursor_output_fingerprint_sha256="e" * 64,
+            previous_staged_patch_sha256=None,
+        )
+
+
+def test_recovery_state_initial_staging_rejects_iteration_not_one() -> None:
+    with pytest.raises(PydanticValidationError, match="source_iteration == 1"):
+        RecoveryState(
+            source_run_id="source-run",
+            source_status="failed",
+            source_iteration=2,
+            recovered_checkpoint="staging",
+            source_staged_patch_sha256=None,
+            created_at=datetime.now(tz=UTC),
+            runtime_migration="none",
+            reason_code="initial_staging_failed",
+            cursor_output_fingerprint_sha256="e" * 64,
+            previous_staged_patch_sha256=None,
+        )
+
+
+def test_recovery_state_initial_staging_rejects_legacy_adoption() -> None:
+    with pytest.raises(PydanticValidationError, match="legacy_cursor_output_adopted"):
+        RecoveryState(
+            source_run_id="source-run",
+            source_status="failed",
+            source_iteration=1,
+            recovered_checkpoint="staging",
+            source_staged_patch_sha256=None,
+            created_at=datetime.now(tz=UTC),
+            runtime_migration="none",
+            reason_code="initial_staging_failed",
+            cursor_output_fingerprint_sha256="e" * 64,
+            previous_staged_patch_sha256=None,
+            legacy_cursor_output_adopted=True,
+        )
+
+
+def test_initial_staging_schema_forbids_legacy_adoption() -> None:
+    schema_path = (
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "ai_dev_loop"
+        / "schemas"
+        / "run-state-v1.json"
+    )
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    recovery_schema = schema["properties"]["recovery"]
+    initial_branch = next(
+        branch
+        for branch in recovery_schema["allOf"]
+        if branch.get("if", {}).get("properties", {}).get("reason_code", {}).get("const")
+        == "initial_staging_failed"
+    )
+    assert initial_branch["then"]["properties"]["legacy_cursor_output_adopted"] == {
+        "enum": [None, False]
+    }
+
+
+def test_recovery_state_correction_staging_rejects_iteration_one() -> None:
+    with pytest.raises(PydanticValidationError, match="source_iteration >= 2"):
+        RecoveryState(
+            source_run_id="source-run",
+            source_status="failed",
+            source_iteration=1,
+            recovered_checkpoint="staging",
+            source_staged_patch_sha256="a" * 64,
+            created_at=datetime.now(tz=UTC),
+            runtime_migration="none",
+            reason_code="correction_staging_failed",
+            cursor_output_fingerprint_sha256="e" * 64,
+            previous_staged_patch_sha256="a" * 64,
         )
 
 
@@ -459,6 +565,14 @@ def test_analyze_recovery_rejects_non_failed_status(tmp_path: Path) -> None:
 
 
 def test_derive_reason_codes(tmp_path: Path) -> None:
+    assert (
+        derive_recovery_reason_code(tmp_path, checkpoint="staging", iteration_number=1)
+        == "initial_staging_failed"
+    )
+    assert (
+        derive_recovery_reason_code(tmp_path, checkpoint="staging", iteration_number=2)
+        == "correction_staging_failed"
+    )
     assert (
         derive_recovery_reason_code(tmp_path, checkpoint="process_review", iteration_number=1)
         == "codex_review_processing_failed"

@@ -125,9 +125,7 @@ def test_legacy_source_prospective_without_adoption(prepared_run, fake_clis, mon
     assert isinstance(dry_without_model, RecoveryAnalysis)
     assert dry_without_model.checkpoint == "cursor"
     assert dry_without_model.eligible is False
-    assert (
-        "legacy_cursor_usage_limit_requires_explicit_adoption" in dry_without_model.blockers
-    )
+    assert "legacy_cursor_usage_limit_requires_explicit_adoption" in dry_without_model.blockers
     assert dry_without_model.requested_cursor_model is None
 
 

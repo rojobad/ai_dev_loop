@@ -233,14 +233,16 @@ Acciones:
 ai_dev_loop recover --dry-run <failed-run-id>
 ```
 
-Si el blocker es `post_cursor_fingerprint_missing` y el status actual coincide con `NN-after-cursor.txt`:
+Si el blocker es `post_cursor_fingerprint_missing` en un fallo de **correccion** (`correction_staging_failed`) y el status actual coincide con `NN-after-cursor.txt`:
 
 ```bash
 ai_dev_loop recover --dry-run <failed-run-id> --adopt-current-cursor-output
 ai_dev_loop recover <failed-run-id> --adopt-current-cursor-output
 ```
 
-Si hay otros blockers (`staged_patch_drift`, `untracked_files`, `branch_mismatch`, `cursor_output_fingerprint_drift`, etc.), corrigelos o prepara un run nuevo. No mutes el run origen.
+La recovery de staging inicial (`initial_staging_failed`, iteracion 1) exige `git/cursor-output/01.json` y coincidencia de fingerprint; no admite `--adopt-current-cursor-output`.
+
+Si hay otros blockers (`staged_patch_drift`, `untracked_files`, `branch_mismatch`, `cursor_output_fingerprint_drift`, `initial_staging_does_not_support_adoption`, etc.), corrigelos o prepara un run nuevo. No mutes el run origen.
 
 Si dry-run es elegible:
 
@@ -251,7 +253,7 @@ ai_dev_loop resume <recovery-run-id> [--update-tools]
 
 `recover` nunca actualiza CLIs ni invoca agentes. Si un sucesor tambien fallo, recupera ese sucesor (cadena), no el abuelo.
 
-Para staging recovery, el sucesor `resume` ejecuta `git add -A` y Codex sin re-ejecutar Cursor.
+Para staging recovery (inicial o correccion), el sucesor `resume` ejecuta `git add -A` y Codex sin re-ejecutar Cursor.
 
 ## Cursor alcanzo el limite de uso del modelo
 

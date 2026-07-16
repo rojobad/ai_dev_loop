@@ -128,12 +128,98 @@ def tiny_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def test_first_iteration_rejects_preexisting_staged_paths(tiny_repo: Path) -> None:
-    staged_file = tiny_repo / "staged.txt"
-    staged_file.write_text("staged\n", encoding="utf-8")
-    _git(tiny_repo, "add", "staged.txt")
+def test_validate_no_preexisting_staged_paths_helper() -> None:
+    """Helper remains available for the trusted pre-Cursor empty-index boundary."""
+
     with pytest.raises(ValidationError, match="pre-existing staged"):
         validate_no_preexisting_staged_paths(("staged.txt",))
+
+
+def test_initial_post_cursor_staging_allows_staged_index(tiny_repo: Path, tmp_path: Path) -> None:
+    target = tiny_repo / "staged_by_cursor.txt"
+    target.write_text("staged\n", encoding="utf-8")
+    _git(tiny_repo, "add", "staged_by_cursor.txt")
+    run_directory = tmp_path / "run"
+    (run_directory / "git/status").mkdir(parents=True)
+    (run_directory / "git/status/01-before-cursor.txt").write_text("", encoding="utf-8")
+    (run_directory / "git/status/01-after-cursor.txt").write_text("", encoding="utf-8")
+    (run_directory / "git/cursor-output").mkdir(parents=True)
+    (run_directory / "git/cursor-output/01.json").write_text(
+        '{"aggregate_sha256": "' + ("c" * 64) + '"}\n',
+        encoding="utf-8",
+    )
+    state = _sample_state(tiny_repo)
+    state.iterations = []
+    validate_pre_staging(
+        state,
+        tiny_repo,
+        iteration_number=1,
+        run_directory=run_directory,
+    )
+    result = run_git_staging(
+        state,
+        run_directory,
+        iteration="01",
+        iteration_number=1,
+        cursor_started_at=utc_now(),
+        cursor_exit_code=0,
+        prompt_path="prompts/cursor-initial.txt",
+    )
+    assert "staged_by_cursor.txt" in result.staged_paths
+    assert (run_directory / "git/diffs/01.patch").is_file()
+
+
+def test_initial_post_cursor_staging_rejects_prompt_source_change(
+    tiny_repo: Path, tmp_path: Path
+) -> None:
+    prompt = tiny_repo / "docs/plans/prompt_sample-plan.txt"
+    prompt.write_text("prompt\nchanged\n", encoding="utf-8")
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    state = _sample_state(tiny_repo)
+    state.iterations = []
+    with pytest.raises(ValidationError, match="prompt source"):
+        validate_pre_staging(
+            state,
+            tiny_repo,
+            iteration_number=1,
+            run_directory=run_directory,
+        )
+
+
+def test_initial_post_cursor_staging_rejects_plan_hash_drift(
+    tiny_repo: Path, tmp_path: Path
+) -> None:
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    state = _sample_state(tiny_repo)
+    state.iterations = []
+    plan = tiny_repo / "docs/plans/sample-plan.md"
+    plan.write_text("# plan\nchanged\n", encoding="utf-8")
+    with pytest.raises(ValidationError, match="plan"):
+        validate_pre_staging(
+            state,
+            tiny_repo,
+            iteration_number=1,
+            run_directory=run_directory,
+        )
+
+
+def test_initial_post_cursor_staging_rejects_identity_drift(
+    tiny_repo: Path, tmp_path: Path
+) -> None:
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    state = _sample_state(tiny_repo)
+    state.iterations = []
+    state.repository.initial_head = "0" * 40
+    with pytest.raises(ValidationError, match="HEAD"):
+        validate_pre_staging(
+            state,
+            tiny_repo,
+            iteration_number=1,
+            run_directory=run_directory,
+        )
 
 
 def test_validate_staged_patch_matches_artifact_detects_drift(

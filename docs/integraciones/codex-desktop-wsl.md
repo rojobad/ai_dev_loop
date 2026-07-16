@@ -49,7 +49,7 @@ Con Desktop (incluido ChatGPT movil sobre la misma conversacion de planificacion
 3. B queda inactiva.
 4. Desde A, `ai-dev-loop-controller` lanza, consulta estado o aborta.
 
-El estado es bajo demanda (`controller status`). Phase 14 no envia notificaciones push automaticas al movil ni a ChatGPT.
+El estado es bajo demanda (`controller status`). El flujo A/B no envia notificaciones push automaticas al movil ni a ChatGPT.
 
 El puente de sesiones y el hook `SessionStart` no cambian de topologia respecto a fases anteriores.
 

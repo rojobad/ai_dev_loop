@@ -20,7 +20,6 @@ from ai_dev_loop.runners.cursor_output import (
     staging_normalization_fingerprint_rel_path,
 )
 from ai_dev_loop.runners.git import (
-    discover_repository,
     git_add_all,
     git_diff_cached_name_only,
     git_diff_cached_patch,
@@ -28,7 +27,6 @@ from ai_dev_loop.runners.git import (
     git_status_porcelain,
     staged_paths_from_name_only,
     validate_clean_after_stage_all,
-    validate_no_preexisting_staged_paths,
     validate_plan_hash_unchanged,
     validate_prompt_source_unchanged,
     validate_repository_identity,
@@ -63,11 +61,14 @@ def validate_pre_staging(
 ) -> None:
     """Validate post-Cursor repository contracts before orchestrator `git add -A`.
 
-    Correction iterations intentionally allow Cursor to mutate the index. The previous
-    staged-patch equality check belongs only to the pre-Cursor correction boundary.
+    Initial and correction turns allow Cursor to mutate the index after the agent
+    starts. The empty-index / pre-existing staged check belongs only to the
+    trusted pre-Cursor boundary (prepare and start baseline). Correction
+    staged-patch equality belongs only to the pre-Cursor correction boundary.
     """
 
     del run_directory  # retained for call-site compatibility
+    del iteration_number  # retained for call-site compatibility
     validate_stage_mode(state.workflow.stage_mode)
 
     validate_repository_identity(
@@ -79,10 +80,6 @@ def validate_pre_staging(
         expected_head=state.repository.initial_head,
         context="before staging",
     )
-
-    repo_info = discover_repository(repo_root)
-    if iteration_number == 1:
-        validate_no_preexisting_staged_paths(repo_info.staged_paths)
 
     validate_plan_hash_unchanged(repo_root, state.plan.repository_path, state.plan.sha256)
 

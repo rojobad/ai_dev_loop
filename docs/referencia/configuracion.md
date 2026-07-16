@@ -12,7 +12,7 @@ Version soportada:
 version: 1
 ```
 
-Phase 14 (controller remoto / sesion reviewer aislada) no agrega campos a `ai_dev_loop.yaml`. El flujo A/B usa flags de CLI (`--controller-session-id`, `launch`, `controller status`) y skills globales instalados; el YAML del repo objetivo no cambia.
+El controller remoto / sesion reviewer aislada (A/B) no agrega campos a `ai_dev_loop.yaml`. El flujo A/B usa flags de CLI (`--controller-session-id`, `launch`, `controller status`) y skills globales instalados; el YAML del repo objetivo no cambia.
 
 ## Schema
 

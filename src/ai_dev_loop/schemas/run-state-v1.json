@@ -245,6 +245,7 @@
             "codex_review_result_invalid",
             "codex_review_processing_failed",
             "correction_staging_failed",
+            "initial_staging_failed",
             "cursor_usage_limit"
           ]
         },
@@ -289,8 +290,11 @@
       "allOf": [
         {
           "if": {
-            "properties": { "recovered_checkpoint": { "const": "staging" } },
-            "required": ["recovered_checkpoint"]
+            "properties": {
+              "recovered_checkpoint": { "const": "staging" },
+              "reason_code": { "const": "correction_staging_failed" }
+            },
+            "required": ["recovered_checkpoint", "reason_code"]
           },
           "then": {
             "required": [
@@ -299,6 +303,7 @@
             ],
             "properties": {
               "reason_code": { "const": "correction_staging_failed" },
+              "source_iteration": { "type": "integer", "minimum": 2 },
               "source_staged_patch_sha256": {
                 "type": "string",
                 "pattern": "^[a-f0-9]{64}$"
@@ -308,6 +313,29 @@
                 "pattern": "^[a-f0-9]{64}$"
               },
               "previous_staged_patch_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "recovered_checkpoint": { "const": "staging" },
+              "reason_code": { "const": "initial_staging_failed" }
+            },
+            "required": ["recovered_checkpoint", "reason_code"]
+          },
+          "then": {
+            "required": ["cursor_output_fingerprint_sha256"],
+            "properties": {
+              "reason_code": { "const": "initial_staging_failed" },
+              "source_iteration": { "const": 1 },
+              "source_staged_patch_sha256": { "type": "null" },
+              "previous_staged_patch_sha256": { "type": "null" },
+              "legacy_cursor_output_adopted": { "enum": [null, false] },
+              "cursor_output_fingerprint_sha256": {
                 "type": "string",
                 "pattern": "^[a-f0-9]{64}$"
               }

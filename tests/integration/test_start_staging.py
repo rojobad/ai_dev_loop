@@ -100,13 +100,48 @@ def test_start_does_not_stage_after_cursor_timeout(prepared_run, fake_clis, monk
     assert state.status == RunStatus.INTERRUPTED
 
 
-def test_start_rejects_cursor_self_staging(prepared_run, fake_clis, monkeypatch) -> None:
+def test_start_accepts_cursor_self_staging(prepared_run, fake_clis, monkeypatch) -> None:
     monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "stage_self")
+    monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "no_findings")
+    result = runner.invoke(app, ["start", prepared_run["run_id"]])
+    assert result.exit_code == 0, result.output
+    state = load_run_state(prepared_run["run_path"] / "state.json")
+    assert state.status == RunStatus.COMPLETED
+    patch = (prepared_run["run_path"] / "git/diffs/01.patch").read_text(encoding="utf-8")
+    assert "staged_by_agent.txt" in patch
+    assert (prepared_run["run_path"] / "codex/reviews/01.json").is_file()
+
+
+def test_start_rejects_preexisting_staged_index_before_cursor(
+    prepared_run, fake_clis, monkeypatch
+) -> None:
+    """User-staged work after prepare must fail preflight before Cursor starts."""
+
+    import subprocess
+
+    staged = prepared_run["repo"] / "preexisting.txt"
+    staged.write_text("preexisting\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "preexisting.txt"],
+        cwd=prepared_run["repo"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    agent_before = ""
+    if fake_clis["agent_log"].is_file():
+        agent_before = fake_clis["agent_log"].read_text(encoding="utf-8")
     result = runner.invoke(app, ["start", prepared_run["run_id"]])
     assert result.exit_code == 4
+    agent_after = ""
+    if fake_clis["agent_log"].is_file():
+        agent_after = fake_clis["agent_log"].read_text(encoding="utf-8")
+    assert agent_after == agent_before
     state = load_run_state(prepared_run["run_path"] / "state.json")
     assert state.status == RunStatus.FAILED
-    assert "pre-existing staged" in (state.last_error or "").lower()
+    assert "worktree status changed" in (state.last_error or "").lower()
+    assert not (prepared_run["run_path"] / "cursor/chat.json").exists()
+    assert not (prepared_run["run_path"] / "git/diffs/01.patch").exists()
 
 
 def test_start_rejects_tracked_prompt_changes(prepared_run, fake_clis, monkeypatch) -> None:

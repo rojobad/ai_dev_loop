@@ -62,12 +62,15 @@ These contracts protect the complete stage-review-fix loop and explicit resume b
 
 ## Git And Staging Safety
 
-- The first staging pass must reject pre-existing staged changes.
+- Before the first Cursor turn, the trusted prepare/start baseline must reject a
+  pre-existing staged index. That empty-index invariant is not re-checked after
+  Cursor completes.
 - Before every correction Cursor turn, the current staged index must still match the previous iteration's recorded staged patch exactly, with no tracked unstaged changes or untracked non-ignored files. This remains the trusted pre-Cursor checkpoint.
-- During Cursor execution, index mutation is permitted. Cursor may use `git add`, `git restore --staged`, and `git rm --cached`. Cursor must not commit, amend, reset, checkout/switch branches, stash, clean, merge, rebase, tag, push, or otherwise change Git history, HEAD, branch, remotes, or repository identity.
+- During Cursor execution, index mutation is permitted for both the initial
+  implementation turn and correction turns. Cursor may use `git add`, `git restore --staged`, and `git rm --cached`. Cursor must not commit, amend, reset, checkout/switch branches, stash, clean, merge, rebase, tag, push, or otherwise change Git history, HEAD, branch, remotes, or repository identity.
 - After Cursor completes successfully, validate that HEAD, branch, Git common directory, Git directory, and repository root remain exactly as prepared, then capture a post-Cursor content fingerprint before staging.
 - Immediately after a successful `git add -A` normalization, capture a post-normalization fingerprint before writing staged patch artifacts so recovery can verify either the pre-staging or post-normalization repository state.
-- Do not assume the post-Cursor index equals the pre-Cursor index. Correction staging must not reject solely because Cursor changed or emptied the index.
+- Do not assume the post-Cursor index equals the pre-Cursor index. Post-Cursor staging for initial and correction iterations must not reject solely because Cursor changed or emptied the index.
 - For `stage_mode: all`, always execute `git add -A` after Cursor, even if Cursor already staged some or all changes. Merely unstaging a tracked non-ignored modification does not exclude it from the final snapshot.
 - After `git add -A`, require no tracked unstaged changes and no untracked non-ignored files. Ignored files may remain.
 - The cumulative staged patch after orchestrator normalization is the only patch Codex reviews and the only patch used for the next correction checkpoint.
@@ -92,18 +95,18 @@ These contracts protect the complete stage-review-fix loop and explicit resume b
 ## Failed-Run Recovery Discipline
 
 - Recoverability is checkpoint- and artifact-driven. Do not classify eligibility by parsing `last_error` strings.
-- Recover post-staging failures whose next proven action is Codex review or review-result processing, and correction staging failures where Cursor completed but staging did not.
+- Recover post-staging failures whose next proven action is Codex review or review-result processing; correction staging failures (`reason_code: correction_staging_failed`, iteration >= 2) where Cursor completed but staging did not; and initial staging failures (`reason_code: initial_staging_failed`, iteration 1) where Cursor completed but staging did not.
 - Reject recovery of incomplete Cursor turns.
 - Require exact preservation of `codex.session_id` and `cursor.chat_id`. Never use `--last`, a new Codex session, or a replacement Cursor chat.
 - Require repository root, Git common directory, Git directory, branch, and initial HEAD to match the source run.
 - For review/process-review checkpoints, require the current staged patch to match the recorded artifact byte-for-byte, and reject unstaged tracked changes or untracked files.
-- For staging checkpoints, require the current repository content to match the persisted post-Cursor fingerprint or the post-normalization fingerprint captured after a successful `git add -A`, or explicit `--adopt-current-cursor-output` when a historical source lacks a fingerprint and the recorded after-cursor status still matches exactly.
+- For staging checkpoints, require the current repository content to match the persisted post-Cursor fingerprint or the post-normalization fingerprint captured after a successful `git add -A`. Correction staging may also use explicit `--adopt-current-cursor-output` when a historical source lacks a fingerprint and the recorded after-cursor status still matches exactly. Initial staging recovery (`initial_staging_failed`) requires a valid fingerprint match, keeps `source_staged_patch_sha256` and `previous_staged_patch_sha256` null, and does not support adoption.
 - The target repository and index are read-only to `recover`. Do not commit, reset, clean, stash, unstage, or apply patches. Staging occurs only when the successor is explicitly resumed.
 - Phase 10 sources with non-null effective runtime and provenance preserve frozen values exactly; do not reread the session and alter them.
 - Eligible Phase 9 legacy sources may capture exact-session runtime during recovery, record `runtime_migration: phase9_session_capture`, and never use WSL `config.toml` defaults.
 - Create successors transactionally (temporary sibling directory plus atomic rename). A partial failure must leave no discoverable runnable successor.
 - Successor lineage lives only on the successor (`recovery` section). Do not mutate the source run to record child IDs.
-- Idempotent recovery reuses a matching non-terminal successor for the same source checkpoint and staged-patch hash. A failed successor must itself be selected for the next recovery; do not skip generations.
+- Idempotent recovery reuses a matching non-terminal successor for the same source checkpoint. Correction staging keys on the previous staged-patch hash plus fingerprint; initial staging keys on the post-Cursor fingerprint with null staged-patch hashes. A failed successor must itself be selected for the next recovery; do not skip generations.
 - `recover --dry-run` is strictly read-only. `recover` never launches Cursor, Codex, or updaters; update flags belong to the returned `resume` command.
 - Successor `resume` must derive the review/process-review checkpoint from copied durable artifacts and must not rerun completed Cursor work.
 
@@ -155,6 +158,9 @@ These contracts protect the complete stage-review-fix loop and explicit resume b
 - Test missing and empty correction fix prompts persist `failed` state and `last_error`.
 - Test interrupted resume derives `running_cursor`, `staging`, or `reviewing` from artifacts.
 - Test review and review-processing resume reject staged index drift, unstaged tracked changes, and untracked files.
+- Test that a Cursor-created initial staged index is normalized with `git add -A` and reaches Codex review.
+- Test that a user-preexisting staged index is rejected at the pre-Cursor prepare/start boundary before any agent launch.
+- Test initial staging recovery (`initial_staging_failed`) creates an immutable successor and `resume` skips Cursor.
 - Test correction staging rejects drift in the previously recorded staged patch.
 - Test correction staging rejects an emptied index when a previous staged patch was recorded.
 - Test status, logs, and inspect output across multiple iterations without leaking sensitive content.

@@ -150,6 +150,8 @@ def derive_recovery_reason_code(
     if checkpoint == "cursor":
         return "cursor_usage_limit"
     if checkpoint == "staging":
+        if iteration_number == 1:
+            return "initial_staging_failed"
         return "correction_staging_failed"
     if checkpoint == "process_review":
         return "codex_review_processing_failed"
@@ -521,40 +523,18 @@ def _previous_iteration_patch_hash(
     return sha256_file(patch_path)
 
 
-def _analyze_staging_checkpoint(
+def _verify_staging_fingerprint(
     analysis: RecoveryAnalysis,
     state: RunState,
     run_directory: Path,
     *,
     iteration_number: int,
     adopt_current_cursor_output: bool,
+    allow_legacy_adoption: bool,
 ) -> None:
-    """Fill staging-checkpoint fields and blockers for a correction staging failure."""
+    """Verify post-Cursor / post-normalization fingerprints for staging recovery."""
 
     label = iteration_label(iteration_number)
-    analysis.checkpoint = "staging"
-    analysis.reason_code = "correction_staging_failed"
-
-    if iteration_number < 2:
-        _add_blocker(analysis.blockers, "staging_recovery_requires_correction_iteration")
-        return
-
-    previous_hash = _previous_iteration_patch_hash(state, run_directory, iteration_number)
-    if previous_hash is None:
-        _add_blocker(analysis.blockers, "previous_staged_patch_missing")
-        return
-    analysis.previous_staged_patch_sha256 = previous_hash
-    # Structural compatibility: source_staged_patch_sha256 is the previous completed patch.
-    analysis.staged_patch_sha256 = previous_hash
-
-    fix_prompt = run_directory / f"prompts/fixes/{iteration_label(iteration_number - 1)}.txt"
-    if not fix_prompt.is_file() or not fix_prompt.read_text(encoding="utf-8").strip():
-        _add_blocker(analysis.blockers, "previous_fix_prompt_missing")
-
-    previous_review = run_directory / f"codex/reviews/{iteration_label(iteration_number - 1)}.json"
-    if not previous_review.is_file():
-        _add_blocker(analysis.blockers, "previous_review_missing")
-
     after_cursor = run_directory / f"git/status/{label}-after-cursor.txt"
     if not after_cursor.is_file():
         _add_blocker(analysis.blockers, "after_cursor_status_missing")
@@ -598,6 +578,8 @@ def _analyze_staging_checkpoint(
         return
 
     _add_blocker(analysis.blockers, "post_cursor_fingerprint_missing")
+    if not allow_legacy_adoption:
+        return
     if not adopt_current_cursor_output:
         analysis.warnings.append(
             "historical_staging_checkpoint_requires_explicit_adoption; "
@@ -625,6 +607,62 @@ def _analyze_staging_checkpoint(
         "legacy_cursor_output_explicitly_adopted; "
         "adoption attests the user has not manually modified the repository since "
         "the recorded Cursor turn (status match only, not cryptographic proof)"
+    )
+
+
+def _analyze_staging_checkpoint(
+    analysis: RecoveryAnalysis,
+    state: RunState,
+    run_directory: Path,
+    *,
+    iteration_number: int,
+    adopt_current_cursor_output: bool,
+) -> None:
+    """Fill staging-checkpoint fields for initial or correction staging failures."""
+
+    analysis.checkpoint = "staging"
+
+    if iteration_number == 1:
+        analysis.reason_code = "initial_staging_failed"
+        analysis.staged_patch_sha256 = None
+        analysis.previous_staged_patch_sha256 = None
+        if adopt_current_cursor_output:
+            _add_blocker(analysis.blockers, "initial_staging_does_not_support_adoption")
+        _verify_staging_fingerprint(
+            analysis,
+            state,
+            run_directory,
+            iteration_number=iteration_number,
+            adopt_current_cursor_output=False,
+            allow_legacy_adoption=False,
+        )
+        return
+
+    analysis.reason_code = "correction_staging_failed"
+
+    previous_hash = _previous_iteration_patch_hash(state, run_directory, iteration_number)
+    if previous_hash is None:
+        _add_blocker(analysis.blockers, "previous_staged_patch_missing")
+        return
+    analysis.previous_staged_patch_sha256 = previous_hash
+    # Structural compatibility: source_staged_patch_sha256 is the previous completed patch.
+    analysis.staged_patch_sha256 = previous_hash
+
+    fix_prompt = run_directory / f"prompts/fixes/{iteration_label(iteration_number - 1)}.txt"
+    if not fix_prompt.is_file() or not fix_prompt.read_text(encoding="utf-8").strip():
+        _add_blocker(analysis.blockers, "previous_fix_prompt_missing")
+
+    previous_review = run_directory / f"codex/reviews/{iteration_label(iteration_number - 1)}.json"
+    if not previous_review.is_file():
+        _add_blocker(analysis.blockers, "previous_review_missing")
+
+    _verify_staging_fingerprint(
+        analysis,
+        state,
+        run_directory,
+        iteration_number=iteration_number,
+        adopt_current_cursor_output=adopt_current_cursor_output,
+        allow_legacy_adoption=True,
     )
 
 

@@ -186,6 +186,18 @@ Documentado en:
 - [Referencia CLI](cli.md)
 - [Referencia de configuracion](configuracion.md)
 
+## Fase 14.5
+
+Corrige el contrato de staging de la iteracion inicial: el indice vacio/pre-staged se exige solo en el boundary pre-Cursor (`prepare`/`start`); tras Cursor (inicial o correccion) el index puede mutar. El orquestador sigue normalizando con `git add -A` y Codex revisa el snapshot completo. Extiende `recover` con `reason_code: initial_staging_failed` (fingerprint verificado, hashes de patch nulos, sin adopcion) para retomar staging sin re-ejecutar Cursor.
+
+Documentado en:
+
+- [Ejecutar runs](../operacion/prepare-start-resume-abort.md)
+- [Seguridad y privacidad](../operacion/seguridad-privacidad.md)
+- [Estado y artefactos](../operacion/estado-artefactos.md)
+- [CLI](cli.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+
 ## Riesgos residuales documentados
 
 - Hook trust sigue siendo `unknown` desde CLI.

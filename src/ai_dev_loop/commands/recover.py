@@ -403,9 +403,30 @@ def _require_recovery_checkpoint_fields(analysis: RecoveryAnalysis) -> None:
             )
             raise ValidationError(f"run is not recoverable: {joined}")
         return
+    if analysis.checkpoint == "staging" and analysis.reason_code == "initial_staging_failed":
+        if not analysis.cursor_output_fingerprint_sha256:
+            joined = (
+                "; ".join(analysis.blockers)
+                if analysis.blockers
+                else "missing_initial_staging_fingerprint"
+            )
+            raise ValidationError(f"run is not recoverable: {joined}")
+        return
     if analysis.staged_patch_sha256 is None:
         joined = "; ".join(analysis.blockers) if analysis.blockers else "missing_checkpoint_fields"
         raise ValidationError(f"run is not recoverable: {joined}")
+
+
+def _analysis_has_lineage_key(analysis: RecoveryAnalysis) -> bool:
+    """Whether analysis has enough checkpoint key fields for successor lookup."""
+
+    if analysis.checkpoint is None or analysis.iteration is None:
+        return False
+    if analysis.checkpoint == "cursor":
+        return True
+    if analysis.checkpoint == "staging" and analysis.reason_code == "initial_staging_failed":
+        return bool(analysis.cursor_output_fingerprint_sha256)
+    return analysis.staged_patch_sha256 is not None
 
 
 def _validate_successor_for_reuse(
@@ -692,7 +713,10 @@ def _annotate_existing_successors_for_analysis(
             legacy_cursor_usage_limit_adopted=analysis.legacy_cursor_usage_limit_adopted,
         )
     else:
-        if analysis.staged_patch_sha256 is None:
+        if analysis.checkpoint == "staging" and analysis.reason_code == "initial_staging_failed":
+            if not analysis.cursor_output_fingerprint_sha256:
+                return
+        elif analysis.staged_patch_sha256 is None:
             return
         matches = _find_matching_successors(
             project=project,
@@ -773,14 +797,18 @@ def _create_successor_run(
     assert analysis.iteration is not None
     assert analysis.reason_code is not None
     assert analysis.resolved_runtime is not None
-    if analysis.checkpoint != "cursor":
-        assert analysis.staged_patch_sha256 is not None
-    else:
+    if analysis.checkpoint == "cursor":
         assert analysis.requested_cursor_model is not None
         assert analysis.usage_limit_fingerprint_sha256 is not None
         assert analysis.source_prompt_path is not None
         assert analysis.source_prompt_sha256 is not None
         assert analysis.usage_limit_fingerprint_path is not None
+    elif analysis.checkpoint == "staging" and analysis.reason_code == "initial_staging_failed":
+        assert analysis.cursor_output_fingerprint_sha256 is not None
+        assert analysis.staged_patch_sha256 is None
+        assert analysis.previous_staged_patch_sha256 is None
+    else:
+        assert analysis.staged_patch_sha256 is not None
 
     now = utc_now()
     project = source.project.name
@@ -1134,7 +1162,7 @@ def recover_run(
         if analysis.eligible or (
             analysis.checkpoint is not None
             and analysis.iteration is not None
-            and (analysis.checkpoint == "cursor" or analysis.staged_patch_sha256 is not None)
+            and _analysis_has_lineage_key(analysis)
             and not analysis.reused_existing_successor
         ):
             # Preview migration/runtime only when no reusable successor is available.
@@ -1145,7 +1173,7 @@ def recover_run(
         if (
             analysis.checkpoint is not None
             and analysis.iteration is not None
-            and (analysis.checkpoint == "cursor" or analysis.staged_patch_sha256 is not None)
+            and _analysis_has_lineage_key(analysis)
             and not analysis.reused_existing_successor
         ):
             _attach_runtime_resolution(analysis, source, source_dir)
@@ -1218,6 +1246,14 @@ def recover_run(
                     f"checkpoint with a different fallback model: {ids}; "
                     "resume or recover that successor instead of creating a parallel one"
                 )
+        elif analysis.checkpoint == "staging" and analysis.reason_code == "initial_staging_failed":
+            if not analysis.cursor_output_fingerprint_sha256:
+                joined = (
+                    "; ".join(analysis.blockers)
+                    if analysis.blockers
+                    else "missing_initial_staging_fingerprint"
+                )
+                raise ValidationError(f"run is not recoverable under lock: {joined}")
         elif analysis.staged_patch_sha256 is None:
             joined = (
                 "; ".join(analysis.blockers) if analysis.blockers else "missing_checkpoint_fields"
@@ -1377,6 +1413,8 @@ def render_recovery_analysis(analysis: RecoveryAnalysis, *, output: str = "text"
             lines.append("Cursor output fingerprint: missing (explicit adoption required)")
         if analysis.previous_staged_patch_sha256:
             lines.append("Previous staged patch: verified")
+        elif analysis.reason_code == "initial_staging_failed":
+            lines.append("Previous staged patch: none (initial iteration)")
         lines.append("Repository identity: checked")
         lines.append("Git mutation performed by recover: none")
     elif analysis.staged_patch_sha256:

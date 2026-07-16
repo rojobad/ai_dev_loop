@@ -135,10 +135,10 @@ source_run_id
 source_status                 # failed
 source_iteration
 recovered_checkpoint          # staging | reviewing | process_review | cursor
-source_staged_patch_sha256
+source_staged_patch_sha256    # null para cursor e initial_staging_failed
 cursor_output_fingerprint_sha256   # requerido para staging
-previous_staged_patch_sha256       # requerido para staging
-legacy_cursor_output_adopted       # opcional; adopcion historica de staging
+previous_staged_patch_sha256       # requerido para correction_staging_failed; null para initial
+legacy_cursor_output_adopted       # opcional; solo correction staging historico
 legacy_cursor_usage_limit_adopted  # opcional; adopcion historica de limite de uso Cursor
 source_cursor_model                # checkpoint cursor
 cursor_model_fallback              # checkpoint cursor; congelado por --cursor-model
@@ -150,7 +150,7 @@ continuation_envelope_path         # checkpoint cursor
 continuation_envelope_sha256       # checkpoint cursor
 created_at
 runtime_migration             # none | phase9_session_capture
-reason_code                   # incluye cursor_usage_limit
+reason_code                   # incluye initial_staging_failed, correction_staging_failed, cursor_usage_limit
 ```
 
 El run origen permanece terminal e inmutable. El sucesor copia snapshots/artefactos necesarios para continuar (plan, prompt, chat, Cursor/git hasta la iteracion recuperada, reviews previos, y el review valido solo si el checkpoint es `process_review`). Los intentos Codex fallidos quedan en el origen.

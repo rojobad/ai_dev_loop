@@ -115,7 +115,7 @@ Antes de invocar agentes:
 
 Luego coordina:
 
-1. Cursor implementa en el chat del run.
+1. Cursor implementa en el chat del run (puede mutar el index; el orquestador normaliza despues).
 2. `ai_dev_loop` ejecuta staging controlado con `git add -A`.
 3. Codex revisa staged changes reanudando la sesion exacta del reviewer.
 4. Si hay findings, Codex devuelve un `cursor_fix_prompt`.
@@ -176,7 +176,7 @@ ai_dev_loop recover <failed-run-id> --adopt-current-cursor-output --cursor-model
 Checkpoints elegibles:
 
 - `reviewing` / `process_review`: Cursor + staging completos; staged patch actual coincide; sin unstaged/untracked.
-- `staging`: correccion con Cursor completo y staging incompleto; fingerprint post-Cursor verificado, o adopcion explicita historica.
+- `staging`: Cursor completo y staging incompleto. Incluye `initial_staging_failed` (iteracion 1; fingerprint post-Cursor verificado; hashes de patch previos nulos; sin adopcion) y `correction_staging_failed` (iteracion >= 2; fingerprint verificado o adopcion explicita historica; patch previo requerido).
 - `cursor`: turno Cursor interrumpido por limite de uso del modelo configurado; fingerprint de contenido parcial verificado en origen Phase 13, o adopcion explicita historica cuando falta el fingerprint contemporaneo; requiere `--cursor-model <modelo>` (por ejemplo `auto`).
 
 Requisitos comunes:
@@ -186,7 +186,7 @@ Requisitos comunes:
 - el chat ID de Cursor y el session ID de Codex estan presentes y coherentes;
 - no hay proceso hijo activo o metadata ambigua.
 
-Para staging historico sin `git/cursor-output/NN.json`, `--adopt-current-cursor-output` exige que el status porcelain actual coincida exactamente con `NN-after-cursor.txt`. Es una atestacion del usuario (no prueba criptografica del intervalo historico).
+Para staging historico de correccion (`correction_staging_failed`) sin `git/cursor-output/NN.json`, `--adopt-current-cursor-output` exige que el status porcelain actual coincida exactamente con `NN-after-cursor.txt`. Es una atestacion del usuario (no prueba criptografica del intervalo historico). La recovery de staging inicial (`initial_staging_failed`) no admite adopcion: exige fingerprint post-Cursor valido.
 
 Para fallos historicos de limite de uso de Cursor sin `git/cursor-output/NN.usage-limit-failure.json` ni `failure_code: cursor_usage_limit`, la misma bandera junto con `--cursor-model <modelo>` habilita una adopcion explicita (`legacy_cursor_usage_limit_adopted`). El clasificador usa `cursor/iterations/NN/stderr.txt` protegido, no `last_error`. El sucesor escribe `git/cursor-output/NN.usage-limit-adopted.json` con hashes seguros capturados en el momento del `recover`; no afirma que el contenido historico fue verificado antes de esa recuperacion.
 
