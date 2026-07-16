@@ -15,3 +15,6 @@ __pycache__/
 *.tar.gz
 
 site/
+
+# ai_dev_loop snapshots these execution prompts outside the repository.
+archive/implementation-history/plans/prompt_*.txt
