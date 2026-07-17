@@ -62,9 +62,68 @@ eval "$(keychain --eval --quiet id_ed25519)"
 ```
 
 The first WSL terminal after a WSL/Windows restart asks for the key passphrase;
-later terminals and detached workers launched from them reuse the same agent.
-`wsl --shutdown` also clears it. Keep the passphrase on the key: removing it
-only to avoid this prompt weakens SSH-key protection.
+later terminals and detached workers launched from that environment reuse the
+same agent.
+
+### Workaround: a detached A worker cannot receive the passphrase
+
+`keychain` is not enough when Codex Desktop launches a detached A worker that
+does not inherit the terminal's `SSH_AUTH_SOCK`. Keep the passphrase on the key,
+but expose a persistent, user-only WSL agent at a fixed socket instead.
+
+Create `~/.config/systemd/user/ai-dev-loop-ssh-agent.service` with:
+
+```ini
+[Unit]
+Description=Persistent SSH agent for ai_dev_loop GitHub publication
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/rm -f %h/.ssh/ai-dev-loop-ssh-agent.sock
+ExecStart=/usr/bin/ssh-agent -D -a %h/.ssh/ai-dev-loop-ssh-agent.sock
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+Add this stanza to `~/.ssh/config` (preserve any existing host configuration):
+
+```text
+Host github.com
+  IdentityAgent ~/.ssh/ai-dev-loop-ssh-agent.sock
+```
+
+Enable the agent once:
+
+```bash
+mkdir -p ~/.config/systemd/user ~/.ssh
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/config ~/.config/systemd/user/ai-dev-loop-ssh-agent.service
+systemctl --user daemon-reload
+systemctl --user enable --now ai-dev-loop-ssh-agent.service
+```
+
+From any WSL terminal where you can enter the passphrase, load the key into
+that socket once:
+
+```bash
+SSH_AUTH_SOCK="$HOME/.ssh/ai-dev-loop-ssh-agent.sock" ssh-add ~/.ssh/id_ed25519
+ssh -T git@github.com
+```
+
+The detached worker then uses the socket through SSH configuration; it does not
+need the passphrase or inherited environment variables. Verify before a GitHub
+cycle:
+
+```bash
+ai_dev_loop github doctor --repo-path /path/to/repository
+```
+
+After `wsl --shutdown` or a reboot, the service restarts but its loaded keys are
+intentionally gone, so repeat only the `ssh-add` command from an accessible
+terminal. Do not remove the passphrase or replace this with an unencrypted
+deployment key merely to automate the prompt.
 
 ## Basic Workflow
 

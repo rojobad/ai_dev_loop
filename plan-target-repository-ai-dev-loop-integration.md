@@ -175,7 +175,7 @@ github:
   continue_command: "@rojobad /ai-dev-loop continue"
   external_review_skill: review-github-pr-feedback
   max_local_review_iterations: 3
-  pr_base: master
+  pr_base: main # Replace with the target repository's actual default branch.
 ```
 
 Replace:
@@ -184,6 +184,7 @@ Replace:
 - `cursor.model` with the exact Cursor CLI model available in the local WSL `agent` installation.
 - `codex.review_model` with a model available to the Codex account that will run `codex exec resume`.
 - `codex.review_skill` with the exact frontmatter name of the repository's staged-change review skill.
+- `github.pr_base` with the repository's actual default branch (for example, `main` or `master`) when enabling the post-PR cycle.
 - timeouts only when the project genuinely needs different limits.
 
 Do not add project architecture rules to `ai_dev_loop.yaml`. Architecture instructions belong in plans, repository rules, and skills.
@@ -370,7 +371,7 @@ resolve, commit, push, or merge; `ai_dev_loop` owns those writes.
 There are two explicit entry paths:
 
 1. `ai_dev_loop pr-review create <source-run-id>` publishes accepted staged
-   changes from a completed normal run, creates/updates the PR to `master`, then
+   changes from a completed normal run, creates/updates the PR to the configured base, then
    requests `@codex review`.
 2. `pr-review prepare` plus `pr-review start` adopts an existing PR that did not
    pass through the main loop. It requires an explicit PR number, checked-out

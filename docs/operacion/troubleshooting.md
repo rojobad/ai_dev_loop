@@ -20,6 +20,65 @@ Accion:
 
 Los warnings `code 400` con texto binario desaparecen cuando el navegador deja de enviar handshakes TLS al servidor HTTP.
 
+## El worker A pide una passphrase SSH que no puedes introducir
+
+Sintoma:
+
+- `github doctor` informa `ssh-agent has no usable keys`;
+- `ssh -T git@github.com` falla con `Permission denied (publickey)`;
+- un worker detached A no tiene una terminal donde introducir la passphrase.
+
+Causa: un `ssh-agent` cargado en otra terminal no siempre comparte
+`SSH_AUTH_SOCK` con Codex Desktop o con un worker detached.
+
+Accion: conserva la passphrase y usa un agente de usuario con socket fijo. Crea
+`~/.config/systemd/user/ai-dev-loop-ssh-agent.service`:
+
+```ini
+[Unit]
+Description=Persistent SSH agent for ai_dev_loop GitHub publication
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/rm -f %h/.ssh/ai-dev-loop-ssh-agent.sock
+ExecStart=/usr/bin/ssh-agent -D -a %h/.ssh/ai-dev-loop-ssh-agent.sock
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+Agrega a `~/.ssh/config`:
+
+```text
+Host github.com
+  IdentityAgent ~/.ssh/ai-dev-loop-ssh-agent.sock
+```
+
+Luego habilita el servicio y, desde cualquier terminal WSL donde sí puedas
+introducir la passphrase, carga la clave:
+
+```bash
+mkdir -p ~/.config/systemd/user ~/.ssh
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/config ~/.config/systemd/user/ai-dev-loop-ssh-agent.service
+systemctl --user daemon-reload
+systemctl --user enable --now ai-dev-loop-ssh-agent.service
+SSH_AUTH_SOCK="$HOME/.ssh/ai-dev-loop-ssh-agent.sock" ssh-add ~/.ssh/id_ed25519
+ssh -T git@github.com
+```
+
+El worker consumirá el socket por `~/.ssh/config`, sin heredar variables ni pedir
+la passphrase. Comprueba finalmente:
+
+```bash
+ai_dev_loop github doctor --repo-path /ruta/al/repositorio
+```
+
+Tras reiniciar WSL o Windows, el servicio vuelve a iniciar pero no conserva la
+clave descifrada: repite sólo `ssh-add` desde una terminal accesible. No elimines
+la passphrase ni crees una deploy key sin cifrar para evitar el prompt.
+
 ## `prepare` rechaza el worktree
 
 Causas comunes:
