@@ -384,6 +384,182 @@ def github_doctor_command(
     _handle(run)
 
 
+@pr_review_app.command("prepare")
+def pr_review_prepare_command(
+    config_path: Annotated[
+        Path | None,
+        typer.Option("--config-path", help="Path to ai_dev_loop.yaml."),
+    ] = None,
+    project_name: Annotated[
+        str | None,
+        typer.Option("--project-name", help="Override project.name."),
+    ] = None,
+    repo_path: Annotated[
+        Path | None,
+        typer.Option("--repo-path", help="Target repository root."),
+    ] = None,
+    pr: Annotated[
+        int | None,
+        typer.Option("--pr", help="Explicit open pull request number."),
+    ] = None,
+    branch: Annotated[
+        str | None,
+        typer.Option("--branch", help="Explicit local/source branch bound to the PR head."),
+    ] = None,
+    plan_path: Annotated[
+        Path | None,
+        typer.Option("--plan-path", help="Approved plan path inside the repository."),
+    ] = None,
+    prompt_source_path: Annotated[
+        Path | None,
+        typer.Option("--prompt-source-path", help="Prompt source path inside the repository."),
+    ] = None,
+    codex_session_id: Annotated[
+        str | None,
+        typer.Option("--codex-session-id", help="Exact reviewer Codex session ID."),
+    ] = None,
+    controller_session_id: Annotated[
+        str | None,
+        typer.Option(
+            "--controller-session-id",
+            help=(
+                "Exact controller Codex session ID for A/B start "
+                "(must differ from --codex-session-id)."
+            ),
+        ),
+    ] = None,
+    cursor_command: Annotated[
+        str | None,
+        typer.Option("--cursor-command", help="Override cursor.command."),
+    ] = None,
+    cursor_model: Annotated[
+        str | None,
+        typer.Option("--cursor-model", help="Override cursor.model."),
+    ] = None,
+    cursor_output_format: Annotated[
+        str | None,
+        typer.Option("--cursor-output-format", help="Override cursor.output_format."),
+    ] = None,
+    codex_command: Annotated[
+        str | None,
+        typer.Option("--codex-command", help="Override codex.command."),
+    ] = None,
+    codex_review_model: Annotated[
+        str | None,
+        typer.Option("--codex-review-model", help="Override codex.review_model."),
+    ] = None,
+    codex_review_reasoning_effort: Annotated[
+        str | None,
+        typer.Option(
+            "--codex-review-reasoning-effort",
+            help="Override codex.review_reasoning_effort.",
+        ),
+    ] = None,
+    review_skill: Annotated[
+        str | None,
+        typer.Option("--review-skill", help="Override codex.review_skill."),
+    ] = None,
+    max_review_iterations: Annotated[
+        int | None,
+        typer.Option("--max-review-iterations", help="Override local review iteration limit."),
+    ] = None,
+    cursor_timeout_minutes: Annotated[
+        int | None,
+        typer.Option("--cursor-timeout-minutes", help="Override workflow.cursor_timeout_minutes."),
+    ] = None,
+    codex_timeout_minutes: Annotated[
+        int | None,
+        typer.Option("--codex-timeout-minutes", help="Override workflow.codex_timeout_minutes."),
+    ] = None,
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Prepare an independent PR-review cycle against an already-open PR (no GitHub write)."""
+
+    def run() -> None:
+        from ai_dev_loop.commands.pr_review_independent import (
+            IndependentPrReviewPrepareOptions,
+            prepare_independent_pr_review,
+            render_independent_prepare_result,
+        )
+
+        result = prepare_independent_pr_review(
+            IndependentPrReviewPrepareOptions(
+                config_path=config_path,
+                project_name=project_name,
+                repo_path=repo_path,
+                pr_number=pr,
+                branch=branch,
+                plan_path=plan_path,
+                prompt_source_path=prompt_source_path,
+                codex_session_id=codex_session_id,
+                controller_session_id=controller_session_id,
+                cursor_command=cursor_command,
+                cursor_model=cursor_model,
+                cursor_output_format=cursor_output_format,
+                codex_command=codex_command,
+                codex_review_model=codex_review_model,
+                codex_review_reasoning_effort=codex_review_reasoning_effort,
+                review_skill=review_skill,
+                max_review_iterations=max_review_iterations,
+                cursor_timeout_minutes=cursor_timeout_minutes,
+                codex_timeout_minutes=codex_timeout_minutes,
+                output=output.value,
+            )
+        )
+        typer.echo(render_independent_prepare_result(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@pr_review_app.command("start")
+def pr_review_start_command(
+    run_id: Annotated[str, typer.Argument(help="Independent PR-review cycle run identifier.")],
+    controller_session_id: Annotated[
+        str | None,
+        typer.Option(
+            "--controller-session-id",
+            help="Exact controller Codex session ID (required for A/B independent cycles).",
+        ),
+    ] = None,
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Post the idempotent review trigger and start the detached worker (independent origin only)."""
+
+    def run() -> None:
+        from ai_dev_loop.commands.pr_review_independent import (
+            render_independent_start_result,
+            start_independent_pr_review,
+        )
+
+        result = start_independent_pr_review(run_id, controller_session_id=controller_session_id)
+        typer.echo(render_independent_start_result(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@pr_review_app.command("set-cursor-model")
+def pr_review_set_cursor_model_command(
+    run_id: Annotated[str, typer.Argument(help="Independent PR-review cycle run identifier.")],
+    cursor_model: Annotated[
+        str,
+        typer.Option("--cursor-model", help="Cursor model to use before the first chat exists."),
+    ],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Change the Cursor model for an independent cycle before a chat is created."""
+
+    def run() -> None:
+        from ai_dev_loop.commands.pr_review_independent import (
+            render_set_cursor_model_result,
+            set_independent_cursor_model,
+        )
+
+        result = set_independent_cursor_model(run_id, cursor_model=cursor_model)
+        typer.echo(render_set_cursor_model_result(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
 @pr_review_app.command("create")
 def pr_review_create_command(
     source_run_id: Annotated[str, typer.Argument(help="Completed source run identifier.")],

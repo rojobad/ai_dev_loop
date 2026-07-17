@@ -45,7 +45,14 @@ class RunStatus(StrEnum):
 
 
 ALLOWED_STATUS_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
-    RunStatus.PREPARED: frozenset({RunStatus.VALIDATING, RunStatus.ABORTED, RunStatus.FAILED}),
+    RunStatus.PREPARED: frozenset(
+        {
+            RunStatus.VALIDATING,
+            RunStatus.AWAITING_BOT_REVIEW,
+            RunStatus.ABORTED,
+            RunStatus.FAILED,
+        }
+    ),
     RunStatus.VALIDATING: frozenset(
         {
             RunStatus.RUNNING_CURSOR,
@@ -506,8 +513,10 @@ class ControllerState(BaseModel):
 
 FULL_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
+GITHUB_PR_ORIGINS = frozenset({"source_run", "independent_pr"})
 GITHUB_PR_LIFECYCLES = frozenset(
     {
+        "prepared_independent",
         "publishing_initial",
         "awaiting_bot_review",
         "evaluating_bot_feedback",
@@ -532,22 +541,28 @@ GITHUB_PUBLICATION_PHASES = frozenset(
 
 
 class GithubPrReviewState(BaseModel):
-    """Optional post-PR cycle binding and lineage (Phase 15).
+    """Optional post-PR cycle binding and lineage (Phase 15 / 15.5).
 
-    Source completed runs remain terminal and immutable. Successors store this
-    section with the inherited exact Cursor chat and Codex reviewer session.
-    Sensitive comment bodies live only in dedicated artifacts, not here.
+    Source completed runs remain terminal and immutable. Source-run successors
+    store this section with the inherited exact Cursor chat and Codex reviewer
+    session. Independent cycles bind an already-open PR with no source run and
+    create a Cursor chat only after actionable external feedback.
+
+    Historical Phase 15 payloads without ``origin`` deserialize as
+    ``source_run``. Sensitive comment bodies live only in dedicated artifacts.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = Field(default=1, alias="schema_version")
-    source_run_id: str = Field(min_length=1)
+    origin: str = "source_run"
+    source_run_id: str | None = None
     lifecycle: str
     cycle_number: int = Field(ge=1)
     max_external_cycles: int = Field(ge=1)
     pr_number: int | None = Field(default=None, ge=1)
     pr_url: str | None = None
+    repository_name_with_owner: str | None = None
     head_branch: str = Field(min_length=1)
     base_branch: str = "master"
     bound_head_sha: str
@@ -571,6 +586,13 @@ class GithubPrReviewState(BaseModel):
     publication_remote: str | None = None
     publication_remote_branch: str | None = None
     publication_text_path: str | None = None
+
+    @field_validator("origin")
+    @classmethod
+    def validate_origin(cls, value: str) -> str:
+        if value not in GITHUB_PR_ORIGINS:
+            raise ValueError(f"github_pr_review.origin must be one of: {sorted(GITHUB_PR_ORIGINS)}")
+        return value
 
     @field_validator("lifecycle")
     @classmethod
@@ -607,8 +629,17 @@ class GithubPrReviewState(BaseModel):
             raise ValueError("SHA must be a 40-character lowercase hex digest")
         return value
 
+    @field_validator("source_run_id")
+    @classmethod
+    def validate_source_run_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not value.strip():
+            raise ValueError("source_run_id must be a non-empty string when set")
+        return value
+
     @model_validator(mode="after")
-    def validate_thread_id_uniqueness(self) -> GithubPrReviewState:
+    def validate_origin_and_binding(self) -> GithubPrReviewState:
         for field_name in (
             "eligible_thread_ids",
             "processed_thread_ids",
@@ -618,6 +649,24 @@ class GithubPrReviewState(BaseModel):
             values = getattr(self, field_name)
             if len(values) != len(set(values)):
                 raise ValueError(f"{field_name} must contain unique thread IDs")
+
+        if self.origin == "source_run":
+            if self.source_run_id is None:
+                raise ValueError("source_run_id is required when origin is source_run")
+            if self.lifecycle == "prepared_independent":
+                raise ValueError(
+                    "prepared_independent lifecycle is only valid for independent_pr origin"
+                )
+        elif self.origin == "independent_pr":
+            if self.source_run_id is not None:
+                raise ValueError("source_run_id must be null when origin is independent_pr")
+            if self.lifecycle == "publishing_initial":
+                raise ValueError("publishing_initial lifecycle is only valid for source_run origin")
+            if self.pr_number is None:
+                raise ValueError("pr_number is required for independent_pr origin")
+            if not self.repository_name_with_owner:
+                raise ValueError("repository_name_with_owner is required for independent_pr origin")
+
         if self.lifecycle == "publishing_initial" and self.pr_number is None:
             return self
         if (

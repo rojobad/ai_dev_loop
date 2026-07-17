@@ -76,12 +76,32 @@ def test_github_pr_review_state_requires_full_sha() -> None:
         )
 
 
+def test_github_pr_review_legacy_origin_default() -> None:
+    """Historical Phase 15 payloads without origin deserialize as source_run."""
+
+    payload = {
+        "schema_version": 1,
+        "source_run_id": "legacy-source",
+        "lifecycle": "awaiting_bot_review",
+        "cycle_number": 1,
+        "max_external_cycles": 8,
+        "pr_number": 3,
+        "head_branch": "feature",
+        "base_branch": "master",
+        "bound_head_sha": "a" * 40,
+    }
+    state = GithubPrReviewState.model_validate(payload)
+    assert state.origin == "source_run"
+    assert state.source_run_id == "legacy-source"
+
+
 def test_github_status_transitions() -> None:
     transition_status(RunStatus.AWAITING_BOT_REVIEW, RunStatus.EVALUATING_BOT_FEEDBACK)
     transition_status(RunStatus.EVALUATING_BOT_FEEDBACK, RunStatus.WAITING_FOR_USER_ATTENTION)
     transition_status(RunStatus.EVALUATING_BOT_FEEDBACK, RunStatus.RUNNING_CURSOR)
     transition_status(RunStatus.REVIEWING, RunStatus.PUBLISHING_EXTERNAL_FIX)
     transition_status(RunStatus.PUBLISHING_EXTERNAL_FIX, RunStatus.AWAITING_BOT_REVIEW)
+    transition_status(RunStatus.PREPARED, RunStatus.AWAITING_BOT_REVIEW)
     with pytest.raises(ValueError):
         transition_status(RunStatus.COMPLETED, RunStatus.AWAITING_BOT_REVIEW)
 

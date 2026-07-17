@@ -217,7 +217,6 @@
       "additionalProperties": false,
       "required": [
         "schema_version",
-        "source_run_id",
         "lifecycle",
         "cycle_number",
         "max_external_cycles",
@@ -227,10 +226,21 @@
       ],
       "properties": {
         "schema_version": { "type": "integer", "const": 1 },
-        "source_run_id": { "type": "string", "minLength": 1 },
+        "origin": {
+          "type": "string",
+          "enum": ["source_run", "independent_pr"],
+          "default": "source_run"
+        },
+        "source_run_id": {
+          "anyOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "null" }
+          ]
+        },
         "lifecycle": {
           "type": "string",
           "enum": [
+            "prepared_independent",
             "publishing_initial",
             "awaiting_bot_review",
             "evaluating_bot_feedback",
@@ -253,6 +263,7 @@
           ]
         },
         "pr_url": { "type": ["string", "null"] },
+        "repository_name_with_owner": { "type": ["string", "null"] },
         "head_branch": { "type": "string", "minLength": 1 },
         "base_branch": { "type": "string", "minLength": 1 },
         "bound_head_sha": {
@@ -323,7 +334,35 @@
         "publication_remote": { "type": ["string", "null"] },
         "publication_remote_branch": { "type": ["string", "null"] },
         "publication_text_path": { "type": ["string", "null"] }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "origin": { "const": "independent_pr" } },
+            "required": ["origin"]
+          },
+          "then": {
+            "required": ["pr_number", "repository_name_with_owner"],
+            "properties": {
+              "source_run_id": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "anyOf": [
+              { "properties": { "origin": { "const": "source_run" } } },
+              { "not": { "required": ["origin"] } }
+            ]
+          },
+          "then": {
+            "required": ["source_run_id"],
+            "properties": {
+              "source_run_id": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      ]
     },
     "recovery": {
       "type": "object",

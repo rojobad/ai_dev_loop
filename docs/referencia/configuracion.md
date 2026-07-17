@@ -215,6 +215,15 @@ github:
 
 Campos de credenciales (`token`, `pat`, `access_token`, etc.) estan prohibidos.
 
+Con `github.enabled: true` hay dos flujos CLI:
+
+- `pr-review create <source-run-id>` para un run local completado (origen
+  `source_run`);
+- `pr-review prepare` + `pr-review start` para adoptar un PR ya abierto (origen
+  `independent_pr`). Prepare no escribe en GitHub; start publica el marcador de
+  review. `set-cursor-model` solo aplica al ciclo independiente antes de crear
+  el chat Cursor.
+
 ## Validacion
 
 Inspecciona la configuracion efectiva antes de `prepare`:

@@ -44,6 +44,28 @@ which ai_dev_loop
 ai_dev_loop --version
 ```
 
+### Optional: cache the SSH key in WSL
+
+The autonomous GitHub PR cycle uses `gh` for the GitHub API and SSH for `git
+push`. If an SSH key has a passphrase, [keychain](https://www.funtoo.org/Keychain)
+can load it once per WSL session instead of asking again in every terminal:
+
+```bash
+sudo apt update
+sudo apt install -y keychain
+```
+
+Add this line to `~/.bashrc` manually:
+
+```bash
+eval "$(keychain --eval --quiet id_ed25519)"
+```
+
+The first WSL terminal after a WSL/Windows restart asks for the key passphrase;
+later terminals and detached workers launched from them reuse the same agent.
+`wsl --shutdown` also clears it. Keep the passphrase on the key: removing it
+only to avoid this prompt weakens SSH-key protection.
+
 ## Basic Workflow
 
 1. Install the matching Codex integration:

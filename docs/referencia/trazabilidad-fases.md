@@ -202,6 +202,14 @@ Documentado en:
 
 Ciclo opt-in post-PR con `gh` autenticado (sin tokens en YAML/state): `github doctor`, `pr-review create|status|continue|resume|abort`, commit/push no-force del patch staged aceptado, PR a `master`, polling de review del bot configurado, adjudicacion con la sesion Codex exacta, fix con el Cursor chat exacto, y parada con `@rojobad` ante hallazgos no aplicables/inciertos.
 
+## Fase 15.5
+
+Adopcion independiente de un PR ya abierto (`pr-review prepare` / `start` /
+`set-cursor-model`) sin debilitar el path `create` de source-run. Prepare no
+escribe en GitHub; start es la puerta explicita de escritura. El Cursor chat se
+crea solo tras feedback externo all-actionable; el modelo Cursor puede cambiarse
+antes de ese chat.
+
 Documentado en:
 
 - [Referencia CLI](cli.md)

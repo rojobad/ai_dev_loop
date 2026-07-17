@@ -26,8 +26,8 @@ interpolation of secrets beyond the exact IDs already known):
 - `ai_dev_loop controller status`
 - `ai_dev_loop launch`
 - `ai_dev_loop abort`
-- `ai_dev_loop pr-review create|status|continue|resume|abort` (only when
-  `github.enabled` is true in the target repository config)
+- `ai_dev_loop pr-review prepare|start|set-cursor-model|create|status|continue|resume|abort`
+  (only when `github.enabled` is true in the target repository config)
 - `ai_dev_loop github doctor`
 - existing read-only commands: `status`, `logs`, `inspect`, `list`
 
@@ -39,6 +39,11 @@ commit the accepted staged patch, non-force push the prepared branch, create or
 update the PR to `master`, post `@codex review`, reply inline, and resolve only
 verified fixed threads. It never merges, force-pushes, retargets, or uses
 `--last` / a new Codex session / a new Cursor chat.
+
+Before `pr-review start` for an **independent** cycle, restate that prepare was
+non-mutating and start is the explicit write gate: one idempotent `@codex review`
+marker at the bound PR head, then detached polling. Independent cycles create a
+new Cursor chat only after all eligible bot findings are actionable.
 
 ## Common User Prompts
 
@@ -96,14 +101,51 @@ ai_dev_loop github doctor --repo-path /path/to/repo --output json
 ai_dev_loop pr-review create <source-run-id> --output json
 ```
 
+### “adopta un PR abierto” / independent PR-review prepare + start
+
+When the PR already exists and did not originate from an `ai_dev_loop` source
+run, reviewer B prepares (non-mutating) and controller A starts:
+
+From B (inactive afterward):
+
+```bash
+ai_dev_loop pr-review prepare \
+  --repo-path /path/to/repo \
+  --pr <number> \
+  --branch <exact-head-branch> \
+  --plan-path <plan.md> \
+  --prompt-source-path <prompt.txt> \
+  --codex-session-id "<exact-reviewer-B>" \
+  --controller-session-id "<exact-controller-A>" \
+  --output json < /path/to/exact-cursor-prompt.txt
+```
+
+Optional before start (only while no Cursor chat exists):
+
+```bash
+ai_dev_loop pr-review set-cursor-model <run-id> --cursor-model <model> --output json
+```
+
+From A only:
+
+```bash
+ai_dev_loop pr-review start <run-id> \
+  --controller-session-id "<exact-controller-A>" \
+  --output json
+```
+
+Never invoke `pr-review start` from reviewer B. For single-session mode, omit
+`--controller-session-id` and ensure the reviewer session is inactive before
+start.
+
 ### “¿cómo va el PR review?” / PR-review status
 
 ```bash
 ai_dev_loop pr-review status <pr-review-run-id> --output json
 ```
 
-Report lifecycle, PR number, cycle counts, and safe next action only. Never
-print GitHub comment bodies, fix prompts, or tokens.
+Report origin, lifecycle, PR number, cycle counts, Cursor model mutability, and
+safe next action only. Never print GitHub comment bodies, fix prompts, or tokens.
 
 ### “continúa el PR review” after user attention
 

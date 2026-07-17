@@ -15,6 +15,7 @@ nav:
       - Instalación: guia/instalacion.md
       - Configuración del repositorio: guia/configuracion-repositorio.md
       - Flujo de handoff: guia/flujo-handoff.md
+      - Flujo completo de trabajo: guia/flujo-completo.md
   - Integraciones:
       - Elegir target: integraciones/seleccion-target.md
       - WSL CLI: integraciones/wsl-cli.md

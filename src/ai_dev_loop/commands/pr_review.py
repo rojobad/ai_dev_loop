@@ -91,6 +91,8 @@ def _resolve_publication_resume_lifecycle(gpr: GithubPrReviewState) -> str | Non
     if gpr.lifecycle in _PUBLICATION_LIFECYCLES:
         return gpr.lifecycle
     if gpr.pr_number is None:
+        if gpr.origin == "independent_pr":
+            raise ValidationError("independent PR-review cycles cannot resume publishing_initial")
         return "publishing_initial"
     return "publishing_external_fix"
 
@@ -104,6 +106,8 @@ def _residual_risk_note_for_publication(gpr: GithubPrReviewState) -> str | None:
 
     if gpr.lifecycle != "publishing_initial":
         return None
+    if gpr.origin != "source_run" or not gpr.source_run_id:
+        return None
     try:
         _, source = load_run(gpr.source_run_id)
     except Exception:
@@ -111,6 +115,59 @@ def _residual_risk_note_for_publication(gpr: GithubPrReviewState) -> str | None:
     if source.status != RunStatus.COMPLETED_WITH_RESIDUAL_RISK:
         return None
     return source.result or "residual risk recorded by local Codex review"
+
+
+def _is_independent_origin(gpr: GithubPrReviewState | None) -> bool:
+    return gpr is not None and gpr.origin == "independent_pr"
+
+
+def ensure_independent_cursor_chat(run_directory: Path, state: RunState) -> str:
+    """Create and persist exactly one Cursor chat for an independent cycle.
+
+    Allowed only when ``cursor.chat_id`` is still null. Persists ``state.json``
+    and ``cursor/chat.json`` before returning so the first Cursor turn can reuse
+    the exact chat identity.
+    """
+
+    if state.cursor.chat_id:
+        return state.cursor.chat_id
+    if not _is_independent_origin(state.github_pr_review):
+        raise ValidationError("source-run PR-review cycles must reuse the source Cursor chat")
+    if state.iterations:
+        raise ValidationError(
+            "independent cycle already has cursor iterations but is missing chat_id"
+        )
+    chat_path = run_directory / "cursor" / "chat.json"
+    if chat_path.is_file():
+        raise ValidationError(
+            "cursor/chat.json exists without state.cursor.chat_id; refusing a replacement chat"
+        )
+
+    from ai_dev_loop.runners.cursor import create_chat
+
+    chat_id = create_chat(state.cursor.command)
+    state.cursor.chat_id = chat_id
+    save_run_state(run_directory, state)
+    atomic_write_json(
+        chat_path,
+        {
+            "chat_id": chat_id,
+            "created_at": utc_now().isoformat(),
+            "command": state.cursor.command,
+            "origin": "independent_pr",
+        },
+        sensitive=True,
+    )
+    set_sensitive_file_mode(chat_path)
+    append_orchestrator_event(
+        run_directory,
+        run_id=state.run_id,
+        component="orchestrator",
+        event="independent_cursor_chat_created",
+        status=state.status.value,
+        detail={"chat_id_prefix": chat_id[:8]},
+    )
+    return chat_id
 
 
 @dataclass(frozen=True)
@@ -264,6 +321,7 @@ def create_pr_review_cycle(source_run_id: str) -> PrReviewCreateResult:
             }
         )
         successor.github_pr_review = GithubPrReviewState(
+            origin="source_run",
             source_run_id=source.run_id,
             lifecycle="publishing_initial",
             cycle_number=1,
@@ -629,6 +687,10 @@ def resume_pr_review_cycle(run_id: str) -> str:
             _spawn_pr_review_worker(run_directory, state.run_id)
             return f"Resumed PR-review polling for {state.run_id}"
         if lifecycle == "fixing_external_feedback":
+            if not state.cursor.chat_id:
+                raise ValidationError(
+                    "cannot resume fixing_external_feedback without a persisted Cursor chat id"
+                )
             _mark_status(state, RunStatus.RUNNING_CURSOR)
             state.github_pr_review = state.github_pr_review.model_copy(
                 update={"lifecycle": "fixing_external_feedback"}
@@ -687,14 +749,27 @@ def render_pr_review_status(run_id: str, *, output: str = "text") -> str:
         "last_error": state.last_error,
         "github_pr_review": None,
     }
+    cursor_model_mutable = False
+    if gpr is not None and gpr.origin == "independent_pr":
+        cursor_model_mutable = (
+            gpr.lifecycle in {"prepared_independent", "awaiting_bot_review"}
+            and state.cursor.chat_id is None
+            and not state.iterations
+            and gpr.publication_phase is None
+        )
+    payload["cursor_model"] = state.cursor.model
+    payload["cursor_model_mutable"] = cursor_model_mutable
+    payload["cursor_chat_present"] = state.cursor.chat_id is not None
     if gpr is not None:
         payload["github_pr_review"] = {
+            "origin": gpr.origin,
             "source_run_id": gpr.source_run_id,
             "lifecycle": gpr.lifecycle,
             "cycle_number": gpr.cycle_number,
             "max_external_cycles": gpr.max_external_cycles,
             "pr_number": gpr.pr_number,
             "bound_head_sha_prefix": gpr.bound_head_sha[:12],
+            "repository_name_with_owner": gpr.repository_name_with_owner,
             "eligible_thread_count": len(gpr.eligible_thread_ids),
             "processed_thread_count": len(gpr.processed_thread_ids),
             "replied_thread_count": len(gpr.replied_thread_ids),
@@ -708,10 +783,14 @@ def render_pr_review_status(run_id: str, *, output: str = "text") -> str:
     lines = [
         f"Run {state.run_id}",
         f"Status: {state.status.value}",
+        f"Cursor model: {state.cursor.model}",
+        f"Cursor model mutable: {cursor_model_mutable}",
+        f"Cursor chat: {'present' if state.cursor.chat_id else 'not created'}",
     ]
     if gpr is not None:
         lines.extend(
             [
+                f"Origin: {gpr.origin}",
                 f"Lifecycle: {gpr.lifecycle}",
                 f"PR: #{gpr.pr_number}",
                 f"Cycle: {gpr.cycle_number}/{gpr.max_external_cycles}",
@@ -954,7 +1033,43 @@ def _run_pr_review_worker_loop_inner(run_id: str, run_directory: Path) -> None:
                 return
 
             assert artifacts.fix_prompt_path is not None
-            assert state.cursor.chat_id
+            if _is_independent_origin(state.github_pr_review):
+                from ai_dev_loop.commands.pr_review_independent import (
+                    validate_independent_pre_cursor_baseline,
+                )
+
+                try:
+                    validate_independent_pre_cursor_baseline(state, config)
+                except ValidationError as exc:
+                    mark_interrupted(
+                        state,
+                        "Independent PR/local binding or clean baseline drifted before "
+                        f"Cursor chat creation: {exc}",
+                    )
+                    state.github_pr_review = state.github_pr_review.model_copy(
+                        update={
+                            "lifecycle": "interrupted",
+                            "worker_outcome": "pre_cursor_binding_drift",
+                            "external_fix_prompt_path": artifacts.fix_prompt_path,
+                        }
+                    )
+                    save_run_state(run_directory, state)
+                    append_orchestrator_event(
+                        run_directory,
+                        run_id=state.run_id,
+                        component="orchestrator",
+                        event="independent_pre_cursor_binding_drift",
+                        status=state.status.value,
+                        detail={"reason": "binding_or_baseline_drift"},
+                    )
+                    return
+            if state.cursor.chat_id is None:
+                ensure_independent_cursor_chat(run_directory, state)
+                state = load_run_state_fresh(run_directory)
+                assert state.github_pr_review is not None
+            if not state.cursor.chat_id:
+                raise ValidationError("Cursor chat id is required before fixing external feedback")
+            assert state.github_pr_review is not None
             state.github_pr_review = state.github_pr_review.model_copy(
                 update={
                     "lifecycle": "fixing_external_feedback",
@@ -1463,7 +1578,13 @@ def _publish_external_fix(
         state = load_run_state_fresh(run_directory)
         assert state.github_pr_review is not None
         gpr = state.github_pr_review
-        create_pr = gpr.lifecycle == "publishing_initial" or gpr.pr_number is None
+        if gpr.origin == "independent_pr" and gpr.lifecycle == "publishing_initial":
+            raise ValidationError(
+                "independent PR-review cycles must never enter publishing_initial"
+            )
+        create_pr = gpr.origin == "source_run" and (
+            gpr.lifecycle == "publishing_initial" or gpr.pr_number is None
+        )
         text_rel = (
             gpr.publication_text_path
             or f"github/cycles/{gpr.cycle_number:02d}/publication-text.json"

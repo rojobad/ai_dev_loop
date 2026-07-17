@@ -108,6 +108,15 @@ Verifica disponibilidad de `gh`, autenticacion (cuenta redactada), schemas GitHu
 Ciclo opt-in post-PR (requiere `github.enabled: true`):
 
 ```bash
+ai_dev_loop pr-review prepare \
+  --repo-path PATH --pr N --branch BRANCH \
+  --plan-path PLAN --prompt-source-path PROMPT \
+  --codex-session-id <reviewer> \
+  [--controller-session-id <controller-A>] \
+  [--cursor-model MODEL] [otros overrides seguros] \
+  [--output text|json]
+ai_dev_loop pr-review set-cursor-model <run-id> --cursor-model MODEL [--output text|json]
+ai_dev_loop pr-review start <run-id> [--controller-session-id <controller-A>] [--output text|json]
 ai_dev_loop pr-review create <source-run-id> [--output text|json]
 ai_dev_loop pr-review status <run-id> [--output text|json]
 ai_dev_loop pr-review continue <run-id>
@@ -115,7 +124,27 @@ ai_dev_loop pr-review resume <run-id>
 ai_dev_loop pr-review abort <run-id>
 ```
 
-`create` es la unica puerta explicita para publicar el patch staged aceptado (commit + push no-force + PR a `master`) y pedir `@codex review`. Reutiliza el Cursor chat y la sesion Codex exactos del source. Ante hallazgos no aplicables/inciertos responde inline con `@rojobad`, deja threads unresolved y espera `@rojobad /ai-dev-loop continue`. No hace merge ni force push.
+Hay dos origenes:
+
+- **`create` (source_run):** unica puerta explicita para publicar el patch staged
+  aceptado (commit + push no-force + PR a `master`) y pedir `@codex review`.
+  Reutiliza el Cursor chat y la sesion Codex exactos del source.
+- **`prepare` + `start` (independent_pr):** adopta un PR ya abierto. `prepare` es
+  no mutante (sin comentario GitHub, sin chat Cursor, sin turnos Codex). Requiere
+  PR/branch/plan/prompt/sesion Codex exactos y `HEAD` local igual al head del PR.
+  `start` es la puerta de escritura: vuelve a verificar el binding, publica un
+  marcador idempotente `@codex review` y lanza el worker. En A/B solo A puede
+  hacer `start` con `--controller-session-id`; en sesion unica el reviewer debe
+  quedar inactivo antes de `start`.
+
+`set-cursor-model` solo aplica a ciclos `independent_pr` en
+`prepared_independent` o `awaiting_bot_review` sin chat Cursor ni iteraciones; no
+cambia el runtime Codex del reviewer ni reescribe `effective-config.yaml`.
+
+Ante hallazgos no aplicables/inciertos responde inline con `@rojobad`, deja
+threads unresolved y espera `@rojobad /ai-dev-loop continue`. No hace merge ni
+force push. El ciclo independiente crea exactamente un Cursor chat nuevo solo
+cuando todos los hallazgos elegibles son accionables.
 
 ## `start`
 
