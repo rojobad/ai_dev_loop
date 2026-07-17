@@ -540,6 +540,40 @@ GITHUB_PUBLICATION_PHASES = frozenset(
 )
 
 
+class GithubBotAcknowledgementState(BaseModel):
+    """Best-effort trigger acknowledgement telemetry (never completion evidence)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    trigger_comment_id: str = Field(min_length=1)
+    reaction: str = Field(min_length=1)
+    first_observed_at: str | None = None
+    acknowledgement_cleared_at: str | None = None
+    timeout_diagnostic_at: str | None = None
+
+
+class GithubNoFindingsCompletionEvidence(BaseModel):
+    """Auditable metadata for a verified no-findings completion comment.
+
+    Never stores the comment body—only ``body_sha256`` and rule identity.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    comment_id: str = Field(min_length=1)
+    created_at: str = Field(min_length=1)
+    rule_id: str = Field(min_length=1)
+    body_sha256: str = Field(min_length=64, max_length=64)
+    reviewed_commit_prefix: str = Field(min_length=7, max_length=40)
+
+    @field_validator("body_sha256")
+    @classmethod
+    def validate_body_hash(cls, value: str) -> str:
+        if not re.fullmatch(r"[a-f0-9]{64}", value):
+            raise ValueError("body_sha256 must be a lowercase hex SHA-256 digest")
+        return value
+
+
 class GithubPrReviewState(BaseModel):
     """Optional post-PR cycle binding and lineage (Phase 15 / 15.5).
 
@@ -586,6 +620,8 @@ class GithubPrReviewState(BaseModel):
     publication_remote: str | None = None
     publication_remote_branch: str | None = None
     publication_text_path: str | None = None
+    bot_acknowledgement: GithubBotAcknowledgementState | None = None
+    no_findings_completion: GithubNoFindingsCompletionEvidence | None = None
 
     @field_validator("origin")
     @classmethod

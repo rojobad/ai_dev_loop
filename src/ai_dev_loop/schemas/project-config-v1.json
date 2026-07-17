@@ -121,7 +121,33 @@
         "continue_command": { "type": "string", "minLength": 1 },
         "external_review_skill": { "type": "string", "minLength": 1 },
         "max_local_review_iterations": { "type": "integer", "minimum": 1 },
-        "pr_base": { "type": "string", "minLength": 1 }
+        "pr_base": { "type": "string", "minLength": 1 },
+        "acknowledgement": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "reaction": { "type": "string", "minLength": 1 },
+            "timeout_seconds": { "type": "integer", "minimum": 1 },
+            "on_timeout": { "type": "string", "const": "diagnostic_only" }
+          }
+        },
+        "no_findings_completion": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "accepted_comment_prefixes": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "reviewed_commit_prefix_length": {
+              "type": "integer",
+              "minimum": 7,
+              "maximum": 40
+            }
+          }
+        }
       }
     }
   }

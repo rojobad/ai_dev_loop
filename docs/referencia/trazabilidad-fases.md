@@ -216,6 +216,21 @@ Documentado en:
 - [Referencia de configuracion](configuracion.md)
 - [Seguridad y privacidad](../operacion/seguridad-privacidad.md)
 
+## Fase 15.6
+
+Acuse best-effort (`eyes`) y finalizacion verificable sin hallazgos para el
+worker de PR review (ciclos Phase 15 y 15.5). La finalizacion exige comentario
+general del reviewer permitido, posterior al trigger, con prefijo configurado y
+`Reviewed commit:` ligado al `bound_head_sha`; nunca completa por ausencia de
+hilos ni por presencia/retirada de `eyes`. Automatic reviews de Codex permanece
+fuera de este flujo.
+
+Documentado en:
+
+- [Referencia de configuracion](configuracion.md)
+- [Flujo completo](../guia/flujo-completo.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+
 ## Riesgos residuales documentados
 
 - Hook trust sigue siendo `unknown` desde CLI.

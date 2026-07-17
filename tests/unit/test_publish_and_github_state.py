@@ -93,6 +93,24 @@ def test_github_pr_review_legacy_origin_default() -> None:
     state = GithubPrReviewState.model_validate(payload)
     assert state.origin == "source_run"
     assert state.source_run_id == "legacy-source"
+    assert state.bot_acknowledgement is None
+    assert state.no_findings_completion is None
+
+
+def test_github_pr_review_no_findings_evidence_rejects_body_field() -> None:
+    from ai_dev_loop.state import GithubNoFindingsCompletionEvidence
+
+    with pytest.raises(ValidationError):
+        GithubNoFindingsCompletionEvidence.model_validate(
+            {
+                "comment_id": "1",
+                "created_at": "2026-07-17T12:00:00+00:00",
+                "rule_id": "accepted_comment_prefix:0",
+                "body_sha256": "a" * 64,
+                "reviewed_commit_prefix": "abcd12345678",
+                "body": "must not be stored",
+            }
+        )
 
 
 def test_github_status_transitions() -> None:

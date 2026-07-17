@@ -144,7 +144,11 @@ cambia el runtime Codex del reviewer ni reescribe `effective-config.yaml`.
 Ante hallazgos no aplicables/inciertos responde inline con `@rojobad`, deja
 threads unresolved y espera `@rojobad /ai-dev-loop continue`. No hace merge ni
 force push. El ciclo independiente crea exactamente un Cursor chat nuevo solo
-cuando todos los hallazgos elegibles son accionables.
+cuando todos los hallazgos elegibles son accionables. Con
+`no_findings_completion` habilitado, un comentario general verificable del bot
+(prefijo + `Reviewed commit:` ligado al SHA) puede completar el ciclo sin
+Cursor; `status` puede mostrar acuse `eyes` o diagnostico de timeout, pero eso
+nunca finaliza ni republica el trigger.
 
 ## `start`
 

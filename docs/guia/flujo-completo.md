@@ -163,6 +163,21 @@ proveniencia:
 - posteriores al marcador idempotente de `@codex review`;
 - no procesados antes por ese ciclo.
 
+Si no hay hilos elegibles y
+`github.no_findings_completion.enabled: true`, el worker puede completar el ciclo
+cuando el reviewer permitido publica un comentario general que cumple el contrato
+configurado (prefijo exacto + línea `Reviewed commit:` ligada al
+`bound_head_sha`, posterior al trigger). Esa ruta no crea chat Cursor, no
+adjudica con Codex, no hace commit/push ni resuelve hilos. La ausencia de hilos,
+la reacción `eyes` o su retirada **no** son señales de éxito.
+
+Con `github.acknowledgement.enabled: true`, la reacción configurada (`eyes` por
+defecto) sobre el comentario trigger es telemetría best-effort: `status` puede
+mostrar acuse observado o un diagnóstico de timeout, pero el worker sigue
+esperando hilos o el comentario de finalización. El timeout de acuse no reintenta
+el trigger. Mantén **Automatic reviews** de Codex apagado en este flujo para
+evitar revisiones duplicadas.
+
 Codex B evalúa todos esos hilos y devuelve una decisión estructurada por hilo.
 
 ### Todos son accionables

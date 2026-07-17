@@ -66,3 +66,60 @@ def test_github_rejects_empty_reviewer_logins(tmp_path: Path) -> None:
     )
     with pytest.raises(ValidationError):
         load_project_config(path)
+
+
+def test_github_acknowledgement_and_no_findings_defaults(tmp_path: Path) -> None:
+    path = tmp_path / "ai_dev_loop.yaml"
+    path.write_text(_BASE + "github:\n  enabled: true\n", encoding="utf-8")
+    config = load_project_config(path)
+    assert config.github is not None
+    assert config.github.acknowledgement.enabled is False
+    assert config.github.acknowledgement.reaction == "eyes"
+    assert config.github.acknowledgement.timeout_seconds == 300
+    assert config.github.acknowledgement.on_timeout == "diagnostic_only"
+    assert config.github.no_findings_completion.enabled is False
+    assert config.github.no_findings_completion.accepted_comment_prefixes == []
+    assert config.github.no_findings_completion.reviewed_commit_prefix_length == 12
+
+
+def test_github_no_findings_requires_prefixes_when_enabled(tmp_path: Path) -> None:
+    path = tmp_path / "ai_dev_loop.yaml"
+    path.write_text(
+        _BASE + "github:\n  enabled: true\n  no_findings_completion:\n    enabled: true\n"
+        "    accepted_comment_prefixes: []\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError, match="accepted_comment_prefixes"):
+        load_project_config(path)
+
+
+def test_github_acknowledgement_rejects_non_diagnostic_timeout(tmp_path: Path) -> None:
+    path = tmp_path / "ai_dev_loop.yaml"
+    path.write_text(
+        _BASE + "github:\n  enabled: true\n  acknowledgement:\n    enabled: true\n"
+        "    on_timeout: retry_trigger\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError, match="diagnostic_only"):
+        load_project_config(path)
+
+
+def test_github_no_findings_opt_in_config(tmp_path: Path) -> None:
+    path = tmp_path / "ai_dev_loop.yaml"
+    path.write_text(
+        _BASE + "github:\n  enabled: true\n"
+        "  acknowledgement:\n    enabled: true\n    timeout_seconds: 120\n"
+        "  no_findings_completion:\n    enabled: true\n"
+        "    accepted_comment_prefixes:\n"
+        '      - "Codex Review: Didn\'t find any major issues."\n'
+        "    reviewed_commit_prefix_length: 12\n",
+        encoding="utf-8",
+    )
+    config = load_project_config(path)
+    assert config.github is not None
+    assert config.github.acknowledgement.enabled is True
+    assert config.github.acknowledgement.timeout_seconds == 120
+    assert config.github.no_findings_completion.enabled is True
+    assert config.github.no_findings_completion.accepted_comment_prefixes == [
+        "Codex Review: Didn't find any major issues."
+    ]

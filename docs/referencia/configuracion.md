@@ -197,6 +197,16 @@ github:
   external_review_skill: review-github-pr-feedback
   max_local_review_iterations: 3
   pr_base: master
+  acknowledgement:
+    enabled: true
+    reaction: eyes
+    timeout_seconds: 300
+    on_timeout: diagnostic_only
+  no_findings_completion:
+    enabled: true
+    accepted_comment_prefixes:
+      - "Codex Review: Didn't find any major issues."
+    reviewed_commit_prefix_length: 12
 ```
 
 | Campo | Default | Descripcion |
@@ -212,8 +222,22 @@ github:
 | `external_review_skill` | `review-github-pr-feedback` | Skill Codex para adjudicacion externa. |
 | `max_local_review_iterations` | `3` | Presupuesto local de review tras feedback externo. |
 | `pr_base` | `master` | Base fija del PR. |
+| `acknowledgement.enabled` | `false` | Telemetria best-effort de la reaccion del bot sobre el trigger. |
+| `acknowledgement.reaction` | `eyes` | Emoji de acuse esperado (solo diagnostico). |
+| `acknowledgement.timeout_seconds` | `300` | Plazo diagnostico sin acuse; no reintenta el trigger. |
+| `acknowledgement.on_timeout` | `diagnostic_only` | Unico valor admitido; nunca completa ni aborta. |
+| `no_findings_completion.enabled` | `false` | Finalizacion verificable sin hallazgos via comentario general. |
+| `no_findings_completion.accepted_comment_prefixes` | `[]` | Prefijos exactos del comentario de “sin hallazgos”; obligatorio si esta habilitado. |
+| `no_findings_completion.reviewed_commit_prefix_length` | `12` | Longitud del SHA en la linea estructural `Reviewed commit:`. |
 
 Campos de credenciales (`token`, `pat`, `access_token`, etc.) estan prohibidos.
+
+La finalizacion sin hallazgos exige a la vez: autor en `reviewer_logins`, comentario
+posterior a `request_created_at`, prefijo configurado, y linea `Reviewed commit:`
+ligada al `bound_head_sha`. La ausencia de hilos, la presencia de `eyes` o la
+retirada de esa reaccion **nunca** completan el ciclo. Mantén apagada la opción
+remota de **Automatic reviews** de Codex mientras ai_dev_loop publica
+`@codex review`; habilitar ambas vías puede duplicar revisiones.
 
 Con `github.enabled: true` hay dos flujos CLI:
 

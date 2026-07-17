@@ -379,3 +379,37 @@ TMPDIR=/tmp TMP=/tmp TEMP=/tmp uv run python -m pytest -q
 ```
 
 Para simulaciones DrvFS puntuales, usa `-s` si la captura de pytest falla antes de coleccion.
+
+## El worker de PR review no sale de `awaiting_bot_review` aunque el bot “aprobó”
+
+Síntoma:
+
+- el bot publicó un comentario general positivo;
+- o aparece/desaparece la reacción `eyes` en el trigger;
+- `status` sigue en `awaiting_bot_review` hasta timeout.
+
+Causa: la ausencia de hilos, la presencia de `eyes` o la retirada de esa
+reacción **no** completan el ciclo. Sólo cuenta un comentario general del login
+en `github.reviewer_logins`, posterior a `request_created_at`, con un prefijo
+exacto de `github.no_findings_completion.accepted_comment_prefixes` y una línea
+estructural `Reviewed commit:` cuyo SHA coincide con el prefijo configurado del
+`bound_head_sha`. `acknowledgement` es telemetría: timeout o reacción borrada
+quedan como diagnóstico y el polling continúa sin republicar `@codex review`.
+
+Acción:
+
+1. Confirma `github.no_findings_completion.enabled: true` y el prefijo exacto
+   del bot (un cambio de texto del bot se corrige en YAML, no relajando el
+   matcher).
+2. Verifica en `pr-review status` el acuse (`observed` / timeout diagnóstico) y
+   que no haya hilos elegibles compitiendo con el comentario positivo.
+3. Mantén **Automatic reviews** de Codex apagado mientras ai_dev_loop publica el
+   trigger explícito.
+4. Si el ciclo quedó `interrupted` por timeout de polling, aborta si hace falta
+   y relanza/reanuda con los comandos existentes; **no** edites `state.json`.
+
+```bash
+ai_dev_loop pr-review status <run-id>
+ai_dev_loop pr-review abort <run-id>
+ai_dev_loop pr-review resume <run-id>
+```

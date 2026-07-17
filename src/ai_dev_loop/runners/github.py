@@ -19,6 +19,10 @@ from ai_dev_loop.process import ProcessResult, run_process
 from ai_dev_loop.redaction import redact_text
 
 FULL_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+# Structural Reviewed-commit line used by configured no-findings completion.
+_REVIEWED_COMMIT_LINE_RE = re.compile(
+    r"(?m)^\s*(?:\*\*)?Reviewed commit:(?:\*\*)?\s*`?([0-9a-fA-F]+)`?\s*$"
+)
 
 
 class GithubErrorKind(StrEnum):
@@ -72,6 +76,46 @@ class GithubIssueComment:
     body_sha256: str
     created_at: str | None
     url: str | None = None
+
+
+@dataclass(frozen=True)
+class GithubIssueCommentDetail:
+    """Ephemeral issue-comment payload for matching.
+
+    ``body`` is for in-memory matching only and must never be persisted in state
+    or written to default logs.
+    """
+
+    comment_id: str
+    author_login: str
+    body: str
+    body_sha256: str
+    created_at: str | None
+    url: str | None = None
+
+
+@dataclass(frozen=True)
+class GithubCommentReaction:
+    reaction_id: str
+    user_login: str
+    content: str
+    created_at: str | None = None
+
+
+@dataclass(frozen=True)
+class EyesAcknowledgementMatch:
+    trigger_comment_id: str
+    reaction: str
+    user_login: str
+
+
+@dataclass(frozen=True)
+class NoFindingsCompletionMatch:
+    comment_id: str
+    created_at: str
+    body_sha256: str
+    rule_id: str
+    reviewed_commit_prefix: str
 
 
 @dataclass(frozen=True)
@@ -370,15 +414,7 @@ def find_issue_comment_with_marker(
         cwd=cwd,
         timeout=timeout,
     )
-    if result.returncode != 0:
-        raise AiDevLoopError(_classify_gh_failure(result).message)
-    items = _parse_json(result)
-    if not isinstance(items, list):
-        text = result.stdout.strip()
-        items = []
-        for line in text.splitlines():
-            if line.strip():
-                items.append(json.loads(line))
+    items = _parse_paginated_json_items(result)
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -636,6 +672,87 @@ def list_review_threads(
     return threads
 
 
+def _parse_paginated_json_items(result: ProcessResult) -> list[Any]:
+    """Parse ``gh api --paginate`` output into a flat list of items.
+
+    ``gh`` may emit one or more concatenated JSON values (arrays or objects),
+    either compact or pretty-printed. Arrays are flattened; non-list values are
+    wrapped as single items. Validation errors never include response bodies.
+    """
+
+    if result.returncode != 0:
+        raise AiDevLoopError(_classify_gh_failure(result).message)
+    text = result.stdout.strip()
+    if not text:
+        return []
+
+    decoder = json.JSONDecoder()
+    items: list[Any] = []
+    index = 0
+    length = len(text)
+    while index < length:
+        while index < length and text[index].isspace():
+            index += 1
+        if index >= length:
+            break
+        try:
+            value, end = decoder.raw_decode(text, index)
+        except json.JSONDecodeError as exc:
+            raise ValidationError("gh returned invalid JSON") from exc
+        if isinstance(value, list):
+            items.extend(value)
+        else:
+            items.append(value)
+        index = end
+    return items
+
+
+def list_issue_comment_details(
+    command: str,
+    *,
+    cwd: str,
+    pr_number: int,
+    timeout: float = 60.0,
+) -> list[GithubIssueCommentDetail]:
+    """List general PR issue comments with ephemeral bodies for matching."""
+
+    from ai_dev_loop.state import sha256_text
+
+    result = run_gh(
+        command,
+        [
+            "api",
+            f"repos/{{owner}}/{{repo}}/issues/{pr_number}/comments",
+            "--paginate",
+        ],
+        cwd=cwd,
+        timeout=timeout,
+    )
+    items = _parse_paginated_json_items(result)
+    comments: list[GithubIssueCommentDetail] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        comment_id = item.get("id")
+        if comment_id is None:
+            continue
+        user = item.get("user") or {}
+        author = str(user.get("login") or "") if isinstance(user, dict) else str(user or "")
+        body = str(item.get("body") or "")
+        created_at = item.get("created_at")
+        comments.append(
+            GithubIssueCommentDetail(
+                comment_id=str(comment_id),
+                author_login=author,
+                body=body,
+                body_sha256=sha256_text(body),
+                created_at=str(created_at) if created_at else None,
+                url=str(item.get("html_url")) if item.get("html_url") else None,
+            )
+        )
+    return comments
+
+
 def list_issue_comments_after(
     command: str,
     *,
@@ -646,53 +763,168 @@ def list_issue_comments_after(
 ) -> list[GithubIssueComment]:
     """List issue comments; filter client-side for continue-command matching."""
 
-    from ai_dev_loop.state import sha256_text
+    details = list_issue_comment_details(command, cwd=cwd, pr_number=pr_number, timeout=timeout)
+    after_int = int(after_comment_id) if after_comment_id and after_comment_id.isdigit() else None
+    comments: list[GithubIssueComment] = []
+    for detail in details:
+        cid = detail.comment_id
+        if after_int is not None and cid.isdigit() and int(cid) <= after_int:
+            continue
+        comments.append(
+            GithubIssueComment(
+                comment_id=cid,
+                author_login=detail.author_login,
+                body_sha256=detail.body_sha256,
+                created_at=detail.created_at,
+                url=detail.url,
+            )
+        )
+    return comments
 
+
+def list_issue_comment_reactions(
+    command: str,
+    *,
+    cwd: str,
+    comment_id: str,
+    timeout: float = 60.0,
+) -> list[GithubCommentReaction]:
+    """List reactions on a PR/issue comment (paginated)."""
+
+    if not str(comment_id).strip() or not str(comment_id).isdigit():
+        raise ValidationError("comment_id must be a numeric GitHub comment id")
     result = run_gh(
         command,
         [
             "api",
-            f"repos/{{owner}}/{{repo}}/issues/{pr_number}/comments",
+            f"repos/{{owner}}/{{repo}}/issues/comments/{comment_id}/reactions",
             "--paginate",
-            "-q",
-            ".[] | {id, user: .user.login, body, created_at: .created_at, html_url: .html_url}",
         ],
         cwd=cwd,
         timeout=timeout,
     )
-    if result.returncode != 0:
-        raise AiDevLoopError(_classify_gh_failure(result).message)
-    # --paginate with -q may emit NDJSON; tolerate both.
-    text = result.stdout.strip()
-    if not text:
-        return []
-    items: list[Any] = []
-    try:
-        loaded = json.loads(text)
-        items = loaded if isinstance(loaded, list) else [loaded]
-    except json.JSONDecodeError:
-        for line in text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            items.append(json.loads(line))
-    comments: list[GithubIssueComment] = []
-    after_int = int(after_comment_id) if after_comment_id and after_comment_id.isdigit() else None
+    items = _parse_paginated_json_items(result)
+    reactions: list[GithubCommentReaction] = []
     for item in items:
-        cid = str(item.get("id"))
-        if after_int is not None and cid.isdigit() and int(cid) <= after_int:
+        if not isinstance(item, dict):
             continue
-        body = item.get("body") or ""
-        comments.append(
-            GithubIssueComment(
-                comment_id=cid,
-                author_login=str(item.get("user") or ""),
-                body_sha256=sha256_text(body),
-                created_at=item.get("created_at"),
-                url=item.get("html_url"),
+        reaction_id = item.get("id")
+        if reaction_id is None:
+            continue
+        user = item.get("user") or {}
+        login = str(user.get("login") or "") if isinstance(user, dict) else str(user or "")
+        content = str(item.get("content") or "")
+        if not content:
+            continue
+        created_at = item.get("created_at")
+        reactions.append(
+            GithubCommentReaction(
+                reaction_id=str(reaction_id),
+                user_login=login,
+                content=content,
+                created_at=str(created_at) if created_at else None,
             )
         )
-    return comments
+    return reactions
+
+
+def match_eyes_acknowledgement(
+    reactions: list[GithubCommentReaction],
+    *,
+    trigger_comment_id: str,
+    reviewer_logins: list[str],
+    reaction: str = "eyes",
+) -> EyesAcknowledgementMatch | None:
+    """Return a match when an allowed reviewer reacted with the configured emoji.
+
+    Pure matcher: never infers completion from presence or absence of reactions.
+    """
+
+    if not trigger_comment_id.strip():
+        return None
+    expected = reaction.strip().lower()
+    if not expected:
+        return None
+    allowed = {login.lower() for login in reviewer_logins if login.strip()}
+    if not allowed:
+        return None
+    for item in reactions:
+        if item.content.strip().lower() != expected:
+            continue
+        if item.user_login.strip().lower() not in allowed:
+            continue
+        return EyesAcknowledgementMatch(
+            trigger_comment_id=trigger_comment_id,
+            reaction=expected,
+            user_login=item.user_login.strip(),
+        )
+    return None
+
+
+def match_no_findings_completion(
+    comments: list[GithubIssueCommentDetail],
+    *,
+    reviewer_logins: list[str],
+    bound_head_sha: str,
+    request_created_at: str | None,
+    accepted_comment_prefixes: list[str],
+    reviewed_commit_prefix_length: int,
+) -> NoFindingsCompletionMatch | None:
+    """Match a configured no-findings general comment bound to ``bound_head_sha``.
+
+    Requires allowed author, timestamp after the review trigger, an exact configured
+    body prefix, and a structural ``Reviewed commit:`` line whose SHA prefix matches.
+    Absence of comments or threads is never treated as success.
+    """
+
+    if not FULL_SHA_PATTERN.match(bound_head_sha):
+        raise ValidationError("bound head SHA is missing or invalid for no-findings matching")
+    if reviewed_commit_prefix_length < 7 or reviewed_commit_prefix_length > 40:
+        raise ValidationError("reviewed_commit_prefix_length must be between 7 and 40")
+    if not accepted_comment_prefixes:
+        return None
+    if not request_created_at or not request_created_at.strip():
+        return None
+    request_at = _parse_github_timestamp(request_created_at)
+    if request_at is None:
+        return None
+    allowed = {login.lower() for login in reviewer_logins if login.strip()}
+    if not allowed:
+        return None
+    expected_prefix = bound_head_sha[:reviewed_commit_prefix_length].lower()
+
+    for comment in comments:
+        if comment.author_login.strip().lower() not in allowed:
+            continue
+        if not comment.created_at:
+            continue
+        created_at = _parse_github_timestamp(comment.created_at)
+        if created_at is None or created_at <= request_at:
+            continue
+        body = comment.body
+        matched_rule: str | None = None
+        for index, prefix in enumerate(accepted_comment_prefixes):
+            if body.startswith(prefix):
+                matched_rule = f"accepted_comment_prefix:{index}"
+                break
+        if matched_rule is None:
+            continue
+        commit_match = _REVIEWED_COMMIT_LINE_RE.search(body)
+        if commit_match is None:
+            continue
+        reviewed = commit_match.group(1).lower()
+        if len(reviewed) < reviewed_commit_prefix_length:
+            continue
+        if reviewed[:reviewed_commit_prefix_length] != expected_prefix:
+            continue
+        return NoFindingsCompletionMatch(
+            comment_id=comment.comment_id,
+            created_at=comment.created_at,
+            body_sha256=comment.body_sha256,
+            rule_id=matched_rule,
+            reviewed_commit_prefix=expected_prefix,
+        )
+    return None
 
 
 def body_is_continue_command(body: str, *, continue_command: str) -> bool:

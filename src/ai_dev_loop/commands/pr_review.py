@@ -46,7 +46,11 @@ from ai_dev_loop.runners.github import (
     filter_eligible_threads,
     find_issue_comment_with_marker,
     get_pull_request,
+    list_issue_comment_details,
+    list_issue_comment_reactions,
     list_review_threads,
+    match_eyes_acknowledgement,
+    match_no_findings_completion,
     reply_to_review_thread,
     resolve_review_thread,
 )
@@ -56,6 +60,8 @@ from ai_dev_loop.runners.publish import (
     validate_clean_except_staged,
 )
 from ai_dev_loop.state import (
+    GithubBotAcknowledgementState,
+    GithubNoFindingsCompletionEvidence,
     GithubPrReviewState,
     RunState,
     RunStatus,
@@ -777,7 +783,27 @@ def render_pr_review_status(run_id: str, *, output: str = "text") -> str:
             "request_comment_id": gpr.request_comment_id,
             "last_external_result_path": gpr.last_external_result_path,
             "last_snapshot_path": gpr.last_snapshot_path,
+            "bot_acknowledgement": None,
+            "no_findings_completion": None,
         }
+        if gpr.bot_acknowledgement is not None:
+            ack = gpr.bot_acknowledgement
+            payload["github_pr_review"]["bot_acknowledgement"] = {
+                "reaction": ack.reaction,
+                "first_observed_at": ack.first_observed_at,
+                "acknowledgement_cleared_at": ack.acknowledgement_cleared_at,
+                "timeout_diagnostic_at": ack.timeout_diagnostic_at,
+                "observed": ack.first_observed_at is not None,
+            }
+        if gpr.no_findings_completion is not None:
+            evidence = gpr.no_findings_completion
+            payload["github_pr_review"]["no_findings_completion"] = {
+                "comment_id": evidence.comment_id,
+                "created_at": evidence.created_at,
+                "rule_id": evidence.rule_id,
+                "body_sha256": evidence.body_sha256,
+                "reviewed_commit_prefix": evidence.reviewed_commit_prefix,
+            }
     if output == "json":
         return json.dumps(payload, indent=2) + "\n"
     lines = [
@@ -800,6 +826,24 @@ def render_pr_review_status(run_id: str, *, output: str = "text") -> str:
                 f"Resolved threads: {len(gpr.resolved_thread_ids)}",
             ]
         )
+        if gpr.bot_acknowledgement is not None:
+            ack = gpr.bot_acknowledgement
+            if ack.first_observed_at:
+                lines.append(f"Bot acknowledgement: observed ({ack.reaction})")
+            elif ack.timeout_diagnostic_at:
+                lines.append(
+                    f"Bot acknowledgement: timeout diagnostic ({ack.reaction}; polling continues)"
+                )
+            else:
+                lines.append(f"Bot acknowledgement: waiting ({ack.reaction})")
+            if ack.acknowledgement_cleared_at:
+                lines.append("Bot acknowledgement: previously observed reaction cleared")
+        if gpr.no_findings_completion is not None:
+            lines.append(
+                "No-findings completion: "
+                f"rule={gpr.no_findings_completion.rule_id} "
+                f"commit={gpr.no_findings_completion.reviewed_commit_prefix}…"
+            )
     if state.result:
         lines.append(state.result)
     if state.last_error:
@@ -878,6 +922,248 @@ def run_pr_review_worker_loop(run_id: str) -> None:
         raise
 
 
+def _observe_bot_acknowledgement(
+    run_directory: Path,
+    *,
+    state: RunState,
+    github_command: str,
+    reviewer_logins: list[str],
+    reaction: str,
+    timeout_seconds: int,
+) -> None:
+    """Persist best-effort eyes acknowledgement telemetry; never completes a cycle."""
+
+    gpr = state.github_pr_review
+    assert gpr is not None
+    if gpr.request_comment_id is None or gpr.pr_number is None:
+        return
+    if gpr.no_findings_completion is not None:
+        return
+
+    ack = gpr.bot_acknowledgement
+    if ack is None or ack.trigger_comment_id != gpr.request_comment_id:
+        ack = GithubBotAcknowledgementState(
+            trigger_comment_id=gpr.request_comment_id,
+            reaction=reaction,
+        )
+
+    try:
+        reactions = list_issue_comment_reactions(
+            github_command,
+            cwd=state.repository.root,
+            comment_id=gpr.request_comment_id,
+        )
+    except AiDevLoopError:
+        # Best-effort telemetry: keep polling for the final result.
+        if gpr.bot_acknowledgement != ack:
+            locks = _run_locks(
+                run_directory, run_id=state.run_id, repository_path=state.repository.root
+            )
+            locks.acquire()
+            try:
+                fresh = load_run_state_fresh(run_directory)
+                assert fresh.github_pr_review is not None
+                if fresh.github_pr_review.bot_acknowledgement is None:
+                    fresh.github_pr_review = fresh.github_pr_review.model_copy(
+                        update={"bot_acknowledgement": ack}
+                    )
+                    save_run_state(run_directory, fresh)
+            finally:
+                locks.release()
+        return
+
+    match = match_eyes_acknowledgement(
+        reactions,
+        trigger_comment_id=gpr.request_comment_id,
+        reviewer_logins=reviewer_logins,
+        reaction=reaction,
+    )
+    now = utc_now().isoformat()
+    updates: dict[str, Any] = {}
+    if match is not None:
+        if ack.first_observed_at is None:
+            updates["first_observed_at"] = now
+            updates["acknowledgement_cleared_at"] = None
+        elif ack.acknowledgement_cleared_at is not None:
+            updates["acknowledgement_cleared_at"] = None
+    else:
+        if ack.first_observed_at is not None and ack.acknowledgement_cleared_at is None:
+            updates["acknowledgement_cleared_at"] = now
+        if (
+            ack.first_observed_at is None
+            and ack.timeout_diagnostic_at is None
+            and gpr.request_created_at
+        ):
+            request_at = _parse_request_created_at(gpr.request_created_at)
+            if request_at is not None:
+                elapsed = (utc_now() - request_at).total_seconds()
+                if elapsed >= timeout_seconds:
+                    updates["timeout_diagnostic_at"] = now
+
+    if updates or gpr.bot_acknowledgement is None or gpr.bot_acknowledgement != ack:
+        new_ack = ack.model_copy(update=updates) if updates else ack
+        locks = _run_locks(
+            run_directory, run_id=state.run_id, repository_path=state.repository.root
+        )
+        locks.acquire()
+        try:
+            fresh = load_run_state_fresh(run_directory)
+            assert fresh.github_pr_review is not None
+            if fresh.status in TERMINAL_STATUSES:
+                return
+            previous = fresh.github_pr_review.bot_acknowledgement
+            fresh.github_pr_review = fresh.github_pr_review.model_copy(
+                update={"bot_acknowledgement": new_ack}
+            )
+            save_run_state(run_directory, fresh)
+            if updates.get("first_observed_at") and (
+                previous is None or previous.first_observed_at is None
+            ):
+                append_orchestrator_event(
+                    run_directory,
+                    run_id=fresh.run_id,
+                    component="orchestrator",
+                    event="pr_review_bot_acknowledgement_observed",
+                    status=fresh.status.value,
+                    detail={"reaction": reaction},
+                )
+            if updates.get("timeout_diagnostic_at") and (
+                previous is None or previous.timeout_diagnostic_at is None
+            ):
+                append_orchestrator_event(
+                    run_directory,
+                    run_id=fresh.run_id,
+                    component="orchestrator",
+                    event="pr_review_bot_acknowledgement_timeout",
+                    status=fresh.status.value,
+                    detail={
+                        "reaction": reaction,
+                        "on_timeout": "diagnostic_only",
+                    },
+                )
+            if updates.get("acknowledgement_cleared_at") and (
+                previous is None or previous.acknowledgement_cleared_at is None
+            ):
+                append_orchestrator_event(
+                    run_directory,
+                    run_id=fresh.run_id,
+                    component="orchestrator",
+                    event="pr_review_bot_acknowledgement_cleared",
+                    status=fresh.status.value,
+                    detail={"reaction": reaction},
+                )
+        finally:
+            locks.release()
+
+
+def _parse_request_created_at(value: str) -> datetime | None:
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _complete_no_findings_cycle(
+    run_directory: Path,
+    *,
+    match: Any,
+) -> bool:
+    """Persist verified no-findings completion under lock.
+
+    Re-reads PR threads under the lock so an eligible thread wins over a
+    positive no-findings comment. Returns True when the cycle is terminal
+    (completed or already terminal); False when eligible threads appeared.
+    """
+
+    from ai_dev_loop.runners.github import NoFindingsCompletionMatch
+
+    if not isinstance(match, NoFindingsCompletionMatch):
+        raise ValidationError("internal no-findings match type is invalid")
+
+    state = load_run_state_fresh(run_directory)
+    locks = _run_locks(run_directory, run_id=state.run_id, repository_path=state.repository.root)
+    locks.acquire()
+    try:
+        state = load_run_state_fresh(run_directory)
+        if state.status in TERMINAL_STATUSES:
+            return True
+        gpr = state.github_pr_review
+        if gpr is None or gpr.pr_number is None:
+            return False
+        if state.status != RunStatus.AWAITING_BOT_REVIEW:
+            return False
+        if gpr.no_findings_completion is not None:
+            return True
+        config = _require_github_config(Path(state.repository.root))
+        assert config.github is not None
+        github = config.github
+
+        pr = get_pull_request(github.command, cwd=state.repository.root, pr_number=gpr.pr_number)
+        if pr.state != "OPEN":
+            raise ValidationError("bound pull request is no longer open")
+        if pr.head_sha != gpr.bound_head_sha:
+            raise ValidationError("PR head changed during await; resolve drift before continuing")
+
+        threads = list_review_threads(
+            github.command, cwd=state.repository.root, pr_number=gpr.pr_number
+        )
+        eligible = filter_eligible_threads(
+            threads,
+            reviewer_logins=github.reviewer_logins,
+            bound_head_sha=gpr.bound_head_sha,
+            already_processed_thread_ids=set(gpr.processed_thread_ids),
+            request_created_at=gpr.request_created_at,
+        )
+        if eligible:
+            # Eligible threads win over a positive no-findings comment.
+            return False
+
+        evidence = GithubNoFindingsCompletionEvidence(
+            comment_id=match.comment_id,
+            created_at=match.created_at,
+            rule_id=match.rule_id,
+            body_sha256=match.body_sha256,
+            reviewed_commit_prefix=match.reviewed_commit_prefix,
+        )
+        mark_completed(
+            state,
+            "Codex-bot reported no actionable findings for the bound head; "
+            "cycle completed without Cursor or publication",
+        )
+        state.github_pr_review = gpr.model_copy(
+            update={
+                "lifecycle": "completed",
+                "no_findings_completion": evidence,
+                "worker_outcome": "no_findings_completion",
+            }
+        )
+        save_run_state(run_directory, state)
+        append_orchestrator_event(
+            run_directory,
+            run_id=state.run_id,
+            component="orchestrator",
+            event="pr_review_no_findings_completed",
+            status=state.status.value,
+            detail={
+                "rule_id": evidence.rule_id,
+                "comment_id": evidence.comment_id,
+                "reviewed_commit_prefix": evidence.reviewed_commit_prefix,
+                "body_sha256": evidence.body_sha256,
+            },
+        )
+        return True
+    finally:
+        locks.release()
+
+
 def _run_pr_review_worker_loop_inner(run_id: str, run_directory: Path) -> None:
     state = load_run_state_fresh(run_directory)
     if state.github_pr_review is None:
@@ -921,11 +1207,12 @@ def _run_pr_review_worker_loop_inner(run_id: str, run_directory: Path) -> None:
             return
         if gpr.pr_number is None:
             raise ValidationError("bound PR number is required while awaiting bot review")
+        pr_number = gpr.pr_number
+        if gpr.lifecycle == "completed" or gpr.no_findings_completion is not None:
+            return
 
         try:
-            pr = get_pull_request(
-                github.command, cwd=state.repository.root, pr_number=gpr.pr_number
-            )
+            pr = get_pull_request(github.command, cwd=state.repository.root, pr_number=pr_number)
         except AiDevLoopError as exc:
             raise AiDevLoopError(_sanitize_worker_error(exc)) from exc
 
@@ -934,8 +1221,22 @@ def _run_pr_review_worker_loop_inner(run_id: str, run_directory: Path) -> None:
         if pr.head_sha != gpr.bound_head_sha:
             raise ValidationError("PR head changed during await; resolve drift before continuing")
 
+        if github.acknowledgement.enabled and gpr.request_comment_id:
+            _observe_bot_acknowledgement(
+                run_directory,
+                state=state,
+                github_command=github.command,
+                reviewer_logins=github.reviewer_logins,
+                reaction=github.acknowledgement.reaction,
+                timeout_seconds=github.acknowledgement.timeout_seconds,
+            )
+            state = load_run_state_fresh(run_directory)
+            gpr = state.github_pr_review
+            if gpr is None or state.status in TERMINAL_STATUSES:
+                return
+
         threads = list_review_threads(
-            github.command, cwd=state.repository.root, pr_number=gpr.pr_number
+            github.command, cwd=state.repository.root, pr_number=pr_number
         )
         eligible = filter_eligible_threads(
             threads,
@@ -945,6 +1246,37 @@ def _run_pr_review_worker_loop_inner(run_id: str, run_directory: Path) -> None:
             request_created_at=gpr.request_created_at,
         )
         if not eligible:
+            if github.no_findings_completion.enabled:
+                comments = None
+                try:
+                    comments = list_issue_comment_details(
+                        github.command,
+                        cwd=state.repository.root,
+                        pr_number=pr_number,
+                    )
+                    match = match_no_findings_completion(
+                        comments,
+                        reviewer_logins=github.reviewer_logins,
+                        bound_head_sha=gpr.bound_head_sha,
+                        request_created_at=gpr.request_created_at,
+                        accepted_comment_prefixes=(
+                            github.no_findings_completion.accepted_comment_prefixes
+                        ),
+                        reviewed_commit_prefix_length=(
+                            github.no_findings_completion.reviewed_commit_prefix_length
+                        ),
+                    )
+                except AiDevLoopError as exc:
+                    raise AiDevLoopError(_sanitize_worker_error(exc)) from exc
+                finally:
+                    # Drop ephemeral bodies before any further processing.
+                    comments = None
+                if match is not None:
+                    completed = _complete_no_findings_cycle(run_directory, match=match)
+                    if completed:
+                        return
+                    # Race: eligible threads appeared during revalidation.
+                    continue
             time.sleep(github.poll_interval_seconds)
             continue
 
@@ -967,7 +1299,7 @@ def _run_pr_review_worker_loop_inner(run_id: str, run_directory: Path) -> None:
         thread_payload = _load_thread_bodies(
             github.command,
             cwd=state.repository.root,
-            pr_number=gpr.pr_number,
+            pr_number=pr_number,
             thread_ids={t.thread_id for t in eligible},
         )
         review, artifacts = run_codex_github_review(
@@ -977,7 +1309,7 @@ def _run_pr_review_worker_loop_inner(run_id: str, run_directory: Path) -> None:
             external_review_skill=github.external_review_skill,
             eligible_thread_payload=thread_payload,
             bound_head_sha=gpr.bound_head_sha,
-            pr_number=gpr.pr_number,
+            pr_number=pr_number,
         )
 
         resume_workflow = False
@@ -1552,6 +1884,8 @@ def _run_publication_pipeline(
                     + list(state.github_pr_review.eligible_thread_ids)
                 )
             ),
+            "bot_acknowledgement": None,
+            "no_findings_completion": None,
         }
     )
     state.repository = state.repository.model_copy(update={"initial_head": commit_sha})

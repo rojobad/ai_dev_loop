@@ -1154,3 +1154,124 @@ def test_start_fails_before_github_write_when_codex_incompatible(
     assert state.github_pr_review is not None
     assert state.github_pr_review.lifecycle == "prepared_independent"
     assert state.github_pr_review.request_comment_id is None
+
+
+def test_independent_no_findings_completes_without_cursor(
+    independent_env: dict[str, Path | str],
+    fake_clis: dict[str, Path],
+) -> None:
+    from ai_dev_loop.config import load_project_config, resolve_effective_config
+    from ai_dev_loop.paths import run_dir
+    from ai_dev_loop.runners.github import (
+        GithubIssueCommentDetail,
+        NoFindingsCompletionMatch,
+    )
+    from ai_dev_loop.state import sha256_text
+
+    repo = Path(str(independent_env["repo"]))
+    config = repo / "ai_dev_loop.yaml"
+    text = config.read_text(encoding="utf-8")
+    if "no_findings_completion:" not in text:
+        config.write_text(
+            text + "\n  acknowledgement:\n    enabled: true\n"
+            "  no_findings_completion:\n    enabled: true\n"
+            "    accepted_comment_prefixes:\n"
+            '      - "Codex Review: Didn\'t find any major issues."\n'
+            "    reviewed_commit_prefix_length: 12\n",
+            encoding="utf-8",
+        )
+        import subprocess
+
+        subprocess.run(
+            ["git", "add", "ai_dev_loop.yaml"], cwd=repo, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "enable no-findings completion"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+    options, prompt = _prepare_options(repo)
+    pr = _mock_pr(repo)
+    with (
+        patch("ai_dev_loop.commands.pr_review_independent.check_gh_auth") as auth,
+        patch(
+            "ai_dev_loop.commands.pr_review_independent.resolve_repository_nwo",
+            return_value="acme/demo",
+        ),
+        patch("ai_dev_loop.commands.pr_review_independent.get_pull_request", return_value=pr),
+        patch("sys.stdin", StringIO(prompt)),
+    ):
+        auth.return_value.authenticated = True
+        auth.return_value.detail = "ok"
+        prepared = prepare_independent_pr_review(options)
+
+    run_path = run_dir(prepared.project, prepared.run_id)
+    state = load_run_state(run_path / "state.json")
+    state.status = RunStatus.AWAITING_BOT_REVIEW
+    assert state.github_pr_review is not None
+    head = pr.head_sha
+    body = f"Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** `{head[:12]}`\n"
+    state.github_pr_review = state.github_pr_review.model_copy(
+        update={
+            "lifecycle": "awaiting_bot_review",
+            "request_comment_id": "1",
+            "request_created_at": "2026-07-16T12:00:00+00:00",
+            "bound_head_sha": head,
+        }
+    )
+    # Independent prepare binds local HEAD to the PR head; keep them aligned.
+    state.repository = state.repository.model_copy(update={"initial_head": head})
+    save_run_state(run_path, state)
+    match = NoFindingsCompletionMatch(
+        comment_id="55",
+        created_at="2026-07-16T12:10:00+00:00",
+        body_sha256=sha256_text(body),
+        rule_id="accepted_comment_prefix:0",
+        reviewed_commit_prefix=head[:12],
+    )
+    cursor_called = {"value": False}
+
+    with (
+        patch("ai_dev_loop.commands.pr_review._require_github_config") as cfg,
+        patch("ai_dev_loop.commands.pr_review.get_pull_request", return_value=pr),
+        patch("ai_dev_loop.commands.pr_review.list_review_threads", return_value=[]),
+        patch("ai_dev_loop.commands.pr_review.filter_eligible_threads", return_value=[]),
+        patch(
+            "ai_dev_loop.commands.pr_review.list_issue_comment_details",
+            return_value=[
+                GithubIssueCommentDetail(
+                    comment_id="55",
+                    author_login="chatgpt-codex-connector",
+                    body=body,
+                    body_sha256=sha256_text(body),
+                    created_at="2026-07-16T12:10:00+00:00",
+                )
+            ],
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.match_no_findings_completion",
+            return_value=match,
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.list_issue_comment_reactions",
+            return_value=[],
+        ),
+        patch(
+            "ai_dev_loop.workflow_engine.resume_run",
+            side_effect=lambda *_a, **_k: cursor_called.__setitem__("value", True),
+        ),
+    ):
+        effective, _, _ = resolve_effective_config(repo_root=repo)
+        cfg.return_value = effective
+        run_pr_review_worker_loop(prepared.run_id)
+
+    final = load_run_state(run_path / "state.json")
+    assert final.status == RunStatus.COMPLETED
+    assert final.cursor.chat_id is None
+    assert cursor_called["value"] is False
+    assert final.github_pr_review is not None
+    assert final.github_pr_review.lifecycle == "completed"
+    assert final.github_pr_review.no_findings_completion is not None
+    assert not (run_path / "cursor" / "chat.json").exists()
+    load_project_config(repo / "ai_dev_loop.yaml")

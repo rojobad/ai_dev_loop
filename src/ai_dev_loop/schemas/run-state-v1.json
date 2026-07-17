@@ -333,7 +333,55 @@
         },
         "publication_remote": { "type": ["string", "null"] },
         "publication_remote_branch": { "type": ["string", "null"] },
-        "publication_text_path": { "type": ["string", "null"] }
+        "publication_text_path": { "type": ["string", "null"] },
+        "bot_acknowledgement": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["trigger_comment_id", "reaction"],
+              "properties": {
+                "trigger_comment_id": { "type": "string", "minLength": 1 },
+                "reaction": { "type": "string", "minLength": 1 },
+                "first_observed_at": { "type": ["string", "null"] },
+                "acknowledgement_cleared_at": { "type": ["string", "null"] },
+                "timeout_diagnostic_at": { "type": ["string", "null"] }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "no_findings_completion": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "comment_id",
+                "created_at",
+                "rule_id",
+                "body_sha256",
+                "reviewed_commit_prefix"
+              ],
+              "properties": {
+                "comment_id": { "type": "string", "minLength": 1 },
+                "created_at": { "type": "string", "minLength": 1 },
+                "rule_id": { "type": "string", "minLength": 1 },
+                "body_sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "reviewed_commit_prefix": {
+                  "type": "string",
+                  "minLength": 7,
+                  "maxLength": 40,
+                  "pattern": "^[0-9a-f]+$"
+                }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
       },
       "allOf": [
         {

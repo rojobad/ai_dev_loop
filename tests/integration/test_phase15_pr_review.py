@@ -1319,3 +1319,525 @@ def test_create_publication_text_failure_resume_via_cli_exactly_once(
     assert final.github_pr_review.pr_number == 42
     assert final.codex.session_id == source_session
     assert final.github_pr_review.publication_text_path == "github/cycles/01/publication-text.json"
+
+
+def _enable_no_findings_github(repo: Path) -> None:
+    config = repo / "ai_dev_loop.yaml"
+    text = config.read_text(encoding="utf-8")
+    if "no_findings_completion:" in text:
+        return
+    if "github:" not in text:
+        _enable_github(repo)
+        text = config.read_text(encoding="utf-8")
+    config.write_text(
+        text + "\n  acknowledgement:\n    enabled: true\n    timeout_seconds: 1\n"
+        "  no_findings_completion:\n    enabled: true\n"
+        "    accepted_comment_prefixes:\n"
+        '      - "Codex Review: Didn\'t find any major issues."\n'
+        "    reviewed_commit_prefix_length: 12\n",
+        encoding="utf-8",
+    )
+
+
+def test_no_findings_comment_completes_without_cursor(
+    prepared_run: dict[str, Path | str],
+    isolated_xdg: Path,
+    fake_clis: dict[str, Path],
+) -> None:
+    from ai_dev_loop.commands.pr_review import run_pr_review_worker_loop
+    from ai_dev_loop.config import load_project_config
+    from ai_dev_loop.runners.github import (
+        GithubIssueCommentDetail,
+        NoFindingsCompletionMatch,
+    )
+    from ai_dev_loop.state import sha256_text
+
+    run_path = Path(str(prepared_run["run_path"]))
+    repo = Path(str(prepared_run["repo"]))
+    _enable_no_findings_github(repo)
+    state = load_run_state(run_path / "state.json")
+    head = "a" * 40
+    body = f"Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** `{head[:12]}`\n"
+    state.status = RunStatus.AWAITING_BOT_REVIEW
+    state.cursor.chat_id = "019abc00-1111-2222-3333-444444444444"
+    state.github_pr_review = GithubPrReviewState(
+        source_run_id="source-run",
+        lifecycle="awaiting_bot_review",
+        cycle_number=1,
+        max_external_cycles=8,
+        pr_number=9,
+        head_branch=state.repository.branch,
+        bound_head_sha=head,
+        request_comment_id="1",
+        request_marker="marker",
+        request_created_at="2026-07-16T12:00:00+00:00",
+    )
+    save_run_state(run_path, state)
+
+    detail = GithubIssueCommentDetail(
+        comment_id="88",
+        author_login="chatgpt-codex-connector",
+        body=body,
+        body_sha256=sha256_text(body),
+        created_at="2026-07-16T12:10:00+00:00",
+    )
+    expected_match = NoFindingsCompletionMatch(
+        comment_id="88",
+        created_at="2026-07-16T12:10:00+00:00",
+        body_sha256=sha256_text(body),
+        rule_id="accepted_comment_prefix:0",
+        reviewed_commit_prefix=head[:12],
+    )
+    forbidden = {
+        "cursor": False,
+        "codex": False,
+        "commit": False,
+        "resolve": False,
+        "trigger": False,
+    }
+
+    def fail_cursor(*_a, **_k):
+        forbidden["cursor"] = True
+        raise AssertionError("Cursor must not run for no-findings completion")
+
+    def fail_codex(*_a, **_k):
+        forbidden["codex"] = True
+        raise AssertionError("Codex adjudication must not run")
+
+    def fail_comment(*_a, **_k):
+        forbidden["trigger"] = True
+        raise AssertionError("must not post another trigger")
+
+    with (
+        patch("ai_dev_loop.commands.pr_review._require_github_config") as cfg,
+        patch(
+            "ai_dev_loop.commands.pr_review.get_pull_request",
+            return_value=GithubPullRequest(
+                number=9,
+                url="",
+                title="t",
+                state="OPEN",
+                head_ref=state.repository.branch,
+                head_sha=head,
+                base_ref="master",
+                is_cross_repository=False,
+                repository_name_with_owner="acme/demo",
+            ),
+        ),
+        patch("ai_dev_loop.commands.pr_review.list_review_threads", return_value=[]),
+        patch("ai_dev_loop.commands.pr_review.filter_eligible_threads", return_value=[]),
+        patch(
+            "ai_dev_loop.commands.pr_review.list_issue_comment_details",
+            return_value=[detail],
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.match_no_findings_completion",
+            return_value=expected_match,
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.list_issue_comment_reactions",
+            return_value=[],
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.run_codex_github_review",
+            side_effect=fail_codex,
+        ),
+        patch("ai_dev_loop.workflow_engine.resume_run", side_effect=fail_cursor),
+        patch(
+            "ai_dev_loop.commands.pr_review.resolve_review_thread",
+            side_effect=lambda *_a, **_k: forbidden.__setitem__("resolve", True),
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.create_issue_comment",
+            side_effect=fail_comment,
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.publish_accepted_staged_patch",
+            side_effect=lambda *_a, **_k: forbidden.__setitem__("commit", True),
+        ),
+    ):
+        cfg.return_value = load_project_config(repo / "ai_dev_loop.yaml")
+        run_pr_review_worker_loop(state.run_id)
+
+    final = load_run_state(run_path / "state.json")
+    assert final.status == RunStatus.COMPLETED
+    assert final.github_pr_review is not None
+    assert final.github_pr_review.lifecycle == "completed"
+    assert final.github_pr_review.no_findings_completion is not None
+    assert final.github_pr_review.no_findings_completion.comment_id == "88"
+    assert final.github_pr_review.no_findings_completion.body_sha256 == sha256_text(body)
+    assert "Didn't find" not in (final.result or "")
+    assert all(not v for v in forbidden.values())
+    status = render_pr_review_status(state.run_id)
+    assert body not in status
+    assert "Didn't find any major issues" not in status
+
+    # Idempotent: already completed worker is a no-op.
+    with patch("ai_dev_loop.commands.pr_review._require_github_config") as cfg:
+        cfg.return_value = load_project_config(repo / "ai_dev_loop.yaml")
+        run_pr_review_worker_loop(state.run_id)
+    again = load_run_state(run_path / "state.json")
+    assert again.status == RunStatus.COMPLETED
+    assert again.github_pr_review is not None
+    assert again.github_pr_review.no_findings_completion is not None
+
+
+def test_eligible_thread_wins_over_no_findings_during_revalidation(
+    prepared_run: dict[str, Path | str],
+    isolated_xdg: Path,
+    fake_clis: dict[str, Path],
+) -> None:
+    from ai_dev_loop.commands.pr_review import run_pr_review_worker_loop
+    from ai_dev_loop.config import load_project_config
+    from ai_dev_loop.runners.github import (
+        GithubIssueCommentDetail,
+        GithubReviewThread,
+        NoFindingsCompletionMatch,
+    )
+    from ai_dev_loop.state import sha256_text
+
+    run_path = Path(str(prepared_run["run_path"]))
+    repo = Path(str(prepared_run["repo"]))
+    _enable_no_findings_github(repo)
+    state = load_run_state(run_path / "state.json")
+    head = "b" * 40
+    body = f"Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** `{head[:12]}`\n"
+    state.status = RunStatus.AWAITING_BOT_REVIEW
+    state.cursor.chat_id = "019abc00-1111-2222-3333-444444444444"
+    state.github_pr_review = GithubPrReviewState(
+        source_run_id="source-run",
+        lifecycle="awaiting_bot_review",
+        cycle_number=1,
+        max_external_cycles=8,
+        pr_number=9,
+        head_branch=state.repository.branch,
+        bound_head_sha=head,
+        request_comment_id="1",
+        request_created_at="2026-07-16T12:00:00+00:00",
+    )
+    save_run_state(run_path, state)
+
+    thread = GithubReviewThread(
+        thread_id="THREAD_RACE",
+        is_resolved=False,
+        author_login="chatgpt-codex-connector",
+        path="x.py",
+        line=1,
+        commit_sha=head,
+        root_comment_id="C1",
+        root_comment_body_sha256="b" * 64,
+        created_at="2026-07-16T12:05:00+00:00",
+        review_id=None,
+    )
+    match = NoFindingsCompletionMatch(
+        comment_id="88",
+        created_at="2026-07-16T12:10:00+00:00",
+        body_sha256=sha256_text(body),
+        rule_id="accepted_comment_prefix:0",
+        reviewed_commit_prefix=head[:12],
+    )
+    thread_reads = {"n": 0}
+
+    def threads_side_effect(*_a, **_k):
+        thread_reads["n"] += 1
+        if thread_reads["n"] == 1:
+            return []
+        return [thread]
+
+    def eligible_side_effect(threads, **_k):
+        return list(threads)
+
+    review = GithubPrReviewResult.model_validate(
+        {
+            "eligible_thread_ids": ["THREAD_RACE"],
+            "thread_decisions": [
+                {
+                    "thread_id": "THREAD_RACE",
+                    "decision": "uncertain",
+                    "inline_reply": "@rojobad Need clarification.",
+                    "summary": "unclear",
+                }
+            ],
+            "all_actionable": False,
+            "review_markdown": "report",
+            "cursor_fix_prompt": None,
+            "tests_status": "not_applicable",
+            "summary": "uncertain",
+            "residual_risk_comment": None,
+            "highest_severity": None,
+        }
+    )
+    artifacts = GithubAdjudicationArtifacts(
+        events_path="github/cycles/01/codex.events.jsonl",
+        stderr_path="github/cycles/01/codex.stderr.txt",
+        result_path="github/cycles/01/result.json",
+        report_path="github/cycles/01/report.md",
+        metadata_path="github/cycles/01/codex.metadata.json",
+        snapshot_path="github/cycles/01/threads.snapshot.json",
+        fix_prompt_path=None,
+    )
+
+    with (
+        patch("ai_dev_loop.commands.pr_review._require_github_config") as cfg,
+        patch(
+            "ai_dev_loop.commands.pr_review.get_pull_request",
+            return_value=GithubPullRequest(
+                number=9,
+                url="",
+                title="t",
+                state="OPEN",
+                head_ref=state.repository.branch,
+                head_sha=head,
+                base_ref="master",
+                is_cross_repository=False,
+                repository_name_with_owner="acme/demo",
+            ),
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.list_review_threads",
+            side_effect=threads_side_effect,
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.filter_eligible_threads",
+            side_effect=eligible_side_effect,
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.list_issue_comment_details",
+            return_value=[
+                GithubIssueCommentDetail(
+                    comment_id="88",
+                    author_login="chatgpt-codex-connector",
+                    body=body,
+                    body_sha256=sha256_text(body),
+                    created_at="2026-07-16T12:10:00+00:00",
+                )
+            ],
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.match_no_findings_completion",
+            return_value=match,
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.list_issue_comment_reactions",
+            return_value=[],
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review._load_thread_bodies",
+            return_value=[
+                {
+                    "thread_id": "THREAD_RACE",
+                    "author_login": "chatgpt-codex-connector",
+                    "path": "x.py",
+                    "line": 1,
+                    "commit_sha": head,
+                    "body": "Why?",
+                }
+            ],
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.run_codex_github_review",
+            return_value=(review, artifacts),
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.reply_to_review_thread",
+            return_value=GithubWriteResult(ok=True, resource_id="R1"),
+        ),
+    ):
+        cfg.return_value = load_project_config(repo / "ai_dev_loop.yaml")
+        run_pr_review_worker_loop(state.run_id)
+
+    final = load_run_state(run_path / "state.json")
+    assert final.status == RunStatus.WAITING_FOR_USER_ATTENTION
+    assert final.github_pr_review is not None
+    assert final.github_pr_review.no_findings_completion is None
+    assert "THREAD_RACE" in final.github_pr_review.replied_thread_ids
+
+
+def test_eyes_ack_and_timeout_are_diagnostic_only(
+    prepared_run: dict[str, Path | str],
+    isolated_xdg: Path,
+    fake_clis: dict[str, Path],
+) -> None:
+    from ai_dev_loop.commands.pr_review import run_pr_review_worker_loop
+    from ai_dev_loop.config import load_project_config
+    from ai_dev_loop.runners.github import GithubCommentReaction
+
+    run_path = Path(str(prepared_run["run_path"]))
+    repo = Path(str(prepared_run["repo"]))
+    _enable_no_findings_github(repo)
+    state = load_run_state(run_path / "state.json")
+    head = "c" * 40
+    state.status = RunStatus.AWAITING_BOT_REVIEW
+    state.cursor.chat_id = "019abc00-1111-2222-3333-444444444444"
+    state.github_pr_review = GithubPrReviewState(
+        source_run_id="source-run",
+        lifecycle="awaiting_bot_review",
+        cycle_number=1,
+        max_external_cycles=8,
+        pr_number=9,
+        head_branch=state.repository.branch,
+        bound_head_sha=head,
+        request_comment_id="1",
+        request_created_at="2026-07-16T12:00:00+00:00",
+    )
+    save_run_state(run_path, state)
+
+    trigger_calls = {"n": 0}
+    polls = {"n": 0}
+
+    def reactions_side_effect(*_a, **_k):
+        polls["n"] += 1
+        if polls["n"] == 1:
+            return [
+                GithubCommentReaction(
+                    reaction_id="1",
+                    user_login="chatgpt-codex-connector",
+                    content="eyes",
+                )
+            ]
+        return []
+
+    def sleep_and_interrupt(_seconds: float) -> None:
+        # Force the worker out after acknowledgement persistence.
+        raise KeyboardInterrupt("stop after ack poll")
+
+    with (
+        patch("ai_dev_loop.commands.pr_review._require_github_config") as cfg,
+        patch(
+            "ai_dev_loop.commands.pr_review.get_pull_request",
+            return_value=GithubPullRequest(
+                number=9,
+                url="",
+                title="t",
+                state="OPEN",
+                head_ref=state.repository.branch,
+                head_sha=head,
+                base_ref="master",
+                is_cross_repository=False,
+                repository_name_with_owner="acme/demo",
+            ),
+        ),
+        patch("ai_dev_loop.commands.pr_review.list_review_threads", return_value=[]),
+        patch("ai_dev_loop.commands.pr_review.filter_eligible_threads", return_value=[]),
+        patch(
+            "ai_dev_loop.commands.pr_review.list_issue_comment_details",
+            return_value=[],
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.match_no_findings_completion",
+            return_value=None,
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.list_issue_comment_reactions",
+            side_effect=reactions_side_effect,
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.create_issue_comment",
+            side_effect=lambda *_a, **_k: trigger_calls.__setitem__("n", trigger_calls["n"] + 1),
+        ),
+        patch("ai_dev_loop.commands.pr_review.time.sleep", side_effect=sleep_and_interrupt),
+    ):
+        cfg.return_value = load_project_config(repo / "ai_dev_loop.yaml")
+        with pytest.raises(KeyboardInterrupt):
+            run_pr_review_worker_loop(state.run_id)
+
+    mid = load_run_state(run_path / "state.json")
+    assert mid.status == RunStatus.AWAITING_BOT_REVIEW
+    assert mid.github_pr_review is not None
+    assert mid.github_pr_review.bot_acknowledgement is not None
+    assert mid.github_pr_review.bot_acknowledgement.first_observed_at is not None
+    assert mid.github_pr_review.lifecycle == "awaiting_bot_review"
+    assert trigger_calls["n"] == 0
+    status = render_pr_review_status(state.run_id)
+    assert "Bot acknowledgement: observed" in status
+    assert mid.github_pr_review.no_findings_completion is None
+
+
+def test_no_findings_completes_without_ever_observing_eyes(
+    prepared_run: dict[str, Path | str],
+    isolated_xdg: Path,
+    fake_clis: dict[str, Path],
+) -> None:
+    from ai_dev_loop.commands.pr_review import run_pr_review_worker_loop
+    from ai_dev_loop.config import load_project_config
+    from ai_dev_loop.runners.github import (
+        GithubIssueCommentDetail,
+        NoFindingsCompletionMatch,
+    )
+    from ai_dev_loop.state import sha256_text
+
+    run_path = Path(str(prepared_run["run_path"]))
+    repo = Path(str(prepared_run["repo"]))
+    _enable_no_findings_github(repo)
+    state = load_run_state(run_path / "state.json")
+    head = "d" * 40
+    body = f"Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** `{head[:12]}`\n"
+    state.status = RunStatus.AWAITING_BOT_REVIEW
+    state.cursor.chat_id = "019abc00-1111-2222-3333-444444444444"
+    state.github_pr_review = GithubPrReviewState(
+        source_run_id="source-run",
+        lifecycle="awaiting_bot_review",
+        cycle_number=1,
+        max_external_cycles=8,
+        pr_number=9,
+        head_branch=state.repository.branch,
+        bound_head_sha=head,
+        request_comment_id="1",
+        request_created_at="2026-07-16T12:00:00+00:00",
+    )
+    save_run_state(run_path, state)
+    match = NoFindingsCompletionMatch(
+        comment_id="77",
+        created_at="2026-07-16T12:10:00+00:00",
+        body_sha256=sha256_text(body),
+        rule_id="accepted_comment_prefix:0",
+        reviewed_commit_prefix=head[:12],
+    )
+    with (
+        patch("ai_dev_loop.commands.pr_review._require_github_config") as cfg,
+        patch(
+            "ai_dev_loop.commands.pr_review.get_pull_request",
+            return_value=GithubPullRequest(
+                number=9,
+                url="",
+                title="t",
+                state="OPEN",
+                head_ref=state.repository.branch,
+                head_sha=head,
+                base_ref="master",
+                is_cross_repository=False,
+                repository_name_with_owner="acme/demo",
+            ),
+        ),
+        patch("ai_dev_loop.commands.pr_review.list_review_threads", return_value=[]),
+        patch("ai_dev_loop.commands.pr_review.filter_eligible_threads", return_value=[]),
+        patch(
+            "ai_dev_loop.commands.pr_review.list_issue_comment_details",
+            return_value=[
+                GithubIssueCommentDetail(
+                    comment_id="77",
+                    author_login="chatgpt-codex-connector",
+                    body=body,
+                    body_sha256=sha256_text(body),
+                    created_at="2026-07-16T12:10:00+00:00",
+                )
+            ],
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.match_no_findings_completion",
+            return_value=match,
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.list_issue_comment_reactions",
+            return_value=[],
+        ),
+    ):
+        cfg.return_value = load_project_config(repo / "ai_dev_loop.yaml")
+        run_pr_review_worker_loop(state.run_id)
+
+    final = load_run_state(run_path / "state.json")
+    assert final.status == RunStatus.COMPLETED
+    assert final.github_pr_review is not None
+    assert final.github_pr_review.bot_acknowledgement is not None
+    assert final.github_pr_review.bot_acknowledgement.first_observed_at is None
+    assert final.github_pr_review.no_findings_completion is not None

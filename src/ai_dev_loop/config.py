@@ -200,6 +200,91 @@ _GITHUB_FORBIDDEN_SECRET_KEYS = frozenset(
 )
 
 
+class GithubAcknowledgementSection(BaseModel):
+    """Best-effort ``eyes`` acknowledgement telemetry while awaiting bot review.
+
+    Disabled by default. Timeout is diagnostic only: it never retries the trigger,
+    never completes the cycle, and never aborts the worker.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    reaction: str = "eyes"
+    timeout_seconds: int = 300
+    on_timeout: str = "diagnostic_only"
+
+    @field_validator("reaction")
+    @classmethod
+    def non_empty_reaction(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("github.acknowledgement.reaction must not be empty")
+        return value.strip()
+
+    @field_validator("timeout_seconds")
+    @classmethod
+    def positive_timeout(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("github.acknowledgement.timeout_seconds must be a positive integer")
+        return value
+
+    @field_validator("on_timeout")
+    @classmethod
+    def validate_on_timeout(cls, value: str) -> str:
+        if value != "diagnostic_only":
+            raise ValueError(
+                "github.acknowledgement.on_timeout must be 'diagnostic_only'; "
+                "acknowledgement timeout must never retry the trigger or complete the cycle"
+            )
+        return value
+
+
+class GithubNoFindingsCompletionSection(BaseModel):
+    """Explicit no-findings completion from a configured general PR comment.
+
+    Disabled by default. When enabled, ``accepted_comment_prefixes`` must be
+    non-empty. Absence of threads is never treated as success.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    accepted_comment_prefixes: list[str] = Field(default_factory=list)
+    reviewed_commit_prefix_length: int = 12
+
+    @field_validator("accepted_comment_prefixes")
+    @classmethod
+    def validate_prefixes(cls, value: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for prefix in value:
+            if not isinstance(prefix, str) or not prefix.strip():
+                raise ValueError(
+                    "github.no_findings_completion.accepted_comment_prefixes "
+                    "entries must be non-empty"
+                )
+            cleaned.append(prefix)
+        return cleaned
+
+    @field_validator("reviewed_commit_prefix_length")
+    @classmethod
+    def validate_prefix_length(cls, value: int) -> int:
+        if value < 7 or value > 40:
+            raise ValueError(
+                "github.no_findings_completion.reviewed_commit_prefix_length "
+                "must be between 7 and 40"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def require_prefixes_when_enabled(self) -> GithubNoFindingsCompletionSection:
+        if self.enabled and not self.accepted_comment_prefixes:
+            raise ValueError(
+                "github.no_findings_completion.accepted_comment_prefixes must be "
+                "non-empty when enabled"
+            )
+        return self
+
+
 class GithubSection(BaseModel):
     """Optional opt-in GitHub PR review loop policy (no secrets).
 
@@ -221,6 +306,12 @@ class GithubSection(BaseModel):
     external_review_skill: str = "review-github-pr-feedback"
     max_local_review_iterations: int = 3
     pr_base: str = "master"
+    acknowledgement: GithubAcknowledgementSection = Field(
+        default_factory=GithubAcknowledgementSection
+    )
+    no_findings_completion: GithubNoFindingsCompletionSection = Field(
+        default_factory=GithubNoFindingsCompletionSection
+    )
 
     @field_validator("command", "review_trigger_body", "user_mention", "continue_command")
     @classmethod
