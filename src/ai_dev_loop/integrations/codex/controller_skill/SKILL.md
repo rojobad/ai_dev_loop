@@ -26,10 +26,19 @@ interpolation of secrets beyond the exact IDs already known):
 - `ai_dev_loop controller status`
 - `ai_dev_loop launch`
 - `ai_dev_loop abort`
+- `ai_dev_loop pr-review create|status|continue|resume|abort` (only when
+  `github.enabled` is true in the target repository config)
+- `ai_dev_loop github doctor`
 - existing read-only commands: `status`, `logs`, `inspect`, `list`
 
 Do **not** run `prepare` from the controller for an A/B run that B already
 prepared. Do **not** invent notification delivery.
+
+Before `pr-review create`, restate the autonomous write scope: the worker may
+commit the accepted staged patch, non-force push the prepared branch, create or
+update the PR to `master`, post `@codex review`, reply inline, and resolve only
+verified fixed threads. It never merges, force-pushes, retargets, or uses
+`--last` / a new Codex session / a new Cursor chat.
 
 ## Common User Prompts
 
@@ -76,6 +85,40 @@ ai_dev_loop abort <run-id>
 
 Abort persists a durable abort request and signals only clearly owned active
 child process groups. It does not reset, unstage, clean, or rewrite Git state.
+
+### “crea el PR” / “create the PR review cycle”
+
+Only after the local run is `completed` or `completed_with_residual_risk` and
+GitHub is enabled:
+
+```bash
+ai_dev_loop github doctor --repo-path /path/to/repo --output json
+ai_dev_loop pr-review create <source-run-id> --output json
+```
+
+### “¿cómo va el PR review?” / PR-review status
+
+```bash
+ai_dev_loop pr-review status <pr-review-run-id> --output json
+```
+
+Report lifecycle, PR number, cycle counts, and safe next action only. Never
+print GitHub comment bodies, fix prompts, or tokens.
+
+### “continúa el PR review” after user attention
+
+Ordinary prose is never authorization. Continue only when GitHub has an exact
+`@rojobad /ai-dev-loop continue` comment, then:
+
+```bash
+ai_dev_loop pr-review continue <pr-review-run-id>
+```
+
+### “reanuda el ciclo PR” after interruption
+
+```bash
+ai_dev_loop pr-review resume <pr-review-run-id>
+```
 
 ## Missing Capability Or Ambiguity
 

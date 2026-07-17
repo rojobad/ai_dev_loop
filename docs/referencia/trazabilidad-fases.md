@@ -198,6 +198,16 @@ Documentado en:
 - [CLI](cli.md)
 - [Troubleshooting](../operacion/troubleshooting.md)
 
+## Fase 15
+
+Ciclo opt-in post-PR con `gh` autenticado (sin tokens en YAML/state): `github doctor`, `pr-review create|status|continue|resume|abort`, commit/push no-force del patch staged aceptado, PR a `master`, polling de review del bot configurado, adjudicacion con la sesion Codex exacta, fix con el Cursor chat exacto, y parada con `@rojobad` ante hallazgos no aplicables/inciertos.
+
+Documentado en:
+
+- [Referencia CLI](cli.md)
+- [Referencia de configuracion](configuracion.md)
+- [Seguridad y privacidad](../operacion/seguridad-privacidad.md)
+
 ## Riesgos residuales documentados
 
 - Hook trust sigue siendo `unknown` desde CLI.

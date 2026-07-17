@@ -36,6 +36,12 @@ class RunStatus(StrEnum):
     INTERRUPTED = "interrupted"
     FAILED = "failed"
     ABORTED = "aborted"
+    # Optional post-PR GitHub review cycle (Phase 15). Local Cursor/staging/review
+    # segments still use the existing statuses above while github_pr_review is set.
+    AWAITING_BOT_REVIEW = "awaiting_bot_review"
+    EVALUATING_BOT_FEEDBACK = "evaluating_bot_feedback"
+    WAITING_FOR_USER_ATTENTION = "waiting_for_user_attention"
+    PUBLISHING_EXTERNAL_FIX = "publishing_external_fix"
 
 
 ALLOWED_STATUS_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
@@ -59,6 +65,7 @@ ALLOWED_STATUS_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
             RunStatus.COMPLETED,
             RunStatus.COMPLETED_WITH_RESIDUAL_RISK,
             RunStatus.MAX_ITERATIONS_REACHED,
+            RunStatus.PUBLISHING_EXTERNAL_FIX,
             RunStatus.INTERRUPTED,
             RunStatus.FAILED,
             RunStatus.ABORTED,
@@ -82,12 +89,59 @@ ALLOWED_STATUS_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
             RunStatus.RUNNING_CURSOR,
             RunStatus.STAGING,
             RunStatus.REVIEWING,
+            RunStatus.AWAITING_BOT_REVIEW,
+            RunStatus.EVALUATING_BOT_FEEDBACK,
+            RunStatus.PUBLISHING_EXTERNAL_FIX,
             RunStatus.ABORTED,
             RunStatus.FAILED,
         }
     ),
     RunStatus.FAILED: frozenset(),
     RunStatus.ABORTED: frozenset(),
+    RunStatus.AWAITING_BOT_REVIEW: frozenset(
+        {
+            RunStatus.EVALUATING_BOT_FEEDBACK,
+            RunStatus.WAITING_FOR_USER_ATTENTION,
+            RunStatus.INTERRUPTED,
+            RunStatus.FAILED,
+            RunStatus.ABORTED,
+            RunStatus.COMPLETED,
+            RunStatus.COMPLETED_WITH_RESIDUAL_RISK,
+        }
+    ),
+    RunStatus.EVALUATING_BOT_FEEDBACK: frozenset(
+        {
+            RunStatus.WAITING_FOR_USER_ATTENTION,
+            RunStatus.RUNNING_CURSOR,
+            RunStatus.AWAITING_BOT_REVIEW,
+            RunStatus.INTERRUPTED,
+            RunStatus.FAILED,
+            RunStatus.ABORTED,
+            RunStatus.COMPLETED,
+            RunStatus.COMPLETED_WITH_RESIDUAL_RISK,
+        }
+    ),
+    RunStatus.WAITING_FOR_USER_ATTENTION: frozenset(
+        {
+            RunStatus.EVALUATING_BOT_FEEDBACK,
+            RunStatus.AWAITING_BOT_REVIEW,
+            RunStatus.INTERRUPTED,
+            RunStatus.FAILED,
+            RunStatus.ABORTED,
+            RunStatus.COMPLETED,
+            RunStatus.COMPLETED_WITH_RESIDUAL_RISK,
+        }
+    ),
+    RunStatus.PUBLISHING_EXTERNAL_FIX: frozenset(
+        {
+            RunStatus.AWAITING_BOT_REVIEW,
+            RunStatus.COMPLETED,
+            RunStatus.COMPLETED_WITH_RESIDUAL_RISK,
+            RunStatus.INTERRUPTED,
+            RunStatus.FAILED,
+            RunStatus.ABORTED,
+        }
+    ),
 }
 
 
@@ -391,8 +445,7 @@ class RecoveryState(BaseModel):
                     )
                 if self.legacy_cursor_output_adopted:
                     raise ValueError(
-                        "legacy_cursor_output_adopted is not supported for "
-                        "initial_staging_failed"
+                        "legacy_cursor_output_adopted is not supported for initial_staging_failed"
                     )
             elif self.reason_code == "correction_staging_failed":
                 if self.source_iteration < 2:
@@ -451,6 +504,130 @@ class ControllerState(BaseModel):
     controller_session_id: str
 
 
+FULL_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+
+GITHUB_PR_LIFECYCLES = frozenset(
+    {
+        "publishing_initial",
+        "awaiting_bot_review",
+        "evaluating_bot_feedback",
+        "waiting_for_user_attention",
+        "fixing_external_feedback",
+        "publishing_external_fix",
+        "max_external_cycles_reached",
+        "completed",
+        "failed",
+        "aborted",
+        "interrupted",
+    }
+)
+GITHUB_PUBLICATION_PHASES = frozenset(
+    {
+        "pre_commit",
+        "committed",
+        "pushed",
+        "pr_bound",
+    }
+)
+
+
+class GithubPrReviewState(BaseModel):
+    """Optional post-PR cycle binding and lineage (Phase 15).
+
+    Source completed runs remain terminal and immutable. Successors store this
+    section with the inherited exact Cursor chat and Codex reviewer session.
+    Sensitive comment bodies live only in dedicated artifacts, not here.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: int = Field(default=1, alias="schema_version")
+    source_run_id: str = Field(min_length=1)
+    lifecycle: str
+    cycle_number: int = Field(ge=1)
+    max_external_cycles: int = Field(ge=1)
+    pr_number: int | None = Field(default=None, ge=1)
+    pr_url: str | None = None
+    head_branch: str = Field(min_length=1)
+    base_branch: str = "master"
+    bound_head_sha: str
+    request_comment_id: str | None = None
+    request_marker: str | None = None
+    request_created_at: str | None = None
+    eligible_thread_ids: list[str] = Field(default_factory=list)
+    processed_thread_ids: list[str] = Field(default_factory=list)
+    replied_thread_ids: list[str] = Field(default_factory=list)
+    resolved_thread_ids: list[str] = Field(default_factory=list)
+    publication_commit_sha: str | None = None
+    staged_patch_sha256: str | None = None
+    last_external_result_path: str | None = None
+    last_snapshot_path: str | None = None
+    continue_comment_id: str | None = None
+    worker_outcome: str | None = None
+    external_fix_prompt_path: str | None = None
+    publication_phase: str | None = None
+    local_commit_sha: str | None = None
+    expected_remote_sha_before_push: str | None = None
+    publication_remote: str | None = None
+    publication_remote_branch: str | None = None
+    publication_text_path: str | None = None
+
+    @field_validator("lifecycle")
+    @classmethod
+    def validate_lifecycle(cls, value: str) -> str:
+        if value not in GITHUB_PR_LIFECYCLES:
+            raise ValueError(
+                f"github_pr_review.lifecycle must be one of: {sorted(GITHUB_PR_LIFECYCLES)}"
+            )
+        return value
+
+    @field_validator("publication_phase")
+    @classmethod
+    def validate_publication_phase(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value not in GITHUB_PUBLICATION_PHASES:
+            raise ValueError(
+                "github_pr_review.publication_phase must be one of: "
+                f"{sorted(GITHUB_PUBLICATION_PHASES)}"
+            )
+        return value
+
+    @field_validator(
+        "bound_head_sha",
+        "publication_commit_sha",
+        "local_commit_sha",
+        "expected_remote_sha_before_push",
+    )
+    @classmethod
+    def validate_sha(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not FULL_SHA_PATTERN.match(value):
+            raise ValueError("SHA must be a 40-character lowercase hex digest")
+        return value
+
+    @model_validator(mode="after")
+    def validate_thread_id_uniqueness(self) -> GithubPrReviewState:
+        for field_name in (
+            "eligible_thread_ids",
+            "processed_thread_ids",
+            "replied_thread_ids",
+            "resolved_thread_ids",
+        ):
+            values = getattr(self, field_name)
+            if len(values) != len(set(values)):
+                raise ValueError(f"{field_name} must contain unique thread IDs")
+        if self.lifecycle == "publishing_initial" and self.pr_number is None:
+            return self
+        if (
+            self.lifecycle not in {"publishing_initial", "failed", "aborted", "interrupted"}
+            and self.pr_number is None
+        ):
+            raise ValueError("pr_number is required after the PR is bound")
+        return self
+
+
 class RunState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -471,6 +648,7 @@ class RunState(BaseModel):
     last_error: str | None = None
     recovery: RecoveryState | None = None
     controller: ControllerState | None = None
+    github_pr_review: GithubPrReviewState | None = None
 
 
 class ManifestArtifact(BaseModel):

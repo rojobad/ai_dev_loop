@@ -54,11 +54,15 @@ app = typer.Typer(
 )
 config_app = typer.Typer(help="Configuration commands.")
 controller_app = typer.Typer(help="Controller-session status and control helpers.")
+github_app = typer.Typer(help="Optional GitHub CLI integration checks.")
+pr_review_app = typer.Typer(help="Optional autonomous GitHub PR review cycle commands.")
 integrations_app = typer.Typer(help="Global Codex integration commands.")
 sessions_app = typer.Typer(help="Desktop session rollout bridge commands.")
 integrations_app.add_typer(sessions_app, name="sessions")
 app.add_typer(config_app, name="config")
 app.add_typer(controller_app, name="controller")
+app.add_typer(github_app, name="github")
+app.add_typer(pr_review_app, name="pr-review")
 app.add_typer(integrations_app, name="integrations")
 
 
@@ -358,6 +362,97 @@ def launch_command(
             ),
         )
         typer.echo(render_launch_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@github_app.command("doctor")
+def github_doctor_command(
+    repo_path: Annotated[
+        Path | None,
+        typer.Option("--repo-path", help="Optional repository path for config/SSH checks."),
+    ] = None,
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Verify gh authentication and optional GitHub PR-review readiness."""
+
+    def run() -> None:
+        from ai_dev_loop.commands.pr_review import github_doctor
+
+        typer.echo(github_doctor(repo_path=repo_path, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@pr_review_app.command("create")
+def pr_review_create_command(
+    source_run_id: Annotated[str, typer.Argument(help="Completed source run identifier.")],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Commit/push accepted staged changes, create/update a PR, and start bot-review polling."""
+
+    def run() -> None:
+        from ai_dev_loop.commands.pr_review import create_pr_review_cycle, render_create_result
+
+        result = create_pr_review_cycle(source_run_id)
+        typer.echo(render_create_result(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@pr_review_app.command("status")
+def pr_review_status_command(
+    run_id: Annotated[str, typer.Argument(help="PR-review cycle run identifier.")],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Show safe PR-review cycle status (no comment bodies or tokens)."""
+
+    def run() -> None:
+        from ai_dev_loop.commands.pr_review import render_pr_review_status
+
+        typer.echo(render_pr_review_status(run_id, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@pr_review_app.command("continue")
+def pr_review_continue_command(
+    run_id: Annotated[str, typer.Argument(help="PR-review cycle waiting for user attention.")],
+) -> None:
+    """Resume after the configured user's exact continue-command GitHub comment."""
+
+    def run() -> None:
+        from ai_dev_loop.commands.pr_review import continue_pr_review_cycle
+
+        typer.echo(continue_pr_review_cycle(run_id))
+
+    _handle(run)
+
+
+@pr_review_app.command("resume")
+def pr_review_resume_command(
+    run_id: Annotated[str, typer.Argument(help="Interrupted PR-review cycle run identifier.")],
+) -> None:
+    """Explicitly resume an interrupted PR-review cycle from durable checkpoints."""
+
+    def run() -> None:
+        from ai_dev_loop.commands.pr_review import resume_pr_review_cycle
+
+        typer.echo(resume_pr_review_cycle(run_id))
+
+    _handle(run)
+
+
+@pr_review_app.command("abort")
+def pr_review_abort_command(
+    run_id: Annotated[str, typer.Argument(help="PR-review cycle run identifier.")],
+) -> None:
+    """Request abort for a PR-review cycle without rewriting Git state."""
+
+    def run() -> None:
+        from ai_dev_loop.commands.pr_review import abort_pr_review_cycle
+
+        typer.echo(abort_pr_review_cycle(run_id))
 
     _handle(run)
 

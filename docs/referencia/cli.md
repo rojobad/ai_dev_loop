@@ -95,6 +95,28 @@ ai_dev_loop controller status \
 
 Lookup read-only por controller session ID y repositorio. Ante ambiguedad (0 o N matches) no elige por timestamp; usa `--run-id` para desambiguar. Incluye liveness del worker en la respuesta.
 
+## `github doctor`
+
+```bash
+ai_dev_loop github doctor [--repo-path PATH] [--output text|json]
+```
+
+Verifica disponibilidad de `gh`, autenticacion (cuenta redactada), schemas GitHub y, con `--repo-path`, si `github.enabled` y el remote SSH estan listos. No imprime tokens.
+
+## `pr-review`
+
+Ciclo opt-in post-PR (requiere `github.enabled: true`):
+
+```bash
+ai_dev_loop pr-review create <source-run-id> [--output text|json]
+ai_dev_loop pr-review status <run-id> [--output text|json]
+ai_dev_loop pr-review continue <run-id>
+ai_dev_loop pr-review resume <run-id>
+ai_dev_loop pr-review abort <run-id>
+```
+
+`create` es la unica puerta explicita para publicar el patch staged aceptado (commit + push no-force + PR a `master`) y pedir `@codex review`. Reutiliza el Cursor chat y la sesion Codex exactos del source. Ante hallazgos no aplicables/inciertos responde inline con `@rojobad`, deja threads unresolved y espera `@rojobad /ai-dev-loop continue`. No hace merge ni force push.
+
 ## `start`
 
 ```bash

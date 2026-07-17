@@ -12,7 +12,9 @@ Version soportada:
 version: 1
 ```
 
-El controller remoto / sesion reviewer aislada (A/B) no agrega campos a `ai_dev_loop.yaml`. El flujo A/B usa flags de CLI (`--controller-session-id`, `launch`, `controller status`) y skills globales instalados; el YAML del repo objetivo no cambia.
+El controller remoto / sesion reviewer aislada (A/B) no agrega campos a `ai_dev_loop.yaml`. El flujo A/B usa flags de CLI (`--controller-session-id`, `launch`, `controller status`) y skills globales instalados.
+
+La seccion opcional `github` habilita el ciclo autonomo post-PR. Ausente o `enabled: false` deja el workflow local sin cambios. No se permiten tokens ni credenciales en YAML; la autenticacion GitHub usa una sesion `gh` ya autenticada.
 
 ## Schema
 
@@ -175,6 +177,43 @@ Si Review 3 aun tiene findings, el estado final es `max_iterations_reached`.
 | --- | --- | --- |
 | `directory` | `docs/plans` | Directorio esperado para plan y prompt. |
 | `filename_template` | `prompt_{plan_stem}.txt` | Template de prompt. Debe incluir `{plan_stem}`. |
+
+## `github` (opcional)
+
+Deshabilitado por defecto. Ejemplo opt-in:
+
+```yaml
+github:
+  enabled: true
+  command: gh
+  reviewer_logins:
+    - chatgpt-codex-connector
+  review_trigger_body: "@codex review"
+  poll_interval_seconds: 60
+  poll_timeout_hours: 24
+  max_external_cycles: 8
+  user_mention: rojobad
+  continue_command: "@rojobad /ai-dev-loop continue"
+  external_review_skill: review-github-pr-feedback
+  max_local_review_iterations: 3
+  pr_base: master
+```
+
+| Campo | Default | Descripcion |
+| --- | --- | --- |
+| `enabled` | `false` | Opt-in del ciclo post-PR. |
+| `command` | `gh` | Ejecutable GitHub CLI. |
+| `reviewer_logins` | `[chatgpt-codex-connector]` | Logins de bot elegibles. |
+| `review_trigger_body` | `@codex review` | Cuerpo del comentario disparador. |
+| `poll_interval_seconds` | `60` | Intervalo de polling local. |
+| `poll_timeout_hours` | `24` | Timeout maximo de espera. |
+| `max_external_cycles` | `8` | Maximo de ciclos externos. |
+| `continue_command` | `@rojobad /ai-dev-loop continue` | Unica autorizacion para reanudar tras atencion del usuario. |
+| `external_review_skill` | `review-github-pr-feedback` | Skill Codex para adjudicacion externa. |
+| `max_local_review_iterations` | `3` | Presupuesto local de review tras feedback externo. |
+| `pr_base` | `master` | Base fija del PR. |
+
+Campos de credenciales (`token`, `pat`, `access_token`, etc.) estan prohibidos.
 
 ## Validacion
 

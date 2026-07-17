@@ -43,6 +43,8 @@ def render_doctor(*, repo_path: Path | None = None, output: str = "text") -> str
         "project-config-v1.json",
         "run-state-v1.json",
         "codex-review-result-v1.json",
+        "github-pr-review-result-v1.json",
+        "github-publication-text-v1.json",
     ):
         path = schema_path(schema_name)
         add(f"schema:{schema_name}", path.is_file(), str(path))

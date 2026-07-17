@@ -45,7 +45,11 @@
         "max_iterations_reached",
         "interrupted",
         "failed",
-        "aborted"
+        "aborted",
+        "awaiting_bot_review",
+        "evaluating_bot_feedback",
+        "waiting_for_user_attention",
+        "publishing_external_fix"
       ]
     },
     "created_at": { "type": "string", "format": "date-time" },
@@ -206,6 +210,119 @@
           "minLength": 1,
           "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
         }
+      }
+    },
+    "github_pr_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "source_run_id",
+        "lifecycle",
+        "cycle_number",
+        "max_external_cycles",
+        "head_branch",
+        "base_branch",
+        "bound_head_sha"
+      ],
+      "properties": {
+        "schema_version": { "type": "integer", "const": 1 },
+        "source_run_id": { "type": "string", "minLength": 1 },
+        "lifecycle": {
+          "type": "string",
+          "enum": [
+            "publishing_initial",
+            "awaiting_bot_review",
+            "evaluating_bot_feedback",
+            "waiting_for_user_attention",
+            "fixing_external_feedback",
+            "publishing_external_fix",
+            "max_external_cycles_reached",
+            "completed",
+            "failed",
+            "aborted",
+            "interrupted"
+          ]
+        },
+        "cycle_number": { "type": "integer", "minimum": 1 },
+        "max_external_cycles": { "type": "integer", "minimum": 1 },
+        "pr_number": {
+          "anyOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "null" }
+          ]
+        },
+        "pr_url": { "type": ["string", "null"] },
+        "head_branch": { "type": "string", "minLength": 1 },
+        "base_branch": { "type": "string", "minLength": 1 },
+        "bound_head_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "request_comment_id": { "type": ["string", "null"] },
+        "request_marker": { "type": ["string", "null"] },
+        "request_created_at": { "type": ["string", "null"] },
+        "eligible_thread_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "processed_thread_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "replied_thread_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "resolved_thread_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "publication_commit_sha": {
+          "anyOf": [
+            { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+            { "type": "null" }
+          ]
+        },
+        "staged_patch_sha256": {
+          "anyOf": [
+            { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            { "type": "null" }
+          ]
+        },
+        "last_external_result_path": { "type": ["string", "null"] },
+        "last_snapshot_path": { "type": ["string", "null"] },
+        "continue_comment_id": { "type": ["string", "null"] },
+        "worker_outcome": { "type": ["string", "null"] },
+        "external_fix_prompt_path": { "type": ["string", "null"] },
+        "publication_phase": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": ["pre_commit", "committed", "pushed", "pr_bound"]
+            },
+            { "type": "null" }
+          ]
+        },
+        "local_commit_sha": {
+          "anyOf": [
+            { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+            { "type": "null" }
+          ]
+        },
+        "expected_remote_sha_before_push": {
+          "anyOf": [
+            { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+            { "type": "null" }
+          ]
+        },
+        "publication_remote": { "type": ["string", "null"] },
+        "publication_remote_branch": { "type": ["string", "null"] },
+        "publication_text_path": { "type": ["string", "null"] }
       }
     },
     "recovery": {

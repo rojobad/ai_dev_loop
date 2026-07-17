@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ai_dev_loop GitHub publication text v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["commit_subject", "commit_body", "pr_title", "pr_body"],
+  "properties": {
+    "commit_subject": { "type": "string", "minLength": 1 },
+    "commit_body": { "type": "string" },
+    "pr_title": { "type": "string", "minLength": 1 },
+    "pr_body": { "type": "string" }
+  }
+}
