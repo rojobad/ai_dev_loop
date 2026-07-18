@@ -464,6 +464,7 @@
           "enum": [
             "codex_review_failed",
             "codex_review_result_invalid",
+            "codex_review_result_artifact_missing",
             "codex_review_processing_failed",
             "correction_staging_failed",
             "initial_staging_failed",

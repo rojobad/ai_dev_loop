@@ -434,3 +434,23 @@ ai_dev_loop pr-review resume <successor-run-id> --controller-session-id <sesion-
 No uses `pr-review prepare` ni publiques otro `@codex review`. Si hay drift de SHA,
 PR cerrado, hilos añadidos/eliminados/resueltos, o side effects previos
 (processed/replied/resolved/Cursor), `recover`/`resume` se detienen sin writes.
+
+## Revisión local Codex sin `codex/reviews/NN.json` tras Cursor
+
+Causa observada (PR #45 / sucesor de adjudicación): Cursor y staging completaron
+la corrección, pero `codex exec --output-last-message` no pudo escribir el
+resultado estructurado porque el directorio padre no existía. El JSONL del
+intento fallido no es fuente de decisión; hay que reintentar solo la revisión
+local con la misma sesión B.
+
+```bash
+ai_dev_loop pr-review recover <failed-run-id> --dry-run
+ai_dev_loop pr-review recover <failed-run-id> --output json
+# Desde A, con el resume que devuelve recover:
+ai_dev_loop pr-review resume <successor-run-id> --controller-session-id <sesion-A>
+```
+
+El checkpoint debe ser `reviewing` /
+`codex_review_result_artifact_missing`. No reejecuta Cursor, no hace polling ni
+adjudicación, y no publica otro `@codex review`. Si el patch staged o el
+worktree driftaron, o ya hay replies/resolves/publicación, `recover` se detiene.

@@ -584,7 +584,22 @@ def test_derive_reason_codes(tmp_path: Path) -> None:
         == "codex_review_failed"
     )
     reviews = tmp_path / "codex" / "reviews"
+    events = tmp_path / "codex" / "events"
     reviews.mkdir(parents=True)
+    events.mkdir(parents=True)
+    (events / "01.stderr.txt").write_text(
+        "failed to write output-last-message codex/reviews/01.json: "
+        "No such file or directory (os error 2)\n",
+        encoding="utf-8",
+    )
+    (reviews / "01.metadata.json").write_text(
+        json.dumps({"exit_code": 2, "timed_out": False}),
+        encoding="utf-8",
+    )
+    assert (
+        derive_recovery_reason_code(tmp_path, checkpoint="reviewing", iteration_number=1)
+        == "codex_review_result_artifact_missing"
+    )
     (reviews / "01.json").write_text("{not-json", encoding="utf-8")
     assert (
         derive_recovery_reason_code(tmp_path, checkpoint="reviewing", iteration_number=1)

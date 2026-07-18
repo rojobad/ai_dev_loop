@@ -128,7 +128,7 @@ def _is_independent_origin(gpr: GithubPrReviewState | None) -> bool:
 
 
 def _expected_eligible_thread_ids(state: RunState) -> list[str] | None:
-    """Frozen eligible-thread set for schema-recovery / adjudication resume checks."""
+    """Frozen eligible-thread set for recovery / resume / publication checks."""
 
     recovery = state.recovery
     if (
@@ -143,14 +143,115 @@ def _expected_eligible_thread_ids(state: RunState) -> list[str] | None:
     return None
 
 
-def _persist_eligible_thread_set_drift(
+def _observe_eligible_thread_set(
+    state: RunState,
+    *,
+    github_command: str,
+    reviewer_logins: list[str],
+) -> tuple[list[str], list[str]] | None:
+    """Return (expected, observed) when a frozen set exists; else None."""
+
+    gpr = state.github_pr_review
+    if gpr is None or gpr.pr_number is None:
+        return None
+    expected = _expected_eligible_thread_ids(state)
+    if not expected:
+        return None
+    threads = list_review_threads(
+        github_command,
+        cwd=state.repository.root,
+        pr_number=gpr.pr_number,
+    )
+    eligible = filter_eligible_threads(
+        threads,
+        reviewer_logins=reviewer_logins,
+        bound_head_sha=gpr.bound_head_sha,
+        already_processed_thread_ids=set(gpr.processed_thread_ids),
+        request_created_at=gpr.request_created_at,
+    )
+    observed = [thread.thread_id for thread in eligible]
+    return expected, observed
+
+
+def _write_eligible_thread_set_drift(
     run_directory: Path,
     *,
     expected: list[str],
     observed: list[str],
 ) -> None:
+    """Persist thread-set drift outcome. Caller must hold mutation locks when required."""
+
+    state = load_run_state_fresh(run_directory)
+    if state.status in TERMINAL_STATUSES:
+        return
+    gpr = state.github_pr_review
+    if gpr is None:
+        return
+    if state.status in {
+        RunStatus.AWAITING_BOT_REVIEW,
+        RunStatus.EVALUATING_BOT_FEEDBACK,
+        RunStatus.INTERRUPTED,
+        RunStatus.PUBLISHING_EXTERNAL_FIX,
+        RunStatus.REVIEWING,
+        RunStatus.RUNNING_CURSOR,
+    }:
+        _mark_status(state, RunStatus.WAITING_FOR_USER_ATTENTION)
+        state.github_pr_review = gpr.model_copy(
+            update={
+                "lifecycle": "waiting_for_user_attention",
+                "worker_outcome": "eligible_thread_set_drift",
+            }
+        )
+    else:
+        mark_interrupted(
+            state,
+            "Eligible GitHub review thread set drifted from the frozen recovery set",
+        )
+        state.github_pr_review = gpr.model_copy(
+            update={
+                "lifecycle": "interrupted",
+                "worker_outcome": "eligible_thread_set_drift",
+            }
+        )
+    state.last_error = (
+        "Eligible GitHub review thread set drifted from the frozen recovery set; "
+        "resolve drift before resuming"
+    )
+    state.result = (
+        "Eligible thread set no longer matches the frozen recovery set "
+        f"(expected={len(expected)}, observed={len(observed)}); "
+        "no GitHub writes were performed"
+    )
+    save_run_state(run_directory, state)
+    append_orchestrator_event(
+        run_directory,
+        run_id=state.run_id,
+        component="orchestrator",
+        event="pr_review_eligible_thread_set_drift",
+        status=state.status.value,
+        detail={
+            "expected_thread_count": len(expected),
+            "observed_thread_count": len(observed),
+        },
+    )
+
+
+def _persist_eligible_thread_set_drift(
+    run_directory: Path,
+    *,
+    expected: list[str],
+    observed: list[str],
+    locks_held: bool = False,
+) -> None:
     """Stop for user attention when the live eligible set drifts from the frozen set."""
 
+    if locks_held:
+        _write_eligible_thread_set_drift(
+            run_directory,
+            expected=expected,
+            observed=observed,
+        )
+        return
     state = load_run_state_fresh(run_directory)
     locks = _run_locks(
         run_directory,
@@ -159,54 +260,10 @@ def _persist_eligible_thread_set_drift(
     )
     locks.acquire()
     try:
-        state = load_run_state_fresh(run_directory)
-        if state.status in TERMINAL_STATUSES:
-            return
-        gpr = state.github_pr_review
-        if gpr is None:
-            return
-        if state.status not in {
-            RunStatus.AWAITING_BOT_REVIEW,
-            RunStatus.EVALUATING_BOT_FEEDBACK,
-        }:
-            mark_interrupted(
-                state,
-                "Eligible GitHub review thread set drifted from the frozen recovery set",
-            )
-            state.github_pr_review = gpr.model_copy(
-                update={
-                    "lifecycle": "interrupted",
-                    "worker_outcome": "eligible_thread_set_drift",
-                }
-            )
-        else:
-            _mark_status(state, RunStatus.WAITING_FOR_USER_ATTENTION)
-            state.github_pr_review = gpr.model_copy(
-                update={
-                    "lifecycle": "waiting_for_user_attention",
-                    "worker_outcome": "eligible_thread_set_drift",
-                }
-            )
-        state.last_error = (
-            "Eligible GitHub review thread set drifted from the frozen recovery set; "
-            "resolve drift before resuming adjudication"
-        )
-        state.result = (
-            "Eligible thread set no longer matches the frozen recovery set "
-            f"(expected={len(expected)}, observed={len(observed)}); "
-            "no GitHub writes were performed"
-        )
-        save_run_state(run_directory, state)
-        append_orchestrator_event(
+        _write_eligible_thread_set_drift(
             run_directory,
-            run_id=state.run_id,
-            component="orchestrator",
-            event="pr_review_eligible_thread_set_drift",
-            status=state.status.value,
-            detail={
-                "expected_thread_count": len(expected),
-                "observed_thread_count": len(observed),
-            },
+            expected=expected,
+            observed=observed,
         )
     finally:
         locks.release()
@@ -794,7 +851,50 @@ def resume_pr_review_cycle(
             save_run_state(run_directory, state)
             _spawn_pr_review_worker(run_directory, state.run_id)
             return f"Resumed publication for {state.run_id}"
-        if lifecycle in {"awaiting_bot_review", "interrupted"}:
+        recovery = state.recovery
+        if (
+            recovery is not None
+            and recovery.recovered_checkpoint == "reviewing"
+            and recovery.reason_code == "codex_review_result_artifact_missing"
+        ):
+            if not state.cursor.chat_id:
+                raise ValidationError(
+                    "cannot resume reviewing recovery without a persisted Cursor chat id"
+                )
+            if lifecycle not in {"fixing_external_feedback", "interrupted"}:
+                raise ValidationError(
+                    "reviewing recovery resume requires lifecycle fixing_external_feedback "
+                    f"(got {lifecycle})"
+                )
+            config = _require_github_config(Path(state.repository.root))
+            assert config.github is not None
+            observed_pair = _observe_eligible_thread_set(
+                state,
+                github_command=config.github.command,
+                reviewer_logins=config.github.reviewer_logins,
+            )
+            if observed_pair is not None:
+                expected_ids, observed_ids = observed_pair
+                if set(observed_ids) != set(expected_ids):
+                    _persist_eligible_thread_set_drift(
+                        run_directory,
+                        expected=expected_ids,
+                        observed=observed_ids,
+                        locks_held=True,
+                    )
+                    return (
+                        "Eligible thread set drifted from the frozen recovery set; "
+                        "waiting for user attention. No local agent or GitHub writes ran."
+                    )
+            # Keep interrupted; workflow resume restores reviewing from durable artifacts
+            # and retries only local Codex review without Cursor, polling, or GitHub writes.
+            state.github_pr_review = state.github_pr_review.model_copy(
+                update={"lifecycle": "fixing_external_feedback", "worker_outcome": None}
+            )
+            state.last_error = None
+            save_run_state(run_directory, state)
+            resume_workflow_run_id = state.run_id
+        elif lifecycle in {"awaiting_bot_review", "interrupted"}:
             _mark_status(state, RunStatus.AWAITING_BOT_REVIEW)
             # Preserve expected_eligible_thread_ids across resume for exact-set checks.
             state.github_pr_review = state.github_pr_review.model_copy(
@@ -804,7 +904,7 @@ def resume_pr_review_cycle(
             save_run_state(run_directory, state)
             _spawn_pr_review_worker(run_directory, state.run_id)
             return f"Resumed PR-review polling for {state.run_id}"
-        if lifecycle == "fixing_external_feedback":
+        elif lifecycle == "fixing_external_feedback":
             if not state.cursor.chat_id:
                 raise ValidationError(
                     "cannot resume fixing_external_feedback without a persisted Cursor chat id"
@@ -2065,6 +2165,22 @@ def _publish_external_fix(
     assert state.github_pr_review is not None
     gpr = state.github_pr_review
     repo_root = Path(state.repository.root)
+    # Re-validate the frozen eligible thread set before any commit/push/reply/resolve.
+    if gpr.lifecycle == "publishing_external_fix":
+        observed_pair = _observe_eligible_thread_set(
+            state,
+            github_command=config.github.command,
+            reviewer_logins=config.github.reviewer_logins,
+        )
+        if observed_pair is not None:
+            expected_ids, observed_ids = observed_pair
+            if set(observed_ids) != set(expected_ids):
+                _persist_eligible_thread_set_drift(
+                    run_directory,
+                    expected=expected_ids,
+                    observed=observed_ids,
+                )
+                return
     locks = _run_locks(run_directory, run_id=state.run_id, repository_path=str(repo_root))
     locks.acquire()
     try:

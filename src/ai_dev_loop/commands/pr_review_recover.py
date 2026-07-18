@@ -1,4 +1,12 @@
-"""Recover failed GitHub PR-review adjudication runs without re-posting a trigger."""
+"""Recover failed GitHub PR-review runs without re-posting a trigger.
+
+Supports two artifact-driven checkpoints:
+
+- ``external_adjudication`` (Phase 15.7): schema-incompatible adjudication before
+  Cursor/GitHub side effects.
+- ``reviewing`` (Phase 15.8): Cursor correction and staging completed, but the
+  local Codex structured result artifact was never persisted.
+"""
 
 from __future__ import annotations
 
@@ -16,14 +24,29 @@ from ai_dev_loop.commands.pr_review import (
     _create_successor_layout,
     _run_locks,
 )
+from ai_dev_loop.commands.recover import (
+    _copy_selected_artifacts,
+    _copy_sensitive_file,
+    _sanitize_iterations_for_successor,
+)
 from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.event_log import append_orchestrator_event
 from ai_dev_loop.integrations.codex.session_runtime import require_codex_session_id
+from ai_dev_loop.iterations import iteration_label, max_iteration_number
 from ai_dev_loop.paths import ensure_dir, run_dir, runs_dir, set_sensitive_file_mode
+from ai_dev_loop.recovery_planner import (
+    analyze_recovery,
+    apply_resolved_runtime_to_codex,
+)
 from ai_dev_loop.response_schema import events_indicate_adjudication_schema_rejection
-from ai_dev_loop.resume_planner import TERMINAL_STATUSES
+from ai_dev_loop.resume_planner import TERMINAL_STATUSES, review_result_available
 from ai_dev_loop.run_discovery import list_run_directories, load_run
-from ai_dev_loop.runners.github import get_pull_request
+from ai_dev_loop.runners.codex import classify_codex_review_output_artifact_failure
+from ai_dev_loop.runners.github import (
+    filter_eligible_threads,
+    get_pull_request,
+    list_review_threads,
+)
 from ai_dev_loop.state import (
     RecoveryState,
     RunState,
@@ -31,6 +54,7 @@ from ai_dev_loop.state import (
     atomic_write_json,
     generate_run_id,
     save_run_state,
+    sha256_file,
     utc_now,
 )
 
@@ -44,6 +68,8 @@ class PrReviewRecoveryAnalysis:
     checkpoint: str | None = None
     reason_code: str | None = None
     cycle_number: int | None = None
+    iteration: int | None = None
+    staged_patch_sha256: str | None = None
     pr_number: int | None = None
     bound_head_sha_prefix: str | None = None
     expected_eligible_thread_ids: list[str] = field(default_factory=list)
@@ -91,11 +117,14 @@ def _cycle_events_path(run_directory: Path, cycle_number: int) -> Path:
     return run_directory / f"github/cycles/{cycle_number:02d}/codex.events.jsonl"
 
 
-def _has_side_effects(gpr: Any, state: RunState) -> list[str]:
-    """Block recovery when adjudication already produced GitHub/Cursor side effects.
+def _has_local_loop_progress(state: RunState, run_directory: Path) -> bool:
+    if max_iteration_number(state) >= 1:
+        return True
+    return (run_directory / "cursor" / "iterations" / "01").exists()
 
-    Initial PR publish + trigger for cycle 1 are expected and are not blockers.
-    """
+
+def _has_adjudication_side_effects(gpr: Any, state: RunState) -> list[str]:
+    """Block external-adjudication recovery when side effects already occurred."""
 
     blockers: list[str] = []
     if gpr.processed_thread_ids:
@@ -112,7 +141,6 @@ def _has_side_effects(gpr: Any, state: RunState) -> list[str]:
         blockers.append("continue_comment_present")
     if state.iterations:
         blockers.append("cursor_iterations_present")
-    # Independent cycles must not have created Cursor yet; source-run cycles reuse chat.
     if gpr.origin == "independent_pr" and state.cursor.chat_id:
         blockers.append("cursor_chat_already_created")
     if gpr.lifecycle in {
@@ -123,6 +151,31 @@ def _has_side_effects(gpr: Any, state: RunState) -> list[str]:
         "max_external_cycles_reached",
     }:
         blockers.append(f"lifecycle_past_adjudication:{gpr.lifecycle}")
+    return blockers
+
+
+def _reviewing_github_side_effect_blockers(gpr: Any) -> list[str]:
+    """Block reviewing recovery when GitHub publication/reply side effects started."""
+
+    blockers: list[str] = []
+    if gpr.processed_thread_ids:
+        blockers.append("processed_threads_present")
+    if gpr.replied_thread_ids:
+        blockers.append("replied_threads_present")
+    if gpr.resolved_thread_ids:
+        blockers.append("resolved_threads_present")
+    if gpr.continue_comment_id:
+        blockers.append("continue_comment_present")
+    if gpr.publication_phase is not None:
+        blockers.append("publication_started")
+    if gpr.lifecycle in {
+        "publishing_external_fix",
+        "publishing_initial",
+        "waiting_for_user_attention",
+        "completed",
+        "max_external_cycles_reached",
+    }:
+        blockers.append(f"lifecycle_past_local_review:{gpr.lifecycle}")
     return blockers
 
 
@@ -142,24 +195,18 @@ def _classify_schema_incompatible_source(
     return False, False
 
 
-def analyze_pr_review_recovery(
-    run_id: str,
-    *,
-    verify_remote: bool = True,
-) -> PrReviewRecoveryAnalysis:
-    run_directory, state = load_run(run_id)
-    analysis = PrReviewRecoveryAnalysis(source_run_id=state.run_id)
+def _fill_common_pr_fields(analysis: PrReviewRecoveryAnalysis, state: RunState) -> None:
     gpr = state.github_pr_review
-    if gpr is None:
-        analysis.blockers.append("not_a_pr_review_cycle")
-        return analysis
+    assert gpr is not None
     analysis.cycle_number = gpr.cycle_number
     analysis.pr_number = gpr.pr_number
     analysis.bound_head_sha_prefix = gpr.bound_head_sha[:12]
     analysis.has_controller = state.controller is not None
     analysis.trigger_present = bool(gpr.request_comment_id and gpr.request_marker)
-    analysis.checkpoint = "external_adjudication"
-    analysis.reason_code = "github_adjudication_schema_incompatible"
+    expected = list(gpr.expected_eligible_thread_ids or gpr.eligible_thread_ids)
+    if expected:
+        analysis.expected_eligible_thread_ids = expected
+        analysis.expected_thread_count = len(expected)
 
     if state.controller is not None:
         try:
@@ -173,6 +220,66 @@ def analyze_pr_review_recovery(
             if analysis.controller_session_id == state.codex.session_id:
                 analysis.blockers.append("controller_equals_reviewer")
 
+
+def _verify_remote_pr(
+    analysis: PrReviewRecoveryAnalysis,
+    state: RunState,
+    *,
+    verify_remote: bool,
+    require_thread_set: bool = False,
+) -> None:
+    gpr = state.github_pr_review
+    assert gpr is not None
+    if not verify_remote or gpr.pr_number is None:
+        return
+    if "not_a_pr_review_cycle" in analysis.blockers:
+        return
+    try:
+        from ai_dev_loop.commands.pr_review import _require_github_config
+
+        config = _require_github_config(Path(state.repository.root))
+        assert config.github is not None
+        pr = get_pull_request(
+            config.github.command,
+            cwd=state.repository.root,
+            pr_number=gpr.pr_number,
+        )
+        if pr.state != "OPEN":
+            analysis.blockers.append("pr_not_open")
+        if pr.head_sha != gpr.bound_head_sha:
+            analysis.blockers.append("head_sha_drift")
+        if require_thread_set and analysis.expected_eligible_thread_ids:
+            threads = list_review_threads(
+                config.github.command,
+                cwd=state.repository.root,
+                pr_number=gpr.pr_number,
+            )
+            eligible = filter_eligible_threads(
+                threads,
+                reviewer_logins=config.github.reviewer_logins,
+                bound_head_sha=gpr.bound_head_sha,
+                already_processed_thread_ids=set(gpr.processed_thread_ids),
+                request_created_at=gpr.request_created_at,
+            )
+            observed = [thread.thread_id for thread in eligible]
+            if set(observed) != set(analysis.expected_eligible_thread_ids):
+                analysis.blockers.append("eligible_thread_set_drift")
+    except Exception as exc:
+        analysis.blockers.append(f"remote_pr_unreadable:{type(exc).__name__}")
+
+
+def _analyze_external_adjudication(
+    analysis: PrReviewRecoveryAnalysis,
+    state: RunState,
+    run_directory: Path,
+    *,
+    verify_remote: bool,
+) -> PrReviewRecoveryAnalysis:
+    gpr = state.github_pr_review
+    assert gpr is not None
+    analysis.checkpoint = "external_adjudication"
+    analysis.reason_code = "github_adjudication_schema_incompatible"
+
     if state.status != RunStatus.FAILED:
         analysis.blockers.append("source_not_failed")
     classified, historical = _classify_schema_incompatible_source(state, run_directory)
@@ -184,44 +291,142 @@ def analyze_pr_review_recovery(
         analysis.blockers.append("pr_not_bound")
     if not analysis.trigger_present:
         analysis.blockers.append("trigger_missing")
-
-    expected = list(gpr.expected_eligible_thread_ids or gpr.eligible_thread_ids)
-    if not expected:
+    if not analysis.expected_eligible_thread_ids:
         analysis.blockers.append("eligible_threads_missing")
-    else:
-        analysis.expected_eligible_thread_ids = expected
-        analysis.expected_thread_count = len(expected)
 
-    analysis.blockers.extend(_has_side_effects(gpr, state))
+    analysis.blockers.extend(_has_adjudication_side_effects(gpr, state))
 
     if _active_worker_pid(run_directory) is not None:
         analysis.blockers.append("active_worker_present")
 
-    if (
-        verify_remote
-        and gpr.pr_number is not None
-        and "not_a_pr_review_cycle" not in analysis.blockers
-    ):
-        try:
-            from ai_dev_loop.commands.pr_review import _require_github_config
-
-            config = _require_github_config(Path(state.repository.root))
-            assert config.github is not None
-            pr = get_pull_request(
-                config.github.command,
-                cwd=state.repository.root,
-                pr_number=gpr.pr_number,
-            )
-            if pr.state != "OPEN":
-                analysis.blockers.append("pr_not_open")
-            if pr.head_sha != gpr.bound_head_sha:
-                analysis.blockers.append("head_sha_drift")
-        except Exception as exc:
-            analysis.blockers.append(f"remote_pr_unreadable:{type(exc).__name__}")
-
+    _verify_remote_pr(analysis, state, verify_remote=verify_remote)
     analysis.eligible = len(analysis.blockers) == 0
     _attach_matching_successor(analysis, state)
     return analysis
+
+
+def _analyze_reviewing(
+    analysis: PrReviewRecoveryAnalysis,
+    state: RunState,
+    run_directory: Path,
+    *,
+    verify_remote: bool,
+) -> PrReviewRecoveryAnalysis:
+    gpr = state.github_pr_review
+    assert gpr is not None
+    analysis.checkpoint = "reviewing"
+    analysis.reason_code = "codex_review_result_artifact_missing"
+
+    if state.status != RunStatus.FAILED:
+        analysis.blockers.append("source_not_failed")
+
+    local = analyze_recovery(state, run_directory, resolve_runtime=True)
+    for blocker in local.blockers:
+        if blocker not in analysis.blockers:
+            analysis.blockers.append(blocker)
+    for warning in local.warnings:
+        if warning not in analysis.warnings:
+            analysis.warnings.append(warning)
+
+    analysis.iteration = local.iteration
+    analysis.staged_patch_sha256 = local.staged_patch_sha256
+
+    if local.checkpoint == "process_review" or (
+        local.iteration is not None and review_result_available(run_directory, local.iteration)
+    ):
+        analysis.blockers.append("review_result_already_present")
+    elif local.checkpoint == "reviewing":
+        if local.reason_code == "codex_review_result_invalid":
+            analysis.blockers.append("review_result_invalid")
+        elif local.reason_code != "codex_review_result_artifact_missing":
+            analysis.blockers.append("not_codex_output_artifact_failure")
+    elif local.checkpoint == "staging":
+        analysis.blockers.append("staging_incomplete")
+    elif local.checkpoint == "cursor":
+        analysis.blockers.append("cursor_incomplete")
+    elif local.checkpoint is not None:
+        analysis.blockers.append(f"unsupported_local_checkpoint:{local.checkpoint}")
+    else:
+        analysis.blockers.append("local_checkpoint_unresolved")
+
+    iteration_number = local.iteration
+    if iteration_number is not None:
+        label = iteration_label(iteration_number)
+        result_path = run_directory / f"codex/reviews/{label}.json"
+        if result_path.is_file() and "review_result_already_present" not in analysis.blockers:
+            if local.reason_code == "codex_review_result_invalid":
+                if "review_result_invalid" not in analysis.blockers:
+                    analysis.blockers.append("review_result_invalid")
+            elif review_result_available(run_directory, iteration_number):
+                analysis.blockers.append("review_result_already_present")
+        elif (
+            not classify_codex_review_output_artifact_failure(run_directory, label)
+            and "not_codex_output_artifact_failure" not in analysis.blockers
+        ):
+            analysis.blockers.append("not_codex_output_artifact_failure")
+
+    if gpr.pr_number is None:
+        analysis.blockers.append("pr_not_bound")
+    if not analysis.trigger_present:
+        analysis.blockers.append("trigger_missing")
+    if not analysis.expected_eligible_thread_ids:
+        analysis.blockers.append("eligible_threads_missing")
+    if not gpr.last_external_result_path:
+        analysis.blockers.append("external_result_missing")
+    if not gpr.external_fix_prompt_path:
+        analysis.blockers.append("external_fix_prompt_missing")
+
+    analysis.blockers.extend(_reviewing_github_side_effect_blockers(gpr))
+
+    if _active_worker_pid(run_directory) is not None:
+        analysis.blockers.append("active_worker_present")
+
+    _verify_remote_pr(
+        analysis,
+        state,
+        verify_remote=verify_remote,
+        require_thread_set=True,
+    )
+
+    # Eligible only for the durable Codex output-artifact-missing checkpoint.
+    analysis.eligible = (
+        len(analysis.blockers) == 0
+        and local.checkpoint == "reviewing"
+        and local.reason_code == "codex_review_result_artifact_missing"
+        and analysis.iteration is not None
+        and analysis.staged_patch_sha256 is not None
+    )
+    _attach_matching_successor(analysis, state)
+    return analysis
+
+
+def analyze_pr_review_recovery(
+    run_id: str,
+    *,
+    verify_remote: bool = True,
+) -> PrReviewRecoveryAnalysis:
+    run_directory, state = load_run(run_id)
+    analysis = PrReviewRecoveryAnalysis(source_run_id=state.run_id)
+    gpr = state.github_pr_review
+    if gpr is None:
+        analysis.blockers.append("not_a_pr_review_cycle")
+        return analysis
+
+    _fill_common_pr_fields(analysis, state)
+
+    if _has_local_loop_progress(state, run_directory):
+        return _analyze_reviewing(
+            analysis,
+            state,
+            run_directory,
+            verify_remote=verify_remote,
+        )
+    return _analyze_external_adjudication(
+        analysis,
+        state,
+        run_directory,
+        verify_remote=verify_remote,
+    )
 
 
 def _attach_matching_successor(analysis: PrReviewRecoveryAnalysis, source: RunState) -> None:
@@ -233,11 +438,9 @@ def _attach_matching_successor(analysis: PrReviewRecoveryAnalysis, source: RunSt
             continue
         if recovery.source_run_id != source.run_id:
             continue
-        if recovery.recovered_checkpoint != "external_adjudication":
+        if recovery.recovered_checkpoint != analysis.checkpoint:
             continue
-        if recovery.reason_code != "github_adjudication_schema_incompatible":
-            continue
-        if set(recovery.expected_eligible_thread_ids or []) != expected:
+        if recovery.reason_code != analysis.reason_code:
             continue
         if candidate.github_pr_review is None:
             continue
@@ -246,6 +449,18 @@ def _attach_matching_successor(analysis: PrReviewRecoveryAnalysis, source: RunSt
         if candidate.github_pr_review.pr_number != analysis.pr_number:
             continue
         if candidate.github_pr_review.bound_head_sha[:12] != analysis.bound_head_sha_prefix:
+            continue
+        if analysis.checkpoint == "external_adjudication":
+            if set(recovery.expected_eligible_thread_ids or []) != expected:
+                continue
+        elif analysis.checkpoint == "reviewing":
+            if recovery.source_iteration != analysis.iteration:
+                continue
+            if recovery.source_staged_patch_sha256 != analysis.staged_patch_sha256:
+                continue
+            if set(candidate.github_pr_review.expected_eligible_thread_ids or []) != expected:
+                continue
+        else:
             continue
         matches.append((path, candidate))
     if not matches:
@@ -263,7 +478,35 @@ def _attach_matching_successor(analysis: PrReviewRecoveryAnalysis, source: RunSt
         analysis.reused_existing_successor = True
 
 
-def _create_recovery_successor(
+def _copy_pr_review_external_context(
+    source_dir: Path,
+    dest_dir: Path,
+    *,
+    cycle_number: int,
+    gpr: Any,
+) -> list[str]:
+    """Copy only state-referenced external artifacts required for continuation."""
+
+    del cycle_number  # cycle paths come from gpr state fields when present
+    copied: list[str] = []
+    allowlisted: list[str] = []
+    if gpr.last_external_result_path:
+        allowlisted.append(gpr.last_external_result_path)
+    if gpr.last_snapshot_path:
+        allowlisted.append(gpr.last_snapshot_path)
+    if gpr.external_fix_prompt_path:
+        allowlisted.append(gpr.external_fix_prompt_path)
+
+    for rel in allowlisted:
+        src = source_dir / rel
+        if not src.is_file():
+            continue
+        _copy_sensitive_file(src, dest_dir / rel)
+        copied.append(rel)
+    return copied
+
+
+def _create_external_adjudication_successor(
     *,
     source_dir: Path,
     source: RunState,
@@ -389,8 +632,184 @@ def _create_recovery_successor(
     return recovery_run_id
 
 
+def _create_reviewing_successor(
+    *,
+    source_dir: Path,
+    source: RunState,
+    analysis: PrReviewRecoveryAnalysis,
+) -> str:
+    assert analysis.cycle_number is not None
+    assert analysis.iteration is not None
+    assert analysis.staged_patch_sha256 is not None
+    assert analysis.expected_eligible_thread_ids
+    gpr = source.github_pr_review
+    assert gpr is not None
+
+    local = analyze_recovery(source, source_dir, resolve_runtime=True)
+    if local.resolved_runtime is None:
+        raise ValidationError("reviewing recovery requires resolved Codex runtime")
+    if local.checkpoint != "reviewing":
+        raise ValidationError("reviewing recovery revalidation lost the reviewing checkpoint")
+
+    now = utc_now()
+    project = source.project.name
+    recovery_run_id = generate_run_id(project, now=now)
+    final_dir = run_dir(project, recovery_run_id)
+    if final_dir.exists():
+        raise ValidationError(f"recovery run directory already exists: {final_dir}")
+
+    project_root = runs_dir() / project
+    ensure_dir(project_root)
+    temp_dir = project_root / f".pr-review-recover-{recovery_run_id}-{secrets.token_hex(4)}"
+    try:
+        _create_successor_layout(temp_dir)
+        ensure_dir(temp_dir / "codex" / "reviews")
+        ensure_dir(temp_dir / "codex" / "events")
+        ensure_dir(temp_dir / "git" / "diffs")
+        ensure_dir(temp_dir / "git" / "status")
+        ensure_dir(temp_dir / "git" / "cursor-output")
+        ensure_dir(temp_dir / "cursor" / "iterations")
+
+        copied = _copy_selected_artifacts(
+            source_dir,
+            temp_dir,
+            iteration=analysis.iteration,
+            checkpoint="reviewing",
+        )
+        copied.extend(
+            _copy_pr_review_external_context(
+                source_dir,
+                temp_dir,
+                cycle_number=analysis.cycle_number,
+                gpr=gpr,
+            )
+        )
+
+        resolved = local.resolved_runtime
+        successor_codex = apply_resolved_runtime_to_codex(source.codex, resolved)
+        recovery = RecoveryState(
+            source_run_id=source.run_id,
+            source_status=RunStatus.FAILED.value,
+            source_iteration=analysis.iteration,
+            recovered_checkpoint="reviewing",
+            source_staged_patch_sha256=analysis.staged_patch_sha256,
+            created_at=now,
+            runtime_migration=resolved.runtime_migration,
+            reason_code="codex_review_result_artifact_missing",
+        )
+        iterations = _sanitize_iterations_for_successor(
+            source.iterations,
+            iteration=analysis.iteration,
+            checkpoint="reviewing",
+        )
+        successor = source.model_copy(deep=True)
+        successor.run_id = recovery_run_id
+        successor.created_at = now
+        successor.updated_at = now
+        successor.status = RunStatus.INTERRUPTED
+        successor.result = (
+            f"Recovered local Codex review from failed run {source.run_id} "
+            f"at reviewing iteration {analysis.iteration:02d} without re-running Cursor "
+            "or re-posting @codex review."
+        )
+        successor.last_error = None
+        successor.codex = successor_codex
+        successor.iterations = iterations
+        successor.recovery = recovery
+        successor.workflow = successor.workflow.model_copy(
+            update={"current_review_iteration": analysis.iteration}
+        )
+        successor.github_pr_review = gpr.model_copy(
+            update={
+                "lifecycle": "fixing_external_feedback",
+                "worker_outcome": None,
+            }
+        )
+
+        assert successor.codex.session_id == source.codex.session_id
+        assert successor.cursor.chat_id == source.cursor.chat_id
+        if source.controller is not None:
+            assert successor.controller is not None
+            assert (
+                successor.controller.controller_session_id
+                == source.controller.controller_session_id
+            )
+
+        save_run_state(temp_dir, successor)
+        atomic_write_json(
+            temp_dir / "manifest.json",
+            {
+                "schema_version": 1,
+                "run_id": recovery_run_id,
+                "project": project,
+                "created_at": now.isoformat(),
+                "artifacts": [
+                    {"path": rel, "sha256": sha256_file(temp_dir / rel)}
+                    for rel in copied
+                    if (temp_dir / rel).is_file()
+                ],
+                "recovery": {
+                    "source_run_id": source.run_id,
+                    "recovered_checkpoint": "reviewing",
+                    "reason_code": "codex_review_result_artifact_missing",
+                    "source_iteration": analysis.iteration,
+                    "source_staged_patch_sha256": analysis.staged_patch_sha256,
+                    "pr_number": gpr.pr_number,
+                    "bound_head_sha_prefix": gpr.bound_head_sha[:12],
+                },
+            },
+            sensitive=True,
+        )
+        append_orchestrator_event(
+            temp_dir,
+            run_id=recovery_run_id,
+            component="orchestrator",
+            event="pr_review_reviewing_recovery_successor_created",
+            status=successor.status.value,
+            detail={
+                "source_run_id": source.run_id,
+                "checkpoint": "reviewing",
+                "reason_code": "codex_review_result_artifact_missing",
+                "source_iteration": analysis.iteration,
+                "staged_patch_sha256": analysis.staged_patch_sha256,
+                "pr_number": gpr.pr_number,
+                "bound_head_sha_prefix": gpr.bound_head_sha[:12],
+                "trigger_reposted": False,
+            },
+        )
+        if final_dir.exists():
+            raise ValidationError(f"recovery run directory already exists: {final_dir}")
+        temp_dir.rename(final_dir)
+    except Exception:
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+    return recovery_run_id
+
+
+def _create_recovery_successor(
+    *,
+    source_dir: Path,
+    source: RunState,
+    analysis: PrReviewRecoveryAnalysis,
+) -> str:
+    if analysis.checkpoint == "reviewing":
+        return _create_reviewing_successor(
+            source_dir=source_dir,
+            source=source,
+            analysis=analysis,
+        )
+    if analysis.checkpoint == "external_adjudication":
+        return _create_external_adjudication_successor(
+            source_dir=source_dir,
+            source=source,
+            analysis=analysis,
+        )
+    raise ValidationError(f"unsupported pr-review recovery checkpoint: {analysis.checkpoint}")
+
+
 def recover_pr_review_cycle(run_id: str, *, dry_run: bool = False) -> PrReviewRecoveryResult:
-    """Create or reuse an immutable adjudication-recovery successor for a failed cycle."""
+    """Create or reuse an immutable PR-review recovery successor for a failed cycle."""
 
     run_directory, source = load_run(run_id)
     analysis = analyze_pr_review_recovery(run_id, verify_remote=True)
@@ -402,11 +821,19 @@ def recover_pr_review_cycle(run_id: str, *, dry_run: bool = False) -> PrReviewRe
             if analysis.eligible
             else None
         )
-        message = (
-            "Dry-run only: no successor created, no GitHub writes, trigger will not be re-posted."
-            if analysis.eligible
-            else f"Dry-run: run is not recoverable ({', '.join(analysis.blockers)})."
-        )
+        if analysis.eligible:
+            if analysis.checkpoint == "reviewing":
+                message = (
+                    "Dry-run only: no successor created, no GitHub writes, Cursor will not rerun, "
+                    "and trigger will not be re-posted."
+                )
+            else:
+                message = (
+                    "Dry-run only: no successor created, no GitHub writes, "
+                    "trigger will not be re-posted."
+                )
+        else:
+            message = f"Dry-run: run is not recoverable ({', '.join(analysis.blockers)})."
         return PrReviewRecoveryResult(
             source_run_id=source.run_id,
             recovery_run_id=None,
@@ -425,16 +852,26 @@ def recover_pr_review_cycle(run_id: str, *, dry_run: bool = False) -> PrReviewRe
         resume_command = _resume_command_for(
             analysis, successor_run_id=analysis.existing_successor_run_id
         )
+        label = "reviewing" if analysis.checkpoint == "reviewing" else "adjudication"
         return PrReviewRecoveryResult(
             source_run_id=source.run_id,
             recovery_run_id=analysis.existing_successor_run_id,
             dry_run=False,
             analysis=analysis,
             message=(
-                f"Reused existing adjudication recovery successor "
+                f"Reused existing {label} recovery successor "
                 f"{analysis.existing_successor_run_id}; trigger will not be re-posted."
             ),
             resume_command=resume_command,
+        )
+
+    if (
+        analysis.existing_successor_run_id
+        and analysis.existing_successor_status == RunStatus.FAILED.value
+    ):
+        raise ValidationError(
+            f"matching recovery successor {analysis.existing_successor_run_id} is itself failed; "
+            "recover that successor explicitly to keep lineage as a clear chain"
         )
 
     locks = _run_locks(
@@ -454,16 +891,25 @@ def recover_pr_review_cycle(run_id: str, *, dry_run: bool = False) -> PrReviewRe
         if fresh.reused_existing_successor and reused_id is not None:
             analysis = fresh
             resume_command = _resume_command_for(analysis, successor_run_id=reused_id)
+            label = "reviewing" if analysis.checkpoint == "reviewing" else "adjudication"
             return PrReviewRecoveryResult(
                 source_run_id=source.run_id,
                 recovery_run_id=reused_id,
                 dry_run=False,
                 analysis=analysis,
                 message=(
-                    f"Reused existing adjudication recovery successor "
+                    f"Reused existing {label} recovery successor "
                     f"{reused_id}; trigger will not be re-posted."
                 ),
                 resume_command=resume_command,
+            )
+        if (
+            fresh.existing_successor_run_id
+            and fresh.existing_successor_status == RunStatus.FAILED.value
+        ):
+            raise ValidationError(
+                f"matching recovery successor {fresh.existing_successor_run_id} is itself failed; "
+                "recover that successor explicitly to keep lineage as a clear chain"
             )
         recovery_run_id = _create_recovery_successor(
             source_dir=run_directory,
@@ -480,15 +926,23 @@ def recover_pr_review_cycle(run_id: str, *, dry_run: bool = False) -> PrReviewRe
         raise ValidationError("source run status changed unexpectedly during recovery")
 
     resume_command = _resume_command_for(analysis, successor_run_id=recovery_run_id)
+    if analysis.checkpoint == "reviewing":
+        message = (
+            f"Created reviewing recovery successor {recovery_run_id} from "
+            f"{source.run_id}. Source remains failed. Cursor will not rerun and "
+            "trigger will not be re-posted."
+        )
+    else:
+        message = (
+            f"Created adjudication recovery successor {recovery_run_id} from "
+            f"{source.run_id}. Source remains failed. Trigger will not be re-posted."
+        )
     return PrReviewRecoveryResult(
         source_run_id=source.run_id,
         recovery_run_id=recovery_run_id,
         dry_run=False,
         analysis=analysis,
-        message=(
-            f"Created adjudication recovery successor {recovery_run_id} from "
-            f"{source.run_id}. Source remains failed. Trigger will not be re-posted."
-        ),
+        message=message,
         resume_command=resume_command,
     )
 
@@ -523,6 +977,8 @@ def render_pr_review_recovery_analysis(
         "checkpoint": analysis.checkpoint,
         "reason_code": analysis.reason_code,
         "cycle_number": analysis.cycle_number,
+        "iteration": analysis.iteration,
+        "staged_patch_sha256": analysis.staged_patch_sha256,
         "pr_number": analysis.pr_number,
         "bound_head_sha_prefix": analysis.bound_head_sha_prefix,
         "expected_thread_count": analysis.expected_thread_count,
@@ -543,6 +999,8 @@ def render_pr_review_recovery_analysis(
         "Trigger will be re-posted: false",
         result.message,
     ]
+    if analysis.iteration is not None:
+        lines.insert(4, f"Iteration: {analysis.iteration:02d}")
     if analysis.blockers:
         lines.append("Blockers: " + ", ".join(analysis.blockers))
     if result.resume_command:
@@ -564,6 +1022,8 @@ def render_pr_review_recovery_result(
         "reused_existing_successor": analysis.reused_existing_successor,
         "checkpoint": analysis.checkpoint,
         "reason_code": analysis.reason_code,
+        "iteration": analysis.iteration,
+        "staged_patch_sha256": analysis.staged_patch_sha256,
         "pr_number": analysis.pr_number,
         "bound_head_sha_prefix": analysis.bound_head_sha_prefix,
         "expected_thread_count": analysis.expected_thread_count,

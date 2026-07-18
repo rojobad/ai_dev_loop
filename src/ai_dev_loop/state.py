@@ -63,7 +63,13 @@ ALLOWED_STATUS_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
         }
     ),
     RunStatus.RUNNING_CURSOR: frozenset(
-        {RunStatus.STAGING, RunStatus.INTERRUPTED, RunStatus.FAILED, RunStatus.ABORTED}
+        {
+            RunStatus.STAGING,
+            RunStatus.WAITING_FOR_USER_ATTENTION,
+            RunStatus.INTERRUPTED,
+            RunStatus.FAILED,
+            RunStatus.ABORTED,
+        }
     ),
     RunStatus.STAGING: frozenset({RunStatus.REVIEWING, RunStatus.FAILED, RunStatus.ABORTED}),
     RunStatus.REVIEWING: frozenset(
@@ -73,6 +79,7 @@ ALLOWED_STATUS_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
             RunStatus.COMPLETED_WITH_RESIDUAL_RISK,
             RunStatus.MAX_ITERATIONS_REACHED,
             RunStatus.PUBLISHING_EXTERNAL_FIX,
+            RunStatus.WAITING_FOR_USER_ATTENTION,
             RunStatus.INTERRUPTED,
             RunStatus.FAILED,
             RunStatus.ABORTED,
@@ -101,6 +108,7 @@ ALLOWED_STATUS_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
             RunStatus.REVIEWING,
             RunStatus.AWAITING_BOT_REVIEW,
             RunStatus.EVALUATING_BOT_FEEDBACK,
+            RunStatus.WAITING_FOR_USER_ATTENTION,
             RunStatus.PUBLISHING_EXTERNAL_FIX,
             RunStatus.ABORTED,
             RunStatus.FAILED,
@@ -145,6 +153,7 @@ ALLOWED_STATUS_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
     RunStatus.PUBLISHING_EXTERNAL_FIX: frozenset(
         {
             RunStatus.AWAITING_BOT_REVIEW,
+            RunStatus.WAITING_FOR_USER_ATTENTION,
             RunStatus.COMPLETED,
             RunStatus.COMPLETED_WITH_RESIDUAL_RISK,
             RunStatus.INTERRUPTED,
@@ -262,6 +271,7 @@ RECOVERY_REASON_CODES = frozenset(
     {
         "codex_review_failed",
         "codex_review_result_invalid",
+        "codex_review_result_artifact_missing",
         "codex_review_processing_failed",
         "correction_staging_failed",
         "initial_staging_failed",

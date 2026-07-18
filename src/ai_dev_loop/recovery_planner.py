@@ -157,6 +157,16 @@ def derive_recovery_reason_code(
         return "codex_review_processing_failed"
     if _has_invalid_review_json(run_directory, iteration_number):
         return "codex_review_result_invalid"
+    result_path = run_directory / f"codex/reviews/{iteration_label(iteration_number)}.json"
+    if not result_path.is_file():
+        from ai_dev_loop.runners.codex import classify_codex_review_output_artifact_failure
+
+        if classify_codex_review_output_artifact_failure(
+            run_directory,
+            iteration_label(iteration_number),
+        ):
+            return "codex_review_result_artifact_missing"
+        return "codex_review_failed"
     return "codex_review_failed"
 
 

@@ -703,11 +703,13 @@ def _continue_workflow(run_directory: Path, state: RunState) -> WorkflowResult:
                     iteration_number=action.iteration_number,
                 )
             elif action.kind == WorkflowActionKind.REVIEW:
-                latest_review_path, result_message = _run_review_pass(
+                latest_review_path, result_message, should_continue = _run_review_pass(
                     run_directory,
                     state,
                     iteration_number=action.iteration_number,
                 )
+                if not should_continue:
+                    break
             elif action.kind == WorkflowActionKind.PROCESS_REVIEW:
                 latest_review_path, result_message, should_continue = _process_review_outcome(
                     run_directory,
@@ -1203,7 +1205,7 @@ def _run_review_pass(
     state: RunState,
     *,
     iteration_number: int,
-) -> tuple[str | None, str]:
+) -> tuple[str | None, str, bool]:
     iteration = iteration_label(iteration_number)
     _ensure_reviewing_status(state, iteration_number)
     save_run_state(run_directory, state)
@@ -1245,14 +1247,14 @@ def _run_review_pass(
         _fail_run(run_directory, state, message, event_name="codex_artifact_failed")
         raise AiDevLoopError(message) from exc
 
-    _, result_message, _ = _apply_review_result(
+    artifact_path, result_message, should_continue = _apply_review_result(
         run_directory,
         state,
         iteration_number=iteration_number,
         review=review_execution.result,
         review_artifact_path=review_execution.artifacts.result_path,
     )
-    return review_execution.artifacts.result_path, result_message
+    return artifact_path, result_message, should_continue
 
 
 def _process_review_outcome(

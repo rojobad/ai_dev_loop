@@ -642,7 +642,11 @@ def pr_review_recover_command(
     ] = False,
     output: OutputOption = DEFAULT_OUTPUT,
 ) -> None:
-    """Create an immutable adjudication-recovery successor without re-posting @codex review."""
+    """Create an immutable PR-review recovery successor without re-posting @codex review.
+
+    Supports external adjudication schema failures and local reviewing checkpoints
+    where Cursor/staging completed but the Codex result artifact is missing.
+    """
 
     def run() -> None:
         from ai_dev_loop.commands.pr_review_recover import (

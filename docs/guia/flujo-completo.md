@@ -236,9 +236,16 @@ ai_dev_loop pr-review recover <failed-run-id> --output json
 ai_dev_loop pr-review resume <successor-run-id> --controller-session-id <sesion-A>
 ```
 
-El sucesor reutiliza PR, SHA, trigger, hilos elegibles, sesión B y controlador A.
-**No** se publica otro `@codex review`. Si el conjunto de hilos elegibles cambió,
-el worker se detiene en atención de usuario sin writes GitHub.
+Si, tras una adjudicación ya recuperada, Cursor corrigió y el staging quedó
+listo pero faltó persistir `codex/reviews/NN.json` (por ejemplo porque el
+directorio de artefactos no existía antes de `--output-last-message`), usa el
+mismo `pr-review recover` sobre ese run `failed`: el checkpoint será
+`reviewing` y el resume desde A reintentará solo la revisión local con la
+sesión B exacta, sin reejecutar Cursor ni republicar `@codex review`.
+
+El sucesor reutiliza PR, SHA, trigger, hilos elegibles, sesión B, chat Cursor y
+controlador A. **No** se publica otro `@codex review`. Si el conjunto de hilos
+elegibles cambió, el worker se detiene en atención de usuario sin writes GitHub.
 
 Para detenerlo sin reescribir Git:
 

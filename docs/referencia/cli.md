@@ -142,12 +142,18 @@ Hay dos origenes:
 `prepared_independent` o `awaiting_bot_review` sin chat Cursor ni iteraciones; no
 cambia el runtime Codex del reviewer ni reescribe `effective-config.yaml`.
 
-`pr-review recover` crea un sucesor inmutable solo para fallos de adjudicacion
-clasificados como incompatibilidad del schema de salida Codex
-(`invalid_json_schema` / `uniqueItems`) antes de cualquier side effect. El
-origen `failed` permanece terminal; el sucesor reutiliza el mismo PR, SHA,
-trigger, hilos elegibles, sesion Codex B y controlador A. **No** republica
-`@codex review`. Usa `--dry-run` primero. El schema
+`pr-review recover` crea un sucesor inmutable para dos checkpoints
+artefacto-dirigidos:
+
+- `external_adjudication`: fallo de adjudicacion por incompatibilidad del schema
+  de salida Codex (`invalid_json_schema` / `uniqueItems`) antes de side effects;
+- `reviewing` (`codex_review_result_artifact_missing`): Cursor y staging ya
+  completaron la correccion local, pero falta `codex/reviews/NN.json`. El
+  sucesor reintenta solo la revision Codex B; no reejecuta Cursor ni toca GitHub.
+
+El origen `failed` permanece terminal; el sucesor reutiliza el mismo PR, SHA,
+trigger, hilos elegibles, sesion Codex B, chat Cursor y controlador A. **No**
+republica `@codex review`. Usa `--dry-run` primero. El schema
 `github-pr-review-result-v1.json` ya no envia `uniqueItems` a Codex; la
 unicidad sigue validada en Pydantic.
 

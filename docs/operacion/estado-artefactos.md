@@ -152,12 +152,19 @@ expected_eligible_thread_ids       # checkpoint external_adjudication; IDs, no c
 created_at
 runtime_migration             # none | phase9_session_capture
 reason_code                   # incluye initial_staging_failed, correction_staging_failed,
-                              # cursor_usage_limit, github_adjudication_schema_incompatible
+                              # cursor_usage_limit, github_adjudication_schema_incompatible,
+                              # codex_review_result_artifact_missing
 ```
 
-`pr-review recover` usa el checkpoint `external_adjudication` cuando Codex rechazo
-el schema de adjudicacion antes de side effects. El sucesor no republica el
-trigger `@codex review`.
+`pr-review recover` usa:
+
+- `external_adjudication` cuando Codex rechazo el schema de adjudicacion antes de
+  side effects;
+- `reviewing` + `codex_review_result_artifact_missing` cuando Cursor/staging
+  terminaron pero falta el resultado local `codex/reviews/NN.json`.
+
+El sucesor no republica el trigger `@codex review` y, en el checkpoint
+`reviewing`, no reejecuta Cursor.
 
 El run origen permanece terminal e inmutable. El sucesor copia snapshots/artefactos necesarios para continuar (plan, prompt, chat, Cursor/git hasta la iteracion recuperada, reviews previos, y el review valido solo si el checkpoint es `process_review`). Los intentos Codex fallidos quedan en el origen.
 

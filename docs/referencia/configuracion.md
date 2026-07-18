@@ -246,8 +246,9 @@ Con `github.enabled: true` hay dos flujos CLI:
 - `pr-review prepare` + `pr-review start` para adoptar un PR ya abierto (origen
   `independent_pr`);
 - `pr-review recover <failed-run-id>` para un fallo de adjudicacion por schema
-  incompatible antes de side effects (sucesor inmutable; no republica
-  `@codex review`).
+  incompatible antes de side effects, o para un checkpoint `reviewing` donde
+  Cursor/staging terminaron pero falta el resultado local Codex (sucesor
+  inmutable; no republica `@codex review` ni reejecuta Cursor).
 
 Prepare no escribe en GitHub; start publica el marcador de review.
 `set-cursor-model` solo aplica al ciclo independiente antes de crear el chat
