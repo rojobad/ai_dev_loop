@@ -70,9 +70,11 @@ trigger del siguiente ciclo externo; `processed_thread_ids` /
 de `external_adjudication` no sustituye ese snapshot tras avanzar `cycle_number`.
 Si un run histórico quedó congelado con el snapshot del ciclo recuperado tras
 avanzar de ciclo, `pr-review continue` (con comentario exacto nuevo) puede
-limpiar solo ese freeze obsoleto cuando la lineage lo prueba; el evento
+limpiar solo ese freeze obsoleto cuando la lineage lo prueba — recovery
+`external_adjudication` directa, o un descendiente `reviewing` con un único
+ancestro terminal verificado —; el evento
 `pr_review_legacy_cycle_freeze_cleared` registra conteos y números de ciclo, no
-IDs de hilo. No edites `state.json` a mano.
+IDs de hilo ni rutas de source. No edites `state.json` a mano.
 `pr-review status` reporta liveness del worker (`live`/`stale`/`absent`) sin
 exponer PID, token ni argv.
 

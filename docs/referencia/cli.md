@@ -176,14 +176,19 @@ Cursor; `status` puede mostrar acuse `eyes` o diagnostico de timeout, pero eso
 nunca finaliza ni republica el trigger.
 
 `pr-review continue` también admite una recuperación histórica **lineage-bound**
-(Phase 15.10): si el run está en `waiting_for_user_attention` con
-`eligible_thread_set_drift` y la lineage `external_adjudication` prueba que el
-freeze `expected_eligible_thread_ids` pertenece a un ciclo anterior ya
+(Phase 15.10 / 15.11): si el run está en `waiting_for_user_attention` con
+`eligible_thread_set_drift` y la lineage prueba que el freeze
+`expected_eligible_thread_ids` pertenece a un ciclo anterior ya
 procesado/resuelto (mientras el ciclo actual ya publicó un marker nuevo), un
 comentario exacto nuevo de continue autoriza limpiar solo ese freeze obsoleto y
-reanudar el mismo worker/run. Conserva PR, SHA, marker, sesiones A/B y chat
-Cursor; **no** republica `@codex review`, no crea sucesor y no relaja el drift
-legítimo del ciclo actual. No edites `state.json` a mano.
+reanudar el mismo worker/run. La evidencia puede ser la recovery directa
+`external_adjudication` del run actual, o un único ancestro terminal
+verificado cuando la recovery actual es `reviewing` /
+`codex_review_result_artifact_missing` (sin recorridos recursivos). Conserva
+PR, SHA, marker, sesiones A/B y chat Cursor; **no** republica `@codex review`,
+no crea sucesor y no relaja el drift legítimo del ciclo actual. Si un continue
+previo ya consumió el comentario, hace falta uno nuevo. No edites `state.json`
+a mano.
 
 ## `start`
 

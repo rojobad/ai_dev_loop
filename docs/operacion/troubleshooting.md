@@ -446,18 +446,21 @@ o controlador incorrecto, falla sin writes.
 
 Síntoma (histórico; Phase 15.9 ya evita el patrón en runs nuevos):
 
-- sucesor con `recovery.recovered_checkpoint == external_adjudication`;
 - `cycle_number` ya avanzó tras un `@codex review` válido;
 - `waiting_for_user_attention` + `worker_outcome == eligible_thread_set_drift`;
 - `expected_eligible_thread_ids` aún apunta a hilos del ciclo recuperado (ya
-  procesados/resueltos), mientras el ciclo actual tiene hilos elegibles nuevos.
+  procesados/resueltos), mientras el ciclo actual tiene hilos elegibles nuevos;
+- lineage verificable: recovery directa `external_adjudication`, **o** recovery
+  actual `reviewing` / `codex_review_result_artifact_missing` cuyo único source
+  terminal tiene recovery `external_adjudication` con el mismo snapshot.
 
 Causa: el freeze operativo se persistió antes del reset por ciclo de Phase 15.9.
 No es fallo del bot, polling, SSH ni A/B.
 
 Acción (mismo run; no uses `recover` ni edites `state.json`):
 
-1. Publica en el PR un comentario **nuevo** y exacto:
+1. Publica en el PR un comentario **nuevo** y exacto (obligatorio también tras
+   un continue previo que ya consumió el último comentario):
 
    ```text
    @rojobad /ai-dev-loop continue
@@ -469,15 +472,28 @@ Acción (mismo run; no uses `recover` ni edites `state.json`):
    ai_dev_loop pr-review continue <run-id>
    ```
 
-Eso limpia solo el freeze obsoleto, vuelve a `awaiting_bot_review` y programa a
-lo sumo un worker. **No** republica `@codex review`, no crea sucesor, no invoca
+Eso limpia solo el freeze obsoleto del run actual, vuelve a
+`awaiting_bot_review` y programa a lo sumo un worker. El source terminal queda
+intacto. **No** republica `@codex review`, no crea sucesor, no invoca
 Cursor/Codex en el comando y no relaja drift legítimo del ciclo actual. El
 evento `pr_review_legacy_cycle_freeze_cleared` expone solo `source_cycle`,
 `current_cycle` y `expected_thread_count`.
 
-Si las precondiciones lineage no coinciden (mismo ciclo, sets distintos/vacíos,
-IDs no procesados, outcome distinto), el continue normal conserva el freeze y
-exige la resolución habitual del usuario.
+Dos caminos distintos cuando la limpieza histórica no aplica:
+
+1. **Continue normal** (el run no es un candidato nested legacy-freeze): por
+   ejemplo drift del mismo ciclo, sets distintos/vacíos, IDs no procesados u
+   outcome distinto. El comentario se consume, el freeze válido del ciclo
+   actual se conserva y el worker puede reanudarse; la resolución sigue siendo
+   la habitual del usuario.
+2. **Candidato nested inválido** (recovery actual
+   `reviewing` / `codex_review_result_artifact_missing` con gates locales de
+   drift, pero el source one-hop está ausente, no terminal, con identidad o
+   ciclo inconsistente, o sin recovery `external_adjudication` verificada):
+   fail-closed. La autorización de continue **no** se consume, no se muta
+   estado ni eventos y no se programa worker. Corrige o resuelve esa lineage
+   inválida antes de reintentar con un comentario exacto (el mismo sigue
+   válido si no se consumió).
 
 ## Adjudicación GitHub falló con `invalid_json_schema` / `uniqueItems`
 
