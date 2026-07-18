@@ -261,6 +261,11 @@ class WorkflowState(BaseModel):
 
     max_review_iterations: int
     current_review_iteration: int = 0
+    # Counts local Codex review passes toward max_review_iterations when set.
+    # None preserves legacy behavior where the artifact iteration number is the
+    # budget. External-feedback scheduling sets this to 0 so a high-numbered
+    # fresh Cursor iteration does not immediately exhaust the local budget.
+    local_review_count: int | None = Field(default=None, ge=0)
     stage_mode: str
     cursor_timeout_minutes: int
     codex_timeout_minutes: int
@@ -277,10 +282,18 @@ RECOVERY_REASON_CODES = frozenset(
         "initial_staging_failed",
         "cursor_usage_limit",
         "github_adjudication_schema_incompatible",
+        "external_feedback_cursor_not_started",
     }
 )
 RECOVERY_CHECKPOINTS = frozenset(
-    {"staging", "reviewing", "process_review", "cursor", "external_adjudication"}
+    {
+        "staging",
+        "reviewing",
+        "process_review",
+        "cursor",
+        "external_adjudication",
+        "external_feedback_cursor",
+    }
 )
 
 
@@ -414,7 +427,7 @@ class RecoveryState(BaseModel):
             if self.expected_eligible_thread_ids is not None:
                 raise ValueError(
                     "expected_eligible_thread_ids is only valid for external_adjudication "
-                    "recovery checkpoints"
+                    "and external_feedback_cursor recovery checkpoints"
                 )
             if self.cursor_output_fingerprint_sha256 is not None:
                 raise ValueError(
@@ -500,10 +513,62 @@ class RecoveryState(BaseModel):
                 )
             return self
 
+        if self.recovered_checkpoint == "external_feedback_cursor":
+            if self.reason_code != "external_feedback_cursor_not_started":
+                raise ValueError(
+                    "external_feedback_cursor reason_code must be "
+                    "external_feedback_cursor_not_started"
+                )
+            if self.source_staged_patch_sha256 is not None:
+                raise ValueError(
+                    "source_staged_patch_sha256 must be null for "
+                    "external_feedback_cursor checkpoints"
+                )
+            if not self.expected_eligible_thread_ids:
+                raise ValueError(
+                    "expected_eligible_thread_ids is required for "
+                    "external_feedback_cursor checkpoints"
+                )
+            if not self.source_prompt_path or not self.source_prompt_sha256:
+                raise ValueError(
+                    "source_prompt_path and source_prompt_sha256 are required for "
+                    "external_feedback_cursor checkpoints"
+                )
+            usage_limit_only = (
+                self.source_cursor_model,
+                self.cursor_model_fallback,
+                self.usage_limit_fingerprint_sha256,
+                self.usage_limit_fingerprint_path,
+                self.continuation_envelope_path,
+                self.continuation_envelope_sha256,
+            )
+            if any(value is not None for value in usage_limit_only):
+                raise ValueError(
+                    "cursor usage-limit recovery fields are only valid for "
+                    "cursor recovery checkpoints"
+                )
+            if self.cursor_output_fingerprint_sha256 is not None:
+                raise ValueError(
+                    "cursor_output_fingerprint_sha256 is only valid for staging recovery checkpoints"
+                )
+            if self.previous_staged_patch_sha256 is not None:
+                raise ValueError(
+                    "previous_staged_patch_sha256 is only valid for staging recovery checkpoints"
+                )
+            if self.legacy_cursor_output_adopted:
+                raise ValueError(
+                    "legacy_cursor_output_adopted is only valid for staging recovery checkpoints"
+                )
+            if self.legacy_cursor_usage_limit_adopted:
+                raise ValueError(
+                    "legacy_cursor_usage_limit_adopted is only valid for cursor recovery checkpoints"
+                )
+            return self
+
         if self.expected_eligible_thread_ids is not None:
             raise ValueError(
                 "expected_eligible_thread_ids is only valid for external_adjudication "
-                "recovery checkpoints"
+                "and external_feedback_cursor recovery checkpoints"
             )
 
         if any(value is not None for value in cursor_only):
@@ -692,6 +757,7 @@ class GithubPrReviewState(BaseModel):
     worker_outcome: str | None = None
     expected_eligible_thread_ids: list[str] | None = None
     external_fix_prompt_path: str | None = None
+    external_cursor_iteration: int | None = Field(default=None, ge=1)
     publication_phase: str | None = None
     local_commit_sha: str | None = None
     expected_remote_sha_before_push: str | None = None

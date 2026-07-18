@@ -274,6 +274,22 @@ mismo `pr-review recover` sobre ese run `failed`: el checkpoint será
 `reviewing` y el resume desde A reintentará solo la revisión local con la
 sesión B exacta, sin reejecutar Cursor ni republicar `@codex review`.
 
+Si la adjudicación externa ya dejó un prompt accionable
+(`prompts/fixes/github-NN.txt`) pero el orquestador falló antes de abrir la
+iteración fresca de Cursor (p. ej. staging vacío sobre `01` histórico), el
+checkpoint es `external_feedback_cursor`. Tras aceptación de esta versión:
+
+```bash
+ai_dev_loop pr-review recover <failed-run-id> --dry-run
+ai_dev_loop pr-review recover <failed-run-id> --output json
+ai_dev_loop pr-review resume <successor-run-id> --controller-session-id <sesion-A>
+```
+
+Ese `resume` revalida PR/SHA/hilos/baseline y abre Cursor con el prompt externo
+exacto en una iteración nueva monotona; no re-adjudica ni republica
+`@codex review`. El próximo trigger solo llega tras una publicación normal de
+corrección aceptada.
+
 El sucesor reutiliza PR, SHA, trigger, hilos elegibles, sesión B, chat Cursor y
 controlador A. **No** se publica otro `@codex review`. Si el conjunto de hilos
 elegibles cambió, el worker se detiene en atención de usuario sin writes GitHub.

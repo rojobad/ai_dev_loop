@@ -535,3 +535,28 @@ El checkpoint debe ser `reviewing` /
 `codex_review_result_artifact_missing`. No reejecuta Cursor, no hace polling ni
 adjudicación, y no publica otro `@codex review`. Si el patch staged o el
 worktree driftaron, o ya hay replies/resolves/publicación, `recover` se detiene.
+
+## Feedback externo accionable con staging vacío antes de Cursor
+
+Causa observada (PR #45 / run anonimizado `…176634`): tras adjudicación del
+ciclo externo con hallazgos accionables, el orquestador reutilizó la iteración
+local `01` completa y saltó a staging (`no staged changes after git add -A`)
+sin enviar `prompts/fixes/github-02.txt` a Cursor.
+
+Los runs nuevos programan una iteración fresca monotona
+(`github_pr_review.external_cursor_iteration`) y entregan el prompt externo
+exacto. Para el origen `failed` histórico con lifecycle
+`fixing_external_feedback`, resultado/prompt externos validos, baseline limpio
+y sin artefactos de la nueva iteración:
+
+```bash
+ai_dev_loop pr-review recover <failed-run-id> --dry-run
+ai_dev_loop pr-review recover <failed-run-id> --output json
+ai_dev_loop pr-review resume <successor-run-id> --controller-session-id <sesion-A>
+```
+
+El checkpoint debe ser `external_feedback_cursor` /
+`external_feedback_cursor_not_started`. Reutiliza la adjudicación persistida;
+no republica `@codex review` ni re-adjudica los mismos hilos. Si PR/SHA/hilos
+cambian, el baseline está sucio, el prompt/resultado son invalidos, hay worker
+vivo, publicación parcial o un intento Cursor parcial, `recover` se detiene.

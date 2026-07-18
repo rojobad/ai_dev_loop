@@ -150,26 +150,29 @@ Un sucesor creado por `ai_dev_loop recover` incluye en `state.json` una seccion 
 source_run_id
 source_status                 # failed
 source_iteration
-recovered_checkpoint          # staging | reviewing | process_review | cursor | external_adjudication
-source_staged_patch_sha256    # null para cursor, initial_staging_failed y external_adjudication
+recovered_checkpoint          # staging | reviewing | process_review | cursor |
+                              # external_adjudication | external_feedback_cursor
+source_staged_patch_sha256    # null para cursor, initial_staging_failed,
+                              # external_adjudication y external_feedback_cursor
 cursor_output_fingerprint_sha256   # requerido para staging
 previous_staged_patch_sha256       # requerido para correction_staging_failed; null para initial
 legacy_cursor_output_adopted       # opcional; solo correction staging historico
 legacy_cursor_usage_limit_adopted  # opcional; adopcion historica de limite de uso Cursor
 source_cursor_model                # checkpoint cursor
 cursor_model_fallback              # checkpoint cursor; congelado por --cursor-model
-source_prompt_path                   # checkpoint cursor
-source_prompt_sha256               # checkpoint cursor
+source_prompt_path                   # cursor y external_feedback_cursor
+source_prompt_sha256               # cursor y external_feedback_cursor
 usage_limit_fingerprint_path       # checkpoint cursor
 usage_limit_fingerprint_sha256     # checkpoint cursor
 continuation_envelope_path         # checkpoint cursor
 continuation_envelope_sha256       # checkpoint cursor
-expected_eligible_thread_ids       # checkpoint external_adjudication; IDs, no cuerpos
+expected_eligible_thread_ids       # external_adjudication y external_feedback_cursor; IDs, no cuerpos
 created_at
 runtime_migration             # none | phase9_session_capture
 reason_code                   # incluye initial_staging_failed, correction_staging_failed,
                               # cursor_usage_limit, github_adjudication_schema_incompatible,
-                              # codex_review_result_artifact_missing
+                              # codex_review_result_artifact_missing,
+                              # external_feedback_cursor_not_started
 ```
 
 `pr-review recover` usa:
@@ -177,10 +180,14 @@ reason_code                   # incluye initial_staging_failed, correction_stagi
 - `external_adjudication` cuando Codex rechazo el schema de adjudicacion antes de
   side effects;
 - `reviewing` + `codex_review_result_artifact_missing` cuando Cursor/staging
-  terminaron pero falta el resultado local `codex/reviews/NN.json`.
+  terminaron pero falta el resultado local `codex/reviews/NN.json`;
+- `external_feedback_cursor` + `external_feedback_cursor_not_started` cuando la
+  adjudicacion externa ya dejo resultado/prompt accionables pero la iteracion
+  fresca de Cursor no llego a empezar. El estado tambien puede registrar
+  `github_pr_review.external_cursor_iteration` para esa iteracion monotona.
 
-El sucesor no republica el trigger `@codex review` y, en el checkpoint
-`reviewing`, no reejecuta Cursor.
+El sucesor no republica el trigger `@codex review`. En `reviewing` no reejecuta
+Cursor; en `external_feedback_cursor` el `resume` abre Cursor antes de staging.
 
 El run origen permanece terminal e inmutable. El sucesor copia snapshots/artefactos necesarios para continuar (plan, prompt, chat, Cursor/git hasta la iteracion recuperada, reviews previos, y el review valido solo si el checkpoint es `process_review`). Los intentos Codex fallidos quedan en el origen.
 

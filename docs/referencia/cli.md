@@ -142,14 +142,20 @@ Hay dos origenes:
 `prepared_independent` o `awaiting_bot_review` sin chat Cursor ni iteraciones; no
 cambia el runtime Codex del reviewer ni reescribe `effective-config.yaml`.
 
-`pr-review recover` crea un sucesor inmutable para dos checkpoints
+`pr-review recover` crea un sucesor inmutable para checkpoints
 artefacto-dirigidos:
 
 - `external_adjudication`: fallo de adjudicacion por incompatibilidad del schema
   de salida Codex (`invalid_json_schema` / `uniqueItems`) antes de side effects;
 - `reviewing` (`codex_review_result_artifact_missing`): Cursor y staging ya
   completaron la correccion local, pero falta `codex/reviews/NN.json`. El
-  sucesor reintenta solo la revision Codex B; no reejecuta Cursor ni toca GitHub.
+  sucesor reintenta solo la revision Codex B; no reejecuta Cursor ni toca GitHub;
+- `external_feedback_cursor` (`external_feedback_cursor_not_started`): la
+  adjudicacion externa ya produjo un prompt accionable, pero la iteracion
+  fresca de Cursor nunca arranco (p. ej. staging vacio sobre artefactos
+  historicos). El sucesor reutiliza la adjudicacion persistida y, tras
+  `pr-review resume`, abre Cursor con el prompt externo exacto antes de
+  staging; no re-adjudica ni republica `@codex review`.
 
 El origen `failed` permanece terminal; el sucesor reutiliza el mismo PR, SHA,
 trigger, hilos elegibles, sesion Codex B, chat Cursor y controlador A. **No**

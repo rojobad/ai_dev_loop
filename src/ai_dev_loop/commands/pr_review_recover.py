@@ -1,11 +1,13 @@
 """Recover failed GitHub PR-review runs without re-posting a trigger.
 
-Supports two artifact-driven checkpoints:
+Supports artifact-driven checkpoints:
 
 - ``external_adjudication`` (Phase 15.7): schema-incompatible adjudication before
   Cursor/GitHub side effects.
 - ``reviewing`` (Phase 15.8): Cursor correction and staging completed, but the
   local Codex structured result artifact was never persisted.
+- ``external_feedback_cursor`` (Phase 15.12): external adjudication completed
+  with an actionable fix prompt, but the fresh Cursor iteration never started.
 """
 
 from __future__ import annotations
@@ -31,15 +33,25 @@ from ai_dev_loop.commands.recover import (
 )
 from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.event_log import append_orchestrator_event
+from ai_dev_loop.github_pr_review_result import GithubPrReviewResult
 from ai_dev_loop.integrations.codex.session_runtime import require_codex_session_id
-from ai_dev_loop.iterations import iteration_label, max_iteration_number
+from ai_dev_loop.iterations import (
+    derive_external_cursor_iteration_for_recovery,
+    iteration_label,
+    max_iteration_number,
+    next_external_cursor_iteration,
+)
 from ai_dev_loop.paths import ensure_dir, run_dir, runs_dir, set_sensitive_file_mode
 from ai_dev_loop.recovery_planner import (
     analyze_recovery,
     apply_resolved_runtime_to_codex,
 )
 from ai_dev_loop.response_schema import events_indicate_adjudication_schema_rejection
-from ai_dev_loop.resume_planner import TERMINAL_STATUSES, review_result_available
+from ai_dev_loop.resume_planner import (
+    TERMINAL_STATUSES,
+    cursor_turn_complete,
+    review_result_available,
+)
 from ai_dev_loop.run_discovery import list_run_directories, load_run
 from ai_dev_loop.runners.codex import classify_codex_review_output_artifact_failure
 from ai_dev_loop.runners.github import (
@@ -47,6 +59,8 @@ from ai_dev_loop.runners.github import (
     get_pull_request,
     list_review_threads,
 )
+from ai_dev_loop.runners.publish import validate_clean_worktree
+from ai_dev_loop.runners.staging import staging_complete_for_iteration
 from ai_dev_loop.state import (
     RecoveryState,
     RunState,
@@ -70,6 +84,7 @@ class PrReviewRecoveryAnalysis:
     cycle_number: int | None = None
     iteration: int | None = None
     staged_patch_sha256: str | None = None
+    source_prompt_sha256: str | None = None
     pr_number: int | None = None
     bound_head_sha_prefix: str | None = None
     expected_eligible_thread_ids: list[str] = field(default_factory=list)
@@ -305,6 +320,226 @@ def _analyze_external_adjudication(
     return analysis
 
 
+def _current_cycle_thread_ids(gpr: Any) -> set[str]:
+    expected = list(gpr.expected_eligible_thread_ids or gpr.eligible_thread_ids or [])
+    return set(expected)
+
+
+def _external_feedback_cursor_side_effect_blockers(gpr: Any) -> list[str]:
+    """Block when publication or current-cycle thread side effects already began.
+
+    A non-null ``continue_comment_id`` is not a blocker: nested Phase 15.10/15.11
+    lineage may have already consumed an authorized continue while clearing a
+    prior-cycle freeze before the current external adjudication.
+    """
+
+    blockers: list[str] = []
+    current = _current_cycle_thread_ids(gpr)
+    if gpr.publication_phase is not None:
+        blockers.append("publication_started")
+    if current and set(gpr.processed_thread_ids) & current:
+        blockers.append("current_threads_processed")
+    if current and set(gpr.replied_thread_ids) & current:
+        blockers.append("current_threads_replied")
+    if current and set(gpr.resolved_thread_ids) & current:
+        blockers.append("current_threads_resolved")
+    if gpr.lifecycle in {
+        "publishing_external_fix",
+        "publishing_initial",
+        "waiting_for_user_attention",
+        "completed",
+        "max_external_cycles_reached",
+        "awaiting_bot_review",
+        "evaluating_bot_feedback",
+    }:
+        blockers.append(f"lifecycle_past_external_cursor:{gpr.lifecycle}")
+    return blockers
+
+
+def _has_partial_external_cursor_attempt(
+    run_directory: Path,
+    pending_iteration: int,
+) -> bool:
+    """True when any durable artifact for the pending external Cursor iteration exists."""
+
+    label = iteration_label(pending_iteration)
+    cursor_dir = run_directory / "cursor" / "iterations" / label
+    if cursor_dir.exists():
+        return True
+    for relative in (
+        f"git/status/{label}-before-cursor.txt",
+        f"git/status/{label}-after-cursor.txt",
+        f"git/cursor-output/{label}.json",
+        f"git/diffs/{label}.patch",
+        f"codex/reviews/{label}.json",
+        f"codex/events/{label}.jsonl",
+    ):
+        if (run_directory / relative).exists():
+            return True
+    return False
+
+
+def _looks_like_external_feedback_cursor_source(
+    state: RunState,
+    run_directory: Path,
+) -> bool:
+    """Structured pre-filter: actionable external feedback, Cursor not started.
+
+    Does not use ``last_error`` or result text as eligibility evidence.
+    Requires a fresh iteration number strictly greater than any persisted
+    iteration so completed local Cursor/staging progress routes to reviewing.
+    """
+
+    gpr = state.github_pr_review
+    if gpr is None:
+        return False
+    if state.status != RunStatus.FAILED:
+        return False
+    if gpr.lifecycle != "fixing_external_feedback":
+        return False
+    if not gpr.external_fix_prompt_path or not gpr.last_external_result_path:
+        return False
+    if not state.cursor.chat_id:
+        return False
+    pending = derive_external_cursor_iteration_for_recovery(state)
+    if pending is None:
+        return False
+    historical_max = max_iteration_number(state)
+    if pending <= historical_max:
+        return False
+    if _has_partial_external_cursor_attempt(run_directory, pending):
+        return False
+    # A completed Cursor+staging pass whose local Codex result is missing is the
+    # reviewing checkpoint, even when lifecycle remains fixing_external_feedback.
+    if historical_max >= 1:
+        label = iteration_label(historical_max)
+        if (
+            cursor_turn_complete(run_directory, historical_max)
+            and staging_complete_for_iteration(state, run_directory, label)
+            and not review_result_available(run_directory, historical_max)
+        ):
+            return False
+    return True
+
+
+def _load_actionable_external_result(
+    run_directory: Path,
+    result_rel: str,
+) -> GithubPrReviewResult | None:
+    result_path = run_directory / result_rel
+    if not result_path.is_file():
+        return None
+    try:
+        payload = json.loads(result_path.read_text(encoding="utf-8"))
+        review = GithubPrReviewResult.model_validate(payload)
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+        return None
+    if not review.all_actionable:
+        return None
+    if not review.cursor_fix_prompt or not review.cursor_fix_prompt.strip():
+        return None
+    return review
+
+
+def _analyze_external_feedback_cursor(
+    analysis: PrReviewRecoveryAnalysis,
+    state: RunState,
+    run_directory: Path,
+    *,
+    verify_remote: bool,
+) -> PrReviewRecoveryAnalysis:
+    gpr = state.github_pr_review
+    assert gpr is not None
+    analysis.checkpoint = "external_feedback_cursor"
+    analysis.reason_code = "external_feedback_cursor_not_started"
+
+    if state.status != RunStatus.FAILED:
+        analysis.blockers.append("source_not_failed")
+    if gpr.lifecycle != "fixing_external_feedback":
+        analysis.blockers.append(f"lifecycle_not_fixing_external_feedback:{gpr.lifecycle}")
+    if not state.cursor.chat_id:
+        analysis.blockers.append("cursor_chat_missing")
+    if not state.codex.session_id:
+        analysis.blockers.append("codex_session_missing")
+
+    if gpr.pr_number is None:
+        analysis.blockers.append("pr_not_bound")
+    if not analysis.trigger_present:
+        analysis.blockers.append("trigger_missing")
+    if not analysis.expected_eligible_thread_ids:
+        analysis.blockers.append("eligible_threads_missing")
+
+    prompt_rel = gpr.external_fix_prompt_path
+    result_rel = gpr.last_external_result_path
+    if not prompt_rel:
+        analysis.blockers.append("external_fix_prompt_missing")
+    if not result_rel:
+        analysis.blockers.append("external_result_missing")
+
+    review = None
+    if result_rel:
+        review = _load_actionable_external_result(run_directory, result_rel)
+        if review is None:
+            analysis.blockers.append("external_result_invalid_or_not_actionable")
+        elif set(review.eligible_thread_ids) != set(analysis.expected_eligible_thread_ids):
+            analysis.blockers.append("external_result_thread_set_mismatch")
+
+    if prompt_rel:
+        prompt_path = run_directory / prompt_rel
+        if not prompt_path.is_file():
+            analysis.blockers.append("external_fix_prompt_missing_file")
+        else:
+            try:
+                text = prompt_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                analysis.blockers.append("external_fix_prompt_unreadable")
+            else:
+                if not text.strip():
+                    analysis.blockers.append("external_fix_prompt_empty")
+                else:
+                    analysis.source_prompt_sha256 = sha256_file(prompt_path)
+                    if review is not None and review.cursor_fix_prompt != text:
+                        analysis.blockers.append("external_fix_prompt_body_mismatch")
+
+    pending = derive_external_cursor_iteration_for_recovery(state)
+    if pending is None:
+        analysis.blockers.append("external_cursor_iteration_unresolved")
+    else:
+        analysis.iteration = pending
+        if pending <= max_iteration_number(state):
+            analysis.blockers.append("external_cursor_iteration_not_fresh")
+        if _has_partial_external_cursor_attempt(run_directory, pending):
+            analysis.blockers.append("partial_external_cursor_attempt")
+
+    analysis.blockers.extend(_external_feedback_cursor_side_effect_blockers(gpr))
+
+    if _active_worker_pid(run_directory) is not None:
+        analysis.blockers.append("active_worker_present")
+
+    try:
+        validate_clean_worktree(Path(state.repository.root))
+    except ValidationError:
+        analysis.blockers.append("baseline_not_clean")
+    except Exception as exc:
+        analysis.blockers.append(f"baseline_unreadable:{type(exc).__name__}")
+
+    _verify_remote_pr(
+        analysis,
+        state,
+        verify_remote=verify_remote,
+        require_thread_set=True,
+    )
+
+    analysis.eligible = (
+        len(analysis.blockers) == 0
+        and analysis.iteration is not None
+        and analysis.source_prompt_sha256 is not None
+        and bool(analysis.expected_eligible_thread_ids)
+    )
+    _attach_matching_successor(analysis, state)
+    return analysis
+
+
 def _analyze_reviewing(
     analysis: PrReviewRecoveryAnalysis,
     state: RunState,
@@ -414,6 +649,13 @@ def analyze_pr_review_recovery(
 
     _fill_common_pr_fields(analysis, state)
 
+    if _looks_like_external_feedback_cursor_source(state, run_directory):
+        return _analyze_external_feedback_cursor(
+            analysis,
+            state,
+            run_directory,
+            verify_remote=verify_remote,
+        )
     if _has_local_loop_progress(state, run_directory):
         return _analyze_reviewing(
             analysis,
@@ -459,6 +701,20 @@ def _attach_matching_successor(analysis: PrReviewRecoveryAnalysis, source: RunSt
             if recovery.source_staged_patch_sha256 != analysis.staged_patch_sha256:
                 continue
             if set(candidate.github_pr_review.expected_eligible_thread_ids or []) != expected:
+                continue
+        elif analysis.checkpoint == "external_feedback_cursor":
+            if recovery.source_iteration != analysis.iteration:
+                continue
+            if recovery.source_prompt_sha256 != analysis.source_prompt_sha256:
+                continue
+            if set(recovery.expected_eligible_thread_ids or []) != expected:
+                continue
+            if set(candidate.github_pr_review.expected_eligible_thread_ids or []) != expected:
+                continue
+            if (
+                candidate.github_pr_review.external_cursor_iteration is not None
+                and candidate.github_pr_review.external_cursor_iteration != analysis.iteration
+            ):
                 continue
         else:
             continue
@@ -787,12 +1043,197 @@ def _create_reviewing_successor(
     return recovery_run_id
 
 
+def _create_external_feedback_cursor_successor(
+    *,
+    source_dir: Path,
+    source: RunState,
+    analysis: PrReviewRecoveryAnalysis,
+) -> str:
+    assert analysis.cycle_number is not None
+    assert analysis.iteration is not None
+    assert analysis.source_prompt_sha256 is not None
+    assert analysis.expected_eligible_thread_ids
+    gpr = source.github_pr_review
+    assert gpr is not None
+    assert gpr.external_fix_prompt_path is not None
+
+    now = utc_now()
+    project = source.project.name
+    recovery_run_id = generate_run_id(project, now=now)
+    final_dir = run_dir(project, recovery_run_id)
+    if final_dir.exists():
+        raise ValidationError(f"recovery run directory already exists: {final_dir}")
+
+    project_root = runs_dir() / project
+    ensure_dir(project_root)
+    temp_dir = project_root / f".pr-review-recover-{recovery_run_id}-{secrets.token_hex(4)}"
+    try:
+        _create_successor_layout(temp_dir)
+        ensure_dir(temp_dir / "codex" / "reviews")
+        ensure_dir(temp_dir / "codex" / "events")
+        ensure_dir(temp_dir / "git" / "diffs")
+        ensure_dir(temp_dir / "git" / "status")
+        ensure_dir(temp_dir / "git" / "cursor-output")
+        ensure_dir(temp_dir / "cursor" / "iterations")
+
+        historical_max = max_iteration_number(source)
+        _copy_identity_artifacts(source_dir, temp_dir)
+        copied: list[str] = []
+        if historical_max >= 1:
+            copied.extend(
+                _copy_selected_artifacts(
+                    source_dir,
+                    temp_dir,
+                    iteration=historical_max,
+                    checkpoint="process_review",
+                )
+            )
+            iterations = _sanitize_iterations_for_successor(
+                source.iterations,
+                iteration=historical_max,
+                checkpoint="process_review",
+            )
+        else:
+            iterations = []
+
+        copied.extend(
+            _copy_pr_review_external_context(
+                source_dir,
+                temp_dir,
+                cycle_number=analysis.cycle_number,
+                gpr=gpr,
+            )
+        )
+
+        expected = list(analysis.expected_eligible_thread_ids)
+        pending_iteration = analysis.iteration
+        # Guard against colliding with a derived number that somehow drifted.
+        if pending_iteration <= historical_max:
+            pending_iteration = next_external_cursor_iteration(source)
+        recovery = RecoveryState(
+            source_run_id=source.run_id,
+            source_status=RunStatus.FAILED.value,
+            source_iteration=pending_iteration,
+            recovered_checkpoint="external_feedback_cursor",
+            source_staged_patch_sha256=None,
+            created_at=now,
+            runtime_migration="none",
+            reason_code="external_feedback_cursor_not_started",
+            expected_eligible_thread_ids=expected,
+            source_prompt_path=gpr.external_fix_prompt_path,
+            source_prompt_sha256=analysis.source_prompt_sha256,
+        )
+        successor = source.model_copy(deep=True)
+        successor.run_id = recovery_run_id
+        successor.created_at = now
+        successor.updated_at = now
+        successor.status = RunStatus.INTERRUPTED
+        successor.result = (
+            f"Recovered external feedback Cursor turn from failed run {source.run_id} "
+            f"at iteration {pending_iteration:02d} without re-posting @codex review "
+            "or re-adjudicating the same threads."
+        )
+        successor.last_error = None
+        successor.iterations = iterations
+        successor.recovery = recovery
+        successor.workflow = successor.workflow.model_copy(
+            update={
+                "current_review_iteration": historical_max,
+                # Fresh local review budget for the post-external Cursor segment.
+                "local_review_count": 0,
+            }
+        )
+        successor.github_pr_review = gpr.model_copy(
+            update={
+                "lifecycle": "fixing_external_feedback",
+                "worker_outcome": None,
+                "eligible_thread_ids": expected,
+                "expected_eligible_thread_ids": expected,
+                "external_cursor_iteration": pending_iteration,
+                "external_fix_prompt_path": gpr.external_fix_prompt_path,
+                "last_external_result_path": gpr.last_external_result_path,
+                "last_snapshot_path": gpr.last_snapshot_path,
+                "publication_phase": None,
+                # Preserve an already-consumed continue comment from prior-cycle
+                # freeze clearance; it is not a current-cycle side effect.
+            }
+        )
+
+        assert successor.codex.session_id == source.codex.session_id
+        assert successor.cursor.chat_id == source.cursor.chat_id
+        if source.controller is not None:
+            assert successor.controller is not None
+            assert (
+                successor.controller.controller_session_id
+                == source.controller.controller_session_id
+            )
+
+        save_run_state(temp_dir, successor)
+        atomic_write_json(
+            temp_dir / "manifest.json",
+            {
+                "schema_version": 1,
+                "run_id": recovery_run_id,
+                "project": project,
+                "created_at": now.isoformat(),
+                "artifacts": [
+                    {"path": rel, "sha256": sha256_file(temp_dir / rel)}
+                    for rel in copied
+                    if (temp_dir / rel).is_file()
+                ],
+                "recovery": {
+                    "source_run_id": source.run_id,
+                    "recovered_checkpoint": "external_feedback_cursor",
+                    "reason_code": "external_feedback_cursor_not_started",
+                    "source_iteration": pending_iteration,
+                    "source_prompt_sha256": analysis.source_prompt_sha256,
+                    "expected_thread_count": len(expected),
+                    "pr_number": gpr.pr_number,
+                    "bound_head_sha_prefix": gpr.bound_head_sha[:12],
+                    "trigger_reposted": False,
+                },
+            },
+            sensitive=True,
+        )
+        append_orchestrator_event(
+            temp_dir,
+            run_id=recovery_run_id,
+            component="orchestrator",
+            event="pr_review_external_feedback_cursor_recovery_successor_created",
+            status=successor.status.value,
+            detail={
+                "source_run_id": source.run_id,
+                "checkpoint": "external_feedback_cursor",
+                "reason_code": "external_feedback_cursor_not_started",
+                "source_iteration": pending_iteration,
+                "expected_thread_count": len(expected),
+                "pr_number": gpr.pr_number,
+                "bound_head_sha_prefix": gpr.bound_head_sha[:12],
+                "trigger_reposted": False,
+            },
+        )
+        if final_dir.exists():
+            raise ValidationError(f"recovery run directory already exists: {final_dir}")
+        temp_dir.rename(final_dir)
+    except Exception:
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+    return recovery_run_id
+
+
 def _create_recovery_successor(
     *,
     source_dir: Path,
     source: RunState,
     analysis: PrReviewRecoveryAnalysis,
 ) -> str:
+    if analysis.checkpoint == "external_feedback_cursor":
+        return _create_external_feedback_cursor_successor(
+            source_dir=source_dir,
+            source=source,
+            analysis=analysis,
+        )
     if analysis.checkpoint == "reviewing":
         return _create_reviewing_successor(
             source_dir=source_dir,
@@ -827,6 +1268,12 @@ def recover_pr_review_cycle(run_id: str, *, dry_run: bool = False) -> PrReviewRe
                     "Dry-run only: no successor created, no GitHub writes, Cursor will not rerun, "
                     "and trigger will not be re-posted."
                 )
+            elif analysis.checkpoint == "external_feedback_cursor":
+                message = (
+                    "Dry-run only: no successor created, no GitHub writes, "
+                    "Cursor will open on a fresh iteration after resume, "
+                    "and trigger will not be re-posted."
+                )
             else:
                 message = (
                     "Dry-run only: no successor created, no GitHub writes, "
@@ -852,7 +1299,7 @@ def recover_pr_review_cycle(run_id: str, *, dry_run: bool = False) -> PrReviewRe
         resume_command = _resume_command_for(
             analysis, successor_run_id=analysis.existing_successor_run_id
         )
-        label = "reviewing" if analysis.checkpoint == "reviewing" else "adjudication"
+        label = _checkpoint_label(analysis.checkpoint)
         return PrReviewRecoveryResult(
             source_run_id=source.run_id,
             recovery_run_id=analysis.existing_successor_run_id,
@@ -891,7 +1338,7 @@ def recover_pr_review_cycle(run_id: str, *, dry_run: bool = False) -> PrReviewRe
         if fresh.reused_existing_successor and reused_id is not None:
             analysis = fresh
             resume_command = _resume_command_for(analysis, successor_run_id=reused_id)
-            label = "reviewing" if analysis.checkpoint == "reviewing" else "adjudication"
+            label = _checkpoint_label(analysis.checkpoint)
             return PrReviewRecoveryResult(
                 source_run_id=source.run_id,
                 recovery_run_id=reused_id,
@@ -932,6 +1379,12 @@ def recover_pr_review_cycle(run_id: str, *, dry_run: bool = False) -> PrReviewRe
             f"{source.run_id}. Source remains failed. Cursor will not rerun and "
             "trigger will not be re-posted."
         )
+    elif analysis.checkpoint == "external_feedback_cursor":
+        message = (
+            f"Created external_feedback_cursor recovery successor {recovery_run_id} from "
+            f"{source.run_id}. Source remains failed. Resume opens Cursor on a fresh "
+            "iteration; trigger will not be re-posted and threads will not be re-adjudicated."
+        )
     else:
         message = (
             f"Created adjudication recovery successor {recovery_run_id} from "
@@ -945,6 +1398,14 @@ def recover_pr_review_cycle(run_id: str, *, dry_run: bool = False) -> PrReviewRe
         message=message,
         resume_command=resume_command,
     )
+
+
+def _checkpoint_label(checkpoint: str | None) -> str:
+    if checkpoint == "reviewing":
+        return "reviewing"
+    if checkpoint == "external_feedback_cursor":
+        return "external_feedback_cursor"
+    return "adjudication"
 
 
 def _resume_command_for(analysis: PrReviewRecoveryAnalysis, *, successor_run_id: str) -> str:
