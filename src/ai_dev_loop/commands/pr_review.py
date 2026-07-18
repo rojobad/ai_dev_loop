@@ -28,6 +28,11 @@ from ai_dev_loop.commands.start_preflight import (
 from ai_dev_loop.config import ProjectConfig, resolve_effective_config
 from ai_dev_loop.errors import AdjudicationSchemaIncompatibleError, AiDevLoopError, ValidationError
 from ai_dev_loop.event_log import append_orchestrator_event
+from ai_dev_loop.iterations import (
+    begin_external_local_review_budget,
+    max_iteration_number,
+    next_external_cursor_iteration,
+)
 from ai_dev_loop.launcher import read_process_starttime
 from ai_dev_loop.locking import LockMetadata, RunLocks
 from ai_dev_loop.paths import ensure_dir, run_dir, runs_dir, set_sensitive_file_mode
@@ -1454,6 +1459,78 @@ def resume_pr_review_cycle(
         recovery = state.recovery
         if (
             recovery is not None
+            and recovery.recovered_checkpoint == "external_feedback_cursor"
+            and recovery.reason_code == "external_feedback_cursor_not_started"
+        ):
+            if not state.cursor.chat_id:
+                raise ValidationError(
+                    "cannot resume external_feedback_cursor recovery without a "
+                    "persisted Cursor chat id"
+                )
+            if lifecycle not in {"fixing_external_feedback", "interrupted"}:
+                raise ValidationError(
+                    "external_feedback_cursor recovery resume requires lifecycle "
+                    f"fixing_external_feedback (got {lifecycle})"
+                )
+            if (
+                state.github_pr_review.external_cursor_iteration is None
+                or not state.github_pr_review.external_fix_prompt_path
+            ):
+                raise ValidationError(
+                    "external_feedback_cursor recovery is missing the scheduled "
+                    "external Cursor iteration or fix prompt path"
+                )
+            config = _require_github_config(Path(state.repository.root))
+            assert config.github is not None
+            observed_pair = _observe_eligible_thread_set(
+                state,
+                github_command=config.github.command,
+                reviewer_logins=config.github.reviewer_logins,
+            )
+            if observed_pair is not None:
+                expected_ids, observed_ids = observed_pair
+                if set(observed_ids) != set(expected_ids):
+                    _persist_eligible_thread_set_drift(
+                        run_directory,
+                        expected=expected_ids,
+                        observed=observed_ids,
+                        locks_held=True,
+                    )
+                    return (
+                        "Eligible thread set drifted from the frozen recovery set; "
+                        "waiting for user attention. No local agent or GitHub writes ran."
+                    )
+            from ai_dev_loop.runners.publish import validate_clean_worktree
+
+            try:
+                validate_clean_worktree(Path(state.repository.root))
+            except ValidationError as exc:
+                raise ValidationError(
+                    f"external_feedback_cursor recovery resume requires a clean baseline: {exc}"
+                ) from exc
+            prompt_rel = state.github_pr_review.external_fix_prompt_path
+            prompt_file = run_directory / prompt_rel
+            if not prompt_file.is_file():
+                raise ValidationError(
+                    f"external fix prompt missing for recovery resume: {prompt_rel}"
+                )
+            from ai_dev_loop.state import sha256_file
+
+            if recovery.source_prompt_sha256 and sha256_file(prompt_file) != (
+                recovery.source_prompt_sha256
+            ):
+                raise ValidationError(
+                    "external fix prompt hash drifted from recovery lineage; refusing Cursor"
+                )
+            _mark_status(state, RunStatus.RUNNING_CURSOR)
+            state.github_pr_review = state.github_pr_review.model_copy(
+                update={"lifecycle": "fixing_external_feedback", "worker_outcome": None}
+            )
+            state.last_error = None
+            save_run_state(run_directory, state)
+            resume_workflow_run_id = state.run_id
+        elif (
+            recovery is not None
             and recovery.recovered_checkpoint == "reviewing"
             and recovery.reason_code == "codex_review_result_artifact_missing"
         ):
@@ -2318,15 +2395,37 @@ def _run_pr_review_worker_loop_inner(run_id: str, run_directory: Path) -> None:
             if not state.cursor.chat_id:
                 raise ValidationError("Cursor chat id is required before fixing external feedback")
             assert state.github_pr_review is not None
+            external_iteration = next_external_cursor_iteration(state)
+            # Keep current_review_iteration at the durable max so the planner
+            # schedules Cursor on external_iteration (max+1) and never reuses a
+            # completed historical iteration for staging. Reset the local review
+            # budget so a high artifact number does not exhaust max_review_iterations.
+            historical_max = max_iteration_number(state)
             state.github_pr_review = state.github_pr_review.model_copy(
                 update={
                     "lifecycle": "fixing_external_feedback",
                     "external_fix_prompt_path": artifacts.fix_prompt_path,
+                    "external_cursor_iteration": external_iteration,
                 }
             )
-            state.workflow = state.workflow.model_copy(update={"current_review_iteration": 0})
+            state.workflow = state.workflow.model_copy(
+                update={"current_review_iteration": historical_max}
+            )
+            begin_external_local_review_budget(state)
             begin_running_cursor(state)
             save_run_state(run_directory, state)
+            append_orchestrator_event(
+                run_directory,
+                run_id=state.run_id,
+                component="orchestrator",
+                event="external_feedback_cursor_scheduled",
+                status=state.status.value,
+                iteration=external_iteration,
+                detail={
+                    "external_cycle": state.github_pr_review.cycle_number,
+                    "historical_max_iteration": historical_max,
+                },
+            )
             resume_workflow = True
         finally:
             locks.release()

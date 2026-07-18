@@ -29,8 +29,10 @@ from ai_dev_loop.event_log import EventLevel, append_orchestrator_event
 from ai_dev_loop.iterations import (
     cursor_prompt_path,
     iteration_label,
+    local_review_budget_used,
     max_iteration_number,
     read_cursor_prompt,
+    record_local_review_for_budget,
     source_prompt_for_usage_limit_recovery,
     upsert_iteration,
 )
@@ -285,7 +287,7 @@ def resume_run(
             run_resume_preflight_checks(state, run_directory, from_prepared=False)
 
         if state.status == RunStatus.WAITING_FOR_CURSOR_FIX:
-            if state.workflow.current_review_iteration >= state.workflow.max_review_iterations:
+            if local_review_budget_used(state) >= state.workflow.max_review_iterations:
                 mark_max_iterations_reached(state, result_message_for_max_iterations())
                 save_run_state(run_directory, state)
                 chat_id = _require_cursor_chat_or_fail(run_directory, state)
@@ -1292,9 +1294,10 @@ def _apply_review_result(
 ) -> tuple[str | None, str, bool]:
     result_message = result_message_for_review(review)
     should_continue = False
+    budget_used = record_local_review_for_budget(state, iteration_number=iteration_number)
 
     if review.has_actionable_findings:
-        if iteration_number >= state.workflow.max_review_iterations:
+        if budget_used >= state.workflow.max_review_iterations:
             mark_max_iterations_reached(state, result_message_for_max_iterations())
             result_message = result_message_for_max_iterations()
             append_orchestrator_event(
@@ -1304,6 +1307,10 @@ def _apply_review_result(
                 event="max_iterations_reached",
                 status=state.status.value,
                 iteration=iteration_number,
+                detail={
+                    "local_review_budget_used": budget_used,
+                    "max_review_iterations": state.workflow.max_review_iterations,
+                },
             )
         else:
             mark_waiting_for_cursor_fix(state, result_message_for_loop_continue())

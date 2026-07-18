@@ -300,6 +300,21 @@ Documentado en:
 - [Troubleshooting](../operacion/troubleshooting.md)
 - [Estado y artefactos](../operacion/estado-artefactos.md)
 
+## Fase 15.12
+
+Corrección externa en iteración nueva monotona (prompt `github-NN` exacto; nunca
+staging sobre artefactos históricos) y `pr-review recover` para el checkpoint
+`external_feedback_cursor` cuando el run falló en `fixing_external_feedback`
+antes de que Cursor arrancara. Sucesor inmutable; `resume` abre Cursor antes de
+staging; no re-adjudica ni republica `@codex review`.
+
+Documentado en:
+
+- [Referencia CLI](cli.md)
+- [Flujo completo](../guia/flujo-completo.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+- [Estado y artefactos](../operacion/estado-artefactos.md)
+
 ## Riesgos residuales documentados
 
 - Hook trust sigue siendo `unknown` desde CLI.

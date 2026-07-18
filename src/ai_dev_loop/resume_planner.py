@@ -12,7 +12,9 @@ from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.iterations import (
     iteration_label,
     iteration_staged_patch_rel_path,
+    local_review_budget_used,
     max_iteration_number,
+    pending_external_cursor_iteration,
 )
 from ai_dev_loop.runners.codex import load_review_result_from_artifacts
 from ai_dev_loop.runners.git import (
@@ -164,6 +166,9 @@ def restore_interrupted_checkpoint(state: RunState, run_directory: Path) -> Inte
 
 
 def active_cursor_iteration(state: RunState, run_directory: Path) -> int:
+    pending_external = pending_external_cursor_iteration(state)
+    if pending_external is not None and not cursor_turn_complete(run_directory, pending_external):
+        return pending_external
     if (
         state.workflow.current_review_iteration > 0
         and state.status in {RunStatus.WAITING_FOR_CURSOR_FIX, RunStatus.RUNNING_CURSOR}
@@ -189,7 +194,7 @@ def plan_next_action(state: RunState, run_directory: Path) -> WorkflowAction | N
         return WorkflowAction(WorkflowActionKind.CURSOR, 1)
 
     if state.status == RunStatus.WAITING_FOR_CURSOR_FIX:
-        if state.workflow.current_review_iteration >= state.workflow.max_review_iterations:
+        if local_review_budget_used(state) >= state.workflow.max_review_iterations:
             raise ValidationError(
                 "review iteration limit already reached; resume cannot send another Cursor correction"
             )
@@ -226,6 +231,10 @@ def plan_next_action(state: RunState, run_directory: Path) -> WorkflowAction | N
 
 
 def _plan_from_interrupted(state: RunState, run_directory: Path) -> WorkflowAction:
+    pending_external = pending_external_cursor_iteration(state)
+    if pending_external is not None and not cursor_turn_complete(run_directory, pending_external):
+        return WorkflowAction(WorkflowActionKind.CURSOR, pending_external)
+
     iteration_number = max(max_iteration_number(state), 1)
     label = iteration_label(iteration_number)
 

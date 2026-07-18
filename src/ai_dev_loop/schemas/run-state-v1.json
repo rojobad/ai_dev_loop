@@ -191,6 +191,12 @@
       "properties": {
         "max_review_iterations": { "type": "integer", "minimum": 1 },
         "current_review_iteration": { "type": "integer", "minimum": 0 },
+        "local_review_count": {
+          "anyOf": [
+            { "type": "integer", "minimum": 0 },
+            { "type": "null" }
+          ]
+        },
         "stage_mode": { "type": "string", "minLength": 1 },
         "cursor_timeout_minutes": { "type": "integer", "minimum": 1 },
         "codex_timeout_minutes": { "type": "integer", "minimum": 1 }
@@ -321,6 +327,12 @@
           ]
         },
         "external_fix_prompt_path": { "type": ["string", "null"] },
+        "external_cursor_iteration": {
+          "anyOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "null" }
+          ]
+        },
         "publication_phase": {
           "anyOf": [
             {
@@ -447,7 +459,8 @@
             "reviewing",
             "process_review",
             "cursor",
-            "external_adjudication"
+            "external_adjudication",
+            "external_feedback_cursor"
           ]
         },
         "source_staged_patch_sha256": {
@@ -469,7 +482,8 @@
             "correction_staging_failed",
             "initial_staging_failed",
             "cursor_usage_limit",
-            "github_adjudication_schema_incompatible"
+            "github_adjudication_schema_incompatible",
+            "external_feedback_cursor_not_started"
           ]
         },
         "cursor_output_fingerprint_sha256": {
@@ -668,6 +682,48 @@
               "cursor_model_fallback": { "type": "null" },
               "source_prompt_path": { "type": "null" },
               "source_prompt_sha256": { "type": "null" },
+              "usage_limit_fingerprint_sha256": { "type": "null" },
+              "usage_limit_fingerprint_path": { "type": "null" },
+              "continuation_envelope_path": { "type": "null" },
+              "continuation_envelope_sha256": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "recovered_checkpoint": { "const": "external_feedback_cursor" }
+            },
+            "required": ["recovered_checkpoint"]
+          },
+          "then": {
+            "required": [
+              "expected_eligible_thread_ids",
+              "source_prompt_path",
+              "source_prompt_sha256"
+            ],
+            "properties": {
+              "reason_code": {
+                "const": "external_feedback_cursor_not_started"
+              },
+              "source_staged_patch_sha256": { "type": "null" },
+              "expected_eligible_thread_ids": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 },
+                "uniqueItems": true
+              },
+              "source_prompt_path": { "type": "string", "minLength": 1 },
+              "source_prompt_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "cursor_output_fingerprint_sha256": { "type": "null" },
+              "previous_staged_patch_sha256": { "type": "null" },
+              "legacy_cursor_output_adopted": { "enum": [null, false] },
+              "legacy_cursor_usage_limit_adopted": { "enum": [null, false] },
+              "source_cursor_model": { "type": "null" },
+              "cursor_model_fallback": { "type": "null" },
               "usage_limit_fingerprint_sha256": { "type": "null" },
               "usage_limit_fingerprint_path": { "type": "null" },
               "continuation_envelope_path": { "type": "null" },

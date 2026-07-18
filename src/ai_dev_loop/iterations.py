@@ -80,6 +80,112 @@ def max_iteration_number(state: RunState) -> int:
     return max(numbers) if numbers else 0
 
 
+def next_external_cursor_iteration(state: RunState) -> int:
+    """Allocate the next durable iteration number for an external correction.
+
+    Always greater than any persisted iteration so historical Cursor/Codex
+    artifacts are never reused or overwritten.
+    """
+
+    return max_iteration_number(state) + 1
+
+
+def pending_external_cursor_iteration(state: RunState) -> int | None:
+    """Return the scheduled external Cursor iteration when one is pending.
+
+    Prefers the typed ``external_cursor_iteration`` field. For historical
+    independent first turns (no persisted iterations yet) without that field,
+    iteration ``1`` is the external prompt turn. Never derives ``max+1`` here:
+    that would keep scheduling new Cursor turns after a completed historical
+    iteration while lifecycle remains ``fixing_external_feedback``.
+    """
+
+    github = state.github_pr_review
+    if github is None:
+        return None
+    if github.lifecycle != "fixing_external_feedback":
+        return None
+    if not github.external_fix_prompt_path:
+        return None
+    if github.external_cursor_iteration is not None:
+        return github.external_cursor_iteration
+    if max_iteration_number(state) == 0:
+        return 1
+    return None
+
+
+def derive_external_cursor_iteration_for_recovery(state: RunState) -> int | None:
+    """Derive the fresh external Cursor iteration for recovery classification.
+
+    Used only when structured evidence shows Cursor never started for the
+    current external prompt. Prefers the typed field; otherwise allocates
+    ``max(persisted iterations) + 1``.
+    """
+
+    github = state.github_pr_review
+    if github is None:
+        return None
+    if github.lifecycle != "fixing_external_feedback":
+        return None
+    if not github.external_fix_prompt_path:
+        return None
+    if github.external_cursor_iteration is not None:
+        return github.external_cursor_iteration
+    return next_external_cursor_iteration(state)
+
+
+def is_external_cursor_prompt_iteration(state: RunState, iteration_number: int) -> bool:
+    """True when this iteration must deliver the exact external fix prompt."""
+
+    github = state.github_pr_review
+    if github is None or not github.external_fix_prompt_path:
+        return False
+    if github.lifecycle != "fixing_external_feedback":
+        return False
+    pending = pending_external_cursor_iteration(state)
+    if pending is not None:
+        return pending == iteration_number
+    # Historical independent first turn without typed field.
+    return iteration_number == 1 and max_iteration_number(state) == 0
+
+
+def local_review_budget_used(state: RunState) -> int:
+    """Return how many local Codex reviews count toward ``max_review_iterations``.
+
+    When ``workflow.local_review_count`` is set (external-feedback decoupled
+    mode), that value is authoritative. Otherwise legacy runs use
+    ``current_review_iteration`` as the budget.
+    """
+
+    count = state.workflow.local_review_count
+    if count is not None:
+        return count
+    return state.workflow.current_review_iteration
+
+
+def begin_external_local_review_budget(state: RunState) -> None:
+    """Start a fresh local review budget for a post-external Cursor segment.
+
+    Artifact iteration numbers remain monotonic via
+    ``external_cursor_iteration``; only the budget counter is reset.
+    """
+
+    state.workflow.local_review_count = 0
+
+
+def record_local_review_for_budget(state: RunState, *, iteration_number: int) -> int:
+    """Advance the local review budget after a completed Codex review.
+
+    Returns the budget value that should be compared to
+    ``max_review_iterations`` for this review pass.
+    """
+
+    if state.workflow.local_review_count is not None:
+        state.workflow.local_review_count += 1
+        return state.workflow.local_review_count
+    return iteration_number
+
+
 def iteration_kind(number: int) -> str:
     if number == 1:
         return "initial_implementation"
@@ -112,8 +218,7 @@ def cursor_prompt_path(state: RunState, iteration_number: int) -> str:
     github = state.github_pr_review
     if (
         github is not None
-        and github.lifecycle == "fixing_external_feedback"
-        and iteration_number == 1
+        and is_external_cursor_prompt_iteration(state, iteration_number)
         and github.external_fix_prompt_path
     ):
         return github.external_fix_prompt_path
@@ -259,7 +364,7 @@ def read_cursor_prompt(state: RunState, run_directory: Path, iteration_number: i
             rel_path=recovery.continuation_envelope_path,
         )
 
-    if iteration_number == 1:
+    if iteration_number == 1 or is_external_cursor_prompt_iteration(state, iteration_number):
         rel_path = cursor_prompt_path(state, iteration_number)
         prompt_file = run_directory / rel_path
         if not prompt_file.is_file():
