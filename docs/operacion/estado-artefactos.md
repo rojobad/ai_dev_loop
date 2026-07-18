@@ -68,6 +68,11 @@ snapshot exact-set de **una** ventana de review. Se limpia a `null` al publicar 
 trigger del siguiente ciclo externo; `processed_thread_ids` /
 `resolved_thread_ids` siguen siendo acumulativos. La lineage `recovery.expected_*`
 de `external_adjudication` no sustituye ese snapshot tras avanzar `cycle_number`.
+Si un run histórico quedó congelado con el snapshot del ciclo recuperado tras
+avanzar de ciclo, `pr-review continue` (con comentario exacto nuevo) puede
+limpiar solo ese freeze obsoleto cuando la lineage lo prueba; el evento
+`pr_review_legacy_cycle_freeze_cleared` registra conteos y números de ciclo, no
+IDs de hilo. No edites `state.json` a mano.
 `pr-review status` reporta liveness del worker (`live`/`stale`/`absent`) sin
 exponer PID, token ni argv.
 

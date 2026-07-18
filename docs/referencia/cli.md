@@ -175,6 +175,16 @@ cuando todos los hallazgos elegibles son accionables. Con
 Cursor; `status` puede mostrar acuse `eyes` o diagnostico de timeout, pero eso
 nunca finaliza ni republica el trigger.
 
+`pr-review continue` también admite una recuperación histórica **lineage-bound**
+(Phase 15.10): si el run está en `waiting_for_user_attention` con
+`eligible_thread_set_drift` y la lineage `external_adjudication` prueba que el
+freeze `expected_eligible_thread_ids` pertenece a un ciclo anterior ya
+procesado/resuelto (mientras el ciclo actual ya publicó un marker nuevo), un
+comentario exacto nuevo de continue autoriza limpiar solo ese freeze obsoleto y
+reanudar el mismo worker/run. Conserva PR, SHA, marker, sesiones A/B y chat
+Cursor; **no** republica `@codex review`, no crea sucesor y no relaja el drift
+legítimo del ciclo actual. No edites `state.json` a mano.
+
 ## `start`
 
 ```bash

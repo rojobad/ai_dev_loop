@@ -267,6 +267,23 @@ Documentado en:
 - [Troubleshooting](../operacion/troubleshooting.md)
 - [Estado y artefactos](../operacion/estado-artefactos.md)
 
+## Fase 15.10
+
+Recuperación histórica lineage-bound del freeze `expected_eligible_thread_ids`
+heredado de una recovery `external_adjudication` de un ciclo anterior cuando el
+ciclo actual ya publicó un marker válido. Tras un comentario exacto nuevo
+`@rojobad /ai-dev-loop continue`, `pr-review continue` limpia solo ese freeze
+obsoleto en el mismo run (PR/SHA/marker/A/B/Cursor intactos), reanuda el worker
+y **no** republica `@codex review`. El drift legítimo del ciclo actual sigue
+deteniendo el run.
+
+Documentado en:
+
+- [Referencia CLI](cli.md)
+- [Flujo completo](../guia/flujo-completo.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+- [Estado y artefactos](../operacion/estado-artefactos.md)
+
 ## Riesgos residuales documentados
 
 - Hook trust sigue siendo `unknown` desde CLI.

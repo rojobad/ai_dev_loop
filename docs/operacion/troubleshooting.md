@@ -442,6 +442,43 @@ Codex. Si el worker ya está `live` con identidad coincidente, el comando es
 idempotente. Si hay drift de PR/head, launcher ambiguo (incluido reuso de PID),
 o controlador incorrecto, falla sin writes.
 
+## Freeze heredado entre ciclos externos (`eligible_thread_set_drift`)
+
+Síntoma (histórico; Phase 15.9 ya evita el patrón en runs nuevos):
+
+- sucesor con `recovery.recovered_checkpoint == external_adjudication`;
+- `cycle_number` ya avanzó tras un `@codex review` válido;
+- `waiting_for_user_attention` + `worker_outcome == eligible_thread_set_drift`;
+- `expected_eligible_thread_ids` aún apunta a hilos del ciclo recuperado (ya
+  procesados/resueltos), mientras el ciclo actual tiene hilos elegibles nuevos.
+
+Causa: el freeze operativo se persistió antes del reset por ciclo de Phase 15.9.
+No es fallo del bot, polling, SSH ni A/B.
+
+Acción (mismo run; no uses `recover` ni edites `state.json`):
+
+1. Publica en el PR un comentario **nuevo** y exacto:
+
+   ```text
+   @rojobad /ai-dev-loop continue
+   ```
+
+2. Desde el controlador A:
+
+   ```bash
+   ai_dev_loop pr-review continue <run-id>
+   ```
+
+Eso limpia solo el freeze obsoleto, vuelve a `awaiting_bot_review` y programa a
+lo sumo un worker. **No** republica `@codex review`, no crea sucesor, no invoca
+Cursor/Codex en el comando y no relaja drift legítimo del ciclo actual. El
+evento `pr_review_legacy_cycle_freeze_cleared` expone solo `source_cycle`,
+`current_cycle` y `expected_thread_count`.
+
+Si las precondiciones lineage no coinciden (mismo ciclo, sets distintos/vacíos,
+IDs no procesados, outcome distinto), el continue normal conserva el freeze y
+exige la resolución habitual del usuario.
+
 ## Adjudicación GitHub falló con `invalid_json_schema` / `uniqueItems`
 
 Causa histórica: el schema de respuesta enviado a Codex incluía `uniqueItems` en

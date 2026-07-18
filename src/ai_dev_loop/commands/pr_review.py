@@ -94,6 +94,19 @@ class PrReviewWorkerLiveness:
     detail: str | None = None
 
 
+@dataclass(frozen=True)
+class LegacyExternalCycleFreeze:
+    """Safe classification of a lineage-bound obsolete eligible-thread freeze.
+
+    Contains only cycle numbers and counts — never thread IDs, bodies, or
+    session identifiers.
+    """
+
+    source_cycle: int
+    current_cycle: int
+    expected_thread_count: int
+
+
 def _publication_in_progress(gpr: GithubPrReviewState | None) -> bool:
     if gpr is None:
         return False
@@ -164,6 +177,51 @@ def _expected_eligible_thread_ids(state: RunState) -> list[str] | None:
     ):
         return list(recovery.expected_eligible_thread_ids)
     return None
+
+
+def _classify_legacy_external_cycle_freeze(
+    state: RunState,
+) -> LegacyExternalCycleFreeze | None:
+    """Detect an obsolete eligible-thread freeze inherited from a prior cycle.
+
+    Matches only the narrow historical shape: ``waiting_for_user_attention`` with
+    ``eligible_thread_set_drift``, ``external_adjudication`` recovery whose
+    ``source_iteration`` is strictly older than the current cycle, identical
+    non-empty operational and recovery expected snapshots, and every expected ID
+    already processed and resolved. Classification uses structured fields only —
+    never ``result`` or ``last_error`` text.
+    """
+
+    gpr = state.github_pr_review
+    recovery = state.recovery
+    if gpr is None or recovery is None:
+        return None
+    if state.status != RunStatus.WAITING_FOR_USER_ATTENTION:
+        return None
+    if gpr.lifecycle != "waiting_for_user_attention":
+        return None
+    if gpr.worker_outcome != "eligible_thread_set_drift":
+        return None
+    if recovery.recovered_checkpoint != "external_adjudication":
+        return None
+    if recovery.source_iteration >= gpr.cycle_number:
+        return None
+    gpr_expected = gpr.expected_eligible_thread_ids
+    recovery_expected = recovery.expected_eligible_thread_ids
+    if not gpr_expected or not recovery_expected:
+        return None
+    if set(gpr_expected) != set(recovery_expected):
+        return None
+    processed = set(gpr.processed_thread_ids)
+    resolved = set(gpr.resolved_thread_ids)
+    for thread_id in gpr_expected:
+        if thread_id not in processed or thread_id not in resolved:
+            return None
+    return LegacyExternalCycleFreeze(
+        source_cycle=recovery.source_iteration,
+        current_cycle=gpr.cycle_number,
+        expected_thread_count=len(set(gpr_expected)),
+    )
 
 
 def probe_pr_review_worker_liveness(run_directory: Path, run_id: str) -> PrReviewWorkerLiveness:
@@ -801,7 +859,16 @@ def _spawn_pr_review_worker(run_directory: Path, run_id: str) -> bool:
 
 
 def continue_pr_review_cycle(run_id: str) -> str:
-    """Resume after waiting_for_user_attention when GitHub continue command is present."""
+    """Resume after waiting_for_user_attention when GitHub continue command is present.
+
+    After an authorized continue comment, either:
+    - clear a lineage-bound obsolete eligible-thread freeze from a prior
+      ``external_adjudication`` cycle (Phase 15.10 historical migration); or
+    - resume the normal non-actionable/uncertain path while preserving any
+      valid same-cycle freeze snapshot.
+    Neither path publishes ``@codex review``, creates Cursor chats, or invokes
+    Codex; at most one worker is scheduled after the durable transition.
+    """
 
     run_directory, state = load_run(run_id)
     gpr = state.github_pr_review
@@ -830,8 +897,72 @@ def continue_pr_review_cycle(run_id: str) -> str:
     locks.acquire()
     try:
         state = load_run_state_fresh(run_directory)
-        assert state.github_pr_review is not None
-        state.github_pr_review = state.github_pr_review.model_copy(
+        gpr = state.github_pr_review
+        if gpr is None:
+            raise ValidationError("run is not a GitHub PR-review cycle")
+        if state.status != RunStatus.WAITING_FOR_USER_ATTENTION:
+            raise ValidationError(
+                "continue requires status waiting_for_user_attention "
+                f"(current: {state.status.value})"
+            )
+        if gpr.lifecycle != "waiting_for_user_attention":
+            raise ValidationError(
+                f"continue requires lifecycle waiting_for_user_attention (current: {gpr.lifecycle})"
+            )
+        if gpr.continue_comment_id == matched:
+            raise ValidationError(
+                "continue authorizing comment was already consumed; "
+                "post a newer exact continue command on the PR"
+            )
+        # Under locks: refuse durable mutation while an identity-verified worker
+        # is live. Leave the continue comment unconsumed so a later retry can
+        # clear a legacy freeze (or resume the normal path) once the slot is free.
+        liveness = _require_spawnable_worker_slot(run_directory, state.run_id)
+        if liveness.status == _WORKER_LIVENESS_LIVE:
+            return (
+                f"PR-review worker already active for {state.run_id}; "
+                "continue authorization left unconsumed and no state mutation "
+                "(identity-checked; freeze preserved; no @codex review, "
+                "Cursor, or Codex). Retry when the worker is absent or stale."
+            )
+        legacy = _classify_legacy_external_cycle_freeze(state)
+        if legacy is not None:
+            state.github_pr_review = gpr.model_copy(
+                update={
+                    "continue_comment_id": matched,
+                    "lifecycle": "awaiting_bot_review",
+                    "expected_eligible_thread_ids": None,
+                    "worker_outcome": None,
+                }
+            )
+            _mark_status(state, RunStatus.AWAITING_BOT_REVIEW)
+            state.result = (
+                "Legacy external-cycle freeze cleared; "
+                "awaiting bot review for the already-published cycle window"
+            )
+            state.last_error = None
+            save_run_state(run_directory, state)
+            append_orchestrator_event(
+                run_directory,
+                run_id=state.run_id,
+                component="orchestrator",
+                event="pr_review_legacy_cycle_freeze_cleared",
+                status=state.status.value,
+                detail={
+                    "source_cycle": legacy.source_cycle,
+                    "current_cycle": legacy.current_cycle,
+                    "expected_thread_count": legacy.expected_thread_count,
+                },
+            )
+            _spawn_pr_review_worker(run_directory, state.run_id)
+            return (
+                f"Continue accepted for {state.run_id}; legacy cycle freeze cleared "
+                f"and worker resumed for the already-published cycle "
+                f"{legacy.current_cycle} window (no @codex review republished)."
+            )
+
+        # Normal path: preserve any valid same-cycle expected freeze snapshot.
+        state.github_pr_review = gpr.model_copy(
             update={
                 "continue_comment_id": matched,
                 "lifecycle": "awaiting_bot_review",
