@@ -266,9 +266,12 @@ RECOVERY_REASON_CODES = frozenset(
         "correction_staging_failed",
         "initial_staging_failed",
         "cursor_usage_limit",
+        "github_adjudication_schema_incompatible",
     }
 )
-RECOVERY_CHECKPOINTS = frozenset({"staging", "reviewing", "process_review", "cursor"})
+RECOVERY_CHECKPOINTS = frozenset(
+    {"staging", "reviewing", "process_review", "cursor", "external_adjudication"}
+)
 
 
 class RecoveryState(BaseModel):
@@ -296,6 +299,7 @@ class RecoveryState(BaseModel):
     usage_limit_fingerprint_path: str | None = None
     continuation_envelope_path: str | None = None
     continuation_envelope_sha256: str | None = None
+    expected_eligible_thread_ids: list[str] | None = None
 
     @field_validator("source_run_id")
     @classmethod
@@ -365,6 +369,19 @@ class RecoveryState(BaseModel):
             raise ValueError("optional string recovery fields must be non-empty when set")
         return value
 
+    @field_validator("expected_eligible_thread_ids")
+    @classmethod
+    def validate_expected_thread_ids(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return value
+        if not value:
+            raise ValueError("expected_eligible_thread_ids must be non-empty when set")
+        if any(not item or not str(item).strip() for item in value):
+            raise ValueError("expected_eligible_thread_ids entries must be non-empty")
+        if len(value) != len(set(value)):
+            raise ValueError("expected_eligible_thread_ids must contain unique thread IDs")
+        return value
+
     @model_validator(mode="after")
     def validate_checkpoint_fields(self) -> RecoveryState:
         cursor_only = (
@@ -383,6 +400,11 @@ class RecoveryState(BaseModel):
             if self.source_staged_patch_sha256 is not None:
                 raise ValueError(
                     "source_staged_patch_sha256 must be null for cursor recovery checkpoints"
+                )
+            if self.expected_eligible_thread_ids is not None:
+                raise ValueError(
+                    "expected_eligible_thread_ids is only valid for external_adjudication "
+                    "recovery checkpoints"
                 )
             if self.cursor_output_fingerprint_sha256 is not None:
                 raise ValueError(
@@ -431,6 +453,48 @@ class RecoveryState(BaseModel):
                     "required for cursor recovery checkpoints"
                 )
             return self
+
+        if self.recovered_checkpoint == "external_adjudication":
+            if self.reason_code != "github_adjudication_schema_incompatible":
+                raise ValueError(
+                    "external_adjudication reason_code must be "
+                    "github_adjudication_schema_incompatible"
+                )
+            if self.source_staged_patch_sha256 is not None:
+                raise ValueError(
+                    "source_staged_patch_sha256 must be null for external_adjudication checkpoints"
+                )
+            if any(value is not None for value in cursor_only):
+                raise ValueError(
+                    "cursor recovery fields are only valid for cursor recovery checkpoints"
+                )
+            if self.cursor_output_fingerprint_sha256 is not None:
+                raise ValueError(
+                    "cursor_output_fingerprint_sha256 is only valid for staging recovery checkpoints"
+                )
+            if self.previous_staged_patch_sha256 is not None:
+                raise ValueError(
+                    "previous_staged_patch_sha256 is only valid for staging recovery checkpoints"
+                )
+            if self.legacy_cursor_output_adopted:
+                raise ValueError(
+                    "legacy_cursor_output_adopted is only valid for staging recovery checkpoints"
+                )
+            if self.legacy_cursor_usage_limit_adopted:
+                raise ValueError(
+                    "legacy_cursor_usage_limit_adopted is only valid for cursor recovery checkpoints"
+                )
+            if not self.expected_eligible_thread_ids:
+                raise ValueError(
+                    "expected_eligible_thread_ids is required for external_adjudication checkpoints"
+                )
+            return self
+
+        if self.expected_eligible_thread_ids is not None:
+            raise ValueError(
+                "expected_eligible_thread_ids is only valid for external_adjudication "
+                "recovery checkpoints"
+            )
 
         if any(value is not None for value in cursor_only):
             raise ValueError(
@@ -616,6 +680,7 @@ class GithubPrReviewState(BaseModel):
     last_snapshot_path: str | None = None
     continue_comment_id: str | None = None
     worker_outcome: str | None = None
+    expected_eligible_thread_ids: list[str] | None = None
     external_fix_prompt_path: str | None = None
     publication_phase: str | None = None
     local_commit_sha: str | None = None
@@ -688,6 +753,14 @@ class GithubPrReviewState(BaseModel):
             values = getattr(self, field_name)
             if len(values) != len(set(values)):
                 raise ValueError(f"{field_name} must contain unique thread IDs")
+        if self.expected_eligible_thread_ids is not None:
+            expected = self.expected_eligible_thread_ids
+            if not expected:
+                raise ValueError("expected_eligible_thread_ids must be non-empty when set")
+            if len(expected) != len(set(expected)):
+                raise ValueError("expected_eligible_thread_ids must contain unique thread IDs")
+            if any(not item or not str(item).strip() for item in expected):
+                raise ValueError("expected_eligible_thread_ids entries must be non-empty")
 
         if self.origin == "source_run":
             if self.source_run_id is None:

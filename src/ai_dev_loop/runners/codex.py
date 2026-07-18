@@ -19,6 +19,7 @@ from ai_dev_loop.process import (
     StreamingProcessResult,
     run_process_streaming,
 )
+from ai_dev_loop.response_schema import validate_codex_response_schema
 from ai_dev_loop.review_result import CodexReviewResult, completion_status_for_review
 from ai_dev_loop.state import CodexState, RunState, atomic_write_json, atomic_write_text
 
@@ -269,6 +270,7 @@ def run_codex_review(
     schema_file = schema_path("codex-review-result-v1.json")
     if not schema_file.is_file():
         raise AiDevLoopError(f"review schema missing: {schema_file}")
+    validate_codex_response_schema(schema_file, schema_name="codex-review-result-v1.json")
 
     events_rel = f"codex/events/{iteration}.jsonl"
     stderr_rel = f"codex/events/{iteration}.stderr.txt"

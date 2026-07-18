@@ -104,7 +104,35 @@ def test_incomplete_thread_coverage_fails() -> None:
 def test_schema_file_exists_and_parses() -> None:
     path = schema_path("github-pr-review-result-v1.json")
     assert path.is_file()
-    json.loads(path.read_text(encoding="utf-8"))
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert "uniqueItems" not in json.dumps(payload)
+
+
+def test_duplicate_eligible_thread_ids_rejected_by_pydantic() -> None:
+    payload = _base(eligible_thread_ids=["T1", "T1"])
+    with pytest.raises(ValidationError, match="unique"):
+        GithubPrReviewResult.model_validate(payload)
+
+
+def test_duplicate_decision_thread_ids_rejected_by_pydantic() -> None:
+    payload = _base(
+        thread_decisions=[
+            {
+                "thread_id": "T1",
+                "decision": "actionable",
+                "inline_reply": None,
+                "summary": "a",
+            },
+            {
+                "thread_id": "T1",
+                "decision": "actionable",
+                "inline_reply": None,
+                "summary": "b",
+            },
+        ]
+    )
+    with pytest.raises(ValidationError, match="unique"):
+        GithubPrReviewResult.model_validate(payload)
 
 
 def test_historical_run_state_without_github_section_loads(tmp_path: Path) -> None:

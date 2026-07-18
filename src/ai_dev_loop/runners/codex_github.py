@@ -9,10 +9,14 @@ from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
 
-from ai_dev_loop.errors import AiDevLoopError, ValidationError
+from ai_dev_loop.errors import AdjudicationSchemaIncompatibleError, AiDevLoopError, ValidationError
 from ai_dev_loop.github_pr_review_result import GithubPrReviewResult
 from ai_dev_loop.paths import schema_path
 from ai_dev_loop.process import ActiveProcessRegistration, run_process_streaming
+from ai_dev_loop.response_schema import (
+    events_indicate_adjudication_schema_rejection,
+    validate_codex_response_schema,
+)
 from ai_dev_loop.runners.codex import build_codex_review_args, redact_codex_args
 from ai_dev_loop.runners.publish import PublicationText
 from ai_dev_loop.state import RunState, atomic_write_json, atomic_write_text, sha256_text
@@ -137,6 +141,7 @@ def run_codex_github_review(
     schema_file = schema_path("github-pr-review-result-v1.json")
     if not schema_file.is_file():
         raise AiDevLoopError(f"schema missing: {schema_file}")
+    validate_codex_response_schema(schema_file, schema_name="github-pr-review-result-v1.json")
 
     label = f"{cycle_number:02d}"
     events_rel = f"github/cycles/{label}/codex.events.jsonl"
@@ -209,6 +214,11 @@ def run_codex_github_review(
             f"Codex GitHub adjudication timed out; inspect {events_rel} and {stderr_rel}"
         )
     if process.returncode != 0:
+        if events_indicate_adjudication_schema_rejection(run_directory / events_rel):
+            raise AdjudicationSchemaIncompatibleError(
+                "Codex rejected the GitHub adjudication output schema "
+                f"(invalid_json_schema); inspect {events_rel} and {stderr_rel}"
+            )
         raise AiDevLoopError(
             f"Codex GitHub adjudication failed with exit code {process.returncode}; "
             f"inspect {events_rel} and {stderr_rel}"
@@ -251,6 +261,7 @@ def run_codex_publication_text(
     schema_file = schema_path("github-publication-text-v1.json")
     if not schema_file.is_file():
         raise AiDevLoopError(f"schema missing: {schema_file}")
+    validate_codex_response_schema(schema_file, schema_name="github-publication-text-v1.json")
     label = f"{cycle_number:02d}"
     result_rel = f"github/cycles/{label}/publication-text.json"
     result_path = run_directory / result_rel

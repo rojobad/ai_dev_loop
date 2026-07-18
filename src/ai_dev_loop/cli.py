@@ -609,13 +609,59 @@ def pr_review_continue_command(
 @pr_review_app.command("resume")
 def pr_review_resume_command(
     run_id: Annotated[str, typer.Argument(help="Interrupted PR-review cycle run identifier.")],
+    controller_session_id: Annotated[
+        str | None,
+        typer.Option(
+            "--controller-session-id",
+            help="Exact controller A session id required for A/B PR-review cycles.",
+        ),
+    ] = None,
 ) -> None:
     """Explicitly resume an interrupted PR-review cycle from durable checkpoints."""
 
     def run() -> None:
         from ai_dev_loop.commands.pr_review import resume_pr_review_cycle
 
-        typer.echo(resume_pr_review_cycle(run_id))
+        typer.echo(resume_pr_review_cycle(run_id, controller_session_id=controller_session_id))
+
+    _handle(run)
+
+
+@pr_review_app.command("recover")
+def pr_review_recover_command(
+    run_id: Annotated[
+        str,
+        typer.Argument(help="Failed PR-review cycle run identifier to recover."),
+    ],
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Analyze recoverability without creating a successor or writing to GitHub.",
+        ),
+    ] = False,
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Create an immutable adjudication-recovery successor without re-posting @codex review."""
+
+    def run() -> None:
+        from ai_dev_loop.commands.pr_review_recover import (
+            recover_pr_review_cycle,
+            render_pr_review_recovery_analysis,
+            render_pr_review_recovery_result,
+        )
+
+        result = recover_pr_review_cycle(run_id, dry_run=dry_run)
+        if dry_run:
+            typer.echo(
+                render_pr_review_recovery_analysis(result, output=output.value),
+                nl=False,
+            )
+            return
+        typer.echo(
+            render_pr_review_recovery_result(result, output=output.value),
+            nl=False,
+        )
 
     _handle(run)
 

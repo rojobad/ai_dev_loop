@@ -309,6 +309,17 @@
         "last_snapshot_path": { "type": ["string", "null"] },
         "continue_comment_id": { "type": ["string", "null"] },
         "worker_outcome": { "type": ["string", "null"] },
+        "expected_eligible_thread_ids": {
+          "anyOf": [
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            },
+            { "type": "null" }
+          ]
+        },
         "external_fix_prompt_path": { "type": ["string", "null"] },
         "publication_phase": {
           "anyOf": [
@@ -431,7 +442,13 @@
         "source_iteration": { "type": "integer", "minimum": 1 },
         "recovered_checkpoint": {
           "type": "string",
-          "enum": ["staging", "reviewing", "process_review", "cursor"]
+          "enum": [
+            "staging",
+            "reviewing",
+            "process_review",
+            "cursor",
+            "external_adjudication"
+          ]
         },
         "source_staged_patch_sha256": {
           "type": ["string", "null"],
@@ -450,7 +467,8 @@
             "codex_review_processing_failed",
             "correction_staging_failed",
             "initial_staging_failed",
-            "cursor_usage_limit"
+            "cursor_usage_limit",
+            "github_adjudication_schema_incompatible"
           ]
         },
         "cursor_output_fingerprint_sha256": {
@@ -489,6 +507,17 @@
         "continuation_envelope_sha256": {
           "type": ["string", "null"],
           "pattern": "^[a-f0-9]{64}$"
+        },
+        "expected_eligible_thread_ids": {
+          "anyOf": [
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            },
+            { "type": "null" }
+          ]
         }
       },
       "allOf": [
@@ -605,7 +634,43 @@
               "continuation_envelope_sha256": {
                 "type": "string",
                 "pattern": "^[a-f0-9]{64}$"
-              }
+              },
+              "expected_eligible_thread_ids": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "recovered_checkpoint": { "const": "external_adjudication" }
+            },
+            "required": ["recovered_checkpoint"]
+          },
+          "then": {
+            "required": ["expected_eligible_thread_ids"],
+            "properties": {
+              "reason_code": {
+                "const": "github_adjudication_schema_incompatible"
+              },
+              "source_staged_patch_sha256": { "type": "null" },
+              "expected_eligible_thread_ids": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 },
+                "uniqueItems": true
+              },
+              "cursor_output_fingerprint_sha256": { "type": "null" },
+              "previous_staged_patch_sha256": { "type": "null" },
+              "legacy_cursor_output_adopted": { "enum": [null, false] },
+              "legacy_cursor_usage_limit_adopted": { "enum": [null, false] },
+              "source_cursor_model": { "type": "null" },
+              "cursor_model_fallback": { "type": "null" },
+              "source_prompt_path": { "type": "null" },
+              "source_prompt_sha256": { "type": "null" },
+              "usage_limit_fingerprint_sha256": { "type": "null" },
+              "usage_limit_fingerprint_path": { "type": "null" },
+              "continuation_envelope_path": { "type": "null" },
+              "continuation_envelope_sha256": { "type": "null" }
             }
           }
         }

@@ -130,10 +130,12 @@ def test_recovery_state_aligns_with_schema() -> None:
         RECOVERY_CHECKPOINTS
     )
     assert "cursor" in RECOVERY_CHECKPOINTS
+    assert "external_adjudication" in RECOVERY_CHECKPOINTS
     assert set(recovery_schema["properties"]["reason_code"]["enum"]) == set(RECOVERY_REASON_CODES)
     assert "cursor_usage_limit" in RECOVERY_REASON_CODES
     assert "initial_staging_failed" in RECOVERY_REASON_CODES
     assert "correction_staging_failed" in RECOVERY_REASON_CODES
+    assert "github_adjudication_schema_incompatible" in RECOVERY_REASON_CODES
 
 
 def test_historical_run_state_without_recovery_loads(tmp_path: Path) -> None:

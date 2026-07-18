@@ -231,6 +231,21 @@ Documentado en:
 - [Flujo completo](../guia/flujo-completo.md)
 - [Troubleshooting](../operacion/troubleshooting.md)
 
+## Fase 15.7
+
+Compatibilidad del schema de adjudicacion GitHub con el response-format de Codex
+(sin `uniqueItems` en el transporte; unicidad en Pydantic) y
+`pr-review recover` para sucesores inmutables tras rechazo
+`invalid_json_schema` antes de side effects. Reutiliza PR/SHA/trigger/hilos/
+sesion B/controlador A y nunca republica `@codex review`.
+
+Documentado en:
+
+- [Referencia CLI](cli.md)
+- [Flujo completo](../guia/flujo-completo.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+- [Estado y artefactos](../operacion/estado-artefactos.md)
+
 ## Riesgos residuales documentados
 
 - Hook trust sigue siendo `unknown` desde CLI.

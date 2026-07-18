@@ -1,0 +1,3 @@
+{"type":"thread.started","thread_id":"019abc00-0000-0000-0000-00000000thrd"}
+{"type":"turn.started"}
+{"type":"error","message":"{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"code\":\"invalid_json_schema\",\"message\":\"Invalid schema for response_format 'codex_output_schema': In context=('properties', 'eligible_thread_ids'), 'uniqueItems' is not supported.\",\"param\":\"text.format.schema\"},\"status\":400}"}

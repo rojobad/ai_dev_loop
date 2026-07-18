@@ -222,8 +222,23 @@ El worker no hace reset, pull, rebase ni fuerza la publicación para resolverlo.
 Tras corregir la causa, usa:
 
 ```bash
-ai_dev_loop pr-review resume <run-id>
+ai_dev_loop pr-review resume <run-id> [--controller-session-id <sesion-A>]
 ```
+
+Si la adjudicación falló porque Codex rechazó el schema de salida
+(`invalid_json_schema` / `uniqueItems`) **antes** de responder o resolver hilos y
+sin crear Cursor, el origen `failed` no se edita in-place. Recupera así:
+
+```bash
+ai_dev_loop pr-review recover <failed-run-id> --dry-run
+ai_dev_loop pr-review recover <failed-run-id> --output json
+# Desde el controlador A del sucesor:
+ai_dev_loop pr-review resume <successor-run-id> --controller-session-id <sesion-A>
+```
+
+El sucesor reutiliza PR, SHA, trigger, hilos elegibles, sesión B y controlador A.
+**No** se publica otro `@codex review`. Si el conjunto de hilos elegibles cambió,
+el worker se detiene en atención de usuario sin writes GitHub.
 
 Para detenerlo sin reescribir Git:
 

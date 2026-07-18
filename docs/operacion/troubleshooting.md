@@ -411,5 +411,26 @@ Acción:
 ```bash
 ai_dev_loop pr-review status <run-id>
 ai_dev_loop pr-review abort <run-id>
-ai_dev_loop pr-review resume <run-id>
+ai_dev_loop pr-review resume <run-id> [--controller-session-id <sesion-A>]
 ```
+
+## Adjudicación GitHub falló con `invalid_json_schema` / `uniqueItems`
+
+Causa histórica: el schema de respuesta enviado a Codex incluía `uniqueItems` en
+`eligible_thread_ids`. El backend rechazó el schema; no hubo adjudicación, replies
+ni Cursor. Los runs nuevos clasifican esto como
+`adjudication_schema_incompatible` (`interrupted`). Los runs `failed` históricos
+con evidencia estructurada en `github/cycles/NN/codex.events.jsonl` se recuperan
+con un sucesor.
+
+Acción (ejemplo PR #45 / run anonimizado del incidente):
+
+```bash
+ai_dev_loop pr-review recover crypto-sentinel-20260718T010234Z-317683 --dry-run
+ai_dev_loop pr-review recover crypto-sentinel-20260718T010234Z-317683 --output json
+ai_dev_loop pr-review resume <successor-run-id> --controller-session-id <sesion-A>
+```
+
+No uses `pr-review prepare` ni publiques otro `@codex review`. Si hay drift de SHA,
+PR cerrado, hilos añadidos/eliminados/resueltos, o side effects previos
+(processed/replied/resolved/Cursor), `recover`/`resume` se detienen sin writes.

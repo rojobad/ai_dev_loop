@@ -120,7 +120,8 @@ ai_dev_loop pr-review start <run-id> [--controller-session-id <controller-A>] [-
 ai_dev_loop pr-review create <source-run-id> [--output text|json]
 ai_dev_loop pr-review status <run-id> [--output text|json]
 ai_dev_loop pr-review continue <run-id>
-ai_dev_loop pr-review resume <run-id>
+ai_dev_loop pr-review resume <run-id> [--controller-session-id <controller-A>]
+ai_dev_loop pr-review recover <failed-run-id> [--dry-run] [--output text|json]
 ai_dev_loop pr-review abort <run-id>
 ```
 
@@ -140,6 +141,18 @@ Hay dos origenes:
 `set-cursor-model` solo aplica a ciclos `independent_pr` en
 `prepared_independent` o `awaiting_bot_review` sin chat Cursor ni iteraciones; no
 cambia el runtime Codex del reviewer ni reescribe `effective-config.yaml`.
+
+`pr-review recover` crea un sucesor inmutable solo para fallos de adjudicacion
+clasificados como incompatibilidad del schema de salida Codex
+(`invalid_json_schema` / `uniqueItems`) antes de cualquier side effect. El
+origen `failed` permanece terminal; el sucesor reutiliza el mismo PR, SHA,
+trigger, hilos elegibles, sesion Codex B y controlador A. **No** republica
+`@codex review`. Usa `--dry-run` primero. El schema
+`github-pr-review-result-v1.json` ya no envia `uniqueItems` a Codex; la
+unicidad sigue validada en Pydantic.
+
+En ciclos A/B, `pr-review resume` exige `--controller-session-id` del
+controlador A original.
 
 Ante hallazgos no aplicables/inciertos responde inline con `@rojobad`, deja
 threads unresolved y espera `@rojobad /ai-dev-loop continue`. No hace merge ni

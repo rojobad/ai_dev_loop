@@ -24,7 +24,7 @@ from ai_dev_loop.commands.start_preflight import (
     mark_interrupted,
 )
 from ai_dev_loop.config import ProjectConfig, resolve_effective_config
-from ai_dev_loop.errors import AiDevLoopError, ValidationError
+from ai_dev_loop.errors import AdjudicationSchemaIncompatibleError, AiDevLoopError, ValidationError
 from ai_dev_loop.event_log import append_orchestrator_event
 from ai_dev_loop.locking import LockMetadata, RunLocks
 from ai_dev_loop.paths import ensure_dir, run_dir, runs_dir, set_sensitive_file_mode
@@ -125,6 +125,91 @@ def _residual_risk_note_for_publication(gpr: GithubPrReviewState) -> str | None:
 
 def _is_independent_origin(gpr: GithubPrReviewState | None) -> bool:
     return gpr is not None and gpr.origin == "independent_pr"
+
+
+def _expected_eligible_thread_ids(state: RunState) -> list[str] | None:
+    """Frozen eligible-thread set for schema-recovery / adjudication resume checks."""
+
+    recovery = state.recovery
+    if (
+        recovery is not None
+        and recovery.recovered_checkpoint == "external_adjudication"
+        and recovery.expected_eligible_thread_ids
+    ):
+        return list(recovery.expected_eligible_thread_ids)
+    gpr = state.github_pr_review
+    if gpr is not None and gpr.expected_eligible_thread_ids:
+        return list(gpr.expected_eligible_thread_ids)
+    return None
+
+
+def _persist_eligible_thread_set_drift(
+    run_directory: Path,
+    *,
+    expected: list[str],
+    observed: list[str],
+) -> None:
+    """Stop for user attention when the live eligible set drifts from the frozen set."""
+
+    state = load_run_state_fresh(run_directory)
+    locks = _run_locks(
+        run_directory,
+        run_id=state.run_id,
+        repository_path=state.repository.root,
+    )
+    locks.acquire()
+    try:
+        state = load_run_state_fresh(run_directory)
+        if state.status in TERMINAL_STATUSES:
+            return
+        gpr = state.github_pr_review
+        if gpr is None:
+            return
+        if state.status not in {
+            RunStatus.AWAITING_BOT_REVIEW,
+            RunStatus.EVALUATING_BOT_FEEDBACK,
+        }:
+            mark_interrupted(
+                state,
+                "Eligible GitHub review thread set drifted from the frozen recovery set",
+            )
+            state.github_pr_review = gpr.model_copy(
+                update={
+                    "lifecycle": "interrupted",
+                    "worker_outcome": "eligible_thread_set_drift",
+                }
+            )
+        else:
+            _mark_status(state, RunStatus.WAITING_FOR_USER_ATTENTION)
+            state.github_pr_review = gpr.model_copy(
+                update={
+                    "lifecycle": "waiting_for_user_attention",
+                    "worker_outcome": "eligible_thread_set_drift",
+                }
+            )
+        state.last_error = (
+            "Eligible GitHub review thread set drifted from the frozen recovery set; "
+            "resolve drift before resuming adjudication"
+        )
+        state.result = (
+            "Eligible thread set no longer matches the frozen recovery set "
+            f"(expected={len(expected)}, observed={len(observed)}); "
+            "no GitHub writes were performed"
+        )
+        save_run_state(run_directory, state)
+        append_orchestrator_event(
+            run_directory,
+            run_id=state.run_id,
+            component="orchestrator",
+            event="pr_review_eligible_thread_set_drift",
+            status=state.status.value,
+            detail={
+                "expected_thread_count": len(expected),
+                "observed_thread_count": len(observed),
+            },
+        )
+    finally:
+        locks.release()
 
 
 def ensure_independent_cursor_chat(run_directory: Path, state: RunState) -> str:
@@ -526,6 +611,8 @@ def _classify_worker_outcome(
     """
 
     text = str(exc).lower()
+    if isinstance(exc, AdjudicationSchemaIncompatibleError):
+        return "interrupted", "adjudication_schema_incompatible"
     if isinstance(exc, ValidationError):
         return "failed", "validation_error"
     if "rate limit" in text:
@@ -571,6 +658,10 @@ def _apply_worker_failure(run_directory: Path, exc: BaseException) -> None:
     if state.github_pr_review is not None:
         gpr = state.github_pr_review
         updates: dict[str, Any] = {"worker_outcome": outcome}
+        if outcome == "adjudication_schema_incompatible":
+            expected = list(gpr.expected_eligible_thread_ids or gpr.eligible_thread_ids)
+            if expected:
+                updates["expected_eligible_thread_ids"] = expected
         if status_target == "interrupted" and _publication_in_progress(gpr):
             if gpr.lifecycle not in _PUBLICATION_LIFECYCLES:
                 updates["lifecycle"] = (
@@ -654,7 +745,11 @@ def _find_continue_comment(
     return None
 
 
-def resume_pr_review_cycle(run_id: str) -> str:
+def resume_pr_review_cycle(
+    run_id: str,
+    *,
+    controller_session_id: str | None = None,
+) -> str:
     """Explicit controller resume for an interrupted PR-review cycle."""
 
     run_directory, state = load_run(run_id)
@@ -662,6 +757,22 @@ def resume_pr_review_cycle(run_id: str) -> str:
         raise ValidationError("run is not a GitHub PR-review cycle")
     if state.status != RunStatus.INTERRUPTED:
         raise ValidationError("pr-review resume requires status interrupted")
+    if state.controller is not None:
+        from ai_dev_loop.integrations.codex.session_runtime import require_codex_session_id
+
+        if controller_session_id is None:
+            raise ValidationError(
+                "A/B PR-review resume requires --controller-session-id matching state.controller"
+            )
+        controller_id = require_codex_session_id(controller_session_id)
+        if state.controller.controller_session_id != controller_id:
+            raise ValidationError(
+                "controller session id does not match the prepared PR-review controller"
+            )
+        if state.codex.session_id == controller_id:
+            raise ValidationError("controller session id must differ from the reviewer session id")
+    elif controller_session_id is not None:
+        raise ValidationError("run was prepared without a controller; omit --controller-session-id")
     resume_workflow_run_id: str | None = None
     locks = _run_locks(run_directory, run_id=state.run_id, repository_path=state.repository.root)
     locks.acquire()
@@ -685,6 +796,7 @@ def resume_pr_review_cycle(run_id: str) -> str:
             return f"Resumed publication for {state.run_id}"
         if lifecycle in {"awaiting_bot_review", "interrupted"}:
             _mark_status(state, RunStatus.AWAITING_BOT_REVIEW)
+            # Preserve expected_eligible_thread_ids across resume for exact-set checks.
             state.github_pr_review = state.github_pr_review.model_copy(
                 update={"lifecycle": "awaiting_bot_review", "worker_outcome": None}
             )
@@ -777,10 +889,16 @@ def render_pr_review_status(run_id: str, *, output: str = "text") -> str:
             "bound_head_sha_prefix": gpr.bound_head_sha[:12],
             "repository_name_with_owner": gpr.repository_name_with_owner,
             "eligible_thread_count": len(gpr.eligible_thread_ids),
+            "expected_eligible_thread_count": (
+                len(gpr.expected_eligible_thread_ids)
+                if gpr.expected_eligible_thread_ids is not None
+                else None
+            ),
             "processed_thread_count": len(gpr.processed_thread_ids),
             "replied_thread_count": len(gpr.replied_thread_ids),
             "resolved_thread_count": len(gpr.resolved_thread_ids),
             "request_comment_id": gpr.request_comment_id,
+            "worker_outcome": gpr.worker_outcome,
             "last_external_result_path": gpr.last_external_result_path,
             "last_snapshot_path": gpr.last_snapshot_path,
             "bot_acknowledgement": None,
@@ -804,6 +922,19 @@ def render_pr_review_status(run_id: str, *, output: str = "text") -> str:
                 "body_sha256": evidence.body_sha256,
                 "reviewed_commit_prefix": evidence.reviewed_commit_prefix,
             }
+    if state.recovery is not None:
+        payload["recovery"] = {
+            "source_run_id": state.recovery.source_run_id,
+            "recovered_checkpoint": state.recovery.recovered_checkpoint,
+            "reason_code": state.recovery.reason_code,
+            "source_iteration": state.recovery.source_iteration,
+            "expected_thread_count": (
+                len(state.recovery.expected_eligible_thread_ids)
+                if state.recovery.expected_eligible_thread_ids is not None
+                else None
+            ),
+            "trigger_will_be_reposted": False,
+        }
     if output == "json":
         return json.dumps(payload, indent=2) + "\n"
     lines = [
@@ -826,6 +957,16 @@ def render_pr_review_status(run_id: str, *, output: str = "text") -> str:
                 f"Resolved threads: {len(gpr.resolved_thread_ids)}",
             ]
         )
+        if gpr.worker_outcome:
+            lines.append(f"Worker outcome: {gpr.worker_outcome}")
+        if gpr.expected_eligible_thread_ids is not None:
+            lines.append(f"Frozen eligible threads: {len(gpr.expected_eligible_thread_ids)}")
+        if state.recovery is not None:
+            lines.append(
+                f"Recovery successor of: {state.recovery.source_run_id} "
+                f"(checkpoint={state.recovery.recovered_checkpoint})"
+            )
+            lines.append("Trigger will be re-posted: false")
         if gpr.bot_acknowledgement is not None:
             ack = gpr.bot_acknowledgement
             if ack.first_observed_at:
@@ -1246,6 +1387,14 @@ def _run_pr_review_worker_loop_inner(run_id: str, run_directory: Path) -> None:
             request_created_at=gpr.request_created_at,
         )
         if not eligible:
+            expected_ids = _expected_eligible_thread_ids(state)
+            if expected_ids:
+                _persist_eligible_thread_set_drift(
+                    run_directory,
+                    expected=expected_ids,
+                    observed=[],
+                )
+                return
             if github.no_findings_completion.enabled:
                 comments = None
                 try:
@@ -1280,6 +1429,16 @@ def _run_pr_review_worker_loop_inner(run_id: str, run_directory: Path) -> None:
             time.sleep(github.poll_interval_seconds)
             continue
 
+        observed_ids = [t.thread_id for t in eligible]
+        expected_ids = _expected_eligible_thread_ids(state)
+        if expected_ids is not None and set(observed_ids) != set(expected_ids):
+            _persist_eligible_thread_set_drift(
+                run_directory,
+                expected=expected_ids,
+                observed=observed_ids,
+            )
+            return
+
         locks = _run_locks(run_directory, run_id=run_id, repository_path=state.repository.root)
         locks.acquire()
         try:
@@ -1289,7 +1448,7 @@ def _run_pr_review_worker_loop_inner(run_id: str, run_directory: Path) -> None:
             state.github_pr_review = state.github_pr_review.model_copy(
                 update={
                     "lifecycle": "evaluating_bot_feedback",
-                    "eligible_thread_ids": [t.thread_id for t in eligible],
+                    "eligible_thread_ids": observed_ids,
                 }
             )
             save_run_state(run_directory, state)
