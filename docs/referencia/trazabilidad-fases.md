@@ -246,6 +246,27 @@ Documentado en:
 - [Troubleshooting](../operacion/troubleshooting.md)
 - [Estado y artefactos](../operacion/estado-artefactos.md)
 
+## Fase 15.8
+
+Recuperacion de checkpoint local `reviewing` cuando Cursor/staging completaron
+pero falta el artefacto `codex/reviews/NN.json`. El sucesor reintenta solo la
+revision Codex B; no reejecuta Cursor ni republica el trigger.
+
+## Fase 15.9
+
+Continuidad del worker PR-review tras publicar un fix externo (el mismo proceso
+sigue a polling sin auto-spawn), reset de `expected_eligible_thread_ids` por
+ciclo externo, y `pr-review resume` para reenganchar un poller ausente/stale en
+`awaiting_bot_review` con A/B exactos sin republicar `@codex review` (validacion
+PR/head solo lectura permitida; sin writes GitHub, Cursor ni Codex).
+
+Documentado en:
+
+- [Referencia CLI](cli.md)
+- [Flujo completo](../guia/flujo-completo.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+- [Estado y artefactos](../operacion/estado-artefactos.md)
+
 ## Riesgos residuales documentados
 
 - Hook trust sigue siendo `unknown` desde CLI.

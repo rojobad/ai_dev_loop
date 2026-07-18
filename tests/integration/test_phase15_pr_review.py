@@ -796,6 +796,8 @@ def test_create_push_failure_resume_via_cli_without_duplicate_commit(
     assert resumed.github_pr_review.lifecycle == "publishing_initial"
     assert resumed.github_pr_review.publication_phase == "committed"
 
+    clock = {"now": 0.0}
+
     with (
         patch("ai_dev_loop.commands.pr_review._require_github_config") as cfg,
         patch(
@@ -815,6 +817,17 @@ def test_create_push_failure_resume_via_cli_without_duplicate_commit(
             return_value=GithubWriteResult(ok=True, resource_id="999"),
         ),
         patch("ai_dev_loop.commands.pr_review._spawn_pr_review_worker"),
+        patch("ai_dev_loop.commands.pr_review.get_pull_request", return_value=pr),
+        patch("ai_dev_loop.commands.pr_review.list_review_threads", return_value=[]),
+        patch("ai_dev_loop.commands.pr_review.filter_eligible_threads", return_value=[]),
+        patch(
+            "ai_dev_loop.commands.pr_review.time.monotonic",
+            side_effect=lambda: clock["now"],
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.time.sleep",
+            side_effect=lambda _s: clock.__setitem__("now", clock["now"] + 10_000.0),
+        ),
     ):
         from ai_dev_loop.config import load_project_config
 
@@ -823,9 +836,11 @@ def test_create_push_failure_resume_via_cli_without_duplicate_commit(
 
     final = load_run_state(find_run_directory(interrupted.run_id) / "state.json")
     assert publish_calls == ["first", "resume"]
-    assert final.status == RunStatus.AWAITING_BOT_REVIEW
     assert final.github_pr_review is not None
     assert final.github_pr_review.pr_number == 42
+    # Worker continues polling in-process after publish; empty window + expired clock.
+    assert final.status == RunStatus.INTERRUPTED
+    assert final.github_pr_review.worker_outcome == "timeout"
 
 
 def test_external_fix_push_failure_resume_via_cli(
@@ -896,6 +911,18 @@ def test_external_fix_push_failure_resume_via_cli(
     with patch("ai_dev_loop.commands.pr_review._spawn_pr_review_worker"):
         assert "Resumed publication" in resume_pr_review_cycle(state.run_id)
 
+    pr = GithubPullRequest(
+        number=9,
+        url="https://example.test/pr/9",
+        title="t",
+        state="OPEN",
+        head_ref=state.repository.branch,
+        head_sha="c" * 40,
+        base_ref="master",
+        is_cross_repository=False,
+        repository_name_with_owner="acme/demo",
+    )
+    clock = {"now": 0.0}
     with (
         patch("ai_dev_loop.commands.pr_review._require_github_config") as cfg,
         patch(
@@ -904,17 +931,7 @@ def test_external_fix_push_failure_resume_via_cli(
         ),
         patch(
             "ai_dev_loop.commands.pr_review.get_pull_request",
-            return_value=GithubPullRequest(
-                number=9,
-                url="https://example.test/pr/9",
-                title="t",
-                state="OPEN",
-                head_ref=state.repository.branch,
-                head_sha="c" * 40,
-                base_ref="master",
-                is_cross_repository=False,
-                repository_name_with_owner="acme/demo",
-            ),
+            return_value=pr,
         ),
         patch(
             "ai_dev_loop.commands.pr_review.resolve_review_thread",
@@ -929,14 +946,26 @@ def test_external_fix_push_failure_resume_via_cli(
             return_value=GithubWriteResult(ok=True, resource_id="1001"),
         ),
         patch("ai_dev_loop.commands.pr_review._spawn_pr_review_worker"),
+        patch("ai_dev_loop.commands.pr_review.list_review_threads", return_value=[]),
+        patch("ai_dev_loop.commands.pr_review.filter_eligible_threads", return_value=[]),
+        patch(
+            "ai_dev_loop.commands.pr_review.time.monotonic",
+            side_effect=lambda: clock["now"],
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.time.sleep",
+            side_effect=lambda _s: clock.__setitem__("now", clock["now"] + 10_000.0),
+        ),
     ):
         cfg.return_value = load_project_config(repo / "ai_dev_loop.yaml")
         run_pr_review_worker_loop(state.run_id)
 
     final = load_run_state(run_path / "state.json")
     assert publish_calls == ["resume"]
-    assert final.status == RunStatus.AWAITING_BOT_REVIEW
     assert final.github_pr_review is not None
+    assert final.github_pr_review.request_comment_id == "1001"
+    assert final.status == RunStatus.INTERRUPTED
+    assert final.github_pr_review.worker_outcome == "timeout"
     assert final.github_pr_review.cycle_number == 2
     assert final.github_pr_review.request_comment_id == "1001"
 
@@ -1285,6 +1314,7 @@ def test_create_publication_text_failure_resume_via_cli_exactly_once(
         is_cross_repository=False,
         repository_name_with_owner="acme/demo",
     )
+    clock = {"now": 0.0}
     with (
         patch("ai_dev_loop.commands.pr_review._require_github_config") as cfg,
         patch(
@@ -1308,17 +1338,29 @@ def test_create_publication_text_failure_resume_via_cli_exactly_once(
             return_value=GithubWriteResult(ok=True, resource_id="999"),
         ),
         patch("ai_dev_loop.commands.pr_review._spawn_pr_review_worker"),
+        patch("ai_dev_loop.commands.pr_review.get_pull_request", return_value=pr),
+        patch("ai_dev_loop.commands.pr_review.list_review_threads", return_value=[]),
+        patch("ai_dev_loop.commands.pr_review.filter_eligible_threads", return_value=[]),
+        patch(
+            "ai_dev_loop.commands.pr_review.time.monotonic",
+            side_effect=lambda: clock["now"],
+        ),
+        patch(
+            "ai_dev_loop.commands.pr_review.time.sleep",
+            side_effect=lambda _s: clock.__setitem__("now", clock["now"] + 10_000.0),
+        ),
     ):
         cfg.return_value = load_project_config(repo / "ai_dev_loop.yaml")
         run_pr_review_worker_loop(interrupted.run_id)
 
     final = load_run_state(find_run_directory(interrupted.run_id) / "state.json")
     assert text_calls == ["fail", "resume"]
-    assert final.status == RunStatus.AWAITING_BOT_REVIEW
     assert final.github_pr_review is not None
     assert final.github_pr_review.pr_number == 42
     assert final.codex.session_id == source_session
     assert final.github_pr_review.publication_text_path == "github/cycles/01/publication-text.json"
+    assert final.status == RunStatus.INTERRUPTED
+    assert final.github_pr_review.worker_outcome == "timeout"
 
 
 def _enable_no_findings_github(repo: Path) -> None:

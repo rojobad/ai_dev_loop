@@ -57,10 +57,19 @@ $XDG_STATE_HOME/ai_dev_loop/runs/<project>/<run-id>/
 └── locks/
     ├── run.lock
     ├── abort-request.json
-    └── active-process.json
+    ├── active-process.json
+    └── pr-review-worker.json   # launcher del poller PR-review (PID/token; no en status humano)
 ```
 
 No todos los archivos existen en todos los estados. Por ejemplo, `prompts/fixes/NN.txt` existe solo si Codex reporto findings en review `NN`.
+
+En ciclos GitHub PR-review, `github_pr_review.expected_eligible_thread_ids` es el
+snapshot exact-set de **una** ventana de review. Se limpia a `null` al publicar el
+trigger del siguiente ciclo externo; `processed_thread_ids` /
+`resolved_thread_ids` siguen siendo acumulativos. La lineage `recovery.expected_*`
+de `external_adjudication` no sustituye ese snapshot tras avanzar `cycle_number`.
+`pr-review status` reporta liveness del worker (`live`/`stale`/`absent`) sin
+exponer PID, token ni argv.
 
 `codex/session-runtime.json` registra la captura segura de Fase 10: prefijo del session ID, modelo/reasoning de sesion, origen y tipo de evento permitido. No contiene transcript ni la ruta absoluta del rollout.
 

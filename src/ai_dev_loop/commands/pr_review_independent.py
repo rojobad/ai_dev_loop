@@ -15,6 +15,7 @@ from ai_dev_loop.commands.pr_review import (
     _require_github_config,
     _run_locks,
     _spawn_pr_review_worker,
+    _worker_is_live,
     load_run_state_fresh,
 )
 from ai_dev_loop.commands.prepare import (
@@ -365,25 +366,6 @@ def _require_start_tool_compatibility(run_directory: Path, state: RunState) -> N
         f"{item.tool}/{item.classification.value}: {item.detail}" for item in failures
     )
     raise ValidationError(f"tool compatibility preflight failed before GitHub write ({details})")
-
-
-def _worker_is_live(run_directory: Path, run_id: str) -> bool:
-    launcher_path = run_directory / "locks" / "pr-review-worker.json"
-    if not launcher_path.is_file():
-        return False
-    try:
-        payload = json.loads(launcher_path.read_text(encoding="utf-8"))
-        if payload.get("run_id") != run_id:
-            return False
-        pid = int(payload.get("pid") or 0)
-        if pid <= 0:
-            return False
-        import os
-
-        os.kill(pid, 0)
-        return True
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return False
 
 
 def _cursor_model_mutable(state: RunState) -> bool:
