@@ -414,6 +414,34 @@ ai_dev_loop pr-review abort <run-id>
 ai_dev_loop pr-review resume <run-id> [--controller-session-id <sesion-A>]
 ```
 
+## Worker PR-review ausente/stale en `awaiting_bot_review`
+
+Síntoma:
+
+- `pr-review status` muestra `awaiting_bot_review` y `Worker: stale` o `absent`;
+- el bot ya dejó hilos nuevos sobre el SHA ligado, pero no hay adjudicación;
+- el lock `locks/pr-review-worker.json` apunta a un PID que ya no vive.
+
+Causa típica (corregida en Phase 15.9): tras publicar el trigger de un ciclo
+externo, el worker detonado terminaba sin continuar el polling y el intento de
+auto-spawn veía su propio PID como vivo. Además, un
+`expected_eligible_thread_ids` congelado del ciclo anterior podía marcar los
+hilos nuevos como drift.
+
+Acción (mismo run; no uses `recover` ni edites `state.json`):
+
+```bash
+ai_dev_loop pr-review status <run-id> --output json
+# Desde el controlador A exacto:
+ai_dev_loop pr-review resume <run-id> --controller-session-id <sesion-A>
+```
+
+Eso solo reengancha el poller. Puede validar PR/head en solo lectura, pero **no**
+escribe en GitHub ni publica otro `@codex review`, y no crea Cursor ni invoca
+Codex. Si el worker ya está `live` con identidad coincidente, el comando es
+idempotente. Si hay drift de PR/head, launcher ambiguo (incluido reuso de PID),
+o controlador incorrecto, falla sin writes.
+
 ## Adjudicación GitHub falló con `invalid_json_schema` / `uniqueItems`
 
 Causa histórica: el schema de respuesta enviado a Codex incluía `uniqueItems` en

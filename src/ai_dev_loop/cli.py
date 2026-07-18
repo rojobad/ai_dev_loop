@@ -608,7 +608,15 @@ def pr_review_continue_command(
 
 @pr_review_app.command("resume")
 def pr_review_resume_command(
-    run_id: Annotated[str, typer.Argument(help="Interrupted PR-review cycle run identifier.")],
+    run_id: Annotated[
+        str,
+        typer.Argument(
+            help=(
+                "PR-review cycle run identifier (interrupted checkpoints, or "
+                "awaiting_bot_review with an absent/stale worker)."
+            ),
+        ),
+    ],
     controller_session_id: Annotated[
         str | None,
         typer.Option(
@@ -617,7 +625,12 @@ def pr_review_resume_command(
         ),
     ] = None,
 ) -> None:
-    """Explicitly resume an interrupted PR-review cycle from durable checkpoints."""
+    """Resume interrupted PR-review checkpoints or reattach an absent/stale poller.
+
+    For awaiting_bot_review, reattaches polling only: may perform read-only PR/head
+    validation, but does not re-post @codex review, create Cursor, invoke Codex,
+    or perform GitHub writes during the command.
+    """
 
     def run() -> None:
         from ai_dev_loop.commands.pr_review import resume_pr_review_cycle

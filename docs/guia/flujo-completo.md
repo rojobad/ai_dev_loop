@@ -214,6 +214,18 @@ Entonces se ejecuta:
 ai_dev_loop pr-review continue <run-id>
 ```
 
+### Continuidad post-publicación y aislamiento por ciclo
+
+Cuando el worker publica un fix externo y deja el run en `awaiting_bot_review`,
+**el mismo proceso continúa el polling**. No depende de auto-spawnearse mientras
+aún posee su propio PID. Las publicaciones síncronas desde `create`/comandos sí
+programan un poller detached al quedar en awaiting.
+
+Al publicar el trigger del siguiente ciclo externo se reinicia el snapshot
+operativo `expected_eligible_thread_ids` (`None`). Los IDs
+`processed_thread_ids` / `resolved_thread_ids` siguen siendo acumulativos para
+impedir reprocesos. Los hilos nuevos del ciclo N+1 no son drift del ciclo N.
+
 ### Fallos o drift externos
 
 Un PR cerrado, cambio externo de SHA/rama, error de `gh`, llave SSH no disponible,
@@ -224,6 +236,13 @@ Tras corregir la causa, usa:
 ```bash
 ai_dev_loop pr-review resume <run-id> [--controller-session-id <sesion-A>]
 ```
+
+Si el run ya está en `awaiting_bot_review` pero el worker registrado está ausente
+o stale (por ejemplo tras un bug histórico de auto-spawn), el mismo comando
+desde el controlador A **reengancha solo el polling**: puede hacer validación
+read-only de PR/head, pero no escribe en GitHub, no republica `@codex review`,
+no crea Cursor ni invoca Codex. Si el worker ya está vivo (identidad PID +
+`pid_starttime` verificada), la respuesta es idempotente sin mutación.
 
 Si la adjudicación falló porque Codex rechazó el schema de salida
 (`invalid_json_schema` / `uniqueItems`) **antes** de responder o resolver hilos y

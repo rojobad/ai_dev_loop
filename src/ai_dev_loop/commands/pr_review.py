@@ -7,6 +7,7 @@ import json
 import os
 import secrets
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -26,6 +27,7 @@ from ai_dev_loop.commands.start_preflight import (
 from ai_dev_loop.config import ProjectConfig, resolve_effective_config
 from ai_dev_loop.errors import AdjudicationSchemaIncompatibleError, AiDevLoopError, ValidationError
 from ai_dev_loop.event_log import append_orchestrator_event
+from ai_dev_loop.launcher import read_process_starttime
 from ai_dev_loop.locking import LockMetadata, RunLocks
 from ai_dev_loop.paths import ensure_dir, run_dir, runs_dir, set_sensitive_file_mode
 from ai_dev_loop.process import require_success, run_process
@@ -77,6 +79,19 @@ from ai_dev_loop.state import (
 WORKER_LAUNCHER_REL = Path("locks/pr-review-worker.json")
 _PUBLICATION_LIFECYCLES = frozenset({"publishing_initial", "publishing_external_fix"})
 _PUBLICATION_PHASES = frozenset({"pre_commit", "committed", "pushed", "pr_bound"})
+_WORKER_LIVENESS_LIVE = "live"
+_WORKER_LIVENESS_STALE = "stale"
+_WORKER_LIVENESS_ABSENT = "absent"
+
+
+@dataclass(frozen=True)
+class PrReviewWorkerLiveness:
+    """Safe worker-launcher probe result (no PID/token/argv in public fields)."""
+
+    status: str
+    launcher_present: bool
+    launcher_safe: bool
+    detail: str | None = None
 
 
 def _publication_in_progress(gpr: GithubPrReviewState | None) -> bool:
@@ -128,19 +143,171 @@ def _is_independent_origin(gpr: GithubPrReviewState | None) -> bool:
 
 
 def _expected_eligible_thread_ids(state: RunState) -> list[str] | None:
-    """Frozen eligible-thread set for recovery / resume / publication checks."""
+    """Frozen eligible-thread set for the current external review window.
 
+    Prefer the operational ``github_pr_review.expected_eligible_thread_ids``
+    snapshot. Recovery lineage may supply the freeze only while the run is still
+    on the recovered external-adjudication cycle; after a new trigger advances
+    ``cycle_number``, do not reuse recovery IDs as the next cycle's expected set.
+    """
+
+    gpr = state.github_pr_review
+    if gpr is not None and gpr.expected_eligible_thread_ids:
+        return list(gpr.expected_eligible_thread_ids)
     recovery = state.recovery
     if (
         recovery is not None
         and recovery.recovered_checkpoint == "external_adjudication"
         and recovery.expected_eligible_thread_ids
+        and gpr is not None
+        and gpr.cycle_number == recovery.source_iteration
     ):
         return list(recovery.expected_eligible_thread_ids)
-    gpr = state.github_pr_review
-    if gpr is not None and gpr.expected_eligible_thread_ids:
-        return list(gpr.expected_eligible_thread_ids)
     return None
+
+
+def probe_pr_review_worker_liveness(run_directory: Path, run_id: str) -> PrReviewWorkerLiveness:
+    """Classify the PR-review worker launcher without exposing PID/token/argv.
+
+    A live PID alone is not enough: ``pid_starttime`` must match the recorded
+    process identity. Mismatched or unavailable identity is fail-closed unsafe,
+    never a silent live/no-op classification.
+    """
+
+    launcher_path = run_directory / WORKER_LAUNCHER_REL
+    if not launcher_path.is_file():
+        return PrReviewWorkerLiveness(
+            status=_WORKER_LIVENESS_ABSENT,
+            launcher_present=False,
+            launcher_safe=True,
+        )
+    try:
+        payload = json.loads(launcher_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return PrReviewWorkerLiveness(
+            status=_WORKER_LIVENESS_ABSENT,
+            launcher_present=True,
+            launcher_safe=False,
+            detail="worker launcher metadata is unreadable or malformed",
+        )
+    if not isinstance(payload, dict):
+        return PrReviewWorkerLiveness(
+            status=_WORKER_LIVENESS_ABSENT,
+            launcher_present=True,
+            launcher_safe=False,
+            detail="worker launcher metadata has an invalid shape",
+        )
+    recorded_run_id = payload.get("run_id")
+    if recorded_run_id != run_id:
+        return PrReviewWorkerLiveness(
+            status=_WORKER_LIVENESS_ABSENT,
+            launcher_present=True,
+            launcher_safe=False,
+            detail="worker launcher run_id does not match the selected run",
+        )
+    try:
+        pid = int(payload.get("pid") or 0)
+    except (TypeError, ValueError):
+        return PrReviewWorkerLiveness(
+            status=_WORKER_LIVENESS_ABSENT,
+            launcher_present=True,
+            launcher_safe=False,
+            detail="worker launcher pid is invalid",
+        )
+    if pid <= 0:
+        return PrReviewWorkerLiveness(
+            status=_WORKER_LIVENESS_ABSENT,
+            launcher_present=True,
+            launcher_safe=False,
+            detail="worker launcher pid is not a positive integer",
+        )
+    recorded_starttime: int | None
+    raw_starttime = payload.get("pid_starttime")
+    if raw_starttime is None:
+        recorded_starttime = None
+    else:
+        try:
+            recorded_starttime = int(raw_starttime)
+        except (TypeError, ValueError):
+            return PrReviewWorkerLiveness(
+                status=_WORKER_LIVENESS_ABSENT,
+                launcher_present=True,
+                launcher_safe=False,
+                detail="worker launcher pid_starttime is invalid",
+            )
+        if recorded_starttime < 0:
+            return PrReviewWorkerLiveness(
+                status=_WORKER_LIVENESS_ABSENT,
+                launcher_present=True,
+                launcher_safe=False,
+                detail="worker launcher pid_starttime is invalid",
+            )
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return PrReviewWorkerLiveness(
+            status=_WORKER_LIVENESS_STALE,
+            launcher_present=True,
+            launcher_safe=True,
+        )
+    except PermissionError:
+        return PrReviewWorkerLiveness(
+            status=_WORKER_LIVENESS_ABSENT,
+            launcher_present=True,
+            launcher_safe=False,
+            detail="worker launcher pid liveness is ambiguous",
+        )
+    except OSError:
+        return PrReviewWorkerLiveness(
+            status=_WORKER_LIVENESS_ABSENT,
+            launcher_present=True,
+            launcher_safe=False,
+            detail="worker launcher pid liveness check failed",
+        )
+    # PID is live: require exact process identity via starttime to resist reuse.
+    if recorded_starttime is None:
+        return PrReviewWorkerLiveness(
+            status=_WORKER_LIVENESS_ABSENT,
+            launcher_present=True,
+            launcher_safe=False,
+            detail="worker launcher process identity is unavailable",
+        )
+    current_starttime = read_process_starttime(pid)
+    if current_starttime is None:
+        return PrReviewWorkerLiveness(
+            status=_WORKER_LIVENESS_ABSENT,
+            launcher_present=True,
+            launcher_safe=False,
+            detail="worker launcher process identity is unavailable",
+        )
+    if current_starttime != recorded_starttime:
+        return PrReviewWorkerLiveness(
+            status=_WORKER_LIVENESS_ABSENT,
+            launcher_present=True,
+            launcher_safe=False,
+            detail="worker launcher process identity mismatch",
+        )
+    return PrReviewWorkerLiveness(
+        status=_WORKER_LIVENESS_LIVE,
+        launcher_present=True,
+        launcher_safe=True,
+    )
+
+
+def _require_spawnable_worker_slot(run_directory: Path, run_id: str) -> PrReviewWorkerLiveness:
+    """Return liveness when a new worker may be started; fail closed otherwise."""
+
+    liveness = probe_pr_review_worker_liveness(run_directory, run_id)
+    if not liveness.launcher_safe:
+        raise ValidationError(
+            liveness.detail or "PR-review worker launcher metadata is unsafe to replace"
+        )
+    return liveness
+
+
+def _worker_is_live(run_directory: Path, run_id: str) -> bool:
+    liveness = probe_pr_review_worker_liveness(run_directory, run_id)
+    return liveness.launcher_safe and liveness.status == _WORKER_LIVENESS_LIVE
 
 
 def _observe_eligible_thread_set(
@@ -538,21 +705,46 @@ def create_pr_review_cycle(source_run_id: str) -> PrReviewCreateResult:
         raise
 
 
-def _spawn_pr_review_worker(run_directory: Path, run_id: str) -> None:
-    launcher_path = run_directory / WORKER_LAUNCHER_REL
-    if launcher_path.is_file():
+def _terminate_and_reap_pr_review_worker(proc: subprocess.Popen[Any]) -> None:
+    """Terminate the worker process group and reap it (best effort)."""
+
+    if proc.poll() is None:
         try:
-            existing = json.loads(launcher_path.read_text(encoding="utf-8"))
-            pid = int(existing.get("pid") or 0)
-            if pid > 0:
+            pgid = os.getpgid(proc.pid)
+        except (OSError, ProcessLookupError):
+            pgid = None
+        if pgid is not None:
+            for sig in (signal.SIGTERM, signal.SIGKILL):
                 try:
-                    os.kill(pid, 0)
-                except OSError:
-                    pass
-                else:
-                    return
-        except (OSError, ValueError, json.JSONDecodeError, TypeError):
-            pass
+                    os.killpg(pgid, sig)
+                except (OSError, ProcessLookupError):
+                    break
+                if proc.poll() is not None:
+                    break
+                time.sleep(0.1)
+        else:
+            with contextlib.suppress(OSError, ProcessLookupError):
+                proc.kill()
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.communicate(timeout=1)
+
+
+def _spawn_pr_review_worker(run_directory: Path, run_id: str) -> bool:
+    """Start at most one PR-review worker for ``run_id``.
+
+    Returns True when a new worker process was started, False when an existing
+    live worker already owns the run (idempotent no-op). Stale launcher
+    metadata for the same run is replaced atomically. Malformed, foreign-run,
+    or ambiguous launcher metadata fails closed without spawning.
+
+    Spawning is all-or-nothing: if the child starts but launcher metadata cannot
+    be persisted, the child process group is terminated and reaped before the
+    error propagates, so an unregistered worker cannot remain live.
+    """
+
+    liveness = _require_spawnable_worker_slot(run_directory, run_id)
+    if liveness.status == _WORKER_LIVENESS_LIVE:
+        return False
     worker_token = secrets.token_hex(8)
     stdout_path = run_directory / "logs" / "pr-review-worker.stdout.txt"
     stderr_path = run_directory / "logs" / "pr-review-worker.stderr.txt"
@@ -561,39 +753,51 @@ def _spawn_pr_review_worker(run_directory: Path, run_id: str) -> None:
     stderr_handle = stderr_path.open("a", encoding="utf-8")
     set_sensitive_file_mode(stdout_path)
     set_sensitive_file_mode(stderr_path)
-    proc = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "ai_dev_loop.pr_review_worker",
-            run_id,
-            worker_token,
-        ],
-        stdout=stdout_handle,
-        stderr=stderr_handle,
-        start_new_session=True,
-        cwd=str(run_directory),
-    )
-    stdout_handle.close()
-    stderr_handle.close()
-    atomic_write_json(
-        launcher_path,
-        {
-            "schema_version": 1,
-            "run_id": run_id,
-            "worker_token": worker_token,
-            "pid": proc.pid,
-            "started_at": utc_now().isoformat(),
-            "argv_redacted": [
+    launcher_path = run_directory / WORKER_LAUNCHER_REL
+    try:
+        proc = subprocess.Popen(
+            [
                 sys.executable,
                 "-m",
                 "ai_dev_loop.pr_review_worker",
                 run_id,
-                "<worker-token>",
+                worker_token,
             ],
-        },
-        sensitive=True,
-    )
+            stdout=stdout_handle,
+            stderr=stderr_handle,
+            start_new_session=True,
+            cwd=str(run_directory),
+        )
+    finally:
+        stdout_handle.close()
+        stderr_handle.close()
+    try:
+        pid_starttime = read_process_starttime(proc.pid)
+        if pid_starttime is None:
+            raise AiDevLoopError("failed to capture PR-review worker process identity after spawn")
+        atomic_write_json(
+            launcher_path,
+            {
+                "schema_version": 1,
+                "run_id": run_id,
+                "worker_token": worker_token,
+                "pid": proc.pid,
+                "pid_starttime": pid_starttime,
+                "started_at": utc_now().isoformat(),
+                "argv_redacted": [
+                    sys.executable,
+                    "-m",
+                    "ai_dev_loop.pr_review_worker",
+                    run_id,
+                    "<worker-token>",
+                ],
+            },
+            sensitive=True,
+        )
+    except Exception:
+        _terminate_and_reap_pr_review_worker(proc)
+        raise
+    return True
 
 
 def continue_pr_review_cycle(run_id: str) -> str:
@@ -802,18 +1006,11 @@ def _find_continue_comment(
     return None
 
 
-def resume_pr_review_cycle(
-    run_id: str,
+def _validate_pr_review_controller(
+    state: RunState,
     *,
-    controller_session_id: str | None = None,
-) -> str:
-    """Explicit controller resume for an interrupted PR-review cycle."""
-
-    run_directory, state = load_run(run_id)
-    if state.github_pr_review is None:
-        raise ValidationError("run is not a GitHub PR-review cycle")
-    if state.status != RunStatus.INTERRUPTED:
-        raise ValidationError("pr-review resume requires status interrupted")
+    controller_session_id: str | None,
+) -> None:
     if state.controller is not None:
         from ai_dev_loop.integrations.codex.session_runtime import require_codex_session_id
 
@@ -830,6 +1027,111 @@ def resume_pr_review_cycle(
             raise ValidationError("controller session id must differ from the reviewer session id")
     elif controller_session_id is not None:
         raise ValidationError("run was prepared without a controller; omit --controller-session-id")
+
+
+def _validate_awaiting_bot_review_binding(state: RunState) -> None:
+    """Read-only PR/head checks before reattaching a poller (no GitHub writes)."""
+
+    gpr = state.github_pr_review
+    if gpr is None:
+        raise ValidationError("run is not a GitHub PR-review cycle")
+    if gpr.pr_number is None:
+        raise ValidationError("awaiting_bot_review resume requires a bound PR number")
+    if not gpr.bound_head_sha:
+        raise ValidationError("awaiting_bot_review resume requires a bound head SHA")
+    if not gpr.request_marker or not gpr.request_comment_id:
+        raise ValidationError(
+            "awaiting_bot_review resume requires the existing review request marker and comment id"
+        )
+    config = _require_github_config(Path(state.repository.root))
+    assert config.github is not None
+    pr = get_pull_request(config.github.command, cwd=state.repository.root, pr_number=gpr.pr_number)
+    if pr.state != "OPEN":
+        raise ValidationError("bound pull request is no longer open")
+    if pr.head_sha != gpr.bound_head_sha:
+        raise ValidationError("PR head changed during await; resolve drift before continuing")
+
+
+def _reattach_awaiting_bot_review_poller(
+    run_directory: Path,
+    state: RunState,
+) -> str:
+    """Reattach polling for awaiting_bot_review without republishing the trigger."""
+
+    assert state.github_pr_review is not None
+    liveness = probe_pr_review_worker_liveness(run_directory, state.run_id)
+    if not liveness.launcher_safe:
+        raise ValidationError(
+            liveness.detail or "PR-review worker launcher metadata is unsafe to replace"
+        )
+    if liveness.status == _WORKER_LIVENESS_LIVE:
+        return (
+            f"PR-review worker already polling for {state.run_id}; "
+            "no state mutation and no GitHub writes "
+            "(identity-checked; no trigger repost, Cursor, or Codex)."
+        )
+    _validate_awaiting_bot_review_binding(state)
+    locks = _run_locks(run_directory, run_id=state.run_id, repository_path=state.repository.root)
+    locks.acquire()
+    try:
+        state = load_run_state_fresh(run_directory)
+        assert state.github_pr_review is not None
+        if state.status != RunStatus.AWAITING_BOT_REVIEW:
+            raise ValidationError(
+                "pr-review resume reattach requires status awaiting_bot_review "
+                f"(current: {state.status.value})"
+            )
+        if state.github_pr_review.lifecycle != "awaiting_bot_review":
+            raise ValidationError(
+                "pr-review resume reattach requires lifecycle awaiting_bot_review "
+                f"(current: {state.github_pr_review.lifecycle})"
+            )
+        if _worker_is_live(run_directory, state.run_id):
+            return (
+                f"PR-review worker already polling for {state.run_id}; "
+                "no state mutation and no GitHub writes "
+                "(identity-checked; no trigger repost, Cursor, or Codex)."
+            )
+        spawned = _spawn_pr_review_worker(run_directory, state.run_id)
+        if spawned:
+            append_orchestrator_event(
+                run_directory,
+                run_id=state.run_id,
+                component="orchestrator",
+                event="pr_review_worker_reattached",
+                status=state.status.value,
+                detail={
+                    "lifecycle": "awaiting_bot_review",
+                    "cycle_number": state.github_pr_review.cycle_number,
+                    "worker_liveness_before": liveness.status,
+                },
+            )
+        return f"Reattached PR-review polling for {state.run_id}"
+    finally:
+        locks.release()
+
+
+def resume_pr_review_cycle(
+    run_id: str,
+    *,
+    controller_session_id: str | None = None,
+) -> str:
+    """Explicit controller resume for interrupted or poller-less PR-review cycles."""
+
+    run_directory, state = load_run(run_id)
+    if state.github_pr_review is None:
+        raise ValidationError("run is not a GitHub PR-review cycle")
+    _validate_pr_review_controller(state, controller_session_id=controller_session_id)
+    if (
+        state.status == RunStatus.AWAITING_BOT_REVIEW
+        and state.github_pr_review.lifecycle == "awaiting_bot_review"
+    ):
+        return _reattach_awaiting_bot_review_poller(run_directory, state)
+    if state.status != RunStatus.INTERRUPTED:
+        raise ValidationError(
+            "pr-review resume requires status interrupted or awaiting_bot_review "
+            "with an absent/stale worker"
+        )
     resume_workflow_run_id: str | None = None
     locks = _run_locks(run_directory, run_id=state.run_id, repository_path=state.repository.root)
     locks.acquire()
@@ -956,9 +1258,49 @@ def abort_pr_review_cycle(run_id: str) -> str:
     return f"Abort requested for PR-review cycle {run_id}"
 
 
+def _pr_review_next_safe_action(
+    state: RunState,
+    *,
+    worker_liveness: PrReviewWorkerLiveness,
+) -> str:
+    gpr = state.github_pr_review
+    if gpr is None:
+        return "Inspect artifacts manually."
+    if state.status == RunStatus.AWAITING_BOT_REVIEW and gpr.lifecycle == "awaiting_bot_review":
+        if not worker_liveness.launcher_safe:
+            return (
+                "Worker launcher metadata is unsafe. Inspect locks/pr-review-worker.json "
+                "without editing state.json, then retry pr-review resume from controller A "
+                "only after the launcher is absent or a confirmed stale same-run lock."
+            )
+        if worker_liveness.status == _WORKER_LIVENESS_LIVE:
+            return "Worker is polling for the Codex-bot review; wait or inspect pr-review status."
+        controller_flag = ""
+        if state.controller is not None:
+            controller_flag = " --controller-session-id <exact-controller-A>"
+        return (
+            f"Worker is {worker_liveness.status}. From controller A run "
+            f"ai_dev_loop pr-review resume {state.run_id}{controller_flag} "
+            "to reattach polling without re-posting @codex review."
+        )
+    if state.status == RunStatus.WAITING_FOR_USER_ATTENTION:
+        return "Post the exact continue command on the PR, then run pr-review continue <run-id>."
+    if state.status == RunStatus.INTERRUPTED:
+        controller_flag = ""
+        if state.controller is not None:
+            controller_flag = " --controller-session-id <exact-controller-A>"
+        return (
+            f"Inspect durable checkpoints, then run ai_dev_loop pr-review resume "
+            f"{state.run_id}{controller_flag}."
+        )
+    return "Inspect artifacts manually."
+
+
 def render_pr_review_status(run_id: str, *, output: str = "text") -> str:
     run_directory, state = load_run(run_id)
     gpr = state.github_pr_review
+    worker_liveness = probe_pr_review_worker_liveness(run_directory, state.run_id)
+    next_safe_action = _pr_review_next_safe_action(state, worker_liveness=worker_liveness)
     payload: dict[str, Any] = {
         "schema_version": 1,
         "run_id": state.run_id,
@@ -966,6 +1308,9 @@ def render_pr_review_status(run_id: str, *, output: str = "text") -> str:
         "result": state.result,
         "last_error": state.last_error,
         "github_pr_review": None,
+        "worker_liveness": worker_liveness.status,
+        "worker_launcher_safe": worker_liveness.launcher_safe,
+        "next_safe_action": next_safe_action,
     }
     cursor_model_mutable = False
     if gpr is not None and gpr.origin == "independent_pr":
@@ -1040,10 +1385,13 @@ def render_pr_review_status(run_id: str, *, output: str = "text") -> str:
     lines = [
         f"Run {state.run_id}",
         f"Status: {state.status.value}",
+        f"Worker: {worker_liveness.status}",
         f"Cursor model: {state.cursor.model}",
         f"Cursor model mutable: {cursor_model_mutable}",
         f"Cursor chat: {'present' if state.cursor.chat_id else 'not created'}",
     ]
+    if not worker_liveness.launcher_safe and worker_liveness.detail:
+        lines.append(f"Worker launcher: unsafe ({worker_liveness.detail})")
     if gpr is not None:
         lines.extend(
             [
@@ -1089,6 +1437,7 @@ def render_pr_review_status(run_id: str, *, output: str = "text") -> str:
         lines.append(state.result)
     if state.last_error:
         lines.append(f"Last error: {state.last_error}")
+    lines.append(f"Next safe action: {next_safe_action}")
     return "\n".join(lines) + "\n"
 
 
@@ -1442,7 +1791,17 @@ def _run_pr_review_worker_loop_inner(run_id: str, run_directory: Path) -> None:
             "publishing_external_fix",
             "publishing_initial",
         }:
-            _publish_external_fix(run_directory, state, config)
+            # Publication already runs inside this worker: continue polling in-process
+            # instead of self-spawning (the live launcher PID would block a new worker).
+            _publish_external_fix(run_directory, state, config, schedule_worker=False)
+            state = load_run_state_fresh(run_directory)
+            gpr = state.github_pr_review
+            if (
+                gpr is not None
+                and state.status == RunStatus.AWAITING_BOT_REVIEW
+                and gpr.lifecycle == "awaiting_bot_review"
+            ):
+                continue
             return
         if state.status != RunStatus.AWAITING_BOT_REVIEW:
             return
@@ -2137,6 +2496,9 @@ def _run_publication_pipeline(
             "request_marker": request_marker,
             "request_created_at": request_created_at,
             "eligible_thread_ids": [],
+            # New external cycle: drop the previous window's exact-set freeze.
+            # processed/resolved IDs remain cumulative to prevent reprocessing.
+            "expected_eligible_thread_ids": None,
             "processed_thread_ids": list(
                 dict.fromkeys(
                     list(state.github_pr_review.processed_thread_ids)
@@ -2160,7 +2522,17 @@ def _publish_external_fix(
     run_directory: Path,
     state: RunState,
     config: ProjectConfig,
+    *,
+    schedule_worker: bool = True,
 ) -> None:
+    """Publish the current PR-review cycle and optionally schedule a poller.
+
+    ``schedule_worker=True`` is for synchronous publication from create/resume
+    commands that need a detached poller afterward. When the detonated worker
+    itself publishes, pass ``schedule_worker=False`` so the same process continues
+    into ``awaiting_bot_review`` polling without attempting to self-spawn.
+    """
+
     assert config.github is not None
     assert state.github_pr_review is not None
     gpr = state.github_pr_review
@@ -2263,7 +2635,7 @@ def _publish_external_fix(
     finally:
         locks.release()
 
-    if state.status == RunStatus.AWAITING_BOT_REVIEW:
+    if schedule_worker and state.status == RunStatus.AWAITING_BOT_REVIEW:
         _spawn_pr_review_worker(run_directory, state.run_id)
 
 

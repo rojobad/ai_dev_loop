@@ -158,7 +158,13 @@ republica `@codex review`. Usa `--dry-run` primero. El schema
 unicidad sigue validada en Pydantic.
 
 En ciclos A/B, `pr-review resume` exige `--controller-session-id` del
-controlador A original.
+controlador A original. Además de checkpoints `interrupted` (publicación,
+polling o recovery), acepta un run no terminal en `awaiting_bot_review` cuyo
+worker esté ausente/stale: reengancha un solo poller. Puede validar PR/head en
+solo lectura, pero no escribe en GitHub, no republica el trigger, no crea Cursor
+ni invoca Codex. Con worker vivo (identidad verificada) es no-op idempotente.
+`pr-review status` reporta `worker_liveness` (`live`/`stale`/`absent`) y la
+siguiente acción segura sin exponer PID, token ni argv.
 
 Ante hallazgos no aplicables/inciertos responde inline con `@rojobad`, deja
 threads unresolved y espera `@rojobad /ai-dev-loop continue`. No hace merge ni
