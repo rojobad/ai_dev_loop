@@ -332,6 +332,22 @@ Documentado en:
 - [Troubleshooting](../operacion/troubleshooting.md)
 - [Estado y artefactos](../operacion/estado-artefactos.md)
 
+## Fase 15.14
+
+Preflight de publicación que valida el `ssh-agent` efectivo de OpenSSH: resuelve
+`IdentityAgent` con `ssh -G` sobre el destino del remote SSH (alias SCP o URL
+`ssh://`), comprueba que el socket sea utilizable y ejecuta `ssh-add -l` sólo
+con ese `SSH_AUTH_SOCK`. Si `IdentityAgent` está ausente o es `none`, usa un
+`SSH_AUTH_SOCK` heredado válido. Fallos de formato/configuración siguen siendo
+`ValidationError` terminales; sólo la ausencia de identidad conserva
+`ssh_agent_no_identity` / `publication_pre_commit` de Phase 15.13.
+
+Documentado en:
+
+- [Referencia CLI](cli.md)
+- [Flujo completo](../guia/flujo-completo.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+
 ## Riesgos residuales documentados
 
 - Hook trust sigue siendo `unknown` desde CLI.

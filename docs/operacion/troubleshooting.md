@@ -68,8 +68,12 @@ SSH_AUTH_SOCK="$HOME/.ssh/ai-dev-loop-ssh-agent.sock" ssh-add ~/.ssh/id_ed25519
 ssh -T git@github.com
 ```
 
-El worker consumirá el socket por `~/.ssh/config`, sin heredar variables ni pedir
-la passphrase. Comprueba finalmente:
+El preflight de publicación consulta la configuración efectiva de OpenSSH con
+`ssh -G` sobre el destino del remote, toma el `IdentityAgent` resuelto (o, si
+es `none`/ausente, un `SSH_AUTH_SOCK` heredado válido) y ejecuta `ssh-add -l`
+sólo con ese socket. El worker detached no necesita heredar `SSH_AUTH_SOCK` ni
+pedir la passphrase, pero la clave debe estar cargada en el agente que OpenSSH
+usará. Comprueba finalmente:
 
 ```bash
 ai_dev_loop github doctor --repo-path /ruta/al/repositorio
@@ -566,10 +570,11 @@ vivo, publicación parcial o un intento Cursor parcial, `recover` se detiene.
 Causa observada (PR #45 / run anonimizado `…9488fe`): Cursor y la revisión local
 Codex ya aceptaron el patch staged (sin hallazgos accionables). El worker llegó
 a `publication_phase: pre_commit` con texto de publicación durable, pero el
-preflight `ssh-add -l` no tenía identidad utilizable. Runs históricos marcaron
-esto como `failed` vía `ValidationError` genérico; runs nuevos lo clasifican
-como interrupción tipada `ssh_agent_no_identity` y conservan el checkpoint
-reanudable.
+preflight no encontró identidad utilizable en el agente SSH efectivo
+(`IdentityAgent` vía `ssh -G`, o `SSH_AUTH_SOCK` heredado si aplica). Runs
+históricos marcaron esto como `failed` vía `ValidationError` genérico; runs
+nuevos lo clasifican como interrupción tipada `ssh_agent_no_identity` y
+conservan el checkpoint reanudable.
 
 Para el origen `failed` histórico con evidencia durable
 (`lifecycle: failed` + `publication_phase: pre_commit`, patch staged igual al
