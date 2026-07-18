@@ -42,8 +42,10 @@ ai_dev_loop config validate --repo /ruta/al/proyecto
 ai_dev_loop github doctor --repo-path /ruta/al/proyecto
 ```
 
-El `ssh-agent` con la llave cargada debe estar disponible en el entorno que
-lanzará el worker. `gh` autentica la API GitHub; el push sigue usando SSH.
+El `ssh-agent` con la llave cargada debe ser el que OpenSSH usará para el
+remote (vía `IdentityAgent` efectivo o `SSH_AUTH_SOCK` heredado válido). El
+worker detached no depende de heredar `SSH_AUTH_SOCK` si `IdentityAgent` apunta
+al agente persistente. `gh` autentica la API GitHub; el push sigue usando SSH.
 
 ## 2. Diseñar el cambio con Codex
 

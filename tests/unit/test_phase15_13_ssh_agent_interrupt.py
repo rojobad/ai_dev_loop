@@ -28,6 +28,21 @@ def _git(cwd: Path, *args: str) -> str:
     return completed.stdout.strip()
 
 
+def _write_fake_ssh(bin_dir: Path, *, identity_agent: str = "none") -> Path:
+    path = bin_dir / "ssh"
+    path.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "-G" ]; then\n'
+        f'  printf "identityagent {identity_agent}\\n"\n'
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+    return path
+
+
 def _write_fake_ssh_add(bin_dir: Path, *, exit_code: int) -> Path:
     path = bin_dir / "ssh-add"
     path.write_text(
@@ -38,6 +53,17 @@ def _write_fake_ssh_add(bin_dir: Path, *, exit_code: int) -> Path:
     return path
 
 
+def _install_ssh_fakes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, ssh_add_exit: int
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_fake_ssh(bin_dir, identity_agent="none")
+    _write_fake_ssh_add(bin_dir, exit_code=ssh_add_exit)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
+
+
 def test_verify_ssh_push_ready_raises_typed_error_without_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -45,10 +71,7 @@ def test_verify_ssh_push_ready_raises_typed_error_without_identity(
     repo.mkdir()
     _git(repo, "init")
     _git(repo, "remote", "add", "origin", "git@github.com:acme/demo.git")
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    _write_fake_ssh_add(bin_dir, exit_code=1)
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    _install_ssh_fakes(tmp_path, monkeypatch, ssh_add_exit=1)
 
     with pytest.raises(SshAgentNoIdentityError, match="ssh-agent has no usable keys"):
         verify_ssh_push_ready(repo, "origin")
@@ -61,10 +84,7 @@ def test_verify_ssh_push_ready_http_remote_remains_validation_error(
     repo.mkdir()
     _git(repo, "init")
     _git(repo, "remote", "add", "origin", "https://github.com/acme/demo.git")
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    _write_fake_ssh_add(bin_dir, exit_code=0)
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    _install_ssh_fakes(tmp_path, monkeypatch, ssh_add_exit=0)
 
     with pytest.raises(ValidationError, match="SSH remote URL"):
         verify_ssh_push_ready(repo, "origin")
@@ -165,10 +185,7 @@ def test_publish_with_missing_ssh_identity_does_not_commit(
     (repo / "a.txt").write_text("two\n", encoding="utf-8")
     _git(repo, "add", "a.txt")
     head_before = _git(repo, "rev-parse", "HEAD")
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    _write_fake_ssh_add(bin_dir, exit_code=1)
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    _install_ssh_fakes(tmp_path, monkeypatch, ssh_add_exit=1)
     monkeypatch.setattr(
         "ai_dev_loop.runners.publish.resolve_upstream",
         lambda *_a, **_k: ("origin", "master"),

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import stat
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -100,26 +102,204 @@ def expected_remote_head(repo_root: Path, remote: str, remote_branch: str) -> st
     return sha
 
 
+def _token_looks_like_option(token: str) -> bool:
+    return token.startswith("-")
+
+
+def _destination_has_unsafe_characters(destination: str) -> bool:
+    if not destination:
+        return True
+    for char in destination:
+        if char in {"\0", "\n", "\r", " ", "\t", "\f", "\v"}:
+            return True
+        if ord(char) < 32:
+            return True
+    return False
+
+
+def _validate_ssh_destination(destination: str) -> str:
+    """Return a single argv-safe ssh destination, or raise ValidationError."""
+
+    if _destination_has_unsafe_characters(destination):
+        raise ValidationError("SSH remote destination is empty or contains unsafe characters")
+    if _token_looks_like_option(destination):
+        raise ValidationError("SSH remote destination looks like an option")
+    if "@" in destination:
+        _user, host = destination.rsplit("@", 1)
+        if _token_looks_like_option(host):
+            raise ValidationError("SSH remote destination looks like an option")
+    return destination
+
+
+def _ssh_destination_from_scp_url(url: str) -> str:
+    # git@alias:owner/repo.git — preserve the Host alias, not a resolved hostname.
+    rest = url[len("git@") :]
+    if ":" not in rest:
+        raise ValidationError("malformed SCP SSH remote URL")
+    host, path = rest.split(":", 1)
+    if not host or not path or path.startswith("/"):
+        raise ValidationError("malformed SCP SSH remote URL")
+    if "/" in host or "@" in host:
+        raise ValidationError("malformed SCP SSH remote URL")
+    if _token_looks_like_option(host):
+        raise ValidationError("SSH remote destination looks like an option")
+    return _validate_ssh_destination(f"git@{host}")
+
+
+def _ssh_destination_from_ssh_url(url: str) -> str:
+    # ssh://user@alias[:port]/owner/repo.git — parse authority without lowercasing.
+    rest = url[len("ssh://") :]
+    if "/" not in rest:
+        raise ValidationError("malformed SSH remote URL")
+    authority, path = rest.split("/", 1)
+    if not authority or not path:
+        raise ValidationError("malformed SSH remote URL")
+    if authority.startswith("[") or _token_looks_like_option(authority):
+        raise ValidationError("unsupported SSH remote URL authority")
+
+    user: str | None
+    hostport: str
+    if "@" in authority:
+        user, hostport = authority.rsplit("@", 1)
+        if not user or not hostport or "@" in user:
+            raise ValidationError("malformed SSH remote URL")
+        if _token_looks_like_option(user):
+            raise ValidationError("SSH remote destination looks like an option")
+    else:
+        user = None
+        hostport = authority
+
+    if ":" in hostport:
+        host, port = hostport.rsplit(":", 1)
+        if not host or not port.isdigit():
+            raise ValidationError("malformed SSH remote URL")
+    else:
+        host = hostport
+    if not host or "/" in host:
+        raise ValidationError("malformed SSH remote URL")
+    if _token_looks_like_option(host):
+        raise ValidationError("SSH remote destination looks like an option")
+
+    destination = f"{user}@{host}" if user else host
+    return _validate_ssh_destination(destination)
+
+
+def ssh_destination_from_remote_url(url: str) -> str:
+    """Build the single ``ssh -G`` destination for a supported Git SSH remote."""
+
+    if url.startswith("https://") or url.startswith("http://"):
+        raise ValidationError(
+            "GitHub publication requires an SSH remote URL; "
+            "configure the remote for SSH and preload ssh-agent"
+        )
+    if url.startswith("git@"):
+        return _ssh_destination_from_scp_url(url)
+    if url.startswith("ssh://"):
+        return _ssh_destination_from_ssh_url(url)
+    raise ValidationError(f"unsupported remote URL scheme for publication: {url[:32]}")
+
+
+def _is_usable_agent_socket(path: Path) -> bool:
+    if not path.is_absolute():
+        return False
+    try:
+        mode = path.stat().st_mode
+    except OSError:
+        return False
+    return stat.S_ISSOCK(mode)
+
+
+def _parse_identity_agent_from_ssh_g(stdout: str) -> str | None:
+    """Return a validated IdentityAgent socket path, or None for absent/none.
+
+    Ambiguous, relative, missing, or non-socket values raise ValidationError.
+    Does not embed ``ssh -G`` output or socket paths in the error message.
+    """
+
+    values: list[str] = []
+    for raw_line in stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        key, separator, remainder = line.partition(" ")
+        if key.lower() != "identityagent":
+            continue
+        if not separator:
+            values.append("")
+            continue
+        values.append(remainder.strip())
+
+    if not values:
+        return None
+    if len(values) > 1:
+        raise ValidationError("ambiguous IdentityAgent in effective SSH configuration")
+
+    value = values[0]
+    if not value or value.lower() == "none":
+        return None
+
+    path = Path(value)
+    if not path.is_absolute():
+        raise ValidationError("effective IdentityAgent must be an absolute socket path")
+    if not _is_usable_agent_socket(path):
+        raise ValidationError("effective IdentityAgent is not a usable SSH agent socket")
+    return str(path)
+
+
+def query_effective_identity_agent(destination: str, *, cwd: Path) -> str | None:
+    """Resolve IdentityAgent via ``ssh -G`` for the remote destination."""
+
+    safe_destination = _validate_ssh_destination(destination)
+    result = run_process(["ssh", "-G", safe_destination], cwd=str(cwd), timeout=10.0)
+    if result.returncode != 0 or result.timed_out:
+        raise ValidationError(
+            "unable to resolve effective SSH configuration for the publication remote"
+        )
+    return _parse_identity_agent_from_ssh_g(result.stdout)
+
+
+def resolve_effective_ssh_auth_sock(repo_root: Path, remote_url: str) -> str:
+    """Choose the agent socket OpenSSH would use for the remote.
+
+    A valid effective IdentityAgent wins over inherited ``SSH_AUTH_SOCK``.
+    When IdentityAgent is absent or ``none``, a valid inherited socket is used.
+    Missing/unusable sockets raise ``SshAgentNoIdentityError``. Remote or
+    configuration shape problems raise ``ValidationError``.
+    """
+
+    destination = ssh_destination_from_remote_url(remote_url)
+    identity_agent = query_effective_identity_agent(destination, cwd=repo_root)
+    if identity_agent is not None:
+        return identity_agent
+
+    inherited = os.environ.get("SSH_AUTH_SOCK", "").strip()
+    if inherited and _is_usable_agent_socket(Path(inherited)):
+        return inherited
+
+    raise SshAgentNoIdentityError(
+        "ssh-agent has no usable keys; preload the SSH key before publication"
+    )
+
+
 def verify_ssh_push_ready(repo_root: Path, remote: str = "origin") -> None:
     """Fail closed when the remote is not SSH or ssh-agent has no keys.
 
-    Remote URL problems remain ``ValidationError``. Missing ssh-agent identity
-    raises the typed ``SshAgentNoIdentityError`` so publication can interrupt
-    without classifying every validation failure as recoverable.
+    Resolves the effective OpenSSH IdentityAgent for the remote via ``ssh -G``
+    and runs ``ssh-add -l`` with only that ``SSH_AUTH_SOCK``. Remote URL and
+    unsafe SSH configuration problems remain ``ValidationError``. Missing
+    ssh-agent identity raises the typed ``SshAgentNoIdentityError`` so
+    publication can interrupt without classifying every validation failure as
+    recoverable.
     """
 
     url = require_success(
         _git(["remote", "get-url", remote], cwd=repo_root),
         context="git remote url",
     ).strip()
-    if url.startswith("https://") or url.startswith("http://"):
-        raise ValidationError(
-            "GitHub publication requires an SSH remote URL; "
-            "configure the remote for SSH and preload ssh-agent"
-        )
-    if not (url.startswith("git@") or url.startswith("ssh://")):
-        raise ValidationError(f"unsupported remote URL scheme for publication: {url[:32]}")
-    agent = run_process(["ssh-add", "-l"], cwd=str(repo_root), timeout=10.0)
+    sock = resolve_effective_ssh_auth_sock(repo_root, url)
+    env = dict(os.environ)
+    env["SSH_AUTH_SOCK"] = sock
+    agent = run_process(["ssh-add", "-l"], cwd=str(repo_root), timeout=10.0, env=env)
     if agent.returncode != 0:
         # Do not embed ssh-add stdout/stderr; the typed outcome is enough.
         raise SshAgentNoIdentityError(

@@ -112,9 +112,11 @@ SSH_AUTH_SOCK="$HOME/.ssh/ai-dev-loop-ssh-agent.sock" ssh-add ~/.ssh/id_ed25519
 ssh -T git@github.com
 ```
 
-The detached worker then uses the socket through SSH configuration; it does not
-need the passphrase or inherited environment variables. Verify before a GitHub
-cycle:
+Publication preflight resolves the effective OpenSSH `IdentityAgent` for the
+Git remote with `ssh -G` and runs `ssh-add -l` against only that socket. The
+detached worker therefore does not need an inherited `SSH_AUTH_SOCK`, but the
+key must already be loaded into the agent OpenSSH will use. Verify before a
+GitHub cycle:
 
 ```bash
 ai_dev_loop github doctor --repo-path /path/to/repository

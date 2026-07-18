@@ -164,7 +164,9 @@ artefacto-dirigidos:
   del flujo normal post-publicacion). La elegibilidad usa evidencia durable
   (fase, patch/SHA/PR/hilos, resultado local sin hallazgos, texto de
   publicacion); nunca `last_error` ni logs. Si falta la identidad del
-  `ssh-agent`, carga la clave manualmente antes del `resume`.
+  agente SSH efectivo (`IdentityAgent` resuelto con `ssh -G`, o
+  `SSH_AUTH_SOCK` heredado), carga la clave manualmente en ese agente antes
+  del `resume`.
 
 El origen `failed` permanece terminal; el sucesor reutiliza el mismo PR, SHA,
 trigger, hilos elegibles, sesion Codex B, chat Cursor y controlador A. **No**
