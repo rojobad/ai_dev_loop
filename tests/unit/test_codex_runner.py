@@ -591,3 +591,12 @@ def test_classify_codex_output_artifact_failure_requires_durable_evidence(tmp_pa
         encoding="utf-8",
     )
     assert classify_codex_review_output_artifact_failure(tmp_path, "01") is True
+
+    # Historical Codex CLI releases could report this write failure to stderr
+    # but still exit zero. The bound missing-file evidence remains sufficient;
+    # do not depend on the user-facing state.last_error string.
+    (reviews / "01.metadata.json").write_text(
+        json.dumps({"exit_code": 0, "timed_out": False}),
+        encoding="utf-8",
+    )
+    assert classify_codex_review_output_artifact_failure(tmp_path, "01") is True

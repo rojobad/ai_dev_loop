@@ -105,9 +105,6 @@ def classify_codex_review_output_artifact_failure(
         return True
     if metadata.get("timed_out") is True:
         return False
-    exit_code = metadata.get("exit_code")
-    if isinstance(exit_code, int) and exit_code == 0:
-        return False
     stderr_path = run_directory / f"codex/events/{iteration}.stderr.txt"
     if not stderr_path.is_file():
         return False
