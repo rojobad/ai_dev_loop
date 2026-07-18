@@ -460,7 +460,8 @@
             "process_review",
             "cursor",
             "external_adjudication",
-            "external_feedback_cursor"
+            "external_feedback_cursor",
+            "publication_pre_commit"
           ]
         },
         "source_staged_patch_sha256": {
@@ -483,7 +484,8 @@
             "initial_staging_failed",
             "cursor_usage_limit",
             "github_adjudication_schema_incompatible",
-            "external_feedback_cursor_not_started"
+            "external_feedback_cursor_not_started",
+            "publication_pre_commit_interrupted"
           ]
         },
         "cursor_output_fingerprint_sha256": {
@@ -724,6 +726,47 @@
               "legacy_cursor_usage_limit_adopted": { "enum": [null, false] },
               "source_cursor_model": { "type": "null" },
               "cursor_model_fallback": { "type": "null" },
+              "usage_limit_fingerprint_sha256": { "type": "null" },
+              "usage_limit_fingerprint_path": { "type": "null" },
+              "continuation_envelope_path": { "type": "null" },
+              "continuation_envelope_sha256": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "recovered_checkpoint": { "const": "publication_pre_commit" }
+            },
+            "required": ["recovered_checkpoint"]
+          },
+          "then": {
+            "required": [
+              "expected_eligible_thread_ids",
+              "source_staged_patch_sha256"
+            ],
+            "properties": {
+              "reason_code": {
+                "const": "publication_pre_commit_interrupted"
+              },
+              "source_staged_patch_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "expected_eligible_thread_ids": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 },
+                "uniqueItems": true
+              },
+              "cursor_output_fingerprint_sha256": { "type": "null" },
+              "previous_staged_patch_sha256": { "type": "null" },
+              "legacy_cursor_output_adopted": { "enum": [null, false] },
+              "legacy_cursor_usage_limit_adopted": { "enum": [null, false] },
+              "source_cursor_model": { "type": "null" },
+              "cursor_model_fallback": { "type": "null" },
+              "source_prompt_path": { "type": "null" },
+              "source_prompt_sha256": { "type": "null" },
               "usage_limit_fingerprint_sha256": { "type": "null" },
               "usage_limit_fingerprint_path": { "type": "null" },
               "continuation_envelope_path": { "type": "null" },

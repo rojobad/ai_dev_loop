@@ -60,3 +60,14 @@ class AdjudicationSchemaIncompatibleError(AiDevLoopError):
 
     exit_code = EXIT_GENERAL_ERROR
     failure_code = "adjudication_schema_incompatible"
+
+
+class SshAgentNoIdentityError(AiDevLoopError):
+    """ssh-add -l reported no usable identities during publication preflight.
+
+    Typed for publication interruption only. Must not embed ssh-add stdout or
+    stderr. Generic ValidationError must not be used for this case.
+    """
+
+    exit_code = EXIT_GENERAL_ERROR
+    failure_code = "ssh_agent_no_identity"

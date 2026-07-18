@@ -657,8 +657,8 @@ def pr_review_recover_command(
 ) -> None:
     """Create an immutable PR-review recovery successor without re-posting @codex review.
 
-    Supports external adjudication schema failures and local reviewing checkpoints
-    where Cursor/staging completed but the Codex result artifact is missing.
+    Supports artifact-driven checkpoints: external_adjudication, reviewing,
+    external_feedback_cursor, and publication_pre_commit.
     """
 
     def run() -> None:

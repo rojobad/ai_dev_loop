@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from ai_dev_loop.errors import AiDevLoopError, ValidationError
+from ai_dev_loop.errors import AiDevLoopError, SshAgentNoIdentityError, ValidationError
 from ai_dev_loop.process import ProcessResult, require_success, run_process
 from ai_dev_loop.runners.git import discover_repository
 from ai_dev_loop.state import FULL_SHA_PATTERN, sha256_text
@@ -101,7 +101,12 @@ def expected_remote_head(repo_root: Path, remote: str, remote_branch: str) -> st
 
 
 def verify_ssh_push_ready(repo_root: Path, remote: str = "origin") -> None:
-    """Fail closed when the remote is not SSH or ssh-agent has no keys."""
+    """Fail closed when the remote is not SSH or ssh-agent has no keys.
+
+    Remote URL problems remain ``ValidationError``. Missing ssh-agent identity
+    raises the typed ``SshAgentNoIdentityError`` so publication can interrupt
+    without classifying every validation failure as recoverable.
+    """
 
     url = require_success(
         _git(["remote", "get-url", remote], cwd=repo_root),
@@ -116,7 +121,8 @@ def verify_ssh_push_ready(repo_root: Path, remote: str = "origin") -> None:
         raise ValidationError(f"unsupported remote URL scheme for publication: {url[:32]}")
     agent = run_process(["ssh-add", "-l"], cwd=str(repo_root), timeout=10.0)
     if agent.returncode != 0:
-        raise ValidationError(
+        # Do not embed ssh-add stdout/stderr; the typed outcome is enough.
+        raise SshAgentNoIdentityError(
             "ssh-agent has no usable keys; preload the SSH key before publication"
         )
 

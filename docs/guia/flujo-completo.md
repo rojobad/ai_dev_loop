@@ -290,6 +290,21 @@ exacto en una iteración nueva monotona; no re-adjudica ni republica
 `@codex review`. El próximo trigger solo llega tras una publicación normal de
 corrección aceptada.
 
+Si la revisión local ya aceptó el patch staged y la publicación quedó en
+`publication_phase: pre_commit` sin commit (por ejemplo `ssh-agent` sin
+identidad), el checkpoint es `publication_pre_commit`. Tras aceptación de esta
+versión, carga la clave SSH en el socket persistente y:
+
+```bash
+ai_dev_loop pr-review recover <failed-run-id> --dry-run
+ai_dev_loop pr-review recover <failed-run-id> --output json
+ai_dev_loop pr-review resume <successor-run-id> --controller-session-id <sesion-A>
+```
+
+Ese `resume` publica solamente; no abre agentes, no re-adjudica, no responde ni
+resuelve hilos, ni republica `@codex review` antes del flujo normal posterior a
+una publicación exitosa.
+
 El sucesor reutiliza PR, SHA, trigger, hilos elegibles, sesión B, chat Cursor y
 controlador A. **No** se publica otro `@codex review`. Si el conjunto de hilos
 elegibles cambió, el worker se detiene en atención de usuario sin writes GitHub.

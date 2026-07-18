@@ -26,7 +26,12 @@ from ai_dev_loop.commands.start_preflight import (
     mark_interrupted,
 )
 from ai_dev_loop.config import ProjectConfig, resolve_effective_config
-from ai_dev_loop.errors import AdjudicationSchemaIncompatibleError, AiDevLoopError, ValidationError
+from ai_dev_loop.errors import (
+    AdjudicationSchemaIncompatibleError,
+    AiDevLoopError,
+    SshAgentNoIdentityError,
+    ValidationError,
+)
 from ai_dev_loop.event_log import append_orchestrator_event
 from ai_dev_loop.iterations import (
     begin_external_local_review_budget,
@@ -1177,6 +1182,13 @@ def _classify_worker_outcome(
     text = str(exc).lower()
     if isinstance(exc, AdjudicationSchemaIncompatibleError):
         return "interrupted", "adjudication_schema_incompatible"
+    if isinstance(exc, SshAgentNoIdentityError):
+        # Only the typed SSH-agent failure may interrupt during publication.
+        # Generic ValidationError remains terminal even when publication_phase
+        # is set.
+        if _publication_in_progress(gpr):
+            return "interrupted", SshAgentNoIdentityError.failure_code
+        return "failed", SshAgentNoIdentityError.failure_code
     if isinstance(exc, ValidationError):
         return "failed", "validation_error"
     if "rate limit" in text:

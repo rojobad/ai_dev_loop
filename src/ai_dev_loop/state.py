@@ -283,6 +283,7 @@ RECOVERY_REASON_CODES = frozenset(
         "cursor_usage_limit",
         "github_adjudication_schema_incompatible",
         "external_feedback_cursor_not_started",
+        "publication_pre_commit_interrupted",
     }
 )
 RECOVERY_CHECKPOINTS = frozenset(
@@ -293,6 +294,7 @@ RECOVERY_CHECKPOINTS = frozenset(
         "cursor",
         "external_adjudication",
         "external_feedback_cursor",
+        "publication_pre_commit",
     }
 )
 
@@ -426,8 +428,8 @@ class RecoveryState(BaseModel):
                 )
             if self.expected_eligible_thread_ids is not None:
                 raise ValueError(
-                    "expected_eligible_thread_ids is only valid for external_adjudication "
-                    "and external_feedback_cursor recovery checkpoints"
+                    "expected_eligible_thread_ids is only valid for external_adjudication, "
+                    "external_feedback_cursor, and publication_pre_commit recovery checkpoints"
                 )
             if self.cursor_output_fingerprint_sha256 is not None:
                 raise ValueError(
@@ -565,10 +567,60 @@ class RecoveryState(BaseModel):
                 )
             return self
 
+        if self.recovered_checkpoint == "publication_pre_commit":
+            if self.reason_code != "publication_pre_commit_interrupted":
+                raise ValueError(
+                    "publication_pre_commit reason_code must be publication_pre_commit_interrupted"
+                )
+            if self.source_staged_patch_sha256 is None:
+                raise ValueError(
+                    "source_staged_patch_sha256 is required for publication_pre_commit checkpoints"
+                )
+            if not self.expected_eligible_thread_ids:
+                raise ValueError(
+                    "expected_eligible_thread_ids is required for "
+                    "publication_pre_commit checkpoints"
+                )
+            usage_limit_only = (
+                self.source_cursor_model,
+                self.cursor_model_fallback,
+                self.usage_limit_fingerprint_sha256,
+                self.usage_limit_fingerprint_path,
+                self.continuation_envelope_path,
+                self.continuation_envelope_sha256,
+            )
+            if any(value is not None for value in usage_limit_only):
+                raise ValueError(
+                    "cursor usage-limit recovery fields are only valid for "
+                    "cursor recovery checkpoints"
+                )
+            if self.source_prompt_path is not None or self.source_prompt_sha256 is not None:
+                raise ValueError(
+                    "source_prompt_path and source_prompt_sha256 are only valid for "
+                    "cursor and external_feedback_cursor recovery checkpoints"
+                )
+            if self.cursor_output_fingerprint_sha256 is not None:
+                raise ValueError(
+                    "cursor_output_fingerprint_sha256 is only valid for staging recovery checkpoints"
+                )
+            if self.previous_staged_patch_sha256 is not None:
+                raise ValueError(
+                    "previous_staged_patch_sha256 is only valid for staging recovery checkpoints"
+                )
+            if self.legacy_cursor_output_adopted:
+                raise ValueError(
+                    "legacy_cursor_output_adopted is only valid for staging recovery checkpoints"
+                )
+            if self.legacy_cursor_usage_limit_adopted:
+                raise ValueError(
+                    "legacy_cursor_usage_limit_adopted is only valid for cursor recovery checkpoints"
+                )
+            return self
+
         if self.expected_eligible_thread_ids is not None:
             raise ValueError(
-                "expected_eligible_thread_ids is only valid for external_adjudication "
-                "and external_feedback_cursor recovery checkpoints"
+                "expected_eligible_thread_ids is only valid for external_adjudication, "
+                "external_feedback_cursor, and publication_pre_commit recovery checkpoints"
             )
 
         if any(value is not None for value in cursor_only):

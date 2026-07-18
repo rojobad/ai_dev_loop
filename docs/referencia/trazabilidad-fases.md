@@ -315,6 +315,23 @@ Documentado en:
 - [Troubleshooting](../operacion/troubleshooting.md)
 - [Estado y artefactos](../operacion/estado-artefactos.md)
 
+## Fase 15.13
+
+Interrupción tipada cuando `ssh-agent` no tiene identidad utilizable durante
+publicación (`SshAgentNoIdentityError` en `pre_commit`) y `pr-review recover`
+para el checkpoint `publication_pre_commit` en runs históricos `failed` con
+evidencia durable de fase/patch/SHA/PR/hilos y revisión local sin hallazgos.
+El `resume` del sucesor publica solamente; no abre agentes ni repite
+adjudicación/replies/resolves/`@codex review`. Los `ValidationError` genéricos
+siguen siendo terminales.
+
+Documentado en:
+
+- [Referencia CLI](cli.md)
+- [Flujo completo](../guia/flujo-completo.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+- [Estado y artefactos](../operacion/estado-artefactos.md)
+
 ## Riesgos residuales documentados
 
 - Hook trust sigue siendo `unknown` desde CLI.

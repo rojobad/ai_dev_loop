@@ -155,7 +155,16 @@ artefacto-dirigidos:
   fresca de Cursor nunca arranco (p. ej. staging vacio sobre artefactos
   historicos). El sucesor reutiliza la adjudicacion persistida y, tras
   `pr-review resume`, abre Cursor con el prompt externo exacto antes de
-  staging; no re-adjudica ni republica `@codex review`.
+  staging; no re-adjudica ni republica `@codex review`;
+- `publication_pre_commit` (`publication_pre_commit_interrupted`): la revision
+  local Codex acepto el patch staged y la publicacion quedo en
+  `publication_phase: pre_commit` sin commit. El sucesor queda `interrupted`
+  para `pr-review resume`, que publica solamente (no abre Cursor/Codex, no
+  re-adjudica, no responde/resuelve hilos ni republica `@codex review` antes
+  del flujo normal post-publicacion). La elegibilidad usa evidencia durable
+  (fase, patch/SHA/PR/hilos, resultado local sin hallazgos, texto de
+  publicacion); nunca `last_error` ni logs. Si falta la identidad del
+  `ssh-agent`, carga la clave manualmente antes del `resume`.
 
 El origen `failed` permanece terminal; el sucesor reutiliza el mismo PR, SHA,
 trigger, hilos elegibles, sesion Codex B, chat Cursor y controlador A. **No**
