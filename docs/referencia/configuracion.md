@@ -12,7 +12,9 @@ Version soportada:
 version: 1
 ```
 
-El controller remoto / sesion reviewer aislada (A/B) no agrega campos a `ai_dev_loop.yaml`. El flujo A/B usa flags de CLI (`--controller-session-id`, `launch`, `controller status`) y skills globales instalados; el YAML del repo objetivo no cambia.
+El controller remoto / sesion reviewer aislada (A/B) no agrega campos a `ai_dev_loop.yaml`. El flujo A/B usa flags de CLI (`--controller-session-id`, `launch`, `controller status`) y skills globales instalados.
+
+La seccion opcional `github` habilita el ciclo autonomo post-PR. Ausente o `enabled: false` deja el workflow local sin cambios. No se permiten tokens ni credenciales en YAML; la autenticacion GitHub usa una sesion `gh` ya autenticada.
 
 ## Schema
 
@@ -175,6 +177,82 @@ Si Review 3 aun tiene findings, el estado final es `max_iterations_reached`.
 | --- | --- | --- |
 | `directory` | `docs/plans` | Directorio esperado para plan y prompt. |
 | `filename_template` | `prompt_{plan_stem}.txt` | Template de prompt. Debe incluir `{plan_stem}`. |
+
+## `github` (opcional)
+
+Deshabilitado por defecto. Ejemplo opt-in:
+
+```yaml
+github:
+  enabled: true
+  command: gh
+  reviewer_logins:
+    - chatgpt-codex-connector
+  review_trigger_body: "@codex review"
+  poll_interval_seconds: 60
+  poll_timeout_hours: 24
+  max_external_cycles: 8
+  user_mention: rojobad
+  continue_command: "@rojobad /ai-dev-loop continue"
+  external_review_skill: review-github-pr-feedback
+  max_local_review_iterations: 3
+  pr_base: master
+  acknowledgement:
+    enabled: true
+    reaction: eyes
+    timeout_seconds: 300
+    on_timeout: diagnostic_only
+  no_findings_completion:
+    enabled: true
+    accepted_comment_prefixes:
+      - "Codex Review: Didn't find any major issues."
+    reviewed_commit_prefix_length: 12
+```
+
+| Campo | Default | Descripcion |
+| --- | --- | --- |
+| `enabled` | `false` | Opt-in del ciclo post-PR. |
+| `command` | `gh` | Ejecutable GitHub CLI. |
+| `reviewer_logins` | `[chatgpt-codex-connector]` | Logins de bot elegibles. |
+| `review_trigger_body` | `@codex review` | Cuerpo del comentario disparador. |
+| `poll_interval_seconds` | `60` | Intervalo de polling local. |
+| `poll_timeout_hours` | `24` | Timeout maximo de espera. |
+| `max_external_cycles` | `8` | Maximo de ciclos externos. |
+| `continue_command` | `@rojobad /ai-dev-loop continue` | Unica autorizacion para reanudar tras atencion del usuario. |
+| `external_review_skill` | `review-github-pr-feedback` | Skill Codex para adjudicacion externa. |
+| `max_local_review_iterations` | `3` | Presupuesto local de review tras feedback externo. |
+| `pr_base` | `master` | Base fija del PR. |
+| `acknowledgement.enabled` | `false` | Telemetria best-effort de la reaccion del bot sobre el trigger. |
+| `acknowledgement.reaction` | `eyes` | Emoji de acuse esperado (solo diagnostico). |
+| `acknowledgement.timeout_seconds` | `300` | Plazo diagnostico sin acuse; no reintenta el trigger. |
+| `acknowledgement.on_timeout` | `diagnostic_only` | Unico valor admitido; nunca completa ni aborta. |
+| `no_findings_completion.enabled` | `false` | Finalizacion verificable sin hallazgos via comentario general. |
+| `no_findings_completion.accepted_comment_prefixes` | `[]` | Prefijos exactos del comentario de “sin hallazgos”; obligatorio si esta habilitado. |
+| `no_findings_completion.reviewed_commit_prefix_length` | `12` | Longitud del SHA en la linea estructural `Reviewed commit:`. |
+
+Campos de credenciales (`token`, `pat`, `access_token`, etc.) estan prohibidos.
+
+La finalizacion sin hallazgos exige a la vez: autor en `reviewer_logins`, comentario
+posterior a `request_created_at`, prefijo configurado, y linea `Reviewed commit:`
+ligada al `bound_head_sha`. La ausencia de hilos, la presencia de `eyes` o la
+retirada de esa reaccion **nunca** completan el ciclo. Mantén apagada la opción
+remota de **Automatic reviews** de Codex mientras ai_dev_loop publica
+`@codex review`; habilitar ambas vías puede duplicar revisiones.
+
+Con `github.enabled: true` hay dos flujos CLI:
+
+- `pr-review create <source-run-id>` para un run local completado (origen
+  `source_run`);
+- `pr-review prepare` + `pr-review start` para adoptar un PR ya abierto (origen
+  `independent_pr`);
+- `pr-review recover <failed-run-id>` para un fallo de adjudicacion por schema
+  incompatible antes de side effects, o para un checkpoint `reviewing` donde
+  Cursor/staging terminaron pero falta el resultado local Codex (sucesor
+  inmutable; no republica `@codex review` ni reejecuta Cursor).
+
+Prepare no escribe en GitHub; start publica el marcador de review.
+`set-cursor-model` solo aplica al ciclo independiente antes de crear el chat
+Cursor.
 
 ## Validacion
 

@@ -13,12 +13,13 @@ from pydantic import ValidationError as PydanticValidationError
 from ai_dev_loop.abort_control import is_abort_requested
 from ai_dev_loop.errors import AiDevLoopError, ValidationError
 from ai_dev_loop.iterations import find_iteration, upsert_iteration
-from ai_dev_loop.paths import schema_path, set_sensitive_file_mode
+from ai_dev_loop.paths import ensure_dir, schema_path, set_sensitive_file_mode
 from ai_dev_loop.process import (
     ActiveProcessRegistration,
     StreamingProcessResult,
     run_process_streaming,
 )
+from ai_dev_loop.response_schema import validate_codex_response_schema
 from ai_dev_loop.review_result import CodexReviewResult, completion_status_for_review
 from ai_dev_loop.state import CodexState, RunState, atomic_write_json, atomic_write_text
 
@@ -43,6 +44,75 @@ PHASE_4_RESIDUAL_RISK_MESSAGE = PHASE_5_RESIDUAL_RISK_MESSAGE
 PHASE_4_FINDINGS_MESSAGE = (
     "Codex review found actionable findings. A Cursor correction prompt is stored."
 )
+
+FAILURE_CODE_RESULT_ARTIFACT_MISSING = "codex_review_result_artifact_missing"
+
+_OUTPUT_ARTIFACT_MISSING_MARKERS = (
+    "no such file",
+    "enoent",
+    "os error 2",
+    "parent missing",
+    "output-last-message parent missing",
+)
+
+
+def stderr_indicates_codex_output_artifact_failure(
+    stderr: str,
+    *,
+    result_path: Path,
+) -> bool:
+    """True when protected stderr ties a missing-file failure to the result path."""
+
+    text = stderr.lower()
+    if not text.strip():
+        return False
+    path_tokens = {
+        str(result_path).lower(),
+        str(result_path.parent).lower(),
+        result_path.name.lower(),
+        "output-last-message",
+        "codex/reviews",
+    }
+    path_ref = any(token in text for token in path_tokens if token)
+    missing = any(marker in text for marker in _OUTPUT_ARTIFACT_MISSING_MARKERS)
+    return path_ref and missing
+
+
+def classify_codex_review_output_artifact_failure(
+    run_directory: Path,
+    iteration: str,
+) -> bool:
+    """Durable classification for the known Codex --output-last-message parent failure.
+
+    Primary evidence is ``failure_code`` in review metadata. Historical compatibility
+    uses protected stderr markers bound to the result path. Timeouts and generic
+    nonzero exits without that evidence are rejected.
+    """
+
+    result_path = run_directory / f"codex/reviews/{iteration}.json"
+    if result_path.is_file():
+        return False
+    metadata_path = run_directory / f"codex/reviews/{iteration}.metadata.json"
+    metadata: dict[str, Any] = {}
+    if metadata_path.is_file():
+        try:
+            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            payload = None
+        if isinstance(payload, dict):
+            metadata = payload
+    if metadata.get("failure_code") == FAILURE_CODE_RESULT_ARTIFACT_MISSING:
+        return True
+    if metadata.get("timed_out") is True:
+        return False
+    stderr_path = run_directory / f"codex/events/{iteration}.stderr.txt"
+    if not stderr_path.is_file():
+        return False
+    try:
+        stderr = stderr_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+    return stderr_indicates_codex_output_artifact_failure(stderr, result_path=result_path)
 
 
 @dataclass(frozen=True)
@@ -222,6 +292,20 @@ def _load_review_result(result_file: Path) -> CodexReviewResult:
         raise ValidationError(f"Codex review result validation failed: {exc}") from exc
 
 
+def ensure_codex_review_artifact_dirs(*paths: Path) -> None:
+    """Create parent directories for Codex review artifacts before launching Codex.
+
+    Idempotent: existing partial artifacts are preserved. Parents receive user-only
+    directory permissions where the filesystem supports chmod.
+    """
+
+    parents: set[Path] = set()
+    for path in paths:
+        parents.add(path.parent)
+    for parent in sorted(parents, key=lambda item: str(item)):
+        ensure_dir(parent)
+
+
 def _update_iteration_review(
     state: RunState,
     *,
@@ -269,6 +353,7 @@ def run_codex_review(
     schema_file = schema_path("codex-review-result-v1.json")
     if not schema_file.is_file():
         raise AiDevLoopError(f"review schema missing: {schema_file}")
+    validate_codex_response_schema(schema_file, schema_name="codex-review-result-v1.json")
 
     events_rel = f"codex/events/{iteration}.jsonl"
     stderr_rel = f"codex/events/{iteration}.stderr.txt"
@@ -281,6 +366,14 @@ def run_codex_review(
     result_path = run_directory / result_rel
     report_path = run_directory / report_rel
     metadata_path = run_directory / metadata_rel
+    # Codex CLI writes --output-last-message itself; parents must exist before launch.
+    ensure_codex_review_artifact_dirs(
+        events_path,
+        stderr_path,
+        result_path,
+        report_path,
+        metadata_path,
+    )
 
     cursor_final_response = _read_cursor_final_response(run_directory, iteration)
     prompt = build_review_wrapper_prompt(
@@ -315,7 +408,21 @@ def run_codex_review(
         ),
     )
 
-    metadata_payload = {
+    failure_code: str | None = None
+    if (
+        not process.timed_out
+        and process.returncode != 0
+        and not result_path.is_file()
+        and stderr_path.is_file()
+    ):
+        try:
+            stderr_text = stderr_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            stderr_text = ""
+        if stderr_indicates_codex_output_artifact_failure(stderr_text, result_path=result_path):
+            failure_code = FAILURE_CODE_RESULT_ARTIFACT_MISSING
+
+    metadata_payload: dict[str, Any] = {
         "args": redact_codex_args(args),
         "exit_code": process.returncode,
         "elapsed_seconds": process.elapsed_seconds,
@@ -329,6 +436,8 @@ def run_codex_review(
         "review_model_source": state.codex.review_model_source,
         "review_reasoning_source": state.codex.review_reasoning_source,
     }
+    if failure_code is not None:
+        metadata_payload["failure_code"] = failure_code
     atomic_write_json(metadata_path, metadata_payload, sensitive=True)
     set_sensitive_file_mode(metadata_path)
 

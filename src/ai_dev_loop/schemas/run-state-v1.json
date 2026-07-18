@@ -45,7 +45,11 @@
         "max_iterations_reached",
         "interrupted",
         "failed",
-        "aborted"
+        "aborted",
+        "awaiting_bot_review",
+        "evaluating_bot_feedback",
+        "waiting_for_user_attention",
+        "publishing_external_fix"
       ]
     },
     "created_at": { "type": "string", "format": "date-time" },
@@ -208,6 +212,217 @@
         }
       }
     },
+    "github_pr_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "lifecycle",
+        "cycle_number",
+        "max_external_cycles",
+        "head_branch",
+        "base_branch",
+        "bound_head_sha"
+      ],
+      "properties": {
+        "schema_version": { "type": "integer", "const": 1 },
+        "origin": {
+          "type": "string",
+          "enum": ["source_run", "independent_pr"],
+          "default": "source_run"
+        },
+        "source_run_id": {
+          "anyOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "null" }
+          ]
+        },
+        "lifecycle": {
+          "type": "string",
+          "enum": [
+            "prepared_independent",
+            "publishing_initial",
+            "awaiting_bot_review",
+            "evaluating_bot_feedback",
+            "waiting_for_user_attention",
+            "fixing_external_feedback",
+            "publishing_external_fix",
+            "max_external_cycles_reached",
+            "completed",
+            "failed",
+            "aborted",
+            "interrupted"
+          ]
+        },
+        "cycle_number": { "type": "integer", "minimum": 1 },
+        "max_external_cycles": { "type": "integer", "minimum": 1 },
+        "pr_number": {
+          "anyOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "null" }
+          ]
+        },
+        "pr_url": { "type": ["string", "null"] },
+        "repository_name_with_owner": { "type": ["string", "null"] },
+        "head_branch": { "type": "string", "minLength": 1 },
+        "base_branch": { "type": "string", "minLength": 1 },
+        "bound_head_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "request_comment_id": { "type": ["string", "null"] },
+        "request_marker": { "type": ["string", "null"] },
+        "request_created_at": { "type": ["string", "null"] },
+        "eligible_thread_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "processed_thread_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "replied_thread_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "resolved_thread_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "publication_commit_sha": {
+          "anyOf": [
+            { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+            { "type": "null" }
+          ]
+        },
+        "staged_patch_sha256": {
+          "anyOf": [
+            { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            { "type": "null" }
+          ]
+        },
+        "last_external_result_path": { "type": ["string", "null"] },
+        "last_snapshot_path": { "type": ["string", "null"] },
+        "continue_comment_id": { "type": ["string", "null"] },
+        "worker_outcome": { "type": ["string", "null"] },
+        "expected_eligible_thread_ids": {
+          "anyOf": [
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            },
+            { "type": "null" }
+          ]
+        },
+        "external_fix_prompt_path": { "type": ["string", "null"] },
+        "publication_phase": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": ["pre_commit", "committed", "pushed", "pr_bound"]
+            },
+            { "type": "null" }
+          ]
+        },
+        "local_commit_sha": {
+          "anyOf": [
+            { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+            { "type": "null" }
+          ]
+        },
+        "expected_remote_sha_before_push": {
+          "anyOf": [
+            { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+            { "type": "null" }
+          ]
+        },
+        "publication_remote": { "type": ["string", "null"] },
+        "publication_remote_branch": { "type": ["string", "null"] },
+        "publication_text_path": { "type": ["string", "null"] },
+        "bot_acknowledgement": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["trigger_comment_id", "reaction"],
+              "properties": {
+                "trigger_comment_id": { "type": "string", "minLength": 1 },
+                "reaction": { "type": "string", "minLength": 1 },
+                "first_observed_at": { "type": ["string", "null"] },
+                "acknowledgement_cleared_at": { "type": ["string", "null"] },
+                "timeout_diagnostic_at": { "type": ["string", "null"] }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "no_findings_completion": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "comment_id",
+                "created_at",
+                "rule_id",
+                "body_sha256",
+                "reviewed_commit_prefix"
+              ],
+              "properties": {
+                "comment_id": { "type": "string", "minLength": 1 },
+                "created_at": { "type": "string", "minLength": 1 },
+                "rule_id": { "type": "string", "minLength": 1 },
+                "body_sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "reviewed_commit_prefix": {
+                  "type": "string",
+                  "minLength": 7,
+                  "maxLength": 40,
+                  "pattern": "^[0-9a-f]+$"
+                }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "origin": { "const": "independent_pr" } },
+            "required": ["origin"]
+          },
+          "then": {
+            "required": ["pr_number", "repository_name_with_owner"],
+            "properties": {
+              "source_run_id": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "anyOf": [
+              { "properties": { "origin": { "const": "source_run" } } },
+              { "not": { "required": ["origin"] } }
+            ]
+          },
+          "then": {
+            "required": ["source_run_id"],
+            "properties": {
+              "source_run_id": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      ]
+    },
     "recovery": {
       "type": "object",
       "additionalProperties": false,
@@ -227,7 +442,13 @@
         "source_iteration": { "type": "integer", "minimum": 1 },
         "recovered_checkpoint": {
           "type": "string",
-          "enum": ["staging", "reviewing", "process_review", "cursor"]
+          "enum": [
+            "staging",
+            "reviewing",
+            "process_review",
+            "cursor",
+            "external_adjudication"
+          ]
         },
         "source_staged_patch_sha256": {
           "type": ["string", "null"],
@@ -243,10 +464,12 @@
           "enum": [
             "codex_review_failed",
             "codex_review_result_invalid",
+            "codex_review_result_artifact_missing",
             "codex_review_processing_failed",
             "correction_staging_failed",
             "initial_staging_failed",
-            "cursor_usage_limit"
+            "cursor_usage_limit",
+            "github_adjudication_schema_incompatible"
           ]
         },
         "cursor_output_fingerprint_sha256": {
@@ -285,6 +508,17 @@
         "continuation_envelope_sha256": {
           "type": ["string", "null"],
           "pattern": "^[a-f0-9]{64}$"
+        },
+        "expected_eligible_thread_ids": {
+          "anyOf": [
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            },
+            { "type": "null" }
+          ]
         }
       },
       "allOf": [
@@ -401,7 +635,43 @@
               "continuation_envelope_sha256": {
                 "type": "string",
                 "pattern": "^[a-f0-9]{64}$"
-              }
+              },
+              "expected_eligible_thread_ids": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "recovered_checkpoint": { "const": "external_adjudication" }
+            },
+            "required": ["recovered_checkpoint"]
+          },
+          "then": {
+            "required": ["expected_eligible_thread_ids"],
+            "properties": {
+              "reason_code": {
+                "const": "github_adjudication_schema_incompatible"
+              },
+              "source_staged_patch_sha256": { "type": "null" },
+              "expected_eligible_thread_ids": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 },
+                "uniqueItems": true
+              },
+              "cursor_output_fingerprint_sha256": { "type": "null" },
+              "previous_staged_patch_sha256": { "type": "null" },
+              "legacy_cursor_output_adopted": { "enum": [null, false] },
+              "legacy_cursor_usage_limit_adopted": { "enum": [null, false] },
+              "source_cursor_model": { "type": "null" },
+              "cursor_model_fallback": { "type": "null" },
+              "source_prompt_path": { "type": "null" },
+              "source_prompt_sha256": { "type": "null" },
+              "usage_limit_fingerprint_sha256": { "type": "null" },
+              "usage_limit_fingerprint_path": { "type": "null" },
+              "continuation_envelope_path": { "type": "null" },
+              "continuation_envelope_sha256": { "type": "null" }
             }
           }
         }

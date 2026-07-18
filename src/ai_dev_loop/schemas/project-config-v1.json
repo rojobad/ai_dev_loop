@@ -100,6 +100,55 @@
         "directory": { "type": "string", "minLength": 1 },
         "filename_template": { "type": "string", "minLength": 1 }
       }
+    },
+    "github": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "command": { "type": "string", "minLength": 1 },
+        "reviewer_logins": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "review_trigger_body": { "type": "string", "minLength": 1 },
+        "poll_interval_seconds": { "type": "integer", "minimum": 1 },
+        "poll_timeout_hours": { "type": "integer", "minimum": 1 },
+        "max_external_cycles": { "type": "integer", "minimum": 1 },
+        "user_mention": { "type": "string", "minLength": 1 },
+        "continue_command": { "type": "string", "minLength": 1 },
+        "external_review_skill": { "type": "string", "minLength": 1 },
+        "max_local_review_iterations": { "type": "integer", "minimum": 1 },
+        "pr_base": { "type": "string", "minLength": 1 },
+        "acknowledgement": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "reaction": { "type": "string", "minLength": 1 },
+            "timeout_seconds": { "type": "integer", "minimum": 1 },
+            "on_timeout": { "type": "string", "const": "diagnostic_only" }
+          }
+        },
+        "no_findings_completion": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "accepted_comment_prefixes": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "reviewed_commit_prefix_length": {
+              "type": "integer",
+              "minimum": 7,
+              "maximum": 40
+            }
+          }
+        }
+      }
     }
   }
 }

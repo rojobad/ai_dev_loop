@@ -60,6 +60,11 @@ def render_status(run_id: str, *, output: str = "text") -> str:
                 "cursor_model_fallback": state.recovery.cursor_model_fallback,
                 "continuation_envelope_path": state.recovery.continuation_envelope_path,
                 "usage_limit_fingerprint_sha256": state.recovery.usage_limit_fingerprint_sha256,
+                "expected_thread_count": (
+                    len(state.recovery.expected_eligible_thread_ids)
+                    if state.recovery.expected_eligible_thread_ids is not None
+                    else None
+                ),
             },
         }
         return json.dumps(payload, indent=2) + "\n"
@@ -151,9 +156,17 @@ def _next_action(state: RunState, run_path: Path) -> str:
             "before committing."
         )
     if status == "max_iterations_reached":
+        resume_command = f"ai_dev_loop resume {state.run_id}"
+        if state.controller is not None:
+            resume_command = (
+                f"ai_dev_loop launch {state.run_id} "
+                "--controller-session-id <exact-controller-session-id>"
+            )
         return (
-            "Maximum review iterations reached. Inspect prompts/fixes/ and codex/reviews/, "
-            "apply fixes manually, then commit when ready."
+            "Maximum review iterations reached. To continue the same Cursor chat and reviewer "
+            "session, explicitly extend the budget with "
+            f"ai_dev_loop extend {state.run_id} --additional-review-iterations <positive-int>, "
+            f"then {resume_command}."
         )
     if status in {"running_cursor", "validating"}:
         return "Wait for start/resume to finish or inspect logs if the run appears stuck."

@@ -23,7 +23,7 @@ git rm --cached
 
 Cursor no puede commit, amend, reset, checkout/switch, stash, clean, merge, rebase, tag ni push. Durante el turno inicial y las correcciones, Cursor puede mutar el index (`git add`, `git restore --staged`, `git rm --cached`). El indice vacio/pre-staged se exige solo en el boundary confiable pre-Cursor (`prepare`/`start`), no despues de que Cursor termine. Tras Cursor, el orquestador siempre normaliza con `git add -A` (`stage_mode: all`) y Codex revisa el snapshot staged acumulativo completo. Solo unstagear un tracked no-ignored no lo excluye del snapshot final; para excluir un generado hay que actualizar `.gitignore` y quitarlo del index.
 
-No permitido por el orquestador:
+No permitido por el workflow local ordinario:
 
 ```bash
 git commit
@@ -34,7 +34,31 @@ git clean
 git stash
 ```
 
-El usuario decide manualmente si commitea despues de revisar el resultado final.
+Tras `pr-review create` (opt-in GitHub, origen `source_run`), el worker puede hacer `git commit` solo del patch staged aceptado y `git push` no-force de la rama preparada, despues de verificar el head remoto esperado. Tras `pr-review prepare` (origen `independent_pr`) no hay escritura GitHub hasta `pr-review start`, que publica el marcador de review y arranca el worker. Siguen prohibidos merge, force push, reset, clean, stash y unstage. Las credenciales GitHub viven solo en la sesion `gh` autenticada; el push Git usa SSH + `ssh-agent`.
+
+### Opcional: conservar la llave SSH durante la sesion WSL
+
+Si la llave SSH tiene passphrase, se puede usar `keychain` para cargarla una vez
+por sesion WSL, de modo que las terminales posteriores y los workers detached
+hereden el agente:
+
+```bash
+sudo apt update
+sudo apt install -y keychain
+```
+
+Anade manualmente esta linea a `~/.bashrc`:
+
+```bash
+eval "$(keychain --eval --quiet id_ed25519)"
+```
+
+La primera terminal abierta despues de reiniciar WSL/Windows pedira la
+passphrase. No la pedira de nuevo mientras la misma sesion WSL siga activa; al
+ejecutar `wsl --shutdown` o reiniciar, la llave deja de estar en memoria. No se
+recomienda quitar la passphrase de la llave para evitar ese aviso.
+
+Sin el ciclo GitHub, el usuario decide manualmente si commitea despues de revisar el resultado final.
 
 `recover` es solo lectura sobre el repositorio: no hace `git add`, no altera el index y no reescribe el working tree. El staging del sucesor ocurre solo con `resume`.
 

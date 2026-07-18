@@ -198,6 +198,54 @@ Documentado en:
 - [CLI](cli.md)
 - [Troubleshooting](../operacion/troubleshooting.md)
 
+## Fase 15
+
+Ciclo opt-in post-PR con `gh` autenticado (sin tokens en YAML/state): `github doctor`, `pr-review create|status|continue|resume|abort`, commit/push no-force del patch staged aceptado, PR a `master`, polling de review del bot configurado, adjudicacion con la sesion Codex exacta, fix con el Cursor chat exacto, y parada con `@rojobad` ante hallazgos no aplicables/inciertos.
+
+## Fase 15.5
+
+Adopcion independiente de un PR ya abierto (`pr-review prepare` / `start` /
+`set-cursor-model`) sin debilitar el path `create` de source-run. Prepare no
+escribe en GitHub; start es la puerta explicita de escritura. El Cursor chat se
+crea solo tras feedback externo all-actionable; el modelo Cursor puede cambiarse
+antes de ese chat.
+
+Documentado en:
+
+- [Referencia CLI](cli.md)
+- [Referencia de configuracion](configuracion.md)
+- [Seguridad y privacidad](../operacion/seguridad-privacidad.md)
+
+## Fase 15.6
+
+Acuse best-effort (`eyes`) y finalizacion verificable sin hallazgos para el
+worker de PR review (ciclos Phase 15 y 15.5). La finalizacion exige comentario
+general del reviewer permitido, posterior al trigger, con prefijo configurado y
+`Reviewed commit:` ligado al `bound_head_sha`; nunca completa por ausencia de
+hilos ni por presencia/retirada de `eyes`. Automatic reviews de Codex permanece
+fuera de este flujo.
+
+Documentado en:
+
+- [Referencia de configuracion](configuracion.md)
+- [Flujo completo](../guia/flujo-completo.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+
+## Fase 15.7
+
+Compatibilidad del schema de adjudicacion GitHub con el response-format de Codex
+(sin `uniqueItems` en el transporte; unicidad en Pydantic) y
+`pr-review recover` para sucesores inmutables tras rechazo
+`invalid_json_schema` antes de side effects. Reutiliza PR/SHA/trigger/hilos/
+sesion B/controlador A y nunca republica `@codex review`.
+
+Documentado en:
+
+- [Referencia CLI](cli.md)
+- [Flujo completo](../guia/flujo-completo.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+- [Estado y artefactos](../operacion/estado-artefactos.md)
+
 ## Riesgos residuales documentados
 
 - Hook trust sigue siendo `unknown` desde CLI.

@@ -138,6 +138,19 @@ exists:
 
 Use lowercase slugs with hyphens for plan names and the same slug after `prompt_` for prompt names.
 
+## ai_dev_loop Handoff
+
+After the user explicitly approves both artifacts, tell them to invoke the
+global `$ai-dev-loop-handoff` skill with the plan and prompt paths. Do not run
+Cursor, `ai_dev_loop prepare`, `start`, `launch`, or `resume` from this
+planning skill.
+
+The target configuration is `ai_dev_loop.yaml`; keep the plan and prompt under
+the configured archive path. Treat changes to `ai_dev_loop.yaml`, this
+planning skill, or the staged-review skill as control-plane work: call them
+out in the plan and require a manual acceptance review rather than presenting
+an automated loop result as sufficient acceptance.
+
 ## Final Response
 
 Report the plan path and prompt path. Include the prompt text in the final response when the user asked for something they can pass to Cursor.

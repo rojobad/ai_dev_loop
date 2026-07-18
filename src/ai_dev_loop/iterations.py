@@ -109,6 +109,14 @@ def cursor_prompt_path(state: RunState, iteration_number: int) -> str:
         and recovery.continuation_envelope_path
     ):
         return recovery.continuation_envelope_path
+    github = state.github_pr_review
+    if (
+        github is not None
+        and github.lifecycle == "fixing_external_feedback"
+        and iteration_number == 1
+        and github.external_fix_prompt_path
+    ):
+        return github.external_fix_prompt_path
     if iteration_number == 1:
         return state.prompt.snapshot_path
     return fix_prompt_path(iteration_number - 1)

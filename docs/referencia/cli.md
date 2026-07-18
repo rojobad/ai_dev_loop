@@ -78,7 +78,7 @@ ai_dev_loop launch <run-id> --controller-session-id TEXT [--repo-path PATH] \
   [--update-tools|--skip-tool-update] [--allow-incompatible-tools] [--output text|json]
 ```
 
-Lanza un run A/B preparado en un worker local detachado. Requiere el controller session ID exacto del prepare. Es idempotente si el worker ya esta vivo. No sustituye `start` para runs legacy sin controller.
+Lanza un run A/B preparado en un worker local detachado. Tambien reanuda el checkpoint `waiting_for_cursor_fix` despues de un `extend`. Requiere el controller session ID exacto del prepare. Es idempotente si el worker ya esta vivo. No sustituye `start` para runs legacy sin controller.
 
 Los flags de compatibilidad de herramientas son los mismos que en `start`/`resume`, pero el worker es siempre non-interactive: nunca pregunta. `--update-tools` autoriza updaters; `--skip-tool-update` (o la omision) no actualiza; `--allow-incompatible-tools` permite continuar ante incompatibilidad confirmada. `--update-tools` y `--skip-tool-update` son mutuamente excluyentes.
 
@@ -94,6 +94,80 @@ ai_dev_loop controller status \
 ```
 
 Lookup read-only por controller session ID y repositorio. Ante ambiguedad (0 o N matches) no elige por timestamp; usa `--run-id` para desambiguar. Incluye liveness del worker en la respuesta.
+
+## `github doctor`
+
+```bash
+ai_dev_loop github doctor [--repo-path PATH] [--output text|json]
+```
+
+Verifica disponibilidad de `gh`, autenticacion (cuenta redactada), schemas GitHub y, con `--repo-path`, si `github.enabled` y el remote SSH estan listos. No imprime tokens.
+
+## `pr-review`
+
+Ciclo opt-in post-PR (requiere `github.enabled: true`):
+
+```bash
+ai_dev_loop pr-review prepare \
+  --repo-path PATH --pr N --branch BRANCH \
+  --plan-path PLAN --prompt-source-path PROMPT \
+  --codex-session-id <reviewer> \
+  [--controller-session-id <controller-A>] \
+  [--cursor-model MODEL] [otros overrides seguros] \
+  [--output text|json]
+ai_dev_loop pr-review set-cursor-model <run-id> --cursor-model MODEL [--output text|json]
+ai_dev_loop pr-review start <run-id> [--controller-session-id <controller-A>] [--output text|json]
+ai_dev_loop pr-review create <source-run-id> [--output text|json]
+ai_dev_loop pr-review status <run-id> [--output text|json]
+ai_dev_loop pr-review continue <run-id>
+ai_dev_loop pr-review resume <run-id> [--controller-session-id <controller-A>]
+ai_dev_loop pr-review recover <failed-run-id> [--dry-run] [--output text|json]
+ai_dev_loop pr-review abort <run-id>
+```
+
+Hay dos origenes:
+
+- **`create` (source_run):** unica puerta explicita para publicar el patch staged
+  aceptado (commit + push no-force + PR a `master`) y pedir `@codex review`.
+  Reutiliza el Cursor chat y la sesion Codex exactos del source.
+- **`prepare` + `start` (independent_pr):** adopta un PR ya abierto. `prepare` es
+  no mutante (sin comentario GitHub, sin chat Cursor, sin turnos Codex). Requiere
+  PR/branch/plan/prompt/sesion Codex exactos y `HEAD` local igual al head del PR.
+  `start` es la puerta de escritura: vuelve a verificar el binding, publica un
+  marcador idempotente `@codex review` y lanza el worker. En A/B solo A puede
+  hacer `start` con `--controller-session-id`; en sesion unica el reviewer debe
+  quedar inactivo antes de `start`.
+
+`set-cursor-model` solo aplica a ciclos `independent_pr` en
+`prepared_independent` o `awaiting_bot_review` sin chat Cursor ni iteraciones; no
+cambia el runtime Codex del reviewer ni reescribe `effective-config.yaml`.
+
+`pr-review recover` crea un sucesor inmutable para dos checkpoints
+artefacto-dirigidos:
+
+- `external_adjudication`: fallo de adjudicacion por incompatibilidad del schema
+  de salida Codex (`invalid_json_schema` / `uniqueItems`) antes de side effects;
+- `reviewing` (`codex_review_result_artifact_missing`): Cursor y staging ya
+  completaron la correccion local, pero falta `codex/reviews/NN.json`. El
+  sucesor reintenta solo la revision Codex B; no reejecuta Cursor ni toca GitHub.
+
+El origen `failed` permanece terminal; el sucesor reutiliza el mismo PR, SHA,
+trigger, hilos elegibles, sesion Codex B, chat Cursor y controlador A. **No**
+republica `@codex review`. Usa `--dry-run` primero. El schema
+`github-pr-review-result-v1.json` ya no envia `uniqueItems` a Codex; la
+unicidad sigue validada en Pydantic.
+
+En ciclos A/B, `pr-review resume` exige `--controller-session-id` del
+controlador A original.
+
+Ante hallazgos no aplicables/inciertos responde inline con `@rojobad`, deja
+threads unresolved y espera `@rojobad /ai-dev-loop continue`. No hace merge ni
+force push. El ciclo independiente crea exactamente un Cursor chat nuevo solo
+cuando todos los hallazgos elegibles son accionables. Con
+`no_findings_completion` habilitado, un comentario general verificable del bot
+(prefijo + `Reviewed commit:` ligado al SHA) puede completar el ciclo sin
+Cursor; `status` puede mostrar acuse `eyes` o diagnostico de timeout, pero eso
+nunca finaliza ni republica el trigger.
 
 ## `start`
 
@@ -118,6 +192,16 @@ ai_dev_loop resume <run-id> [--update-tools|--skip-tool-update] [--allow-incompa
 Continua un run checkpointed o interrumpido si el siguiente paso seguro puede derivarse de estado y artefactos.
 
 Aplica la misma politica de compatibilidad y updates que `start`. Tras un update se vuelven a consultar version y catalogos (`agent models`, `codex debug models`). Un abort pendiente tiene prioridad.
+
+## `extend`
+
+```bash
+ai_dev_loop extend <run-id> --additional-review-iterations INTEGER [--output text|json]
+```
+
+Solo aplica a un run detenido en `max_iterations_reached`. Requiere un entero positivo, aumenta ese presupuesto sin crear un run nuevo y restaura el checkpoint `waiting_for_cursor_fix` con el fix prompt exacto de la ultima review. Conserva el chat de Cursor, la sesion revisora Codex, los cambios staged y todos los artefactos.
+
+Despues, en un run legacy usa `ai_dev_loop resume <run-id>`. En un run A/B deja B inactiva y usa `ai_dev_loop launch <run-id> --controller-session-id <exact-controller-session-id>`: el worker detecta el checkpoint y ejecuta `resume` de forma detachada.
 
 ## `recover`
 

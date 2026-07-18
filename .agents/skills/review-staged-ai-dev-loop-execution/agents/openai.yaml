@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review ai_dev_loop Execution"
+  short_description: "Review staged ai_dev_loop executions safely"
+  default_prompt: "Use $review-staged-ai-dev-loop-execution to review staged ai_dev_loop changes against the approved plan."

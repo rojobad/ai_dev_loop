@@ -44,6 +44,87 @@ which ai_dev_loop
 ai_dev_loop --version
 ```
 
+### Optional: cache the SSH key in WSL
+
+The autonomous GitHub PR cycle uses `gh` for the GitHub API and SSH for `git
+push`. If an SSH key has a passphrase, [keychain](https://www.funtoo.org/Keychain)
+can load it once per WSL session instead of asking again in every terminal:
+
+```bash
+sudo apt update
+sudo apt install -y keychain
+```
+
+Add this line to `~/.bashrc` manually:
+
+```bash
+eval "$(keychain --eval --quiet id_ed25519)"
+```
+
+The first WSL terminal after a WSL/Windows restart asks for the key passphrase;
+later terminals and detached workers launched from that environment reuse the
+same agent.
+
+### Workaround: a detached A worker cannot receive the passphrase
+
+`keychain` is not enough when Codex Desktop launches a detached A worker that
+does not inherit the terminal's `SSH_AUTH_SOCK`. Keep the passphrase on the key,
+but expose a persistent, user-only WSL agent at a fixed socket instead.
+
+Create `~/.config/systemd/user/ai-dev-loop-ssh-agent.service` with:
+
+```ini
+[Unit]
+Description=Persistent SSH agent for ai_dev_loop GitHub publication
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/rm -f %h/.ssh/ai-dev-loop-ssh-agent.sock
+ExecStart=/usr/bin/ssh-agent -D -a %h/.ssh/ai-dev-loop-ssh-agent.sock
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+Add this stanza to `~/.ssh/config` (preserve any existing host configuration):
+
+```text
+Host github.com
+  IdentityAgent ~/.ssh/ai-dev-loop-ssh-agent.sock
+```
+
+Enable the agent once:
+
+```bash
+mkdir -p ~/.config/systemd/user ~/.ssh
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/config ~/.config/systemd/user/ai-dev-loop-ssh-agent.service
+systemctl --user daemon-reload
+systemctl --user enable --now ai-dev-loop-ssh-agent.service
+```
+
+From any WSL terminal where you can enter the passphrase, load the key into
+that socket once:
+
+```bash
+SSH_AUTH_SOCK="$HOME/.ssh/ai-dev-loop-ssh-agent.sock" ssh-add ~/.ssh/id_ed25519
+ssh -T git@github.com
+```
+
+The detached worker then uses the socket through SSH configuration; it does not
+need the passphrase or inherited environment variables. Verify before a GitHub
+cycle:
+
+```bash
+ai_dev_loop github doctor --repo-path /path/to/repository
+```
+
+After `wsl --shutdown` or a reboot, the service restarts but its loaded keys are
+intentionally gone, so repeat only the `ssh-add` command from an accessible
+terminal. Do not remove the passphrase or replace this with an unencrypted
+deployment key merely to automate the prompt.
+
 ## Basic Workflow
 
 1. Install the matching Codex integration:
@@ -56,6 +137,7 @@ ai_dev_loop --version
 6. Inspect the staged changes and review artifacts.
 7. If a run fails after Cursor + staging with an intact staged patch, use `ai_dev_loop recover --dry-run <run-id>` then `recover` / `resume` on the successor. Do not expect ordinary `resume` to reopen a terminal `failed` run.
 8. If Cursor fails with a usage limit on its configured model, recover with the same chat via `ai_dev_loop recover <run-id> --cursor-model auto` then `resume` on the successor. In a TTY, `start`/`resume` may offer this recovery after the failure; non-TTY runs require the explicit recover command.
+9. If a GitHub PR-review adjudication fails because Codex rejected the output schema before any thread side effects, use `ai_dev_loop pr-review recover --dry-run <failed-run-id>` then `pr-review recover` / `pr-review resume` on the successor. That path reuses the same PR, SHA, trigger, threads, Codex B session, and controller A, and does not post another `@codex review`.
 
 `start` and `resume` probe WSL Cursor/Codex CLI model compatibility. In a TTY they may offer each incompatible tool's official updater; non-interactive runs require explicit `--update-tools` or `--allow-incompatible-tools`. These updates do not update Windows desktop applications.
 

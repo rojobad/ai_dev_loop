@@ -5,8 +5,8 @@ Invoked as::
     python -m ai_dev_loop.launch_worker <run-id> <worker-token> [policy-path]
 
 The worker waits until the parent publishes a matching ``launcher.json`` before
-calling ``start_run``. Completion updates the launcher record only when the
-worker token and PID still match.
+calling ``start_run`` or ``resume_run``. Completion updates the launcher record
+only when the worker token and PID still match.
 """
 
 from __future__ import annotations
@@ -24,7 +24,8 @@ from ai_dev_loop.launcher import (
 )
 from ai_dev_loop.run_discovery import find_run_directory, load_run
 from ai_dev_loop.runners.tool_updates import ToolCompatibilityPolicy, UpdateMode
-from ai_dev_loop.workflow_engine import start_run
+from ai_dev_loop.state import RunStatus
+from ai_dev_loop.workflow_engine import resume_run, start_run
 
 
 def _policy_from_path(path: Path | None) -> ToolCompatibilityPolicy:
@@ -64,7 +65,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         ready = True
         policy = _policy_from_path(policy_path)
-        result = start_run(run_id, tool_policy=policy)
+        _, state = load_run(run_id)
+        if state.status == RunStatus.PREPARED:
+            result = start_run(run_id, tool_policy=policy)
+        else:
+            result = resume_run(run_id, tool_policy=policy)
         workflow_status = result.status
         _, state = load_run(run_id)
         safe_error = state.last_error

@@ -348,3 +348,255 @@ def test_codex_failure_message_points_to_artifacts_without_raw_output() -> None:
         "inspect codex/events/01.jsonl and codex/events/01.stderr.txt"
     )
     assert "proprietary" not in message
+
+
+def test_ensure_codex_review_artifact_dirs_is_idempotent(tmp_path: Path) -> None:
+    from ai_dev_loop.runners.codex import ensure_codex_review_artifact_dirs
+
+    events = tmp_path / "codex" / "events" / "01.jsonl"
+    result = tmp_path / "codex" / "reviews" / "01.json"
+    preexisting = tmp_path / "codex" / "reviews" / "partial.json"
+    preexisting.parent.mkdir(parents=True)
+    preexisting.write_text('{"keep": true}\n', encoding="utf-8")
+
+    ensure_codex_review_artifact_dirs(events, result, preexisting)
+    ensure_codex_review_artifact_dirs(events, result, preexisting)
+
+    assert events.parent.is_dir()
+    assert result.parent.is_dir()
+    assert preexisting.read_text(encoding="utf-8") == '{"keep": true}\n'
+
+
+def test_run_codex_review_creates_output_parent_before_fake_codex(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fake Codex fails if --output-last-message parent is missing before launch."""
+
+    import os
+    import stat
+    from unittest.mock import patch
+
+    from ai_dev_loop.paths import schema_path
+    from ai_dev_loop.runners.codex import run_codex_review
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_codex = bin_dir / "codex"
+    fake_codex.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+import sys
+
+args = sys.argv[1:]
+assert "--output-last-message" in args
+output = args[args.index("--output-last-message") + 1]
+parent = os.path.dirname(output)
+if not parent or not os.path.isdir(parent):
+    print(f"missing parent: {parent!r}", file=sys.stderr)
+    sys.exit(91)
+sys.stdin.read()
+with open(output, "w", encoding="utf-8") as handle:
+    json.dump(
+        {
+            "has_actionable_findings": False,
+            "findings_count": 0,
+            "highest_severity": None,
+            "review_markdown": "# Review\\n\\nOK",
+            "cursor_fix_prompt": None,
+            "tests_status": "passed",
+            "summary": "No actionable findings.",
+        },
+        handle,
+    )
+print(json.dumps({"type": "message", "content": "ok"}))
+sys.exit(0)
+""",
+        encoding="utf-8",
+    )
+    fake_codex.chmod(fake_codex.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    run_directory = tmp_path / "run"
+    (run_directory / "plan").mkdir(parents=True)
+    (run_directory / "prompts").mkdir(parents=True)
+    (run_directory / "cursor/iterations/01").mkdir(parents=True)
+    (run_directory / "git/diffs").mkdir(parents=True)
+    state = _sample_state()
+    state = state.model_copy(
+        update={
+            "codex": state.codex.model_copy(update={"command": "codex"}),
+            "repository": state.repository.model_copy(update={"root": str(tmp_path / "repo")}),
+            "iterations": [
+                {
+                    "number": 1,
+                    "kind": "initial_implementation",
+                    "started_at": state.created_at.isoformat(),
+                    "cursor": {"chat_id": "chat-1"},
+                    "git": {"staged_diff_path": "git/diffs/01.patch"},
+                }
+            ],
+        }
+    )
+    (tmp_path / "repo").mkdir()
+    (run_directory / state.plan.snapshot_path).write_text("# plan\n", encoding="utf-8")
+    (run_directory / state.prompt.snapshot_path).write_text("prompt\n", encoding="utf-8")
+    (run_directory / "cursor/iterations/01/final.txt").write_text("done\n", encoding="utf-8")
+    for rel in ("01.stat", "01.name-only.txt", "01.patch"):
+        (run_directory / "git/diffs" / rel).write_text("artifact\n", encoding="utf-8")
+
+    assert not (run_directory / "codex" / "reviews").exists()
+    with (
+        patch(
+            "ai_dev_loop.runners.codex.schema_path",
+            return_value=schema_path("codex-review-result-v1.json"),
+        ),
+        patch("ai_dev_loop.runners.codex.validate_codex_response_schema"),
+    ):
+        execution = run_codex_review(state, run_directory, iteration="01")
+
+    assert execution.result.has_actionable_findings is False
+    assert (run_directory / "codex/reviews/01.json").is_file()
+    assert (run_directory / "codex/reviews/01.md").is_file()
+    assert (run_directory / "codex/reviews/01.metadata.json").is_file()
+    assert (run_directory / "codex/events/01.jsonl").is_file()
+
+
+def test_run_codex_review_preserves_events_on_fake_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+    import stat
+
+    import pytest as pytest_mod
+
+    from ai_dev_loop.errors import AiDevLoopError
+    from ai_dev_loop.runners.codex import run_codex_review
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_codex = bin_dir / "codex"
+    fake_codex.write_text(
+        """#!/usr/bin/env python3
+import os
+import sys
+
+args = sys.argv[1:]
+output = args[args.index("--output-last-message") + 1]
+parent = os.path.dirname(output)
+if not parent or not os.path.isdir(parent):
+    print(f"missing parent: {parent!r}", file=sys.stderr)
+    sys.exit(91)
+sys.stdin.read()
+print("events", flush=True)
+print("codex failed", file=sys.stderr)
+sys.exit(2)
+""",
+        encoding="utf-8",
+    )
+    fake_codex.chmod(fake_codex.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    run_directory = tmp_path / "run"
+    (run_directory / "plan").mkdir(parents=True)
+    (run_directory / "prompts").mkdir(parents=True)
+    (run_directory / "cursor/iterations/01").mkdir(parents=True)
+    (run_directory / "git/diffs").mkdir(parents=True)
+    state = _sample_state()
+    state = state.model_copy(
+        update={
+            "repository": state.repository.model_copy(update={"root": str(tmp_path / "repo")}),
+            "iterations": [
+                {
+                    "number": 1,
+                    "kind": "initial_implementation",
+                    "started_at": state.created_at.isoformat(),
+                    "cursor": {},
+                    "git": {"staged_diff_path": "git/diffs/01.patch"},
+                }
+            ],
+        }
+    )
+    (tmp_path / "repo").mkdir()
+    (run_directory / state.plan.snapshot_path).write_text("# plan\n", encoding="utf-8")
+    (run_directory / state.prompt.snapshot_path).write_text("prompt\n", encoding="utf-8")
+    for rel in ("01.stat", "01.name-only.txt", "01.patch"):
+        (run_directory / "git/diffs" / rel).write_text("artifact\n", encoding="utf-8")
+
+    from unittest.mock import patch
+
+    from ai_dev_loop.paths import schema_path
+
+    with (
+        patch(
+            "ai_dev_loop.runners.codex.schema_path",
+            return_value=schema_path("codex-review-result-v1.json"),
+        ),
+        patch("ai_dev_loop.runners.codex.validate_codex_response_schema"),
+        pytest_mod.raises(AiDevLoopError, match="exit code 2"),
+    ):
+        run_codex_review(state, run_directory, iteration="01")
+
+    assert (run_directory / "codex/events/01.jsonl").is_file()
+    assert (run_directory / "codex/events/01.stderr.txt").is_file()
+    assert (run_directory / "codex/reviews/01.metadata.json").is_file()
+    assert not (run_directory / "codex/reviews/01.json").exists()
+
+
+def test_classify_codex_output_artifact_failure_requires_durable_evidence(tmp_path: Path) -> None:
+    from ai_dev_loop.runners.codex import (
+        FAILURE_CODE_RESULT_ARTIFACT_MISSING,
+        classify_codex_review_output_artifact_failure,
+    )
+
+    reviews = tmp_path / "codex" / "reviews"
+    events = tmp_path / "codex" / "events"
+    reviews.mkdir(parents=True)
+    events.mkdir(parents=True)
+
+    (reviews / "01.metadata.json").write_text(
+        json.dumps({"exit_code": 2, "timed_out": False}),
+        encoding="utf-8",
+    )
+    (events / "01.stderr.txt").write_text("codex review failed\n", encoding="utf-8")
+    assert classify_codex_review_output_artifact_failure(tmp_path, "01") is False
+
+    (reviews / "01.metadata.json").write_text(
+        json.dumps({"exit_code": 2, "timed_out": True}),
+        encoding="utf-8",
+    )
+    assert classify_codex_review_output_artifact_failure(tmp_path, "01") is False
+
+    (reviews / "01.metadata.json").write_text(
+        json.dumps(
+            {
+                "exit_code": 2,
+                "timed_out": False,
+                "failure_code": FAILURE_CODE_RESULT_ARTIFACT_MISSING,
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert classify_codex_review_output_artifact_failure(tmp_path, "01") is True
+
+    (reviews / "01.metadata.json").write_text(
+        json.dumps({"exit_code": 2, "timed_out": False}),
+        encoding="utf-8",
+    )
+    (events / "01.stderr.txt").write_text(
+        "failed to write output-last-message codex/reviews/01.json: "
+        "No such file or directory (os error 2)\n",
+        encoding="utf-8",
+    )
+    assert classify_codex_review_output_artifact_failure(tmp_path, "01") is True
+
+    # Historical Codex CLI releases could report this write failure to stderr
+    # but still exit zero. The bound missing-file evidence remains sufficient;
+    # do not depend on the user-facing state.last_error string.
+    (reviews / "01.metadata.json").write_text(
+        json.dumps({"exit_code": 0, "timed_out": False}),
+        encoding="utf-8",
+    )
+    assert classify_codex_review_output_artifact_failure(tmp_path, "01") is True

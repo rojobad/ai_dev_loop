@@ -160,6 +160,22 @@ workflow:
 prompt:
   directory: docs/plans
   filename_template: prompt_{plan_stem}.txt
+
+# Enable only when the autonomous post-PR cycle is required.
+github:
+  enabled: true
+  command: gh
+  reviewer_logins:
+    - chatgpt-codex-connector
+  review_trigger_body: "@codex review"
+  poll_interval_seconds: 60
+  poll_timeout_hours: 24
+  max_external_cycles: 8
+  user_mention: rojobad
+  continue_command: "@rojobad /ai-dev-loop continue"
+  external_review_skill: review-github-pr-feedback
+  max_local_review_iterations: 3
+  pr_base: main # Replace with the target repository's actual default branch.
 ```
 
 Replace:
@@ -168,6 +184,7 @@ Replace:
 - `cursor.model` with the exact Cursor CLI model available in the local WSL `agent` installation.
 - `codex.review_model` with a model available to the Codex account that will run `codex exec resume`.
 - `codex.review_skill` with the exact frontmatter name of the repository's staged-change review skill.
+- `github.pr_base` with the repository's actual default branch (for example, `main` or `master`) when enabling the post-PR cycle.
 - timeouts only when the project genuinely needs different limits.
 
 Do not add project architecture rules to `ai_dev_loop.yaml`. Architecture instructions belong in plans, repository rules, and skills.
@@ -335,6 +352,72 @@ If actionable findings exist, provide a complete `cursor_fix_prompt` in English.
 
 Do not otherwise rewrite the review methodology unless an actual incompatibility is found.
 
+## Optional GitHub PR Review Cycle
+
+Enable this only for the bounded autonomous post-PR cycle. `gh` must already be
+authenticated and Git push must use SSH with a loaded `ssh-agent` key; never put
+tokens, passphrases, or credentials in `ai_dev_loop.yaml`.
+
+The target repository must provide an external-feedback skill whose frontmatter
+name matches `github.external_review_skill` (normally
+`review-github-pr-feedback`). It is distinct from the staged-change review
+skill, is read-only, and returns the exact `github-pr-review-result-v1.json`
+contract: one decision per supplied bot thread, all-or-stop behavior,
+`@rojobad` replies for non-applicable/uncertain comments, and a Cursor prompt
+only when every finding is actionable. Keep it under `.agents/skills/` or
+otherwise discoverable by the exact Codex session. The skill must never post,
+resolve, commit, push, or merge; `ai_dev_loop` owns those writes.
+
+There are two explicit entry paths:
+
+1. `ai_dev_loop pr-review create <source-run-id>` publishes accepted staged
+   changes from a completed normal run, creates/updates the PR to the configured base, then
+   requests `@codex review`.
+2. `pr-review prepare` plus `pr-review start` adopts an existing PR that did not
+   pass through the main loop. It requires an explicit PR number, checked-out
+   branch, local `HEAD` equal to the PR head, plan, original Cursor prompt, and
+   exact Codex reviewer session. `prepare` creates no chat and performs no
+   GitHub write; `start` is the separate explicit write gate.
+
+```bash
+ai_dev_loop pr-review prepare \
+  --repo-path /path/to/repo --pr <number> --branch <branch> \
+  --plan-path docs/plans/<plan>.md \
+  --prompt-source-path docs/plans/prompt_<plan>.txt \
+  --codex-session-id <reviewer-session> \
+  [--controller-session-id <controller-A>] \
+  < docs/plans/prompt_<plan>.txt
+
+ai_dev_loop pr-review start <run-id> \
+  [--controller-session-id <controller-A>]
+```
+
+In A/B, B prepares with its reviewer session and remains inactive; A starts
+with its controller session. In single-session mode the reviewer must be
+inactive before `start`. Never use `--last` or infer a session.
+
+For independent PR adoption, pass `--cursor-model <model>` at prepare or, while
+the cycle has no Cursor chat, run:
+
+```bash
+ai_dev_loop pr-review set-cursor-model <run-id> --cursor-model <model>
+```
+
+This changes only the new Cursor chat's model; it never changes the exact Codex
+reviewer session/runtime. Once the chat exists, it is frozen for that run.
+
+Before a live start, run:
+
+```bash
+ai_dev_loop github doctor --repo-path /path/to/repo
+```
+
+The worker binds one PR/head/request window, accepts only matching unresolved
+bot threads, and stops with inline `@rojobad` replies and unresolved threads if
+any decision is non-applicable or uncertain. After all-actionable feedback it
+performs the normal local review, non-force verified publication, resolves only
+verified fixed threads, and requests the next round. Merge remains manual.
+
 ## Validation Plan
 
 Run target-repository-appropriate checks:
@@ -379,6 +462,12 @@ Do not run `ai_dev_loop start` during repository integration unless the user exp
 - The plan/prompt convention is documented or encoded in the planning workflow.
 - The configured review skill exists.
 - The review skill is compatible with schema-constrained `ai_dev_loop` output.
+- If GitHub PR review is enabled, the configured external-feedback skill exists,
+  returns the GitHub-thread JSON contract, and performs no GitHub writes itself.
+- If GitHub PR review is enabled, `ai_dev_loop github doctor --repo-path` passes
+  with authenticated `gh` and SSH push readiness.
+- Both source-run `pr-review create` and independent `prepare`/`start` are
+  documented accurately; neither path uses `--last` or creates an implicit PR.
 - The review skill instructs Codex to generate high-signal `cursor_fix_prompt` content for Cursor: header plus actionable findings only.
 - The repository does not contain `ai_dev_loop` run state, logs, session mappings, Cursor artifacts, or Codex artifacts.
 - The repository does not install global hooks or global skills.

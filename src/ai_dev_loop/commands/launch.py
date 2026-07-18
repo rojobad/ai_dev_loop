@@ -1,4 +1,4 @@
-"""Launch a prepared A/B run via a detached local worker."""
+"""Launch or resume an eligible A/B run via a detached local worker."""
 
 from __future__ import annotations
 
@@ -123,12 +123,11 @@ def launch_run(
                 reviewer_session_id=state.codex.session_id,
             )
 
-        if state.status != RunStatus.PREPARED:
+        if state.status not in {RunStatus.PREPARED, RunStatus.WAITING_FOR_CURSOR_FIX}:
             raise ValidationError(
-                f"launch requires status prepared (current: {state.status.value}); "
-                "use resume for in-progress runs, or wait for the existing worker"
+                "launch requires status prepared or waiting_for_cursor_fix "
+                f"(current: {state.status.value}); wait for the existing worker or inspect artifacts"
             )
-
         record = spawn_detached_worker(run_directory, run_id=run_id, policy=policy)
 
     return LaunchResult(

@@ -666,15 +666,30 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                     handle.write(str(counter + 1))
             else:
                 mode = os.environ.get("FAKE_CODEX_REVIEW_MODE", "no_findings")
+            output_last_message = None
+            if "--output-last-message" in args:
+                output_last_message = args[args.index("--output-last-message") + 1]
+                parent = os.path.dirname(output_last_message)
+                if parent and not os.path.isdir(parent):
+                    print(
+                        f"output-last-message parent missing: {{parent}}",
+                        file=sys.stderr,
+                    )
+                    sys.exit(91)
             if mode == "sleep":
                 time.sleep(float(os.environ.get("FAKE_CODEX_SLEEP_SECONDS", "5")))
                 sys.exit(0)
             if mode == "fail":
                 print("codex review failed", file=sys.stderr)
                 sys.exit(2)
-            output_last_message = None
-            if "--output-last-message" in args:
-                output_last_message = args[args.index("--output-last-message") + 1]
+            if mode == "output_artifact_fail":
+                target = output_last_message or "codex/reviews/01.json"
+                print(
+                    f"failed to write output-last-message {{target}}: "
+                    "No such file or directory (os error 2)",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
             if mode == "invalid_json":
                 if output_last_message:
                     with open(output_last_message, "w", encoding="utf-8") as handle:

@@ -17,11 +17,20 @@ El handoff conecta una sesion interactiva de Codex con el loop automatizado. En 
 
 No hay notificaciones automaticas al movil ni a ChatGPT: el estado se pide desde A cuando hace falta.
 
+Si un run A/B termina en `max_iterations_reached`, A puede conceder presupuesto adicional sin reactivar B:
+
+```bash
+ai_dev_loop extend <run-id> --additional-review-iterations 1
+ai_dev_loop launch <run-id> --controller-session-id "<exact-controller-session-id>"
+```
+
+El worker detachado entrega a Cursor el fix prompt preservado de la ultima review y despues reanuda B para la siguiente review.
+
 ## Roles A y B
 
 | Sesion | Rol | Acciones |
 | --- | --- | --- |
-| A (controller) | Planificacion y control | `launch`, `controller status`, `abort`, inspeccion read-only |
+| A (controller) | Planificacion y control | `launch`, `extend`, `controller status`, `abort`, inspeccion read-only |
 | B (reviewer) | Solo `prepare`, luego quietud | No ejecuta `start`, `launch`, `resume`, `abort` ni control |
 
 Todo review automatizado reanuda exactamente `state.codex.session_id` (B). A nunca se pasa a `codex exec resume`.
@@ -39,6 +48,7 @@ ai-dev-loop-controller
 
 - `ai_dev_loop controller status`
 - `ai_dev_loop launch`
+- `ai_dev_loop extend`
 - `ai_dev_loop abort`
 - comandos read-only existentes (`status`, `logs`, `inspect`, `list`)
 

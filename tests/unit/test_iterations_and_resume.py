@@ -194,12 +194,12 @@ def test_status_transitions_include_max_iterations_and_resume_paths() -> None:
     for terminal in (
         RunStatus.COMPLETED,
         RunStatus.COMPLETED_WITH_RESIDUAL_RISK,
-        RunStatus.MAX_ITERATIONS_REACHED,
         RunStatus.FAILED,
         RunStatus.ABORTED,
     ):
         with pytest.raises(ValueError):
             transition_status(terminal, RunStatus.VALIDATING)
+    transition_status(RunStatus.MAX_ITERATIONS_REACHED, RunStatus.WAITING_FOR_CURSOR_FIX)
 
 
 def test_validate_resume_status_rejects_terminal() -> None:

@@ -130,10 +130,12 @@ def test_recovery_state_aligns_with_schema() -> None:
         RECOVERY_CHECKPOINTS
     )
     assert "cursor" in RECOVERY_CHECKPOINTS
+    assert "external_adjudication" in RECOVERY_CHECKPOINTS
     assert set(recovery_schema["properties"]["reason_code"]["enum"]) == set(RECOVERY_REASON_CODES)
     assert "cursor_usage_limit" in RECOVERY_REASON_CODES
     assert "initial_staging_failed" in RECOVERY_REASON_CODES
     assert "correction_staging_failed" in RECOVERY_REASON_CODES
+    assert "github_adjudication_schema_incompatible" in RECOVERY_REASON_CODES
 
 
 def test_historical_run_state_without_recovery_loads(tmp_path: Path) -> None:
@@ -582,7 +584,22 @@ def test_derive_reason_codes(tmp_path: Path) -> None:
         == "codex_review_failed"
     )
     reviews = tmp_path / "codex" / "reviews"
+    events = tmp_path / "codex" / "events"
     reviews.mkdir(parents=True)
+    events.mkdir(parents=True)
+    (events / "01.stderr.txt").write_text(
+        "failed to write output-last-message codex/reviews/01.json: "
+        "No such file or directory (os error 2)\n",
+        encoding="utf-8",
+    )
+    (reviews / "01.metadata.json").write_text(
+        json.dumps({"exit_code": 2, "timed_out": False}),
+        encoding="utf-8",
+    )
+    assert (
+        derive_recovery_reason_code(tmp_path, checkpoint="reviewing", iteration_number=1)
+        == "codex_review_result_artifact_missing"
+    )
     (reviews / "01.json").write_text("{not-json", encoding="utf-8")
     assert (
         derive_recovery_reason_code(tmp_path, checkpoint="reviewing", iteration_number=1)

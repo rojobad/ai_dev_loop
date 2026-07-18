@@ -703,11 +703,13 @@ def _continue_workflow(run_directory: Path, state: RunState) -> WorkflowResult:
                     iteration_number=action.iteration_number,
                 )
             elif action.kind == WorkflowActionKind.REVIEW:
-                latest_review_path, result_message = _run_review_pass(
+                latest_review_path, result_message, should_continue = _run_review_pass(
                     run_directory,
                     state,
                     iteration_number=action.iteration_number,
                 )
+                if not should_continue:
+                    break
             elif action.kind == WorkflowActionKind.PROCESS_REVIEW:
                 latest_review_path, result_message, should_continue = _process_review_outcome(
                     run_directory,
@@ -1203,7 +1205,7 @@ def _run_review_pass(
     state: RunState,
     *,
     iteration_number: int,
-) -> tuple[str | None, str]:
+) -> tuple[str | None, str, bool]:
     iteration = iteration_label(iteration_number)
     _ensure_reviewing_status(state, iteration_number)
     save_run_state(run_directory, state)
@@ -1245,14 +1247,14 @@ def _run_review_pass(
         _fail_run(run_directory, state, message, event_name="codex_artifact_failed")
         raise AiDevLoopError(message) from exc
 
-    _, result_message, _ = _apply_review_result(
+    artifact_path, result_message, should_continue = _apply_review_result(
         run_directory,
         state,
         iteration_number=iteration_number,
         review=review_execution.result,
         review_artifact_path=review_execution.artifacts.result_path,
     )
-    return review_execution.artifacts.result_path, result_message
+    return artifact_path, result_message, should_continue
 
 
 def _process_review_outcome(
@@ -1317,6 +1319,39 @@ def _apply_review_result(
             begin_running_cursor(state)
             result_message = result_message_for_loop_continue()
             should_continue = True
+    elif (
+        state.github_pr_review is not None
+        and state.github_pr_review.lifecycle == "fixing_external_feedback"
+    ):
+        # Post-PR local review accepted: hand off to publication rather than completing.
+        from ai_dev_loop.state import transition_status
+
+        transition_status(state.status, RunStatus.PUBLISHING_EXTERNAL_FIX)
+        state.status = RunStatus.PUBLISHING_EXTERNAL_FIX
+        state.github_pr_review = state.github_pr_review.model_copy(
+            update={"lifecycle": "publishing_external_fix"}
+        )
+        # Residual-risk tests may continue when Codex recorded no corrective action.
+        if review.tests_status in {"failed", "blocked_environment", "skipped_findings_present"}:
+            state.result = (
+                f"{result_message} Residual risk recorded; continuing automatic publication."
+            )
+        else:
+            state.result = result_message
+        state.last_error = None
+        save_run_state(run_directory, state)
+        append_orchestrator_event(
+            run_directory,
+            run_id=state.run_id,
+            component="orchestrator",
+            event="pr_review_ready_to_publish",
+            status=state.status.value,
+            iteration=iteration_number,
+        )
+        from ai_dev_loop.commands.pr_review import _spawn_pr_review_worker
+
+        _spawn_pr_review_worker(run_directory, state.run_id)
+        return review_artifact_path, state.result or result_message, False
     elif review.tests_status in {"failed", "blocked_environment", "skipped_findings_present"}:
         mark_completed_with_residual_risk(state, result_message)
     else:

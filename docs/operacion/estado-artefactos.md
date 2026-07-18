@@ -134,8 +134,8 @@ Un sucesor creado por `ai_dev_loop recover` incluye en `state.json` una seccion 
 source_run_id
 source_status                 # failed
 source_iteration
-recovered_checkpoint          # staging | reviewing | process_review | cursor
-source_staged_patch_sha256    # null para cursor e initial_staging_failed
+recovered_checkpoint          # staging | reviewing | process_review | cursor | external_adjudication
+source_staged_patch_sha256    # null para cursor, initial_staging_failed y external_adjudication
 cursor_output_fingerprint_sha256   # requerido para staging
 previous_staged_patch_sha256       # requerido para correction_staging_failed; null para initial
 legacy_cursor_output_adopted       # opcional; solo correction staging historico
@@ -148,10 +148,23 @@ usage_limit_fingerprint_path       # checkpoint cursor
 usage_limit_fingerprint_sha256     # checkpoint cursor
 continuation_envelope_path         # checkpoint cursor
 continuation_envelope_sha256       # checkpoint cursor
+expected_eligible_thread_ids       # checkpoint external_adjudication; IDs, no cuerpos
 created_at
 runtime_migration             # none | phase9_session_capture
-reason_code                   # incluye initial_staging_failed, correction_staging_failed, cursor_usage_limit
+reason_code                   # incluye initial_staging_failed, correction_staging_failed,
+                              # cursor_usage_limit, github_adjudication_schema_incompatible,
+                              # codex_review_result_artifact_missing
 ```
+
+`pr-review recover` usa:
+
+- `external_adjudication` cuando Codex rechazo el schema de adjudicacion antes de
+  side effects;
+- `reviewing` + `codex_review_result_artifact_missing` cuando Cursor/staging
+  terminaron pero falta el resultado local `codex/reviews/NN.json`.
+
+El sucesor no republica el trigger `@codex review` y, en el checkpoint
+`reviewing`, no reejecuta Cursor.
 
 El run origen permanece terminal e inmutable. El sucesor copia snapshots/artefactos necesarios para continuar (plan, prompt, chat, Cursor/git hasta la iteracion recuperada, reviews previos, y el review valido solo si el checkpoint es `process_review`). Los intentos Codex fallidos quedan en el origen.
 

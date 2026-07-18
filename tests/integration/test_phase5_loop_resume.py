@@ -12,6 +12,7 @@ import pytest
 from typer.testing import CliRunner
 
 from ai_dev_loop.cli import app
+from ai_dev_loop.commands.extend import extend_review_iterations
 from ai_dev_loop.commands.prepare import PrepareOptions, prepare_run
 from ai_dev_loop.commands.resume import resume_run
 from ai_dev_loop.commands.start import start_run
@@ -94,6 +95,47 @@ def test_start_max_iterations_reached_without_extra_cursor_turn(
 
     agent_log = fake_clis["agent_log"].read_text(encoding="utf-8")
     assert agent_log.count("-p") == 3
+
+
+def test_extend_maxed_run_resumes_stored_final_fix_prompt(
+    git_repo, isolated_xdg, fake_clis, monkeypatch, fixture_codex_session
+) -> None:
+    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    monkeypatch.setenv("FAKE_CODEX_REVIEW_SEQUENCE", "findings,findings,findings")
+    run_id = _prepare(git_repo, max_review_iterations=3)
+
+    first_result = start_run(run_id)
+    assert first_result.status == "max_iterations_reached"
+
+    extension = extend_review_iterations(run_id, additional_review_iterations=1)
+    assert extension.status == "waiting_for_cursor_fix"
+    assert extension.current_review_iteration == 3
+    assert extension.previous_max_review_iterations == 3
+    assert extension.max_review_iterations == 4
+
+    run_path = run_dir("fixture-project", run_id)
+    state = load_run_state(run_path / "state.json")
+    assert state.status == RunStatus.WAITING_FOR_CURSOR_FIX
+    assert state.workflow.current_review_iteration == 3
+    assert state.workflow.max_review_iterations == 4
+    assert (run_path / "prompts/fixes/03.txt").is_file()
+    assert "review_iterations_extended" in (run_path / "logs/events.jsonl").read_text(
+        encoding="utf-8"
+    )
+
+    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "correction")
+    monkeypatch.setenv("FAKE_CODEX_REVIEW_SEQUENCE", "no_findings")
+    resumed = resume_run(run_id)
+    assert resumed.status == "completed"
+    assert resumed.iteration_count == 4
+
+    state = load_run_state(run_path / "state.json")
+    assert state.workflow.current_review_iteration == 4
+    assert (run_path / "cursor/iterations/04/events.jsonl").is_file()
+    assert (run_path / "codex/reviews/04.json").is_file()
+
+    agent_log = fake_clis["agent_log"].read_text(encoding="utf-8")
+    assert agent_log.count("-p") == 4
 
 
 def test_resume_from_waiting_for_cursor_fix(prepared_run, fake_clis, monkeypatch) -> None:

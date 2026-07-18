@@ -49,3 +49,14 @@ class CursorUsageLimitError(AiDevLoopError):
     def __init__(self, message: str, *, run_id: str) -> None:
         super().__init__(message)
         self.run_id = run_id
+
+
+class AdjudicationSchemaIncompatibleError(AiDevLoopError):
+    """Codex rejected the GitHub adjudication output schema structurally.
+
+    Safe for classification and recovery. Must not embed raw JSONL, stderr,
+    review Markdown, or thread bodies.
+    """
+
+    exit_code = EXIT_GENERAL_ERROR
+    failure_code = "adjudication_schema_incompatible"

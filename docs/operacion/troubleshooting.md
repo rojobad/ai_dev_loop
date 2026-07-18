@@ -20,6 +20,65 @@ Accion:
 
 Los warnings `code 400` con texto binario desaparecen cuando el navegador deja de enviar handshakes TLS al servidor HTTP.
 
+## El worker A pide una passphrase SSH que no puedes introducir
+
+Sintoma:
+
+- `github doctor` informa `ssh-agent has no usable keys`;
+- `ssh -T git@github.com` falla con `Permission denied (publickey)`;
+- un worker detached A no tiene una terminal donde introducir la passphrase.
+
+Causa: un `ssh-agent` cargado en otra terminal no siempre comparte
+`SSH_AUTH_SOCK` con Codex Desktop o con un worker detached.
+
+Accion: conserva la passphrase y usa un agente de usuario con socket fijo. Crea
+`~/.config/systemd/user/ai-dev-loop-ssh-agent.service`:
+
+```ini
+[Unit]
+Description=Persistent SSH agent for ai_dev_loop GitHub publication
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/rm -f %h/.ssh/ai-dev-loop-ssh-agent.sock
+ExecStart=/usr/bin/ssh-agent -D -a %h/.ssh/ai-dev-loop-ssh-agent.sock
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+Agrega a `~/.ssh/config`:
+
+```text
+Host github.com
+  IdentityAgent ~/.ssh/ai-dev-loop-ssh-agent.sock
+```
+
+Luego habilita el servicio y, desde cualquier terminal WSL donde sí puedas
+introducir la passphrase, carga la clave:
+
+```bash
+mkdir -p ~/.config/systemd/user ~/.ssh
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/config ~/.config/systemd/user/ai-dev-loop-ssh-agent.service
+systemctl --user daemon-reload
+systemctl --user enable --now ai-dev-loop-ssh-agent.service
+SSH_AUTH_SOCK="$HOME/.ssh/ai-dev-loop-ssh-agent.sock" ssh-add ~/.ssh/id_ed25519
+ssh -T git@github.com
+```
+
+El worker consumirá el socket por `~/.ssh/config`, sin heredar variables ni pedir
+la passphrase. Comprueba finalmente:
+
+```bash
+ai_dev_loop github doctor --repo-path /ruta/al/repositorio
+```
+
+Tras reiniciar WSL o Windows, el servicio vuelve a iniciar pero no conserva la
+clave descifrada: repite sólo `ssh-add` desde una terminal accesible. No elimines
+la passphrase ni crees una deploy key sin cifrar para evitar el prompt.
+
 ## `prepare` rechaza el worktree
 
 Causas comunes:
@@ -320,3 +379,78 @@ TMPDIR=/tmp TMP=/tmp TEMP=/tmp uv run python -m pytest -q
 ```
 
 Para simulaciones DrvFS puntuales, usa `-s` si la captura de pytest falla antes de coleccion.
+
+## El worker de PR review no sale de `awaiting_bot_review` aunque el bot “aprobó”
+
+Síntoma:
+
+- el bot publicó un comentario general positivo;
+- o aparece/desaparece la reacción `eyes` en el trigger;
+- `status` sigue en `awaiting_bot_review` hasta timeout.
+
+Causa: la ausencia de hilos, la presencia de `eyes` o la retirada de esa
+reacción **no** completan el ciclo. Sólo cuenta un comentario general del login
+en `github.reviewer_logins`, posterior a `request_created_at`, con un prefijo
+exacto de `github.no_findings_completion.accepted_comment_prefixes` y una línea
+estructural `Reviewed commit:` cuyo SHA coincide con el prefijo configurado del
+`bound_head_sha`. `acknowledgement` es telemetría: timeout o reacción borrada
+quedan como diagnóstico y el polling continúa sin republicar `@codex review`.
+
+Acción:
+
+1. Confirma `github.no_findings_completion.enabled: true` y el prefijo exacto
+   del bot (un cambio de texto del bot se corrige en YAML, no relajando el
+   matcher).
+2. Verifica en `pr-review status` el acuse (`observed` / timeout diagnóstico) y
+   que no haya hilos elegibles compitiendo con el comentario positivo.
+3. Mantén **Automatic reviews** de Codex apagado mientras ai_dev_loop publica el
+   trigger explícito.
+4. Si el ciclo quedó `interrupted` por timeout de polling, aborta si hace falta
+   y relanza/reanuda con los comandos existentes; **no** edites `state.json`.
+
+```bash
+ai_dev_loop pr-review status <run-id>
+ai_dev_loop pr-review abort <run-id>
+ai_dev_loop pr-review resume <run-id> [--controller-session-id <sesion-A>]
+```
+
+## Adjudicación GitHub falló con `invalid_json_schema` / `uniqueItems`
+
+Causa histórica: el schema de respuesta enviado a Codex incluía `uniqueItems` en
+`eligible_thread_ids`. El backend rechazó el schema; no hubo adjudicación, replies
+ni Cursor. Los runs nuevos clasifican esto como
+`adjudication_schema_incompatible` (`interrupted`). Los runs `failed` históricos
+con evidencia estructurada en `github/cycles/NN/codex.events.jsonl` se recuperan
+con un sucesor.
+
+Acción (ejemplo PR #45 / run anonimizado del incidente):
+
+```bash
+ai_dev_loop pr-review recover crypto-sentinel-20260718T010234Z-317683 --dry-run
+ai_dev_loop pr-review recover crypto-sentinel-20260718T010234Z-317683 --output json
+ai_dev_loop pr-review resume <successor-run-id> --controller-session-id <sesion-A>
+```
+
+No uses `pr-review prepare` ni publiques otro `@codex review`. Si hay drift de SHA,
+PR cerrado, hilos añadidos/eliminados/resueltos, o side effects previos
+(processed/replied/resolved/Cursor), `recover`/`resume` se detienen sin writes.
+
+## Revisión local Codex sin `codex/reviews/NN.json` tras Cursor
+
+Causa observada (PR #45 / sucesor de adjudicación): Cursor y staging completaron
+la corrección, pero `codex exec --output-last-message` no pudo escribir el
+resultado estructurado porque el directorio padre no existía. El JSONL del
+intento fallido no es fuente de decisión; hay que reintentar solo la revisión
+local con la misma sesión B.
+
+```bash
+ai_dev_loop pr-review recover <failed-run-id> --dry-run
+ai_dev_loop pr-review recover <failed-run-id> --output json
+# Desde A, con el resume que devuelve recover:
+ai_dev_loop pr-review resume <successor-run-id> --controller-session-id <sesion-A>
+```
+
+El checkpoint debe ser `reviewing` /
+`codex_review_result_artifact_missing`. No reejecuta Cursor, no hace polling ni
+adjudicación, y no publica otro `@codex review`. Si el patch staged o el
+worktree driftaron, o ya hay replies/resolves/publicación, `recover` se detiene.

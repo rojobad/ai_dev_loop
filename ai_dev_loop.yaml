@@ -1,0 +1,28 @@
+version: 1
+
+project:
+  name: ai-dev-loop
+
+cursor:
+  command: agent
+  model: cursor-grok-4.5-high-fast
+  output_format: stream-json
+  force: true
+  trust_workspace: true
+  sandbox: disabled
+
+codex:
+  command: codex
+  review_skill: review-staged-ai-dev-loop-execution
+  sandbox: workspace-write
+
+workflow:
+  max_review_iterations: 5
+  require_clean_worktree: true
+  stage_mode: all
+  cursor_timeout_minutes: 90
+  codex_timeout_minutes: 90
+
+prompt:
+  directory: archive/implementation-history/plans
+  filename_template: prompt_{plan_stem}.txt
