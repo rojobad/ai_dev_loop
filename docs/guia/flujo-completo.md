@@ -215,13 +215,16 @@ ai_dev_loop pr-review continue <run-id>
 ```
 
 El mismo comando, con un comentario exacto **nuevo**, también cubre un caso
-histórico excepcional: un sucesor de `external_adjudication` cuyo freeze
-`expected_eligible_thread_ids` quedó del ciclo recuperado y choca con hilos
-válidos del ciclo ya publicado (`eligible_thread_set_drift`). La limpieza es
+histórico excepcional: un freeze `expected_eligible_thread_ids` heredado de un
+ciclo `external_adjudication` anterior que choca con hilos válidos del ciclo ya
+publicado (`eligible_thread_set_drift`). La evidencia lineage puede ser directa
+en el run actual, o un único salto a un source terminal con recovery
+`external_adjudication` cuando el actual es sucesor `reviewing`. La limpieza es
 estrictamente lineage-bound: mismo run, PR, SHA, marker, sesiones A/B y chat
 Cursor; no republica `@codex review` ni acepta drift real del ciclo actual.
-Phase 15.9 ya evita este patrón en runs nuevos al resetear el freeze al
-publicar el siguiente trigger.
+Tras un continue previo hace falta un comentario nuevo. Phase 15.9 ya evita
+este patrón en runs nuevos al resetear el freeze al publicar el siguiente
+trigger.
 
 ### Continuidad post-publicación y aislamiento por ciclo
 

@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -179,22 +180,15 @@ def _expected_eligible_thread_ids(state: RunState) -> list[str] | None:
     return None
 
 
-def _classify_legacy_external_cycle_freeze(
-    state: RunState,
-) -> LegacyExternalCycleFreeze | None:
-    """Detect an obsolete eligible-thread freeze inherited from a prior cycle.
+def _legacy_freeze_local_preconditions(state: RunState) -> list[str] | None:
+    """Return the current freeze snapshot when local waiting/drift gates hold.
 
-    Matches only the narrow historical shape: ``waiting_for_user_attention`` with
-    ``eligible_thread_set_drift``, ``external_adjudication`` recovery whose
-    ``source_iteration`` is strictly older than the current cycle, identical
-    non-empty operational and recovery expected snapshots, and every expected ID
-    already processed and resolved. Classification uses structured fields only —
-    never ``result`` or ``last_error`` text.
+    Does not inspect recovery lineage. Classification uses structured fields
+    only — never ``result`` or ``last_error`` text.
     """
 
     gpr = state.github_pr_review
-    recovery = state.recovery
-    if gpr is None or recovery is None:
+    if gpr is None:
         return None
     if state.status != RunStatus.WAITING_FOR_USER_ATTENTION:
         return None
@@ -202,26 +196,184 @@ def _classify_legacy_external_cycle_freeze(
         return None
     if gpr.worker_outcome != "eligible_thread_set_drift":
         return None
+    expected = gpr.expected_eligible_thread_ids
+    if not expected:
+        return None
+    processed = set(gpr.processed_thread_ids)
+    resolved = set(gpr.resolved_thread_ids)
+    for thread_id in expected:
+        if thread_id not in processed or thread_id not in resolved:
+            return None
+    return list(expected)
+
+
+def _classify_direct_external_cycle_freeze(
+    state: RunState,
+    expected: list[str],
+) -> LegacyExternalCycleFreeze | None:
+    """Phase 15.10: freeze evidence on the current run's direct recovery."""
+
+    gpr = state.github_pr_review
+    recovery = state.recovery
+    if gpr is None or recovery is None:
+        return None
     if recovery.recovered_checkpoint != "external_adjudication":
         return None
     if recovery.source_iteration >= gpr.cycle_number:
         return None
-    gpr_expected = gpr.expected_eligible_thread_ids
     recovery_expected = recovery.expected_eligible_thread_ids
-    if not gpr_expected or not recovery_expected:
+    if not recovery_expected:
         return None
-    if set(gpr_expected) != set(recovery_expected):
+    if set(expected) != set(recovery_expected):
         return None
-    processed = set(gpr.processed_thread_ids)
-    resolved = set(gpr.resolved_thread_ids)
-    for thread_id in gpr_expected:
-        if thread_id not in processed or thread_id not in resolved:
-            return None
     return LegacyExternalCycleFreeze(
         source_cycle=recovery.source_iteration,
         current_cycle=gpr.cycle_number,
-        expected_thread_count=len(set(gpr_expected)),
+        expected_thread_count=len(set(expected)),
     )
+
+
+def _same_pr_review_identity(current: RunState, ancestor: RunState) -> bool:
+    """True when project, repo root, local/GitHub head branch, owner, and PR match.
+
+    Fail closed when persisted ``github_pr_review.head_branch`` or
+    ``repository_name_with_owner`` is missing on either side or differs.
+    """
+
+    if current.project.name != ancestor.project.name:
+        return False
+    try:
+        if Path(current.repository.root).resolve() != Path(ancestor.repository.root).resolve():
+            return False
+    except OSError:
+        return False
+    if current.repository.branch != ancestor.repository.branch:
+        return False
+    current_gpr = current.github_pr_review
+    ancestor_gpr = ancestor.github_pr_review
+    if current_gpr is None or ancestor_gpr is None:
+        return False
+    if current_gpr.pr_number is None or ancestor_gpr.pr_number is None:
+        return False
+    if current_gpr.pr_number != ancestor_gpr.pr_number:
+        return False
+    current_head = (current_gpr.head_branch or "").strip()
+    ancestor_head = (ancestor_gpr.head_branch or "").strip()
+    if not current_head or not ancestor_head or current_head != ancestor_head:
+        return False
+    current_nwo = (current_gpr.repository_name_with_owner or "").strip()
+    ancestor_nwo = (ancestor_gpr.repository_name_with_owner or "").strip()
+    return bool(current_nwo and ancestor_nwo and current_nwo == ancestor_nwo)
+
+
+def _classify_nested_ancestor_cycle_freeze(
+    state: RunState,
+    expected: list[str],
+    *,
+    load_run_fn: Callable[[str], tuple[Path, RunState]],
+) -> LegacyExternalCycleFreeze | None:
+    """Phase 15.11: one-hop reviewing successor of a terminal external freeze.
+
+    Loads exactly one ``recovery.source_run_id`` via ``load_run_fn``. Never
+    follows the ancestor's own source. Any mismatch is a safe no-match.
+    """
+
+    gpr = state.github_pr_review
+    recovery = state.recovery
+    if gpr is None or recovery is None:
+        return None
+    if recovery.recovered_checkpoint != "reviewing":
+        return None
+    if recovery.reason_code != "codex_review_result_artifact_missing":
+        return None
+    source_run_id = recovery.source_run_id
+    if not source_run_id or source_run_id == state.run_id:
+        return None
+    try:
+        _, ancestor = load_run_fn(source_run_id)
+    except Exception:
+        return None
+    if ancestor.status != RunStatus.FAILED:
+        return None
+    if ancestor.status.value != recovery.source_status:
+        return None
+    if not _same_pr_review_identity(state, ancestor):
+        return None
+    ancestor_recovery = ancestor.recovery
+    ancestor_gpr = ancestor.github_pr_review
+    if ancestor_recovery is None or ancestor_gpr is None:
+        return None
+    if ancestor_recovery.recovered_checkpoint != "external_adjudication":
+        return None
+    if ancestor_recovery.reason_code != "github_adjudication_schema_incompatible":
+        return None
+    if ancestor_gpr.cycle_number >= gpr.cycle_number:
+        return None
+    if ancestor_recovery.source_iteration >= gpr.cycle_number:
+        return None
+    # Recovery snapshot must belong to the ancestor's own external-review cycle.
+    if ancestor_recovery.source_iteration != ancestor_gpr.cycle_number:
+        return None
+    ancestor_gpr_expected = ancestor_gpr.expected_eligible_thread_ids
+    ancestor_recovery_expected = ancestor_recovery.expected_eligible_thread_ids
+    if not ancestor_gpr_expected or not ancestor_recovery_expected:
+        return None
+    expected_set = set(expected)
+    if expected_set != set(ancestor_gpr_expected):
+        return None
+    if expected_set != set(ancestor_recovery_expected):
+        return None
+    return LegacyExternalCycleFreeze(
+        source_cycle=ancestor_recovery.source_iteration,
+        current_cycle=gpr.cycle_number,
+        expected_thread_count=len(expected_set),
+    )
+
+
+def _is_nested_legacy_freeze_candidate(state: RunState) -> bool:
+    """True when local drift gates hold and recovery is the reviewing nested shape.
+
+    Nested candidates must not fall through to normal continue when one-hop
+    lineage evidence is absent or invalid; ``continue_pr_review_cycle`` fails
+    closed instead.
+    """
+
+    if _legacy_freeze_local_preconditions(state) is None:
+        return False
+    recovery = state.recovery
+    if recovery is None:
+        return False
+    return (
+        recovery.recovered_checkpoint == "reviewing"
+        and recovery.reason_code == "codex_review_result_artifact_missing"
+    )
+
+
+def _classify_legacy_external_cycle_freeze(
+    state: RunState,
+    *,
+    load_run_fn: Callable[[str], tuple[Path, RunState]] | None = None,
+) -> LegacyExternalCycleFreeze | None:
+    """Detect an obsolete eligible-thread freeze inherited from a prior cycle.
+
+    Accepts either:
+    - Phase 15.10 direct ``external_adjudication`` recovery on the current run; or
+    - Phase 15.11 one-hop nested lineage where the current recovery is
+      ``reviewing`` / ``codex_review_result_artifact_missing`` and a single
+      loaded terminal source holds the verified ``external_adjudication`` freeze.
+
+    Never recurses beyond that one ancestor. Classification uses structured
+    fields only — never ``result`` or ``last_error`` text.
+    """
+
+    expected = _legacy_freeze_local_preconditions(state)
+    if expected is None:
+        return None
+    direct = _classify_direct_external_cycle_freeze(state, expected)
+    if direct is not None:
+        return direct
+    loader = load_run if load_run_fn is None else load_run_fn
+    return _classify_nested_ancestor_cycle_freeze(state, expected, load_run_fn=loader)
 
 
 def probe_pr_review_worker_liveness(run_directory: Path, run_id: str) -> PrReviewWorkerLiveness:
@@ -863,11 +1015,19 @@ def continue_pr_review_cycle(run_id: str) -> str:
 
     After an authorized continue comment, either:
     - clear a lineage-bound obsolete eligible-thread freeze from a prior
-      ``external_adjudication`` cycle (Phase 15.10 historical migration); or
+      ``external_adjudication`` cycle (Phase 15.10 direct recovery, or
+      Phase 15.11 one-hop reviewing successor of a verified terminal source); or
     - resume the normal non-actionable/uncertain path while preserving any
       valid same-cycle freeze snapshot.
-    Neither path publishes ``@codex review``, creates Cursor chats, or invokes
-    Codex; at most one worker is scheduled after the durable transition.
+
+    Nested legacy-freeze candidates
+    (``reviewing`` / ``codex_review_result_artifact_missing`` with local drift
+    gates) fail closed when one-hop source evidence is absent or invalid: the
+    continue comment stays unconsumed, state/events are untouched, and no
+    worker is spawned. Non-nested runs keep the normal continue fall-through.
+
+    Neither successful path publishes ``@codex review``, creates Cursor chats,
+    or invokes Codex; at most one worker is scheduled after a durable transition.
     """
 
     run_directory, state = load_run(run_id)
@@ -959,6 +1119,13 @@ def continue_pr_review_cycle(run_id: str) -> str:
                 f"Continue accepted for {state.run_id}; legacy cycle freeze cleared "
                 f"and worker resumed for the already-published cycle "
                 f"{legacy.current_cycle} window (no @codex review republished)."
+            )
+        if _is_nested_legacy_freeze_candidate(state):
+            # Nested candidate with incomplete/invalid one-hop evidence: do not
+            # consume authorization or fall through to normal continue.
+            raise ValidationError(
+                "nested legacy-cycle freeze lineage is incomplete or invalid; "
+                "continue authorization left unconsumed and no state mutation"
             )
 
         # Normal path: preserve any valid same-cycle expected freeze snapshot.

@@ -284,6 +284,22 @@ Documentado en:
 - [Troubleshooting](../operacion/troubleshooting.md)
 - [Estado y artefactos](../operacion/estado-artefactos.md)
 
+## Fase 15.11
+
+Extiende Phase 15.10 al lineage anidado de un solo salto: cuando el run actual
+tiene recovery `reviewing` / `codex_review_result_artifact_missing`, se carga
+exactamente un source terminal con recovery `external_adjudication` verificada
+(misma identidad PR/repo, mismos IDs esperados ya processed/resolved, ciclo
+ancestral estricto menor). Sin recursión ni limpieza ambigua. Misma autorización
+por comentario exacto nuevo; mismo run; sin republicar `@codex review`.
+
+Documentado en:
+
+- [Referencia CLI](cli.md)
+- [Flujo completo](../guia/flujo-completo.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+- [Estado y artefactos](../operacion/estado-artefactos.md)
+
 ## Riesgos residuales documentados
 
 - Hook trust sigue siendo `unknown` desde CLI.
