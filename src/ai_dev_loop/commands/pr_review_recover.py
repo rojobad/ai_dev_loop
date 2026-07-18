@@ -8,6 +8,9 @@ Supports artifact-driven checkpoints:
   local Codex structured result artifact was never persisted.
 - ``external_feedback_cursor`` (Phase 15.12): external adjudication completed
   with an actionable fix prompt, but the fresh Cursor iteration never started.
+- ``publication_pre_commit`` (Phase 15.13): local Cursor/Codex accepted the
+  staged fix and publication reached ``pre_commit``, but commit never happened
+  (historically a terminal ValidationError from ssh-agent identity preflight).
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ from ai_dev_loop.commands.pr_review import (
     WORKER_LAUNCHER_REL,
     _copy_identity_artifacts,
     _create_successor_layout,
+    _load_publication_text,
     _run_locks,
 )
 from ai_dev_loop.commands.recover import (
@@ -52,14 +56,19 @@ from ai_dev_loop.resume_planner import (
     cursor_turn_complete,
     review_result_available,
 )
+from ai_dev_loop.review_result import CodexReviewResult
 from ai_dev_loop.run_discovery import list_run_directories, load_run
-from ai_dev_loop.runners.codex import classify_codex_review_output_artifact_failure
+from ai_dev_loop.runners.codex import (
+    classify_codex_review_output_artifact_failure,
+    load_review_result_from_artifacts,
+)
+from ai_dev_loop.runners.git import discover_repository, validate_staged_patch_matches_artifact
 from ai_dev_loop.runners.github import (
     filter_eligible_threads,
     get_pull_request,
     list_review_threads,
 )
-from ai_dev_loop.runners.publish import validate_clean_worktree
+from ai_dev_loop.runners.publish import validate_clean_except_staged, validate_clean_worktree
 from ai_dev_loop.runners.staging import staging_complete_for_iteration
 from ai_dev_loop.state import (
     RecoveryState,
@@ -69,6 +78,7 @@ from ai_dev_loop.state import (
     generate_run_id,
     save_run_state,
     sha256_file,
+    sha256_text,
     utc_now,
 )
 
@@ -540,6 +550,225 @@ def _analyze_external_feedback_cursor(
     return analysis
 
 
+def _publication_commit_fields_are_carried_forward(gpr: Any) -> bool:
+    """True when recorded commit SHAs are absent or equal the bound head.
+
+    Historical PR-review cycles may carry ``local_commit_sha`` /
+    ``publication_commit_sha`` forward from the previously published bound HEAD
+    while ``publication_phase`` remains ``pre_commit``. That is not evidence of a
+    new commit from this publication attempt. A SHA that differs from
+    ``bound_head_sha`` means a post-bound commit was recorded and is ineligible.
+    """
+
+    bound = gpr.bound_head_sha
+    for value in (gpr.local_commit_sha, gpr.publication_commit_sha):
+        if value is not None and value != bound:
+            return False
+    return True
+
+
+def _publication_pre_commit_side_effect_blockers(gpr: Any) -> list[str]:
+    """Block when commit/push/trigger or current-cycle thread writes already began."""
+
+    blockers: list[str] = []
+    if gpr.publication_phase != "pre_commit":
+        blockers.append(f"publication_phase_not_pre_commit:{gpr.publication_phase}")
+    if not _publication_commit_fields_are_carried_forward(gpr):
+        if gpr.local_commit_sha is not None and gpr.local_commit_sha != gpr.bound_head_sha:
+            blockers.append("local_commit_diverged_from_bound")
+        if (
+            gpr.publication_commit_sha is not None
+            and gpr.publication_commit_sha != gpr.bound_head_sha
+        ):
+            blockers.append("publication_commit_diverged_from_bound")
+    current = _current_cycle_thread_ids(gpr)
+    if current and set(gpr.replied_thread_ids) & current:
+        blockers.append("current_threads_replied")
+    if current and set(gpr.resolved_thread_ids) & current:
+        blockers.append("current_threads_resolved")
+    return blockers
+
+
+def _load_accepted_local_review(
+    run_directory: Path,
+    iteration_number: int,
+) -> CodexReviewResult | None:
+    if not review_result_available(run_directory, iteration_number):
+        return None
+    try:
+        review = load_review_result_from_artifacts(run_directory, iteration_label(iteration_number))
+    except ValidationError:
+        return None
+    if review.has_actionable_findings:
+        return None
+    return review
+
+
+def _looks_like_publication_pre_commit_source(
+    state: RunState,
+    run_directory: Path,
+) -> bool:
+    """Structured pre-filter for failed publication stopped at ``pre_commit``.
+
+    Eligibility is checkpoint- and artifact-driven. Never uses ``last_error``,
+    logs, or agent/Git stderr text.
+    """
+
+    gpr = state.github_pr_review
+    if gpr is None:
+        return False
+    if state.status != RunStatus.FAILED:
+        return False
+    if gpr.lifecycle != "failed":
+        return False
+    if gpr.publication_phase != "pre_commit":
+        return False
+    if gpr.pr_number is None:
+        return False
+    # Allow null commit fields or carried-forward SHAs equal to bound_head_sha.
+    # Reject only when a recorded SHA proves a post-bound commit.
+    if not _publication_commit_fields_are_carried_forward(gpr):
+        return False
+    if not state.cursor.chat_id or not state.codex.session_id:
+        return False
+    iteration = max_iteration_number(state)
+    if iteration < 1:
+        return False
+    label = iteration_label(iteration)
+    if not (
+        cursor_turn_complete(run_directory, iteration)
+        and staging_complete_for_iteration(state, run_directory, label)
+    ):
+        return False
+    if _load_accepted_local_review(run_directory, iteration) is None:
+        return False
+    text_rel = (
+        gpr.publication_text_path or f"github/cycles/{gpr.cycle_number:02d}/publication-text.json"
+    )
+    return (run_directory / text_rel).is_file()
+
+
+def _analyze_publication_pre_commit(
+    analysis: PrReviewRecoveryAnalysis,
+    state: RunState,
+    run_directory: Path,
+    *,
+    verify_remote: bool,
+) -> PrReviewRecoveryAnalysis:
+    gpr = state.github_pr_review
+    assert gpr is not None
+    analysis.checkpoint = "publication_pre_commit"
+    analysis.reason_code = "publication_pre_commit_interrupted"
+
+    if state.status != RunStatus.FAILED:
+        analysis.blockers.append("source_not_failed")
+    if gpr.lifecycle != "failed":
+        analysis.blockers.append(f"lifecycle_not_failed:{gpr.lifecycle}")
+    if not state.cursor.chat_id:
+        analysis.blockers.append("cursor_chat_missing")
+    if not state.codex.session_id:
+        analysis.blockers.append("codex_session_missing")
+    if gpr.pr_number is None:
+        analysis.blockers.append("pr_not_bound")
+    if not analysis.trigger_present:
+        analysis.blockers.append("trigger_missing")
+    if not analysis.expected_eligible_thread_ids:
+        analysis.blockers.append("eligible_threads_missing")
+
+    analysis.blockers.extend(_publication_pre_commit_side_effect_blockers(gpr))
+
+    iteration = max_iteration_number(state)
+    if iteration < 1:
+        analysis.blockers.append("local_iteration_missing")
+    else:
+        analysis.iteration = iteration
+        label = iteration_label(iteration)
+        if not cursor_turn_complete(run_directory, iteration):
+            analysis.blockers.append("cursor_incomplete")
+        if not staging_complete_for_iteration(state, run_directory, label):
+            analysis.blockers.append("staging_incomplete")
+        review = _load_accepted_local_review(run_directory, iteration)
+        if review is None:
+            if review_result_available(run_directory, iteration):
+                analysis.blockers.append("local_review_has_actionable_findings")
+            else:
+                analysis.blockers.append("local_review_missing_or_invalid")
+
+        patch_artifact = run_directory / f"git/diffs/{label}.patch"
+        durable_hash = gpr.staged_patch_sha256
+        if durable_hash is None and patch_artifact.is_file():
+            durable_hash = sha256_file(patch_artifact)
+        if durable_hash is None:
+            analysis.blockers.append("staged_patch_hash_missing")
+        else:
+            analysis.staged_patch_sha256 = durable_hash
+            repo_root = Path(state.repository.root)
+            try:
+                current_patch = validate_clean_except_staged(repo_root)
+            except ValidationError:
+                analysis.blockers.append("staged_baseline_invalid")
+            except Exception as exc:
+                analysis.blockers.append(f"staged_baseline_unreadable:{type(exc).__name__}")
+            else:
+                current_hash = sha256_text(current_patch)
+                if current_hash != durable_hash:
+                    analysis.blockers.append("staged_patch_drift")
+                if patch_artifact.is_file():
+                    try:
+                        validate_staged_patch_matches_artifact(repo_root, patch_artifact)
+                    except ValidationError:
+                        if "staged_patch_drift" not in analysis.blockers:
+                            analysis.blockers.append("staged_patch_artifact_drift")
+
+    text_rel = (
+        gpr.publication_text_path or f"github/cycles/{gpr.cycle_number:02d}/publication-text.json"
+    )
+    text_path = run_directory / text_rel
+    if not text_path.is_file():
+        analysis.blockers.append("publication_text_missing")
+    else:
+        try:
+            text = _load_publication_text(run_directory, text_rel)
+        except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+            analysis.blockers.append("publication_text_invalid")
+        except ValidationError:
+            analysis.blockers.append("publication_text_invalid")
+        else:
+            if not text.commit_subject.strip() or not text.pr_title.strip():
+                analysis.blockers.append("publication_text_incomplete")
+
+    try:
+        repo_info = discover_repository(Path(state.repository.root))
+    except Exception as exc:
+        analysis.blockers.append(f"repository_unreadable:{type(exc).__name__}")
+    else:
+        if repo_info.head != gpr.bound_head_sha:
+            analysis.blockers.append("head_advanced_past_bound")
+        if state.repository.initial_head != gpr.bound_head_sha:
+            analysis.blockers.append("initial_head_drift")
+        if repo_info.branch != gpr.head_branch:
+            analysis.blockers.append("branch_drift")
+
+    if _active_worker_pid(run_directory) is not None:
+        analysis.blockers.append("active_worker_present")
+
+    _verify_remote_pr(
+        analysis,
+        state,
+        verify_remote=verify_remote,
+        require_thread_set=True,
+    )
+
+    analysis.eligible = (
+        len(analysis.blockers) == 0
+        and analysis.iteration is not None
+        and analysis.staged_patch_sha256 is not None
+        and bool(analysis.expected_eligible_thread_ids)
+    )
+    _attach_matching_successor(analysis, state)
+    return analysis
+
+
 def _analyze_reviewing(
     analysis: PrReviewRecoveryAnalysis,
     state: RunState,
@@ -649,6 +878,13 @@ def analyze_pr_review_recovery(
 
     _fill_common_pr_fields(analysis, state)
 
+    if _looks_like_publication_pre_commit_source(state, run_directory):
+        return _analyze_publication_pre_commit(
+            analysis,
+            state,
+            run_directory,
+            verify_remote=verify_remote,
+        )
     if _looks_like_external_feedback_cursor_source(state, run_directory):
         return _analyze_external_feedback_cursor(
             analysis,
@@ -716,6 +952,17 @@ def _attach_matching_successor(analysis: PrReviewRecoveryAnalysis, source: RunSt
                 and candidate.github_pr_review.external_cursor_iteration != analysis.iteration
             ):
                 continue
+        elif analysis.checkpoint == "publication_pre_commit":
+            if recovery.source_iteration != analysis.iteration:
+                continue
+            if recovery.source_staged_patch_sha256 != analysis.staged_patch_sha256:
+                continue
+            if set(recovery.expected_eligible_thread_ids or []) != expected:
+                continue
+            if set(candidate.github_pr_review.expected_eligible_thread_ids or []) != expected:
+                continue
+            if candidate.github_pr_review.publication_phase != "pre_commit":
+                continue
         else:
             continue
         matches.append((path, candidate))
@@ -752,6 +999,8 @@ def _copy_pr_review_external_context(
         allowlisted.append(gpr.last_snapshot_path)
     if gpr.external_fix_prompt_path:
         allowlisted.append(gpr.external_fix_prompt_path)
+    if gpr.publication_text_path:
+        allowlisted.append(gpr.publication_text_path)
 
     for rel in allowlisted:
         src = source_dir / rel
@@ -760,6 +1009,174 @@ def _copy_pr_review_external_context(
         _copy_sensitive_file(src, dest_dir / rel)
         copied.append(rel)
     return copied
+
+
+def _create_publication_pre_commit_successor(
+    *,
+    source_dir: Path,
+    source: RunState,
+    analysis: PrReviewRecoveryAnalysis,
+) -> str:
+    assert analysis.cycle_number is not None
+    assert analysis.iteration is not None
+    assert analysis.staged_patch_sha256 is not None
+    assert analysis.expected_eligible_thread_ids
+    gpr = source.github_pr_review
+    assert gpr is not None
+
+    now = utc_now()
+    project = source.project.name
+    recovery_run_id = generate_run_id(project, now=now)
+    final_dir = run_dir(project, recovery_run_id)
+    if final_dir.exists():
+        raise ValidationError(f"recovery run directory already exists: {final_dir}")
+
+    project_root = runs_dir() / project
+    ensure_dir(project_root)
+    temp_dir = project_root / f".pr-review-recover-{recovery_run_id}-{secrets.token_hex(4)}"
+    try:
+        _create_successor_layout(temp_dir)
+        ensure_dir(temp_dir / "codex" / "reviews")
+        ensure_dir(temp_dir / "codex" / "events")
+        ensure_dir(temp_dir / "git" / "diffs")
+        ensure_dir(temp_dir / "git" / "status")
+        ensure_dir(temp_dir / "git" / "cursor-output")
+        ensure_dir(temp_dir / "cursor" / "iterations")
+        ensure_dir(temp_dir / "github" / "cycles" / f"{analysis.cycle_number:02d}")
+
+        _copy_identity_artifacts(source_dir, temp_dir)
+        copied = _copy_selected_artifacts(
+            source_dir,
+            temp_dir,
+            iteration=analysis.iteration,
+            checkpoint="process_review",
+        )
+        copied.extend(
+            _copy_pr_review_external_context(
+                source_dir,
+                temp_dir,
+                cycle_number=analysis.cycle_number,
+                gpr=gpr,
+            )
+        )
+        # Ensure publication text is present even when only the default path exists.
+        text_rel = (
+            gpr.publication_text_path
+            or f"github/cycles/{analysis.cycle_number:02d}/publication-text.json"
+        )
+        if text_rel not in copied and (source_dir / text_rel).is_file():
+            _copy_sensitive_file(source_dir / text_rel, temp_dir / text_rel)
+            copied.append(text_rel)
+
+        expected = list(analysis.expected_eligible_thread_ids)
+        recovery = RecoveryState(
+            source_run_id=source.run_id,
+            source_status=RunStatus.FAILED.value,
+            source_iteration=analysis.iteration,
+            recovered_checkpoint="publication_pre_commit",
+            source_staged_patch_sha256=analysis.staged_patch_sha256,
+            created_at=now,
+            runtime_migration="none",
+            reason_code="publication_pre_commit_interrupted",
+            expected_eligible_thread_ids=expected,
+        )
+        iterations = _sanitize_iterations_for_successor(
+            source.iterations,
+            iteration=analysis.iteration,
+            checkpoint="process_review",
+        )
+        successor = source.model_copy(deep=True)
+        successor.run_id = recovery_run_id
+        successor.created_at = now
+        successor.updated_at = now
+        successor.status = RunStatus.INTERRUPTED
+        successor.result = (
+            f"Recovered publication pre_commit checkpoint from failed run {source.run_id} "
+            f"at iteration {analysis.iteration:02d}. Resume publishes only; no Cursor, "
+            "Codex adjudication, replies, resolves, or @codex review."
+        )
+        successor.last_error = None
+        successor.iterations = iterations
+        successor.recovery = recovery
+        successor.workflow = successor.workflow.model_copy(
+            update={"current_review_iteration": analysis.iteration}
+        )
+        successor.github_pr_review = gpr.model_copy(
+            update={
+                "lifecycle": "publishing_external_fix",
+                "worker_outcome": None,
+                "eligible_thread_ids": expected,
+                "expected_eligible_thread_ids": expected,
+                "publication_phase": "pre_commit",
+                "publication_text_path": text_rel,
+                "staged_patch_sha256": analysis.staged_patch_sha256,
+                "local_commit_sha": None,
+                "publication_commit_sha": None,
+            }
+        )
+
+        assert successor.codex.session_id == source.codex.session_id
+        assert successor.cursor.chat_id == source.cursor.chat_id
+        if source.controller is not None:
+            assert successor.controller is not None
+            assert (
+                successor.controller.controller_session_id
+                == source.controller.controller_session_id
+            )
+
+        save_run_state(temp_dir, successor)
+        atomic_write_json(
+            temp_dir / "manifest.json",
+            {
+                "schema_version": 1,
+                "run_id": recovery_run_id,
+                "project": project,
+                "created_at": now.isoformat(),
+                "artifacts": [
+                    {"path": rel, "sha256": sha256_file(temp_dir / rel)}
+                    for rel in copied
+                    if (temp_dir / rel).is_file()
+                ],
+                "recovery": {
+                    "source_run_id": source.run_id,
+                    "recovered_checkpoint": "publication_pre_commit",
+                    "reason_code": "publication_pre_commit_interrupted",
+                    "source_iteration": analysis.iteration,
+                    "source_staged_patch_sha256": analysis.staged_patch_sha256,
+                    "expected_thread_count": len(expected),
+                    "pr_number": gpr.pr_number,
+                    "bound_head_sha_prefix": gpr.bound_head_sha[:12],
+                    "trigger_reposted": False,
+                },
+            },
+            sensitive=True,
+        )
+        append_orchestrator_event(
+            temp_dir,
+            run_id=recovery_run_id,
+            component="orchestrator",
+            event="pr_review_publication_pre_commit_recovery_successor_created",
+            status=successor.status.value,
+            detail={
+                "source_run_id": source.run_id,
+                "checkpoint": "publication_pre_commit",
+                "reason_code": "publication_pre_commit_interrupted",
+                "source_iteration": analysis.iteration,
+                "staged_patch_sha256": analysis.staged_patch_sha256,
+                "expected_thread_count": len(expected),
+                "pr_number": gpr.pr_number,
+                "bound_head_sha_prefix": gpr.bound_head_sha[:12],
+                "trigger_reposted": False,
+            },
+        )
+        if final_dir.exists():
+            raise ValidationError(f"recovery run directory already exists: {final_dir}")
+        temp_dir.rename(final_dir)
+    except Exception:
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+    return recovery_run_id
 
 
 def _create_external_adjudication_successor(
@@ -1228,6 +1645,12 @@ def _create_recovery_successor(
     source: RunState,
     analysis: PrReviewRecoveryAnalysis,
 ) -> str:
+    if analysis.checkpoint == "publication_pre_commit":
+        return _create_publication_pre_commit_successor(
+            source_dir=source_dir,
+            source=source,
+            analysis=analysis,
+        )
     if analysis.checkpoint == "external_feedback_cursor":
         return _create_external_feedback_cursor_successor(
             source_dir=source_dir,
@@ -1273,6 +1696,12 @@ def recover_pr_review_cycle(run_id: str, *, dry_run: bool = False) -> PrReviewRe
                     "Dry-run only: no successor created, no GitHub writes, "
                     "Cursor will open on a fresh iteration after resume, "
                     "and trigger will not be re-posted."
+                )
+            elif analysis.checkpoint == "publication_pre_commit":
+                message = (
+                    "Dry-run only: no successor created, no GitHub writes, "
+                    "resume will publish only (no Cursor/Codex/adjudication), "
+                    "and trigger will not be re-posted before a successful publication."
                 )
             else:
                 message = (
@@ -1385,6 +1814,12 @@ def recover_pr_review_cycle(run_id: str, *, dry_run: bool = False) -> PrReviewRe
             f"{source.run_id}. Source remains failed. Resume opens Cursor on a fresh "
             "iteration; trigger will not be re-posted and threads will not be re-adjudicated."
         )
+    elif analysis.checkpoint == "publication_pre_commit":
+        message = (
+            f"Created publication_pre_commit recovery successor {recovery_run_id} from "
+            f"{source.run_id}. Source remains failed. Resume publishes only; no Cursor, "
+            "Codex adjudication, replies, resolves, or @codex review before publication."
+        )
     else:
         message = (
             f"Created adjudication recovery successor {recovery_run_id} from "
@@ -1405,6 +1840,8 @@ def _checkpoint_label(checkpoint: str | None) -> str:
         return "reviewing"
     if checkpoint == "external_feedback_cursor":
         return "external_feedback_cursor"
+    if checkpoint == "publication_pre_commit":
+        return "publication_pre_commit"
     return "adjudication"
 
 

@@ -560,3 +560,36 @@ El checkpoint debe ser `external_feedback_cursor` /
 no republica `@codex review` ni re-adjudica los mismos hilos. Si PR/SHA/hilos
 cambian, el baseline está sucio, el prompt/resultado son invalidos, hay worker
 vivo, publicación parcial o un intento Cursor parcial, `recover` se detiene.
+
+## Publicación detenida en `pre_commit` (ssh-agent sin identidad)
+
+Causa observada (PR #45 / run anonimizado `…9488fe`): Cursor y la revisión local
+Codex ya aceptaron el patch staged (sin hallazgos accionables). El worker llegó
+a `publication_phase: pre_commit` con texto de publicación durable, pero el
+preflight `ssh-add -l` no tenía identidad utilizable. Runs históricos marcaron
+esto como `failed` vía `ValidationError` genérico; runs nuevos lo clasifican
+como interrupción tipada `ssh_agent_no_identity` y conservan el checkpoint
+reanudable.
+
+Para el origen `failed` histórico con evidencia durable
+(`lifecycle: failed` + `publication_phase: pre_commit`, patch staged igual al
+hash durable, HEAD/SHA sin commit posterior, resultado local válido sin
+hallazgos, texto de publicación válido, freeze de hilos intacto, PR abierto en
+el SHA enlazado):
+
+```bash
+# Cargar la clave en el socket persistente antes del resume (no durante recover).
+SSH_AUTH_SOCK="$HOME/.ssh/ai-dev-loop-ssh-agent.sock" ssh-add ~/.ssh/id_ed25519
+
+ai_dev_loop pr-review recover <failed-run-id> --dry-run
+ai_dev_loop pr-review recover <failed-run-id> --output json
+ai_dev_loop pr-review resume <successor-run-id> --controller-session-id <sesion-A>
+```
+
+El checkpoint debe ser `publication_pre_commit` /
+`publication_pre_commit_interrupted`. El `resume` publica solamente: no abre
+Cursor/Codex, no re-adjudica, no responde/resuelve hilos ni republica
+`@codex review` antes del flujo normal tras una publicación exitosa. La
+elegibilidad no usa `last_error` ni logs. Si el PR/SHA/rama/patch/hilos
+cambiaron, hay worker vivo, fase `committed`/`pushed`/`pr_bound`, review local
+accionable o texto corrupto, `recover` se detiene sin writes.
