@@ -89,7 +89,10 @@ ALLOWED_STATUS_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
     ),
     RunStatus.COMPLETED: frozenset(),
     RunStatus.COMPLETED_WITH_RESIDUAL_RISK: frozenset(),
-    RunStatus.MAX_ITERATIONS_REACHED: frozenset(),
+    # A user can explicitly increase the budget for this one terminal outcome.
+    # The extension command records the decision and restores the durable
+    # checkpoint that already has a stored Cursor fix prompt.
+    RunStatus.MAX_ITERATIONS_REACHED: frozenset({RunStatus.WAITING_FOR_CURSOR_FIX}),
     RunStatus.INTERRUPTED: frozenset(
         {
             RunStatus.VALIDATING,

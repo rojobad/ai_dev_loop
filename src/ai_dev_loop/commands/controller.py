@@ -157,7 +157,10 @@ def _build_result(
     status_text = render_status(state.run_id, output="json")
     status_payload = json.loads(status_text)
     next_action = str(status_payload["next_safe_action"])
-    if state.status == RunStatus.PREPARED and state.controller is not None:
+    if (
+        state.status in {RunStatus.PREPARED, RunStatus.WAITING_FOR_CURSOR_FIX}
+        and state.controller is not None
+    ):
         next_action = (
             "Leave the reviewer session inactive, then launch with "
             f"ai_dev_loop launch {state.run_id} --controller-session-id <exact-controller-id>."

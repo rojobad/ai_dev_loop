@@ -15,6 +15,7 @@ from ai_dev_loop.commands.abort import render_abort_output, run_abort
 from ai_dev_loop.commands.config_cmd import run_validate_config
 from ai_dev_loop.commands.controller import controller_status, render_controller_status
 from ai_dev_loop.commands.doctor import render_doctor
+from ai_dev_loop.commands.extend import extend_review_iterations, render_extend_output
 from ai_dev_loop.commands.inspect import render_inspect
 from ai_dev_loop.commands.integrations import (
     CodexIntegrationTarget,
@@ -311,7 +312,7 @@ def prepare_command(
 
 @app.command("launch")
 def launch_command(
-    run_id: Annotated[str, typer.Argument(help="Prepared A/B run identifier.")],
+    run_id: Annotated[str, typer.Argument(help="Eligible A/B run identifier.")],
     controller_session_id: Annotated[
         str,
         typer.Option(
@@ -346,7 +347,7 @@ def launch_command(
     ] = False,
     output: OutputOption = DEFAULT_OUTPUT,
 ) -> None:
-    """Launch a prepared A/B run in a detached local worker."""
+    """Launch or resume an eligible A/B run in a detached local worker."""
 
     def run() -> None:
         from ai_dev_loop.runners.tool_updates import ToolUpdateFlags
@@ -781,6 +782,30 @@ def resume_command(
                 return
             raise typer.Exit(code=exc.exit_code) from exc
         typer.echo(render_resume_output(result), nl=False)
+
+    _handle(run)
+
+
+@app.command("extend")
+def extend_command(
+    run_id: Annotated[str, typer.Argument(help="Run identifier at the review-iteration limit.")],
+    additional_review_iterations: Annotated[
+        int,
+        typer.Option(
+            "--additional-review-iterations",
+            help="Positive number of review iterations to add.",
+        ),
+    ],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Extend a maxed-out run and restore its stored Cursor fix checkpoint."""
+
+    def run() -> None:
+        result = extend_review_iterations(
+            run_id,
+            additional_review_iterations=additional_review_iterations,
+        )
+        typer.echo(render_extend_output(result, output=output.value), nl=False)
 
     _handle(run)
 

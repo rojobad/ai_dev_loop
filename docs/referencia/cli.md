@@ -78,7 +78,7 @@ ai_dev_loop launch <run-id> --controller-session-id TEXT [--repo-path PATH] \
   [--update-tools|--skip-tool-update] [--allow-incompatible-tools] [--output text|json]
 ```
 
-Lanza un run A/B preparado en un worker local detachado. Requiere el controller session ID exacto del prepare. Es idempotente si el worker ya esta vivo. No sustituye `start` para runs legacy sin controller.
+Lanza un run A/B preparado en un worker local detachado. Tambien reanuda el checkpoint `waiting_for_cursor_fix` despues de un `extend`. Requiere el controller session ID exacto del prepare. Es idempotente si el worker ya esta vivo. No sustituye `start` para runs legacy sin controller.
 
 Los flags de compatibilidad de herramientas son los mismos que en `start`/`resume`, pero el worker es siempre non-interactive: nunca pregunta. `--update-tools` autoriza updaters; `--skip-tool-update` (o la omision) no actualiza; `--allow-incompatible-tools` permite continuar ante incompatibilidad confirmada. `--update-tools` y `--skip-tool-update` son mutuamente excluyentes.
 
@@ -173,6 +173,16 @@ ai_dev_loop resume <run-id> [--update-tools|--skip-tool-update] [--allow-incompa
 Continua un run checkpointed o interrumpido si el siguiente paso seguro puede derivarse de estado y artefactos.
 
 Aplica la misma politica de compatibilidad y updates que `start`. Tras un update se vuelven a consultar version y catalogos (`agent models`, `codex debug models`). Un abort pendiente tiene prioridad.
+
+## `extend`
+
+```bash
+ai_dev_loop extend <run-id> --additional-review-iterations INTEGER [--output text|json]
+```
+
+Solo aplica a un run detenido en `max_iterations_reached`. Requiere un entero positivo, aumenta ese presupuesto sin crear un run nuevo y restaura el checkpoint `waiting_for_cursor_fix` con el fix prompt exacto de la ultima review. Conserva el chat de Cursor, la sesion revisora Codex, los cambios staged y todos los artefactos.
+
+Despues, en un run legacy usa `ai_dev_loop resume <run-id>`. En un run A/B deja B inactiva y usa `ai_dev_loop launch <run-id> --controller-session-id <exact-controller-session-id>`: el worker detecta el checkpoint y ejecuta `resume` de forma detachada.
 
 ## `recover`
 

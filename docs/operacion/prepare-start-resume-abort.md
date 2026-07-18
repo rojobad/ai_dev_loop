@@ -7,6 +7,7 @@ ai_dev_loop prepare
 ai_dev_loop launch <run-id> --controller-session-id <exact-controller-session-id>
 ai_dev_loop start <run-id>
 ai_dev_loop resume <run-id>
+ai_dev_loop extend <run-id> --additional-review-iterations <positive-int>
 ai_dev_loop abort <run-id>
 ai_dev_loop recover <failed-run-id>
 ai_dev_loop controller status --controller-session-id <exact-controller-session-id> --repo-path /path/al/repo
@@ -64,7 +65,7 @@ ai_dev_loop launch <run-id> \
   [--allow-incompatible-tools]
 ```
 
-`launch` arranca un worker local detachado que invoca el mismo camino de `start` para un run A/B preparado.
+`launch` arranca un worker local detachado que invoca `start` para un run A/B preparado, o `resume` para el checkpoint `waiting_for_cursor_fix` creado por `extend`.
 
 Antes de spawn:
 
@@ -156,7 +157,17 @@ Checkpoints soportados:
 - `reviewing`;
 - `interrupted`.
 
-Estados terminales como `completed`, `failed`, `aborted` o `max_iterations_reached` no se reanudan con `resume`. Para ciertos `failed` elegibles, usa `recover` (abajo).
+Estados terminales como `completed`, `failed` o `aborted` no se reanudan con `resume`. `max_iterations_reached` tampoco se reanuda directamente: si decides conceder mas presupuesto, usa `extend` primero (abajo). Para ciertos `failed` elegibles, usa `recover` (abajo).
+
+## `extend`
+
+```bash
+ai_dev_loop extend <run-id> --additional-review-iterations 1
+```
+
+`extend` es la decision explicita para continuar un run que se detuvo en `max_iterations_reached`. Solo acepta una cantidad positiva, conserva el mismo run, chat Cursor, sesion Codex y artefactos, y registra la ampliacion en el log/eventos. Restaura el fix prompt generado por la ultima review pendiente: con `+1`, Cursor corrige esos findings y Codex hace la siguiente review, por ejemplo de `5/5` a `6/6`.
+
+Luego usa `resume` en un run legacy. Para A/B, B sigue inactiva y A usa `launch` con el controller session ID exacto; el worker reanuda de forma detachada.
 
 ## `recover`
 
