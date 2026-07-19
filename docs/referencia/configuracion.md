@@ -249,7 +249,8 @@ Con `github.enabled: true` hay dos flujos CLI:
   (`external_adjudication`, `reviewing`, `external_feedback_cursor`,
   `publication_pre_commit`): sucesor inmutable; no republica `@codex review`.
   En `publication_pre_commit` el `resume` publica solamente tras cargar la
-  identidad SSH manualmente.
+  identidad SSH manualmente; un hash GPR obsoleto solo se adopta en el
+  sucesor si el patch live coincide con el artefacto via `normalize_patch_text`.
 
 Prepare no escribe en GitHub; start publica el marcador de review.
 `set-cursor-model` solo aplica al ciclo independiente antes de crear el chat

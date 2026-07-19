@@ -162,11 +162,13 @@ artefacto-dirigidos:
   para `pr-review resume`, que publica solamente (no abre Cursor/Codex, no
   re-adjudica, no responde/resuelve hilos ni republica `@codex review` antes
   del flujo normal post-publicacion). La elegibilidad usa evidencia durable
-  (fase, patch/SHA/PR/hilos, resultado local sin hallazgos, texto de
-  publicacion); nunca `last_error` ni logs. Si falta la identidad del
-  agente SSH efectivo (`IdentityAgent` resuelto con `ssh -G`, o
-  `SSH_AUTH_SOCK` heredado), carga la clave manualmente en ese agente antes
-  del `resume`.
+  (fase, equivalencia normalizada artefacto/index, SHA/PR/hilos, resultado
+  local sin hallazgos, texto de publicacion); nunca `last_error` ni logs.
+  Un hash GPR obsoleto se adopta en el sucesor solo si el patch live coincide
+  con `git/diffs/NN.patch` tras `normalize_patch_text` (CRLF/newline terminal);
+  un cambio de contenido real bloquea. Si falta la identidad del agente SSH
+  efectivo (`IdentityAgent` resuelto con `ssh -G`, o `SSH_AUTH_SOCK`
+  heredado), carga la clave manualmente en ese agente antes del `resume`.
 
 El origen `failed` permanece terminal; el sucesor reutiliza el mismo PR, SHA,
 trigger, hilos elegibles, sesion Codex B, chat Cursor y controlador A. **No**

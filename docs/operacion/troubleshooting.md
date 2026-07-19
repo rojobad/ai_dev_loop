@@ -577,10 +577,11 @@ nuevos lo clasifican como interrupción tipada `ssh_agent_no_identity` y
 conservan el checkpoint reanudable.
 
 Para el origen `failed` histórico con evidencia durable
-(`lifecycle: failed` + `publication_phase: pre_commit`, patch staged igual al
-hash durable, HEAD/SHA sin commit posterior, resultado local válido sin
-hallazgos, texto de publicación válido, freeze de hilos intacto, PR abierto en
-el SHA enlazado):
+(`lifecycle: failed` + `publication_phase: pre_commit`, HEAD/SHA sin commit
+posterior, resultado local válido sin hallazgos, texto de publicación válido,
+freeze de hilos intacto, PR abierto en el SHA enlazado, y patch staged live que
+pasa baseline y coincide con `git/diffs/NN.patch` de la última iteración vía
+`normalize_patch_text` — sólo CRLF y newline terminal):
 
 ```bash
 # Cargar la clave en el socket persistente antes del resume (no durante recover).
@@ -598,3 +599,11 @@ Cursor/Codex, no re-adjudica, no responde/resuelve hilos ni republica
 elegibilidad no usa `last_error` ni logs. Si el PR/SHA/rama/patch/hilos
 cambiaron, hay worker vivo, fase `committed`/`pushed`/`pr_bound`, review local
 accionable o texto corrupto, `recover` se detiene sin writes.
+
+Un `github_pr_review.staged_patch_sha256` obsoleto (heredado del ciclo anterior
+a la corrección externa) no es drift por sí solo. Si el artefacto de la última
+iteración coincide normalizado con el index live, el sucesor adopta el hash raw
+live de `git diff --cached --binary` (el mismo que verificará la publicación).
+Eso no autoriza cambios de contenido distintos del artefacto ni edición del
+`state.json` del origen. El hash de bytes del archivo artefacto
+(`sha256_file`) no sustituye al fingerprint de publicación.
