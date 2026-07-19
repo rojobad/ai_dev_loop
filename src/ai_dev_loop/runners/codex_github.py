@@ -7,9 +7,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pydantic import ValidationError as PydanticValidationError
-
 from ai_dev_loop.errors import AdjudicationSchemaIncompatibleError, AiDevLoopError, ValidationError
+from ai_dev_loop.external_adjudication import (
+    ExternalCycleArtifactPaths,
+    load_external_review_result,
+    materialize_derived_external_artifacts,
+)
 from ai_dev_loop.github_pr_review_result import GithubPrReviewResult
 from ai_dev_loop.paths import schema_path
 from ai_dev_loop.process import ActiveProcessRegistration, run_process_streaming
@@ -19,7 +22,7 @@ from ai_dev_loop.response_schema import (
 )
 from ai_dev_loop.runners.codex import build_codex_review_args, redact_codex_args
 from ai_dev_loop.runners.publish import PublicationText
-from ai_dev_loop.state import RunState, atomic_write_json, atomic_write_text, sha256_text
+from ai_dev_loop.state import RunState, atomic_write_json, sha256_text
 
 
 @dataclass(frozen=True)
@@ -95,19 +98,6 @@ def build_publication_text_prompt(
     )
 
 
-def _load_github_result(path: Path) -> GithubPrReviewResult:
-    if not path.is_file():
-        raise ValidationError(f"GitHub PR review result missing: {path}")
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ValidationError(f"GitHub PR review result is not valid JSON: {exc}") from exc
-    try:
-        return GithubPrReviewResult.model_validate(payload)
-    except PydanticValidationError as exc:
-        raise ValidationError(f"GitHub PR review result validation failed: {exc}") from exc
-
-
 def _load_publication_text(path: Path) -> PublicationText:
     if not path.is_file():
         raise ValidationError(f"publication text result missing: {path}")
@@ -143,15 +133,8 @@ def run_codex_github_review(
         raise AiDevLoopError(f"schema missing: {schema_file}")
     validate_codex_response_schema(schema_file, schema_name="github-pr-review-result-v1.json")
 
-    label = f"{cycle_number:02d}"
-    events_rel = f"github/cycles/{label}/codex.events.jsonl"
-    stderr_rel = f"github/cycles/{label}/codex.stderr.txt"
-    result_rel = f"github/cycles/{label}/result.json"
-    report_rel = f"github/cycles/{label}/report.md"
-    metadata_rel = f"github/cycles/{label}/codex.metadata.json"
-    snapshot_rel = f"github/cycles/{label}/threads.snapshot.json"
-
-    result_path = run_directory / result_rel
+    cycle_paths = ExternalCycleArtifactPaths.for_cycle(cycle_number)
+    result_path = run_directory / cycle_paths.result_path
     prompt = build_github_feedback_prompt(
         state,
         run_directory,
@@ -171,8 +154,10 @@ def run_codex_github_review(
         }
         for item in eligible_thread_payload
     ]
-    atomic_write_json(run_directory / snapshot_rel, {"threads": safe_snapshot}, sensitive=True)
-    sensitive_snapshot = run_directory / f"github/cycles/{label}/threads.full.json"
+    atomic_write_json(
+        run_directory / cycle_paths.snapshot_path, {"threads": safe_snapshot}, sensitive=True
+    )
+    sensitive_snapshot = run_directory / f"github/cycles/{cycle_number:02d}/threads.full.json"
     atomic_write_json(sensitive_snapshot, {"threads": eligible_thread_payload}, sensitive=True)
 
     args = build_codex_review_args(
@@ -188,8 +173,8 @@ def run_codex_github_review(
         cwd=state.repository.root,
         timeout=timeout_seconds,
         stdin_text=prompt,
-        stdout_path=run_directory / events_rel,
-        stderr_path=run_directory / stderr_rel,
+        stdout_path=run_directory / cycle_paths.events_path,
+        stderr_path=run_directory / cycle_paths.stderr_path,
         sensitive=True,
         active_process=ActiveProcessRegistration(
             run_directory=run_directory,
@@ -200,7 +185,7 @@ def run_codex_github_review(
         ),
     )
     atomic_write_json(
-        run_directory / metadata_rel,
+        run_directory / cycle_paths.metadata_path,
         {
             "args": redact_codex_args(args),
             "exit_code": process.returncode,
@@ -211,39 +196,33 @@ def run_codex_github_review(
     )
     if process.timed_out:
         raise AiDevLoopError(
-            f"Codex GitHub adjudication timed out; inspect {events_rel} and {stderr_rel}"
+            "Codex GitHub adjudication timed out; inspect "
+            f"{cycle_paths.events_path} and {cycle_paths.stderr_path}"
         )
     if process.returncode != 0:
-        if events_indicate_adjudication_schema_rejection(run_directory / events_rel):
+        if events_indicate_adjudication_schema_rejection(run_directory / cycle_paths.events_path):
             raise AdjudicationSchemaIncompatibleError(
                 "Codex rejected the GitHub adjudication output schema "
-                f"(invalid_json_schema); inspect {events_rel} and {stderr_rel}"
+                f"(invalid_json_schema); inspect {cycle_paths.events_path} and "
+                f"{cycle_paths.stderr_path}"
             )
         raise AiDevLoopError(
             f"Codex GitHub adjudication failed with exit code {process.returncode}; "
-            f"inspect {events_rel} and {stderr_rel}"
+            f"inspect {cycle_paths.events_path} and {cycle_paths.stderr_path}"
         )
-    review = _load_github_result(result_path)
-    atomic_write_text(
-        run_directory / report_rel,
-        review.review_markdown,
-        sensitive=True,
+    review = load_external_review_result(run_directory, cycle_paths.result_path)
+    report_rel, fix_prompt_path = materialize_derived_external_artifacts(
+        run_directory,
+        review,
+        cycle_number=cycle_number,
     )
-    fix_prompt_path: str | None = None
-    if review.all_actionable and review.cursor_fix_prompt:
-        fix_prompt_path = f"prompts/fixes/github-{label}.txt"
-        atomic_write_text(
-            run_directory / fix_prompt_path,
-            review.cursor_fix_prompt,
-            sensitive=True,
-        )
     artifacts = GithubAdjudicationArtifacts(
-        events_path=events_rel,
-        stderr_path=stderr_rel,
-        result_path=result_rel,
+        events_path=cycle_paths.events_path,
+        stderr_path=cycle_paths.stderr_path,
+        result_path=cycle_paths.result_path,
         report_path=report_rel,
-        metadata_path=metadata_rel,
-        snapshot_path=snapshot_rel,
+        metadata_path=cycle_paths.metadata_path,
+        snapshot_path=cycle_paths.snapshot_path,
         fix_prompt_path=fix_prompt_path,
     )
     return review, artifacts

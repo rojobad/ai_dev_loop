@@ -186,22 +186,31 @@ Codex B evalúa todos esos hilos y devuelve una decisión estructurada por hilo.
 
 ```text
 Codex B adjudica los hilos
+→ checkpoint durable external_adjudication (antes de GraphQL/Cursor)
 → Cursor corrige en su mismo chat
 → revisión local Codex B
 → commit y push no-force
 → verifica el nuevo SHA del PR
 → resuelve sólo los hilos corregidos
 → solicita otra revisión con @codex review
+→ el mismo worker continúa polling in-process
 ```
 
 El número máximo de rondas externas se controla mediante
-`github.max_external_cycles`.
+`github.max_external_cycles`. Si GraphQL falla después de los artefactos de
+Codex pero antes del preflight, el run queda `interrupted` con el checkpoint
+del ciclo actual; `pr-review resume` revalida sin re-adjudicar ni crear
+sucesor. `RecoveryState` es lineage de auditoría y no guarda prompts de
+ciclos posteriores.
 
 ### Alguno es incierto o no aplica
 
-El worker no envía nada a Cursor ni resuelve esos hilos. Codex publica la
-explicación exacta en línea, empezando por `@rojobad`, y el ciclo queda en
-`waiting_for_user_attention`.
+El worker no envía nada a Cursor ni resuelve esos hilos. Persiste el intent en
+`writing` antes de cada write; sólo marca `written` tras éxito confirmado. Si el
+resultado es ambiguo (`GithubWriteResult(ok=False)`, excepción, timeout o
+interrupción con `writing` sin confirmación), espera atención del usuario en
+lugar de duplicar el comentario. La explicación en línea empieza por
+`@rojobad`, y el ciclo queda en `waiting_for_user_attention`.
 
 Después de evaluarlo, el usuario autoriza una continuación únicamente con este
 comentario exacto en el PR:

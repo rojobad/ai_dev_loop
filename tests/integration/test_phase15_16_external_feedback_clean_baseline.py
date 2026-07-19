@@ -208,7 +208,14 @@ def _seed_incident_empty_dir_03(
         json.dumps(_actionable_result(thread_ids, EXTERNAL_PROMPT_C3), indent=2) + "\n",
         encoding="utf-8",
     )
-    (cycle_dir / "threads.snapshot.json").write_text("[]\n", encoding="utf-8")
+    (cycle_dir / "threads.snapshot.json").write_text(
+        json.dumps(
+            {"threads": [{"thread_id": tid, "body_sha256": "a" * 64} for tid in thread_ids]},
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     fix_prompt = run_path / "prompts/fixes/github-03.txt"
     fix_prompt.parent.mkdir(parents=True, exist_ok=True)
     fix_prompt.write_text(EXTERNAL_PROMPT_C3, encoding="utf-8")

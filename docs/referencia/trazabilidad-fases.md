@@ -384,6 +384,22 @@ Documentado en:
 - [Troubleshooting](../operacion/troubleshooting.md)
 - [Estado y artefactos](../operacion/estado-artefactos.md)
 
+## Fase 15.17
+
+Checkpoint tipado `github_pr_review.external_adjudication` persistido justo
+después de Codex B y antes de GraphQL/Cursor/replies/publicación. `pr-review
+resume` hidrata solo el ciclo actual; `RecoveryState` queda como lineage y no
+como guardia global de hashes. El worker, tras `resume_run` local, continúa
+in-process a publicación/polling (`schedule_worker=False`). Replies no
+accionables usan intents durables para evitar duplicados ante ambigüedad.
+
+Documentado en:
+
+- [Referencia CLI](cli.md)
+- [Flujo completo](../guia/flujo-completo.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+- [Estado y artefactos](../operacion/estado-artefactos.md)
+
 ## Riesgos residuales documentados
 
 - Hook trust sigue siendo `unknown` desde CLI.

@@ -732,6 +732,17 @@ GITHUB_PUBLICATION_PHASES = frozenset(
         "pr_bound",
     }
 )
+EXTERNAL_ADJUDICATION_APPLICATION_STATUSES = frozenset(
+    {
+        "cursor_pending",
+        "cursor_scheduled",
+        "replies_pending",
+        "consumed",
+    }
+)
+EXTERNAL_REPLY_INTENT_STATUSES = frozenset({"pending", "writing", "written", "ambiguous"})
+EXTERNAL_REPLY_DECISIONS = frozenset({"not_applicable", "uncertain"})
+_SAFE_RUN_RELATIVE_PATH = re.compile(r"^(?!/)(?!.*(?:^|/)\.\.(?:/|$))[A-Za-z0-9._/-]+$")
 
 
 class GithubBotAcknowledgementState(BaseModel):
@@ -766,6 +777,169 @@ class GithubNoFindingsCompletionEvidence(BaseModel):
         if not re.fullmatch(r"[a-f0-9]{64}", value):
             raise ValueError("body_sha256 must be a lowercase hex SHA-256 digest")
         return value
+
+
+class ExternalReplyIntent(BaseModel):
+    """Per-thread non-actionable reply intent for durable write idempotency.
+
+    Stores only the reply body hash — never the reply text itself.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    thread_id: str = Field(min_length=1)
+    decision: str
+    inline_reply_sha256: str = Field(min_length=64, max_length=64)
+    status: str = "pending"
+
+    @field_validator("decision")
+    @classmethod
+    def validate_decision(cls, value: str) -> str:
+        if value not in EXTERNAL_REPLY_DECISIONS:
+            raise ValueError(
+                f"reply intent decision must be one of: {sorted(EXTERNAL_REPLY_DECISIONS)}"
+            )
+        return value
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str) -> str:
+        if value not in EXTERNAL_REPLY_INTENT_STATUSES:
+            raise ValueError(
+                f"reply intent status must be one of: {sorted(EXTERNAL_REPLY_INTENT_STATUSES)}"
+            )
+        return value
+
+    @field_validator("inline_reply_sha256")
+    @classmethod
+    def validate_reply_hash(cls, value: str) -> str:
+        if not re.fullmatch(r"[a-f0-9]{64}", value):
+            raise ValueError("inline_reply_sha256 must be a lowercase hex SHA-256 digest")
+        return value
+
+
+class ExternalAdjudicationCheckpoint(BaseModel):
+    """Durable checkpoint for the current external GitHub adjudication round.
+
+    Persisted under ``github_pr_review`` immediately after Codex B returns a
+    validated structured result, before remote preflight, Cursor, replies, or
+    publication. Historical ``RecoveryState`` remains lineage only.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    cycle_number: int = Field(ge=1)
+    bound_head_sha: str
+    eligible_thread_ids: list[str] = Field(min_length=1)
+    result_path: str = Field(min_length=1)
+    result_sha256: str = Field(min_length=64, max_length=64)
+    snapshot_path: str = Field(min_length=1)
+    snapshot_sha256: str = Field(min_length=64, max_length=64)
+    report_path: str | None = None
+    report_sha256: str | None = None
+    fix_prompt_path: str | None = None
+    fix_prompt_sha256: str | None = None
+    application_status: str
+    reply_intents: list[ExternalReplyIntent] = Field(default_factory=list)
+
+    @field_validator("bound_head_sha")
+    @classmethod
+    def validate_bound_sha(cls, value: str) -> str:
+        if not FULL_SHA_PATTERN.match(value):
+            raise ValueError("bound_head_sha must be a 40-character lowercase hex digest")
+        return value
+
+    @field_validator("result_sha256", "snapshot_sha256", "report_sha256", "fix_prompt_sha256")
+    @classmethod
+    def validate_artifact_hash(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not re.fullmatch(r"[a-f0-9]{64}", value):
+            raise ValueError("artifact hash fields must be lowercase sha256 hex digests")
+        return value
+
+    @field_validator(
+        "result_path",
+        "snapshot_path",
+        "report_path",
+        "fix_prompt_path",
+    )
+    @classmethod
+    def validate_relative_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not value.strip() or not _SAFE_RUN_RELATIVE_PATH.fullmatch(value):
+            raise ValueError("external adjudication artifact paths must be safe run-relative paths")
+        return value
+
+    @field_validator("application_status")
+    @classmethod
+    def validate_application_status(cls, value: str) -> str:
+        if value not in EXTERNAL_ADJUDICATION_APPLICATION_STATUSES:
+            raise ValueError(
+                "application_status must be one of: "
+                f"{sorted(EXTERNAL_ADJUDICATION_APPLICATION_STATUSES)}"
+            )
+        return value
+
+    @field_validator("eligible_thread_ids")
+    @classmethod
+    def validate_thread_ids(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("eligible_thread_ids must be non-empty")
+        if any(not item or not str(item).strip() for item in value):
+            raise ValueError("eligible_thread_ids entries must be non-empty")
+        if len(value) != len(set(value)):
+            raise ValueError("eligible_thread_ids must contain unique thread IDs")
+        return value
+
+    @model_validator(mode="after")
+    def validate_checkpoint_shape(self) -> ExternalAdjudicationCheckpoint:
+        label = f"{self.cycle_number:02d}"
+        expected_result = f"github/cycles/{label}/result.json"
+        expected_snapshot = f"github/cycles/{label}/threads.snapshot.json"
+        expected_report = f"github/cycles/{label}/report.md"
+        expected_prompt = f"prompts/fixes/github-{label}.txt"
+        if self.result_path != expected_result:
+            raise ValueError(f"result_path must be {expected_result} for cycle {self.cycle_number}")
+        if self.snapshot_path != expected_snapshot:
+            raise ValueError(
+                f"snapshot_path must be {expected_snapshot} for cycle {self.cycle_number}"
+            )
+        if self.report_path is not None and self.report_path != expected_report:
+            raise ValueError(f"report_path must be {expected_report} for cycle {self.cycle_number}")
+        if self.report_path is None and self.report_sha256 is not None:
+            raise ValueError("report_sha256 requires report_path")
+        if self.report_path is not None and self.report_sha256 is None:
+            raise ValueError("report_path requires report_sha256")
+        if self.fix_prompt_path is None and self.fix_prompt_sha256 is not None:
+            raise ValueError("fix_prompt_sha256 requires fix_prompt_path")
+        if self.fix_prompt_path is not None and self.fix_prompt_sha256 is None:
+            raise ValueError("fix_prompt_path requires fix_prompt_sha256")
+        if self.fix_prompt_path is not None and self.fix_prompt_path != expected_prompt:
+            raise ValueError(
+                f"fix_prompt_path must be {expected_prompt} for cycle {self.cycle_number}"
+            )
+
+        intent_ids = [item.thread_id for item in self.reply_intents]
+        if len(intent_ids) != len(set(intent_ids)):
+            raise ValueError("reply_intents must have unique thread_id values")
+        if any(item.thread_id not in set(self.eligible_thread_ids) for item in self.reply_intents):
+            raise ValueError("reply_intents thread_id values must be in eligible_thread_ids")
+
+        if self.application_status in {"cursor_pending", "cursor_scheduled"}:
+            if not self.fix_prompt_path or not self.fix_prompt_sha256:
+                raise ValueError(
+                    "cursor_pending/cursor_scheduled require fix_prompt_path and fix_prompt_sha256"
+                )
+            if self.reply_intents:
+                raise ValueError("cursor_pending/cursor_scheduled must not carry reply_intents")
+        elif self.application_status == "replies_pending":
+            if self.fix_prompt_path is not None or self.fix_prompt_sha256 is not None:
+                raise ValueError("replies_pending must not carry a fix prompt")
+            if not self.reply_intents:
+                raise ValueError("replies_pending requires at least one reply intent")
+        return self
 
 
 class GithubPrReviewState(BaseModel):
@@ -818,6 +992,7 @@ class GithubPrReviewState(BaseModel):
     publication_text_path: str | None = None
     bot_acknowledgement: GithubBotAcknowledgementState | None = None
     no_findings_completion: GithubNoFindingsCompletionEvidence | None = None
+    external_adjudication: ExternalAdjudicationCheckpoint | None = None
 
     @field_validator("origin")
     @classmethod
@@ -914,6 +1089,20 @@ class GithubPrReviewState(BaseModel):
             and self.pr_number is None
         ):
             raise ValueError("pr_number is required after the PR is bound")
+        if (
+            self.external_adjudication is not None
+            and self.external_adjudication.application_status != "consumed"
+        ):
+            checkpoint = self.external_adjudication
+            if checkpoint.cycle_number != self.cycle_number:
+                raise ValueError(
+                    "external_adjudication.cycle_number must match github_pr_review.cycle_number"
+                )
+            if checkpoint.bound_head_sha != self.bound_head_sha:
+                raise ValueError(
+                    "external_adjudication.bound_head_sha must match "
+                    "github_pr_review.bound_head_sha"
+                )
         return self
 
 

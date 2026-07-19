@@ -1086,8 +1086,22 @@ def _copy_pr_review_external_context(
         allowlisted.append(gpr.external_fix_prompt_path)
     if gpr.publication_text_path:
         allowlisted.append(gpr.publication_text_path)
+    checkpoint = getattr(gpr, "external_adjudication", None)
+    if checkpoint is not None:
+        for rel in (
+            checkpoint.result_path,
+            checkpoint.snapshot_path,
+            checkpoint.report_path,
+            checkpoint.fix_prompt_path,
+        ):
+            if rel:
+                allowlisted.append(rel)
 
+    seen: set[str] = set()
     for rel in allowlisted:
+        if rel in seen:
+            continue
+        seen.add(rel)
         src = source_dir / rel
         if not src.is_file():
             continue
@@ -1645,6 +1659,31 @@ def _create_external_feedback_cursor_successor(
                 "local_review_count": 0,
             }
         )
+        successor_checkpoint = gpr.external_adjudication
+        if successor_checkpoint is not None:
+            from ai_dev_loop.external_adjudication import mark_checkpoint_status
+
+            if successor_checkpoint.application_status == "cursor_pending":
+                successor_checkpoint = mark_checkpoint_status(
+                    successor_checkpoint, "cursor_scheduled"
+                )
+        elif gpr.last_external_result_path and gpr.external_fix_prompt_path:
+            from ai_dev_loop.external_adjudication import (
+                build_external_adjudication_checkpoint,
+                load_external_review_result,
+            )
+
+            review = load_external_review_result(temp_dir, gpr.last_external_result_path)
+            if review.all_actionable:
+                successor_checkpoint = build_external_adjudication_checkpoint(
+                    temp_dir,
+                    review,
+                    cycle_number=gpr.cycle_number,
+                    bound_head_sha=gpr.bound_head_sha,
+                    eligible_thread_ids=expected,
+                    application_status="cursor_scheduled",
+                )
+
         successor.github_pr_review = gpr.model_copy(
             update={
                 "lifecycle": "fixing_external_feedback",
@@ -1656,6 +1695,7 @@ def _create_external_feedback_cursor_successor(
                 "last_external_result_path": gpr.last_external_result_path,
                 "last_snapshot_path": gpr.last_snapshot_path,
                 "publication_phase": None,
+                "external_adjudication": successor_checkpoint,
                 # Preserve an already-consumed continue comment from prior-cycle
                 # freeze clearance; it is not a current-cycle side effect.
             }

@@ -78,6 +78,30 @@ IDs de hilo ni rutas de source. No edites `state.json` a mano.
 `pr-review status` reporta liveness del worker (`live`/`stale`/`absent`) sin
 exponer PID, token ni argv.
 
+`github_pr_review.external_adjudication` es el checkpoint operativo del ciclo
+externo actual (Fase 15.17):
+
+```text
+cycle_number
+bound_head_sha
+eligible_thread_ids
+result_path / result_sha256
+snapshot_path / snapshot_sha256
+report_path / report_sha256          # opcionales; derivables del result
+fix_prompt_path / fix_prompt_sha256  # all-actionable
+application_status                   # cursor_pending | cursor_scheduled |
+                                     # replies_pending | consumed
+reply_intents[]                      # thread_id, decision, inline_reply_sha256,
+                                     # status (pending|writing|written|ambiguous)
+                                     # writing = write started; written only after
+                                     # confirmed success; ambiguous waits for user
+```
+
+Se persiste bajo locks inmediatamente después de un `result.json` válido y antes
+de GraphQL, chat, Cursor, replies o publicación. Al abrir el ciclo siguiente se
+retira. `RecoveryState` permanece como lineage y no es guardia global de hashes
+de prompt para rondas futuras.
+
 `codex/session-runtime.json` registra la captura segura de Fase 10: prefijo del session ID, modelo/reasoning de sesion, origen y tipo de evento permitido. No contiene transcript ni la ruta absoluta del rollout.
 
 En `state.json`, `codex` incluye:

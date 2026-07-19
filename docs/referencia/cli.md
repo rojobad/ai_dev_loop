@@ -180,12 +180,28 @@ republica `@codex review`. Usa `--dry-run` primero. El schema
 `github-pr-review-result-v1.json` ya no envia `uniqueItems` a Codex; la
 unicidad sigue validada en Pydantic.
 
+Tras Codex B, el worker persiste
+`github_pr_review.external_adjudication` (ciclo, SHA, IDs, rutas/hashes de
+resultado/snapshot/prompt y `application_status`) **antes** del preflight
+remoto, chat Cursor, replies o publicación. Un timeout GraphQL deja el
+checkpoint intacto; `pr-review resume` en el mismo run hidrata solo artefactos
+del `cycle_number` actual (reconstruye report/prompt únicamente desde un
+`result.json` válido; nunca sintetiza un `threads.snapshot.json` vacío o
+ausente) y no trata `recovery.source_prompt_sha256` como guardia global de
+ciclos posteriores. Un `cursor_scheduled` sin evidencia durable de Cursor
+completado revalida binding PR/local y baseline limpia antes de continuar. Tras un `resume_run` local que deja
+`publishing_external_fix`, el mismo worker publica in-process
+(`schedule_worker=False`) y sigue a polling; el `resume` del controlador A
+sigue siendo el camino legítimo para reenganchar publicación con un único
+spawn.
+
 En ciclos A/B, `pr-review resume` exige `--controller-session-id` del
 controlador A original. Además de checkpoints `interrupted` (publicación,
-polling o recovery), acepta un run no terminal en `awaiting_bot_review` cuyo
-worker esté ausente/stale: reengancha un solo poller. Puede validar PR/head en
-solo lectura, pero no escribe en GitHub, no republica el trigger, no crea Cursor
-ni invoca Codex. Con worker vivo (identidad verificada) es no-op idempotente.
+polling, adjudicación durable o recovery), acepta un run no terminal en
+`awaiting_bot_review` cuyo worker esté ausente/stale: reengancha un solo
+poller. Puede validar PR/head en solo lectura, pero no escribe en GitHub, no
+republica el trigger, no crea Cursor ni invoca Codex. Con worker vivo
+(identidad verificada) es no-op idempotente.
 `pr-review status` reporta `worker_liveness` (`live`/`stale`/`absent`) y la
 siguiente acción segura sin exponer PID, token ni argv.
 

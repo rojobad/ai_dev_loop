@@ -41,6 +41,39 @@ runner = CliRunner()
 CONTROLLER_SESSION_ID = "019abc00-aaaa-bbbb-cccc-ddddeeeeffff"
 
 
+def _write_adjudication_snapshot(run_directory, review, artifacts):
+    result_path = run_directory / artifacts.result_path
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    if not result_path.is_file():
+        result_path.write_text(
+            json.dumps(review.model_dump(mode="json"), indent=2) + "\n",
+            encoding="utf-8",
+        )
+    report_path = run_directory / artifacts.report_path
+    if not report_path.is_file():
+        report_path.write_text(review.review_markdown, encoding="utf-8")
+    snap_path = run_directory / artifacts.snapshot_path
+    snap_path.parent.mkdir(parents=True, exist_ok=True)
+    snap_path.write_text(
+        json.dumps(
+            {
+                "threads": [
+                    {"thread_id": tid, "body_sha256": "a" * 64}
+                    for tid in review.eligible_thread_ids
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    if artifacts.fix_prompt_path and review.cursor_fix_prompt:
+        prompt_path = run_directory / artifacts.fix_prompt_path
+        prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        if not prompt_path.is_file():
+            prompt_path.write_text(review.cursor_fix_prompt, encoding="utf-8")
+
+
 def _enable_github(repo: Path) -> None:
     config = repo / "ai_dev_loop.yaml"
     text = config.read_text(encoding="utf-8")
@@ -586,7 +619,10 @@ def test_uncertain_independent_keeps_chat_null(
         ),
         patch(
             "ai_dev_loop.commands.pr_review.run_codex_github_review",
-            return_value=(review, artifacts),
+            side_effect=lambda state, run_directory, **kwargs: (
+                _write_adjudication_snapshot(run_directory, review, artifacts)
+                or (review, artifacts)
+            ),
         ),
         patch(
             "ai_dev_loop.commands.pr_review.reply_to_review_thread",
@@ -731,7 +767,10 @@ def test_actionable_independent_creates_one_chat(
         ),
         patch(
             "ai_dev_loop.commands.pr_review.run_codex_github_review",
-            return_value=(review, artifacts),
+            side_effect=lambda state, run_directory, **kwargs: (
+                _write_adjudication_snapshot(run_directory, review, artifacts)
+                or (review, artifacts)
+            ),
         ),
         patch("ai_dev_loop.runners.cursor.create_chat", side_effect=fake_create_chat),
         patch("ai_dev_loop.workflow_engine.resume_run"),
@@ -1055,7 +1094,10 @@ def test_pre_cursor_pr_head_drift_interrupts_without_chat(
         ),
         patch(
             "ai_dev_loop.commands.pr_review.run_codex_github_review",
-            return_value=(review, artifacts),
+            side_effect=lambda state, run_directory, **kwargs: (
+                _write_adjudication_snapshot(run_directory, review, artifacts)
+                or (review, artifacts)
+            ),
         ),
         patch(
             "ai_dev_loop.runners.cursor.create_chat",

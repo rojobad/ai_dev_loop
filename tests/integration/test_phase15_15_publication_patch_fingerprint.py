@@ -211,10 +211,17 @@ def _seed_publication_pre_commit_with_iteration(
         json.dumps(publication, indent=2) + "\n", encoding="utf-8"
     )
     (cycle_dir / "result.json").write_text("{}\n", encoding="utf-8")
-    (cycle_dir / "threads.snapshot.json").write_text("[]\n", encoding="utf-8")
+    thread_ids = [THREAD_A, THREAD_B, THREAD_C]
+    (cycle_dir / "threads.snapshot.json").write_text(
+        json.dumps(
+            {"threads": [{"thread_id": tid, "body_sha256": "a" * 64} for tid in thread_ids]},
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     gpr_hash = OBSOLETE_GPR_HASH if obsolete_gpr_hash else live_hash
-    thread_ids = [THREAD_A, THREAD_B, THREAD_C]
     state.status = RunStatus.FAILED
     state.codex.session_id = REVIEWER_B
     state.controller = ControllerState(controller_session_id=CONTROLLER_A)
