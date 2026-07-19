@@ -540,18 +540,31 @@ El checkpoint debe ser `reviewing` /
 adjudicación, y no publica otro `@codex review`. Si el patch staged o el
 worktree driftaron, o ya hay replies/resolves/publicación, `recover` se detiene.
 
-## Feedback externo accionable con staging vacío antes de Cursor
+## Feedback externo accionable con staging vacío o baseline limpio antes de Cursor
 
 Causa observada (PR #45 / run anonimizado `…176634`): tras adjudicación del
 ciclo externo con hallazgos accionables, el orquestador reutilizó la iteración
 local `01` completa y saltó a staging (`no staged changes after git add -A`)
 sin enviar `prompts/fixes/github-02.txt` a Cursor.
 
+Causa observada (PR #45 / run anonimizado `…a0f030`): tras publicar el fix y
+recibir hallazgos del ciclo 3, el worktree estaba limpio en el HEAD enlazado,
+pero el preflight de corrección comparó ese índice vacío con
+`git/diffs/02.patch`. Un directorio `cursor/iterations/03` vacío creado antes
+del preflight no es intento parcial ni debe clasificar el source como
+`reviewing`.
+
 Los runs nuevos programan una iteración fresca monotona
-(`github_pr_review.external_cursor_iteration`) y entregan el prompt externo
-exacto. Para el origen `failed` histórico con lifecycle
-`fixing_external_feedback`, resultado/prompt externos validos, baseline limpio
-y sin artefactos de la nueva iteración:
+(`github_pr_review.external_cursor_iteration`), entregan el prompt externo
+exacto y, para ese primer turno externo, exigen baseline limpio (identidad
+Git, branch/HEAD = `initial_head`/`bound_head_sha`, indice/worktree limpios)
+sin comparar un patch publicado anterior. Solo una corrección local posterior
+a un finding Codex de la misma ronda exige el patch staged anterior.
+
+Para el origen `failed` histórico con lifecycle `fixing_external_feedback`,
+resultado/prompt externos validos, baseline limpio y sin evidencia durable de
+la nueva iteración (entrada `iterations[NN]` o cualquier archivo bajo
+`cursor/iterations/NN` / status / fingerprint / diff / review):
 
 ```bash
 ai_dev_loop pr-review recover <failed-run-id> --dry-run
@@ -560,10 +573,11 @@ ai_dev_loop pr-review resume <successor-run-id> --controller-session-id <sesion-
 ```
 
 El checkpoint debe ser `external_feedback_cursor` /
-`external_feedback_cursor_not_started`. Reutiliza la adjudicación persistida;
-no republica `@codex review` ni re-adjudica los mismos hilos. Si PR/SHA/hilos
-cambian, el baseline está sucio, el prompt/resultado son invalidos, hay worker
-vivo, publicación parcial o un intento Cursor parcial, `recover` se detiene.
+`external_feedback_cursor_not_started` (no `reviewing`). Reutiliza la
+adjudicación persistida; no republica `@codex review` ni re-adjudica los
+mismos hilos. Si PR/SHA/rama/hilos cambian, el baseline está sucio, el
+prompt/resultado son invalidos, hay worker vivo, publicación parcial o un
+intento Cursor parcial real, `recover` se detiene.
 
 ## Publicación detenida en `pre_commit` (ssh-agent sin identidad)
 

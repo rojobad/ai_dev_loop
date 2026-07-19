@@ -6,8 +6,10 @@ Supports artifact-driven checkpoints:
   Cursor/GitHub side effects.
 - ``reviewing`` (Phase 15.8): Cursor correction and staging completed, but the
   local Codex structured result artifact was never persisted.
-- ``external_feedback_cursor`` (Phase 15.12): external adjudication completed
-  with an actionable fix prompt, but the fresh Cursor iteration never started.
+- ``external_feedback_cursor`` (Phase 15.12 / 15.16): external adjudication
+  completed with an actionable fix prompt, but the fresh Cursor iteration never
+  started. An empty ``cursor/iterations/NN`` directory alone is not partial
+  Cursor evidence; durable iteration entries or any files under that path are.
 - ``publication_pre_commit`` (Phase 15.13): local Cursor/Codex accepted the
   staged fix and publication reached ``pre_commit``, but commit never happened
   (historically a terminal ValidationError from ssh-agent identity preflight).
@@ -371,27 +373,85 @@ def _external_feedback_cursor_side_effect_blockers(gpr: Any) -> list[str]:
     return blockers
 
 
+def _cursor_iteration_dir_has_execution_evidence(cursor_dir: Path) -> bool:
+    """True when the iteration directory contains any file (partial Cursor evidence).
+
+    An empty directory created before preflight is compatibility noise only and
+    must not classify the source as a partial Cursor attempt or as reviewing.
+    """
+
+    if not cursor_dir.exists():
+        return False
+    if cursor_dir.is_file():
+        return True
+    if not cursor_dir.is_dir():
+        return True
+    return any(path.is_file() for path in cursor_dir.rglob("*"))
+
+
+def _iteration_prefixed_name(name: str, label: str, *, status_style: bool) -> bool:
+    """True when ``name`` is a durable artifact for iteration ``label``."""
+
+    if status_style:
+        return name.startswith(f"{label}-")
+    return name == label or name.startswith(f"{label}.")
+
+
+def _has_iteration_prefixed_durable_artifact(run_directory: Path, label: str) -> bool:
+    """Conservatively detect any iteration-prefixed durable artifact on disk.
+
+    Scans known per-iteration roots rather than a short hand-maintained filename
+    list so staging/review artifacts (before/after staging status, ``.stat``,
+    ``.name-only.txt``, post-normalization fingerprints, review metadata, etc.)
+    cannot be omitted by accident.
+    """
+
+    roots: tuple[tuple[str, bool], ...] = (
+        ("git/status", True),
+        ("git/cursor-output", False),
+        ("git/diffs", False),
+        ("codex/reviews", False),
+        ("codex/events", False),
+    )
+    for relative_root, status_style in roots:
+        directory = run_directory / relative_root
+        if not directory.is_dir():
+            continue
+        for path in directory.iterdir():
+            if path.is_file() and _iteration_prefixed_name(
+                path.name, label, status_style=status_style
+            ):
+                return True
+    return False
+
+
 def _has_partial_external_cursor_attempt(
     run_directory: Path,
     pending_iteration: int,
+    *,
+    state: RunState | None = None,
 ) -> bool:
-    """True when any durable artifact for the pending external Cursor iteration exists."""
+    """True when durable evidence shows the pending external Cursor iteration started.
+
+    An empty ``cursor/iterations/NN`` directory alone is compatibility noise only
+    when there is no durable ``iterations[NN]`` entry and no iteration-prefixed
+    artifact under the known staging/review roots.
+    """
 
     label = iteration_label(pending_iteration)
+    if state is not None:
+        for entry in state.iterations:
+            raw_number = entry.get("number")
+            try:
+                number = int(raw_number)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+            if number == pending_iteration:
+                return True
     cursor_dir = run_directory / "cursor" / "iterations" / label
-    if cursor_dir.exists():
+    if _cursor_iteration_dir_has_execution_evidence(cursor_dir):
         return True
-    for relative in (
-        f"git/status/{label}-before-cursor.txt",
-        f"git/status/{label}-after-cursor.txt",
-        f"git/cursor-output/{label}.json",
-        f"git/diffs/{label}.patch",
-        f"codex/reviews/{label}.json",
-        f"codex/events/{label}.jsonl",
-    ):
-        if (run_directory / relative).exists():
-            return True
-    return False
+    return _has_iteration_prefixed_durable_artifact(run_directory, label)
 
 
 def _looks_like_external_feedback_cursor_source(
@@ -422,11 +482,14 @@ def _looks_like_external_feedback_cursor_source(
     historical_max = max_iteration_number(state)
     if pending <= historical_max:
         return False
-    if _has_partial_external_cursor_attempt(run_directory, pending):
+    if _has_partial_external_cursor_attempt(run_directory, pending, state=state):
         return False
-    # A completed Cursor+staging pass whose local Codex result is missing is the
-    # reviewing checkpoint, even when lifecycle remains fixing_external_feedback.
-    if historical_max >= 1:
+    # Historical sources without a typed external_cursor_iteration may still need
+    # reviewing recovery when the latest local Cursor+staging completed but the
+    # Codex result is missing. Typed fresh external turns must classify as
+    # external_feedback_cursor first and must not be forced into reviewing by a
+    # published historical patch that simply lacks a local review artifact copy.
+    if historical_max >= 1 and gpr.external_cursor_iteration is None:
         label = iteration_label(historical_max)
         if (
             cursor_turn_complete(run_directory, historical_max)
@@ -523,7 +586,7 @@ def _analyze_external_feedback_cursor(
         analysis.iteration = pending
         if pending <= max_iteration_number(state):
             analysis.blockers.append("external_cursor_iteration_not_fresh")
-        if _has_partial_external_cursor_attempt(run_directory, pending):
+        if _has_partial_external_cursor_attempt(run_directory, pending, state=state):
             analysis.blockers.append("partial_external_cursor_attempt")
 
     analysis.blockers.extend(_external_feedback_cursor_side_effect_blockers(gpr))
@@ -532,11 +595,22 @@ def _analyze_external_feedback_cursor(
         analysis.blockers.append("active_worker_present")
 
     try:
-        validate_clean_worktree(Path(state.repository.root))
-    except ValidationError:
-        analysis.blockers.append("baseline_not_clean")
+        repo_info = discover_repository(Path(state.repository.root))
     except Exception as exc:
         analysis.blockers.append(f"baseline_unreadable:{type(exc).__name__}")
+    else:
+        if state.repository.initial_head != gpr.bound_head_sha:
+            analysis.blockers.append("initial_head_drift")
+        if repo_info.head != gpr.bound_head_sha:
+            analysis.blockers.append("head_advanced_past_bound")
+        if repo_info.branch != gpr.head_branch:
+            analysis.blockers.append("branch_drift")
+        try:
+            validate_clean_worktree(Path(state.repository.root))
+        except ValidationError:
+            analysis.blockers.append("baseline_not_clean")
+        except Exception as exc:
+            analysis.blockers.append(f"baseline_unreadable:{type(exc).__name__}")
 
     _verify_remote_pr(
         analysis,

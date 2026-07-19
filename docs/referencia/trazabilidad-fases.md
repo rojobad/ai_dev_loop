@@ -366,6 +366,24 @@ Documentado en:
 - [Troubleshooting](../operacion/troubleshooting.md)
 - [Estado y artefactos](../operacion/estado-artefactos.md)
 
+## Fase 15.16
+
+Baseline limpio para el primer Cursor de cada ronda de feedback externo
+(`external_cursor_iteration`): identidad Git, branch/HEAD enlazados e
+indice/worktree limpios; no compara con un patch publicado anterior. Las
+correcciones locales posteriores a un finding Codex siguen exigiendo
+`validate_correction_pre_cursor` sobre el patch staged de la iteración
+anterior. Recovery `external_feedback_cursor` ignora un directorio
+`cursor/iterations/NN` vacío sin entrada durable ni archivos, y clasifica ese
+checkpoint antes de `reviewing`.
+
+Documentado en:
+
+- [Referencia CLI](cli.md)
+- [Flujo completo](../guia/flujo-completo.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+- [Estado y artefactos](../operacion/estado-artefactos.md)
+
 ## Riesgos residuales documentados
 
 - Hook trust sigue siendo `unknown` desde CLI.

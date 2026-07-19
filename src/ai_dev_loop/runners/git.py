@@ -406,6 +406,63 @@ def validate_correction_pre_cursor(repo_root: Path, *, patch_artifact: Path) -> 
         raise ValidationError(f"untracked files detected before correction: {joined}")
 
 
+def validate_external_feedback_pre_cursor(state: RunState) -> None:
+    """Strict pre-Cursor checkpoint for the first turn of an external PR feedback round.
+
+    Requires repository identity, the bound PR branch, HEAD equal to both
+    ``repository.initial_head`` and ``github_pr_review.bound_head_sha``, and an
+    absolutely clean index/worktree/untracked set. Does not compare against a
+    previously published staged patch. Local only — no GitHub API calls.
+    """
+
+    gpr = state.github_pr_review
+    if gpr is None:
+        raise ValidationError("external feedback preflight requires github_pr_review state")
+    if not gpr.bound_head_sha:
+        raise ValidationError("external feedback preflight requires bound_head_sha")
+    if not gpr.head_branch:
+        raise ValidationError("external feedback preflight requires head_branch")
+    if state.repository.initial_head != gpr.bound_head_sha:
+        raise ValidationError(
+            "external feedback preflight: repository.initial_head does not match bound_head_sha"
+        )
+    if state.repository.branch != gpr.head_branch:
+        raise ValidationError(
+            "external feedback preflight: repository.branch does not match PR head_branch"
+        )
+
+    repo_root = Path(state.repository.root)
+    validate_repository_identity(
+        repo_root,
+        expected_root=state.repository.root,
+        expected_git_common_dir=state.repository.git_common_dir,
+        expected_git_dir=state.repository.git_dir,
+        expected_branch=gpr.head_branch,
+        expected_head=gpr.bound_head_sha,
+        context="before external-feedback Cursor turn",
+    )
+    info = discover_repository(repo_root)
+    if info.staged_paths:
+        joined = ", ".join(sorted(info.staged_paths))
+        raise ValidationError(
+            f"external feedback Cursor requires an empty staged index; staged paths: {joined}"
+        )
+    if info.status_porcelain.strip():
+        status = info.status_porcelain
+        unstaged = paths_with_unstaged_changes(status)
+        untracked = paths_with_untracked(status)
+        details: list[str] = []
+        if unstaged:
+            details.append(f"unstaged tracked: {', '.join(sorted(unstaged))}")
+        if untracked:
+            details.append(f"untracked: {', '.join(sorted(untracked))}")
+        if not details:
+            details.append("dirty worktree")
+        raise ValidationError(
+            "external feedback Cursor requires a clean worktree (" + "; ".join(details) + ")"
+        )
+
+
 def validate_usage_limit_recovery_pre_cursor(
     state: RunState,
     run_directory: Path,
