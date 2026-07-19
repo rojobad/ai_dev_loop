@@ -551,7 +551,9 @@ def test_publication_pre_commit_rejects_patch_drift(
             recover_pr_review_cycle(run_id, dry_run=False)
     assert analysis.eligible is False
     assert (
-        "staged_patch_drift" in analysis.blockers or "staged_baseline_invalid" in analysis.blockers
+        "staged_patch_artifact_drift" in analysis.blockers
+        or "staged_patch_drift" in analysis.blockers
+        or "staged_baseline_invalid" in analysis.blockers
     )
     assert (run_path / "state.json").read_bytes() == source_before
 

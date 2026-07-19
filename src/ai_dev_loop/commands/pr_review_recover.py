@@ -62,13 +62,16 @@ from ai_dev_loop.runners.codex import (
     classify_codex_review_output_artifact_failure,
     load_review_result_from_artifacts,
 )
-from ai_dev_loop.runners.git import discover_repository, validate_staged_patch_matches_artifact
+from ai_dev_loop.runners.git import discover_repository
 from ai_dev_loop.runners.github import (
     filter_eligible_threads,
     get_pull_request,
     list_review_threads,
 )
-from ai_dev_loop.runners.publish import validate_clean_except_staged, validate_clean_worktree
+from ai_dev_loop.runners.publish import (
+    publication_staged_patch_fingerprint,
+    validate_clean_worktree,
+)
 from ai_dev_loop.runners.staging import staging_complete_for_iteration
 from ai_dev_loop.state import (
     RecoveryState,
@@ -78,7 +81,6 @@ from ai_dev_loop.state import (
     generate_run_id,
     save_run_state,
     sha256_file,
-    sha256_text,
     utc_now,
 )
 
@@ -108,6 +110,9 @@ class PrReviewRecoveryAnalysis:
     controller_session_id: str | None = None
     trigger_present: bool = False
     historical_schema_rejection: bool = False
+    # Analysis-only: obsolete GPR hash replaced by proven live raw fingerprint.
+    # Not persisted; successor lineage records the adopted live hash.
+    historical_patch_fingerprint_adopted: bool = False
 
 
 @dataclass(frozen=True)
@@ -695,30 +700,36 @@ def _analyze_publication_pre_commit(
                 analysis.blockers.append("local_review_missing_or_invalid")
 
         patch_artifact = run_directory / f"git/diffs/{label}.patch"
-        durable_hash = gpr.staged_patch_sha256
-        if durable_hash is None and patch_artifact.is_file():
-            durable_hash = sha256_file(patch_artifact)
-        if durable_hash is None:
-            analysis.blockers.append("staged_patch_hash_missing")
+        repo_root = Path(state.repository.root)
+        if not patch_artifact.is_file():
+            analysis.blockers.append("staged_patch_artifact_missing")
         else:
-            analysis.staged_patch_sha256 = durable_hash
-            repo_root = Path(state.repository.root)
             try:
-                current_patch = validate_clean_except_staged(repo_root)
-            except ValidationError:
-                analysis.blockers.append("staged_baseline_invalid")
+                live_hash = publication_staged_patch_fingerprint(repo_root, patch_artifact)
+            except ValidationError as exc:
+                message = str(exc).lower()
+                if "no longer matches" in message or "staged index" in message:
+                    analysis.blockers.append("staged_patch_artifact_drift")
+                elif (
+                    "non-empty staged" in message
+                    or "unstaged" in message
+                    or "untracked" in message
+                    or "empty" in message
+                ):
+                    analysis.blockers.append("staged_baseline_invalid")
+                else:
+                    analysis.blockers.append("staged_baseline_invalid")
             except Exception as exc:
                 analysis.blockers.append(f"staged_baseline_unreadable:{type(exc).__name__}")
             else:
-                current_hash = sha256_text(current_patch)
-                if current_hash != durable_hash:
-                    analysis.blockers.append("staged_patch_drift")
-                if patch_artifact.is_file():
-                    try:
-                        validate_staged_patch_matches_artifact(repo_root, patch_artifact)
-                    except ValidationError:
-                        if "staged_patch_drift" not in analysis.blockers:
-                            analysis.blockers.append("staged_patch_artifact_drift")
+                durable_hash = gpr.staged_patch_sha256
+                # Publication fingerprint is always the raw live patch hash after
+                # normalized artifact equivalence. An obsolete GPR hash alone is
+                # not drift when the artifact still matches (e.g. trailing newline).
+                analysis.staged_patch_sha256 = live_hash
+                if durable_hash is not None and durable_hash != live_hash:
+                    analysis.historical_patch_fingerprint_adopted = True
+                    analysis.warnings.append("historical_publication_patch_fingerprint_adopted")
 
     text_rel = (
         gpr.publication_text_path or f"github/cycles/{gpr.cycle_number:02d}/publication-text.json"
@@ -1881,6 +1892,7 @@ def render_pr_review_recovery_analysis(
         "bound_head_sha_prefix": analysis.bound_head_sha_prefix,
         "expected_thread_count": analysis.expected_thread_count,
         "historical_schema_rejection": analysis.historical_schema_rejection,
+        "historical_patch_fingerprint_adopted": analysis.historical_patch_fingerprint_adopted,
         "existing_successor_run_id": analysis.existing_successor_run_id,
         "trigger_will_be_reposted": False,
         "resume_command": result.resume_command,
@@ -1899,6 +1911,11 @@ def render_pr_review_recovery_analysis(
     ]
     if analysis.iteration is not None:
         lines.insert(4, f"Iteration: {analysis.iteration:02d}")
+    if analysis.historical_patch_fingerprint_adopted:
+        lines.append(
+            "Publication patch fingerprint: adopted live raw hash after normalized "
+            "artifact equivalence (source GPR hash left unchanged)"
+        )
     if analysis.blockers:
         lines.append("Blockers: " + ", ".join(analysis.blockers))
     if result.resume_command:

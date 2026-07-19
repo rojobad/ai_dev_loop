@@ -35,6 +35,7 @@ from ai_dev_loop.errors import (
 from ai_dev_loop.event_log import append_orchestrator_event
 from ai_dev_loop.iterations import (
     begin_external_local_review_budget,
+    iteration_label,
     max_iteration_number,
     next_external_cursor_iteration,
 )
@@ -69,6 +70,7 @@ from ai_dev_loop.runners.github import (
 )
 from ai_dev_loop.runners.publish import (
     PublicationText,
+    publication_staged_patch_fingerprint,
     publish_accepted_staged_patch,
     validate_clean_except_staged,
 )
@@ -124,6 +126,41 @@ def _publication_in_progress(gpr: GithubPrReviewState | None) -> bool:
     if gpr.lifecycle in _PUBLICATION_LIFECYCLES:
         return True
     return gpr.publication_phase in _PUBLICATION_PHASES
+
+
+def refresh_external_publication_patch_fingerprint(
+    run_directory: Path,
+    state: RunState,
+    *,
+    iteration_number: int,
+) -> str:
+    """Update ``gpr.staged_patch_sha256`` to the live raw fingerprint after acceptance.
+
+    Call only for external-feedback corrections that completed a durable local
+    iteration with no actionable findings, under run/repository locks, before
+    transitioning to ``publishing_external_fix``. Validates baseline and
+    normalized artifact equivalence first; fails closed on real content drift.
+    """
+
+    gpr = state.github_pr_review
+    if gpr is None:
+        raise ValidationError(
+            "github_pr_review is required to refresh publication patch fingerprint"
+        )
+    if gpr.lifecycle != "fixing_external_feedback":
+        raise ValidationError(
+            "publication patch fingerprint refresh requires lifecycle fixing_external_feedback"
+        )
+    label = iteration_label(iteration_number)
+    patch_artifact = run_directory / f"git/diffs/{label}.patch"
+    if not patch_artifact.is_file():
+        raise ValidationError(
+            f"staged patch artifact missing for publication fingerprint refresh: git/diffs/{label}.patch"
+        )
+    repo_root = Path(state.repository.root)
+    live_hash = publication_staged_patch_fingerprint(repo_root, patch_artifact)
+    state.github_pr_review = gpr.model_copy(update={"staged_patch_sha256": live_hash})
+    return live_hash
 
 
 def _resolve_publication_resume_lifecycle(gpr: GithubPrReviewState) -> str | None:

@@ -348,6 +348,24 @@ Documentado en:
 - [Flujo completo](../guia/flujo-completo.md)
 - [Troubleshooting](../operacion/troubleshooting.md)
 
+## Fase 15.15
+
+Corrige el fingerprint de publicación tras una corrección externa aceptada:
+actualiza `github_pr_review.staged_patch_sha256` al hash raw live del patch
+staged (tras equivalencia normalizada con el artefacto de la última iteración)
+antes de `publishing_external_fix`. En recovery histórico
+`publication_pre_commit`, un hash GPR obsoleto no bloquea si el index live
+coincide con `git/diffs/NN.patch` vía `normalize_patch_text` (sólo CRLF/newline
+terminal); el sucesor adopta el hash live y el origen permanece inmutable. Un
+cambio de contenido real sigue siendo drift. El `resume` publica solamente.
+
+Documentado en:
+
+- [Referencia CLI](cli.md)
+- [Flujo completo](../guia/flujo-completo.md)
+- [Troubleshooting](../operacion/troubleshooting.md)
+- [Estado y artefactos](../operacion/estado-artefactos.md)
+
 ## Riesgos residuales documentados
 
 - Hook trust sigue siendo `unknown` desde CLI.

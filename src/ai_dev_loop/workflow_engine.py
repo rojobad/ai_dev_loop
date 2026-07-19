@@ -1330,13 +1330,37 @@ def _apply_review_result(
         state.github_pr_review is not None
         and state.github_pr_review.lifecycle == "fixing_external_feedback"
     ):
-        # Post-PR local review accepted: hand off to publication rather than completing.
+        # Post-PR local review accepted: refresh the publication fingerprint from
+        # the latest durable iteration, then hand off to publication.
+        from ai_dev_loop.commands.pr_review import (
+            _spawn_pr_review_worker,
+            refresh_external_publication_patch_fingerprint,
+        )
         from ai_dev_loop.state import transition_status
+
+        try:
+            patch_sha = refresh_external_publication_patch_fingerprint(
+                run_directory,
+                state,
+                iteration_number=iteration_number,
+            )
+        except ValidationError as exc:
+            _fail_run(
+                run_directory,
+                state,
+                str(exc),
+                event_name="publication_patch_fingerprint_failed",
+            )
+            raise AiDevLoopError(str(exc), exit_code=exc.exit_code) from exc
 
         transition_status(state.status, RunStatus.PUBLISHING_EXTERNAL_FIX)
         state.status = RunStatus.PUBLISHING_EXTERNAL_FIX
+        assert state.github_pr_review is not None
         state.github_pr_review = state.github_pr_review.model_copy(
-            update={"lifecycle": "publishing_external_fix"}
+            update={
+                "lifecycle": "publishing_external_fix",
+                "staged_patch_sha256": patch_sha,
+            }
         )
         # Residual-risk tests may continue when Codex recorded no corrective action.
         if review.tests_status in {"failed", "blocked_environment", "skipped_findings_present"}:
@@ -1354,9 +1378,8 @@ def _apply_review_result(
             event="pr_review_ready_to_publish",
             status=state.status.value,
             iteration=iteration_number,
+            detail={"staged_patch_sha256": patch_sha},
         )
-        from ai_dev_loop.commands.pr_review import _spawn_pr_review_worker
-
         _spawn_pr_review_worker(run_directory, state.run_id)
         return review_artifact_path, state.result or result_message, False
     elif review.tests_status in {"failed", "blocked_environment", "skipped_findings_present"}:

@@ -294,8 +294,13 @@ corrección aceptada.
 
 Si la revisión local ya aceptó el patch staged y la publicación quedó en
 `publication_phase: pre_commit` sin commit (por ejemplo `ssh-agent` sin
-identidad), el checkpoint es `publication_pre_commit`. Tras aceptación de esta
-versión, carga la clave SSH en el socket persistente y:
+identidad), el checkpoint es `publication_pre_commit`. Tras una corrección
+externa aceptada, el orquestador actualiza `github_pr_review.staged_patch_sha256`
+al hash raw live del patch antes de publicar. En recovery histórico, si ese
+campo quedó obsoleto pero el index live sigue coincidiendo con
+`git/diffs/NN.patch` tras normalizar CRLF/newline terminal, el sucesor adopta
+el hash live sin mutar el origen. Tras aceptación de esta versión, carga la
+clave SSH en el socket persistente y:
 
 ```bash
 ai_dev_loop pr-review recover <failed-run-id> --dry-run

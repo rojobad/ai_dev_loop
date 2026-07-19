@@ -192,7 +192,14 @@ reason_code                   # incluye initial_staging_failed, correction_stagi
 - `publication_pre_commit` + `publication_pre_commit_interrupted` cuando la
   revision local acepto el staged patch y la publicacion quedo en
   `pre_commit` sin commit (p. ej. `ssh-agent` sin identidad). La elegibilidad
-  no usa `last_error`.
+  no usa `last_error`. El fingerprint de publicacion es el sha256 raw del
+  patch live (`git diff --cached --binary`) tras equivalencia normalizada
+  (CRLF / newline terminal) con `git/diffs/NN.patch` de la ultima iteracion;
+  no confundir con `sha256_file` del artefacto. Tras una correccion externa
+  aceptada, runs nuevos actualizan `github_pr_review.staged_patch_sha256`
+  antes de `publishing_external_fix`. En recovery historico, un hash GPR
+  obsoleto puede adoptarse solo en el sucesor cuando esa equivalencia
+  normalizada se cumple; el origen permanece inmutable.
 
 El sucesor no republica el trigger `@codex review`. En `reviewing` no reejecuta
 Cursor; en `external_feedback_cursor` el `resume` abre Cursor antes de staging;
