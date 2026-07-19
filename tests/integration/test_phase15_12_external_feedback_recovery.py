@@ -211,7 +211,14 @@ def _seed_failed_external_feedback_cursor_run(
     (cycle_dir / "result.json").write_text(
         json.dumps(_actionable_result(thread_ids), indent=2) + "\n", encoding="utf-8"
     )
-    (cycle_dir / "threads.snapshot.json").write_text("[]\n", encoding="utf-8")
+    (cycle_dir / "threads.snapshot.json").write_text(
+        json.dumps(
+            {"threads": [{"thread_id": tid, "body_sha256": "a" * 64} for tid in thread_ids]},
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     (cycle_dir / "codex.events.jsonl").write_text("{}\n", encoding="utf-8")
     fix_prompt = run_path / "prompts/fixes/github-02.txt"
     fix_prompt.parent.mkdir(parents=True, exist_ok=True)
@@ -313,6 +320,29 @@ def test_worker_schedules_fresh_iteration_and_exact_external_prompt(
             json.dumps(_actionable_result(thread_ids), indent=2) + "\n",
             encoding="utf-8",
         )
+        result_path = run_directory / artifacts.result_path
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        if not result_path.is_file():
+            result_path.write_text(
+                json.dumps(review.model_dump(mode="json"), indent=2) + "\n",
+                encoding="utf-8",
+            )
+        snap_path = run_directory / artifacts.snapshot_path
+        snap_path.parent.mkdir(parents=True, exist_ok=True)
+        if not snap_path.is_file() or snap_path.read_text(encoding="utf-8").strip() in {"", "[]"}:
+            snap_path.write_text(
+                json.dumps(
+                    {
+                        "threads": [
+                            {"thread_id": tid, "body_sha256": "a" * 64}
+                            for tid in review.eligible_thread_ids
+                        ]
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
         return review, artifacts
 
     def capture_resume(run_id: str):

@@ -579,6 +579,27 @@ mismos hilos. Si PR/SHA/rama/hilos cambian, el baseline está sucio, el
 prompt/resultado son invalidos, hay worker vivo, publicación parcial o un
 intento Cursor parcial real, `recover` se detiene.
 
+## Adjudicación externa con artefactos en disco pero estado atrasado
+
+Causa observada (PR #45 / run anonimizado `…66d03c`): Codex B ya escribió
+`github/cycles/05/result.json`, snapshot, report y `prompts/fixes/github-05.txt`,
+pero un timeout GraphQL ocurrió antes de `save_run_state`. Los punteros
+`last_external_*` / `external_fix_prompt_path` seguían en el ciclo 4 y
+`recovery` conservaba el hash de `github-03` de una recovery anterior.
+
+No edites `state.json` ni uses `pr-review recover` para este caso in-place.
+Desde el controlador A:
+
+```bash
+ai_dev_loop pr-review resume <run-id> --controller-session-id <sesion-A>
+```
+
+`resume` hidrata `github_pr_review.external_adjudication` desde los artefactos
+deterministas del `cycle_number` actual, agenda una sola corrección Cursor con
+`github-05`, y no re-adjudica ni republica `@codex review`. El hash de recovery
+histórico no bloquea ciclos posteriores. Si PR/SHA/hilos/prompt/baseline
+realmente derivan, para sin side effects.
+
 ## Publicación detenida en `pre_commit` (ssh-agent sin identidad)
 
 Causa observada (PR #45 / run anonimizado `…9488fe`): Cursor y la revisión local

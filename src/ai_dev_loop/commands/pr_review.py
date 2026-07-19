@@ -33,6 +33,16 @@ from ai_dev_loop.errors import (
     ValidationError,
 )
 from ai_dev_loop.event_log import append_orchestrator_event
+from ai_dev_loop.external_adjudication import (
+    active_external_prompt_guard_sha256,
+    build_external_adjudication_checkpoint,
+    discover_current_cycle_artifacts,
+    gpr_updates_for_checkpoint,
+    load_external_review_result,
+    mark_checkpoint_status,
+    recovery_matches_active_external_round,
+    verify_checkpoint_artifacts,
+)
 from ai_dev_loop.iterations import (
     begin_external_local_review_budget,
     iteration_label,
@@ -44,7 +54,7 @@ from ai_dev_loop.locking import LockMetadata, RunLocks
 from ai_dev_loop.paths import ensure_dir, run_dir, runs_dir, set_sensitive_file_mode
 from ai_dev_loop.process import require_success, run_process
 from ai_dev_loop.redaction import redact_text
-from ai_dev_loop.resume_planner import TERMINAL_STATUSES
+from ai_dev_loop.resume_planner import TERMINAL_STATUSES, cursor_turn_complete
 from ai_dev_loop.run_discovery import list_run_directories, load_run
 from ai_dev_loop.runners.codex_github import (
     run_codex_github_review,
@@ -75,6 +85,8 @@ from ai_dev_loop.runners.publish import (
     validate_clean_except_staged,
 )
 from ai_dev_loop.state import (
+    ExternalAdjudicationCheckpoint,
+    ExternalReplyIntent,
     GithubBotAcknowledgementState,
     GithubNoFindingsCompletionEvidence,
     GithubPrReviewState,
@@ -84,6 +96,7 @@ from ai_dev_loop.state import (
     atomic_write_text,
     generate_run_id,
     save_run_state,
+    sha256_file,
     sha256_text,
     transition_status,
     utc_now,
@@ -213,6 +226,10 @@ def _expected_eligible_thread_ids(state: RunState) -> list[str] | None:
     """
 
     gpr = state.github_pr_review
+    if gpr is not None and gpr.external_adjudication is not None:
+        checkpoint = gpr.external_adjudication
+        if checkpoint.application_status != "consumed":
+            return list(checkpoint.eligible_thread_ids)
     if gpr is not None and gpr.expected_eligible_thread_ids:
         return list(gpr.expected_eligible_thread_ids)
     recovery = state.recovery
@@ -225,6 +242,419 @@ def _expected_eligible_thread_ids(state: RunState) -> list[str] | None:
     ):
         return list(recovery.expected_eligible_thread_ids)
     return None
+
+
+def _hydrate_external_adjudication_locked(
+    run_directory: Path,
+    state: RunState,
+) -> RunState:
+    """Promote current-cycle durable artifacts into an operational checkpoint.
+
+    Caller must hold run/repo locks. Never invents results; only materializes
+    derived report/prompt from a validated structured result.
+    """
+
+    gpr = state.github_pr_review
+    if gpr is None:
+        return state
+    checkpoint = gpr.external_adjudication
+    if checkpoint is not None and checkpoint.application_status != "consumed":
+        verify_checkpoint_artifacts(run_directory, checkpoint)
+        return state
+
+    expected = list(gpr.expected_eligible_thread_ids or gpr.eligible_thread_ids or [])
+    discovered = discover_current_cycle_artifacts(
+        run_directory,
+        cycle_number=gpr.cycle_number,
+        bound_head_sha=gpr.bound_head_sha,
+        expected_thread_ids=expected or None,
+    )
+    if discovered is None:
+        # Legacy successor: migrate recovery lineage only when it still names
+        # the exact pending external round and matching prompt artifact.
+        recovery = state.recovery
+        if (
+            recovery is not None
+            and recovery_matches_active_external_round(state, recovery)
+            and gpr.external_fix_prompt_path
+            and gpr.last_external_result_path
+        ):
+            review = load_external_review_result(run_directory, gpr.last_external_result_path)
+            status = "cursor_pending" if review.all_actionable else "replies_pending"
+            migrated = build_external_adjudication_checkpoint(
+                run_directory,
+                review,
+                cycle_number=gpr.cycle_number,
+                bound_head_sha=gpr.bound_head_sha,
+                eligible_thread_ids=list(
+                    recovery.expected_eligible_thread_ids or review.eligible_thread_ids
+                ),
+                application_status=status,
+            )
+            if (
+                migrated.fix_prompt_path != recovery.source_prompt_path
+                or migrated.fix_prompt_sha256 != recovery.source_prompt_sha256
+            ):
+                raise ValidationError(
+                    "recovery lineage prompt does not match current-cycle "
+                    "external adjudication artifacts"
+                )
+            state.github_pr_review = gpr.model_copy(update=gpr_updates_for_checkpoint(migrated))
+            save_run_state(run_directory, state)
+            append_orchestrator_event(
+                run_directory,
+                run_id=state.run_id,
+                component="orchestrator",
+                event="external_adjudication_checkpoint_migrated_from_recovery",
+                status=state.status.value,
+                detail={
+                    "external_cycle": migrated.cycle_number,
+                    "application_status": migrated.application_status,
+                },
+            )
+            return state
+        return state
+
+    _review, hydrated = discovered
+    state.github_pr_review = gpr.model_copy(update=gpr_updates_for_checkpoint(hydrated))
+    save_run_state(run_directory, state)
+    append_orchestrator_event(
+        run_directory,
+        run_id=state.run_id,
+        component="orchestrator",
+        event="external_adjudication_checkpoint_hydrated",
+        status=state.status.value,
+        detail={
+            "external_cycle": hydrated.cycle_number,
+            "application_status": hydrated.application_status,
+            "thread_count": len(hydrated.eligible_thread_ids),
+        },
+    )
+    return state
+
+
+def _park_ambiguous_inline_reply(
+    run_directory: Path,
+    state: RunState,
+    *,
+    checkpoint: ExternalAdjudicationCheckpoint,
+    intents: list[ExternalReplyIntent],
+    index: int,
+) -> RunState:
+    """Mark one reply intent ambiguous and wait; never retry or invent Cursor."""
+
+    intents[index] = intents[index].model_copy(update={"status": "ambiguous"})
+    state = load_run_state_fresh(run_directory)
+    assert state.github_pr_review is not None
+    if state.status != RunStatus.WAITING_FOR_USER_ATTENTION:
+        _mark_status(state, RunStatus.WAITING_FOR_USER_ATTENTION)
+    state.github_pr_review = state.github_pr_review.model_copy(
+        update={
+            "lifecycle": "waiting_for_user_attention",
+            "external_adjudication": mark_checkpoint_status(
+                checkpoint, "replies_pending", reply_intents=intents
+            ),
+            "worker_outcome": "inline_reply_ambiguous",
+        }
+    )
+    state.result = (
+        "Ambiguous inline reply write detected; waiting for user attention "
+        "before any duplicate reply, Cursor, or publication"
+    )
+    save_run_state(run_directory, state)
+    return state
+
+
+def _apply_non_actionable_replies_from_checkpoint(
+    run_directory: Path,
+    state: RunState,
+    *,
+    github_command: str,
+    user_mention: str,
+) -> RunState:
+    """Apply non-actionable replies using durable intents; never duplicate."""
+
+    assert state.github_pr_review is not None
+    gpr = state.github_pr_review
+    checkpoint = gpr.external_adjudication
+    if checkpoint is None or checkpoint.application_status != "replies_pending":
+        raise ValidationError(
+            "non-actionable reply application requires replies_pending checkpoint"
+        )
+    review = verify_checkpoint_artifacts(run_directory, checkpoint)
+    decisions_by_id = {item.thread_id: item for item in review.thread_decisions}
+    intents = list(checkpoint.reply_intents)
+    for index, intent in enumerate(intents):
+        if intent.status == "written":
+            continue
+        if intent.status in {"ambiguous", "writing"}:
+            # ``writing`` means a prior attempt started without durable confirmation.
+            # Fail closed to user attention rather than risk a duplicate reply.
+            return _park_ambiguous_inline_reply(
+                run_directory,
+                state,
+                checkpoint=checkpoint,
+                intents=intents,
+                index=index,
+            )
+        if intent.thread_id in gpr.replied_thread_ids:
+            intents[index] = intent.model_copy(update={"status": "written"})
+            continue
+        decision = decisions_by_id.get(intent.thread_id)
+        if decision is None or decision.inline_reply is None:
+            raise ValidationError(
+                "reply intent thread is missing from the structured adjudication result"
+            )
+        if sha256_text(decision.inline_reply) != intent.inline_reply_sha256:
+            raise ValidationError("inline reply body drifted from durable reply intent hash")
+        # Persist ``writing`` before the remote mutation so crashes cannot retry blindly.
+        intents[index] = intent.model_copy(update={"status": "writing"})
+        state.github_pr_review = gpr.model_copy(
+            update={
+                "external_adjudication": mark_checkpoint_status(
+                    checkpoint, "replies_pending", reply_intents=intents
+                )
+            }
+        )
+        save_run_state(run_directory, state)
+        try:
+            reply = reply_to_review_thread(
+                github_command,
+                cwd=state.repository.root,
+                pull_request_review_thread_id=intent.thread_id,
+                body=decision.inline_reply,
+            )
+        except Exception:
+            return _park_ambiguous_inline_reply(
+                run_directory,
+                state,
+                checkpoint=checkpoint,
+                intents=intents,
+                index=index,
+            )
+        if not reply.ok:
+            # Timeout/auth/network soft-failure returns are also ambiguous: the
+            # remote side may or may not have accepted the mutation.
+            return _park_ambiguous_inline_reply(
+                run_directory,
+                state,
+                checkpoint=checkpoint,
+                intents=intents,
+                index=index,
+            )
+        intents[index] = intent.model_copy(update={"status": "written"})
+        assert state.github_pr_review is not None
+        replied = list(state.github_pr_review.replied_thread_ids)
+        if intent.thread_id not in replied:
+            replied.append(intent.thread_id)
+        consumed = mark_checkpoint_status(checkpoint, "replies_pending", reply_intents=intents)
+        state.github_pr_review = state.github_pr_review.model_copy(
+            update={
+                "replied_thread_ids": replied,
+                "external_adjudication": consumed,
+            }
+        )
+        gpr = state.github_pr_review
+        save_run_state(run_directory, state)
+
+    if any(item.status != "written" for item in intents):
+        return state
+
+    final_checkpoint = mark_checkpoint_status(checkpoint, "consumed", reply_intents=intents)
+    if state.status != RunStatus.WAITING_FOR_USER_ATTENTION:
+        _mark_status(state, RunStatus.WAITING_FOR_USER_ATTENTION)
+    assert state.github_pr_review is not None
+    state.github_pr_review = state.github_pr_review.model_copy(
+        update={
+            "lifecycle": "waiting_for_user_attention",
+            "external_adjudication": final_checkpoint,
+        }
+    )
+    state.result = (
+        "Non-actionable or uncertain bot finding(s) replied inline; "
+        f"waiting for exact continue command from {user_mention}"
+    )
+    save_run_state(run_directory, state)
+    append_orchestrator_event(
+        run_directory,
+        run_id=state.run_id,
+        component="orchestrator",
+        event="pr_review_user_attention",
+        status=state.status.value,
+        detail={"replied_thread_count": len(state.github_pr_review.replied_thread_ids)},
+    )
+    return state
+
+
+def _external_cursor_turn_completed(run_directory: Path, state: RunState) -> bool:
+    """True when durable Cursor metadata proves the scheduled external turn finished."""
+
+    gpr = state.github_pr_review
+    if gpr is None or gpr.external_cursor_iteration is None:
+        return False
+    return cursor_turn_complete(run_directory, gpr.external_cursor_iteration)
+
+
+def _run_independent_pre_cursor_preflight(
+    run_directory: Path,
+    state: RunState,
+    config: ProjectConfig,
+    *,
+    checkpoint: ExternalAdjudicationCheckpoint,
+) -> bool:
+    """Run independent PR/local binding + clean baseline; return False when blocked."""
+
+    assert state.github_pr_review is not None
+    gpr = state.github_pr_review
+    from ai_dev_loop.commands.pr_review_independent import (
+        validate_independent_pre_cursor_baseline,
+    )
+
+    try:
+        validate_independent_pre_cursor_baseline(state, config)
+    except ValidationError as exc:
+        mark_interrupted(
+            state,
+            "Independent PR/local binding or clean baseline drifted before "
+            f"Cursor chat creation: {exc}",
+        )
+        state.github_pr_review = gpr.model_copy(
+            update={
+                "lifecycle": "interrupted",
+                "worker_outcome": "pre_cursor_binding_drift",
+                "external_fix_prompt_path": checkpoint.fix_prompt_path,
+            }
+        )
+        save_run_state(run_directory, state)
+        append_orchestrator_event(
+            run_directory,
+            run_id=state.run_id,
+            component="orchestrator",
+            event="independent_pre_cursor_binding_drift",
+            status=state.status.value,
+            detail={"reason": "binding_or_baseline_drift"},
+        )
+        return False
+    except AiDevLoopError as exc:
+        # Network/GraphQL/auth interruptions must keep the durable checkpoint
+        # and leave the run resumable without re-adjudicating.
+        mark_interrupted(state, _sanitize_worker_error(exc))
+        state.github_pr_review = gpr.model_copy(
+            update={
+                "lifecycle": "interrupted",
+                "worker_outcome": "pre_cursor_remote_preflight_failed",
+                "external_fix_prompt_path": checkpoint.fix_prompt_path,
+            }
+        )
+        save_run_state(run_directory, state)
+        append_orchestrator_event(
+            run_directory,
+            run_id=state.run_id,
+            component="orchestrator",
+            event="external_adjudication_preflight_interrupted",
+            status=state.status.value,
+            detail={"reason": "remote_preflight_failed"},
+        )
+        return False
+    return True
+
+
+def _schedule_external_cursor_from_checkpoint(
+    run_directory: Path,
+    state: RunState,
+    config: ProjectConfig,
+) -> bool:
+    """Schedule one external Cursor turn from a cursor_pending checkpoint.
+
+    Returns True when the local workflow should be resumed. Caller holds locks.
+    """
+
+    assert state.github_pr_review is not None
+    gpr = state.github_pr_review
+    checkpoint = gpr.external_adjudication
+    if checkpoint is None or checkpoint.application_status not in {
+        "cursor_pending",
+        "cursor_scheduled",
+    }:
+        raise ValidationError("external Cursor schedule requires a cursor checkpoint")
+    verify_checkpoint_artifacts(run_directory, checkpoint)
+    if checkpoint.application_status == "cursor_scheduled":
+        if gpr.external_cursor_iteration is None or not gpr.external_fix_prompt_path:
+            raise ValidationError(
+                "cursor_scheduled checkpoint is missing external Cursor iteration metadata"
+            )
+        # Resume of a scheduled turn still requires independent binding/baseline
+        # unless durable evidence proves Cursor already completed that iteration.
+        if not _external_cursor_turn_completed(run_directory, state) and _is_independent_origin(
+            gpr
+        ):
+            if not _run_independent_pre_cursor_preflight(
+                run_directory, state, config, checkpoint=checkpoint
+            ):
+                return False
+            state = load_run_state_fresh(run_directory)
+            assert state.github_pr_review is not None
+            gpr = state.github_pr_review
+        if state.status != RunStatus.RUNNING_CURSOR:
+            begin_running_cursor(state)
+            state.github_pr_review = gpr.model_copy(
+                update={"lifecycle": "fixing_external_feedback", "worker_outcome": None}
+            )
+            state.last_error = None
+            save_run_state(run_directory, state)
+        return True
+
+    if _is_independent_origin(gpr):
+        if not _run_independent_pre_cursor_preflight(
+            run_directory, state, config, checkpoint=checkpoint
+        ):
+            return False
+        state = load_run_state_fresh(run_directory)
+        assert state.github_pr_review is not None
+        gpr = state.github_pr_review
+        checkpoint = gpr.external_adjudication
+        assert checkpoint is not None
+
+    if state.cursor.chat_id is None:
+        ensure_independent_cursor_chat(run_directory, state)
+        state = load_run_state_fresh(run_directory)
+        assert state.github_pr_review is not None
+        gpr = state.github_pr_review
+        checkpoint = gpr.external_adjudication
+        assert checkpoint is not None
+    if not state.cursor.chat_id:
+        raise ValidationError("Cursor chat id is required before fixing external feedback")
+
+    external_iteration = next_external_cursor_iteration(state)
+    historical_max = max_iteration_number(state)
+    scheduled = mark_checkpoint_status(checkpoint, "cursor_scheduled")
+    state.github_pr_review = gpr.model_copy(
+        update=gpr_updates_for_checkpoint(
+            scheduled,
+            extra={
+                "lifecycle": "fixing_external_feedback",
+                "external_cursor_iteration": external_iteration,
+                "worker_outcome": None,
+            },
+        )
+    )
+    state.workflow = state.workflow.model_copy(update={"current_review_iteration": historical_max})
+    begin_external_local_review_budget(state)
+    begin_running_cursor(state)
+    save_run_state(run_directory, state)
+    append_orchestrator_event(
+        run_directory,
+        run_id=state.run_id,
+        component="orchestrator",
+        event="external_feedback_cursor_scheduled",
+        status=state.status.value,
+        iteration=external_iteration,
+        detail={
+            "external_cycle": state.github_pr_review.cycle_number,
+            "historical_max_iteration": historical_max,
+        },
+    )
+    return True
 
 
 def _legacy_freeze_local_preconditions(state: RunState) -> list[str] | None:
@@ -1479,10 +1909,17 @@ def resume_pr_review_cycle(
         and state.github_pr_review.lifecycle == "awaiting_bot_review"
     ):
         return _reattach_awaiting_bot_review_poller(run_directory, state)
-    if state.status != RunStatus.INTERRUPTED:
+    replies_pending_resume = (
+        state.status == RunStatus.WAITING_FOR_USER_ATTENTION
+        and state.github_pr_review.lifecycle == "waiting_for_user_attention"
+        and state.github_pr_review.external_adjudication is not None
+        and state.github_pr_review.external_adjudication.application_status == "replies_pending"
+    )
+    if state.status != RunStatus.INTERRUPTED and not replies_pending_resume:
         raise ValidationError(
-            "pr-review resume requires status interrupted or awaiting_bot_review "
-            "with an absent/stale worker"
+            "pr-review resume requires status interrupted, awaiting_bot_review "
+            "with an absent/stale worker, or waiting_for_user_attention with a "
+            "replies_pending external adjudication checkpoint"
         )
     resume_workflow_run_id: str | None = None
     locks = _run_locks(run_directory, run_id=state.run_id, repository_path=state.repository.root)
@@ -1505,24 +1942,134 @@ def resume_pr_review_cycle(
             save_run_state(run_directory, state)
             _spawn_pr_review_worker(run_directory, state.run_id)
             return f"Resumed publication for {state.run_id}"
+        # Phase 15.17: hydrate current-cycle durable adjudication before any
+        # recovery/lineage guard or Cursor schedule. Invalid/stub cycle artifacts
+        # must not block unrelated reviewing recovery resume paths.
         recovery = state.recovery
+        if lifecycle in {"fixing_external_feedback", "interrupted", "evaluating_bot_feedback"}:
+            try:
+                state = _hydrate_external_adjudication_locked(run_directory, state)
+            except ValidationError:
+                if not (
+                    recovery is not None
+                    and recovery.recovered_checkpoint == "reviewing"
+                    and recovery.reason_code == "codex_review_result_artifact_missing"
+                ):
+                    raise
+            assert state.github_pr_review is not None
+            gpr = state.github_pr_review
+            lifecycle = gpr.lifecycle
+
+        checkpoint = (
+            state.github_pr_review.external_adjudication
+            if state.github_pr_review is not None
+            else None
+        )
         if (
-            recovery is not None
-            and recovery.recovered_checkpoint == "external_feedback_cursor"
-            and recovery.reason_code == "external_feedback_cursor_not_started"
+            checkpoint is not None
+            and checkpoint.application_status == "replies_pending"
+            and lifecycle
+            in {"interrupted", "evaluating_bot_feedback", "waiting_for_user_attention"}
         ):
+            config = _require_github_config(Path(state.repository.root))
+            assert config.github is not None
+            state = _apply_non_actionable_replies_from_checkpoint(
+                run_directory,
+                state,
+                github_command=config.github.command,
+                user_mention=config.github.user_mention,
+            )
+            return (
+                f"Applied non-actionable replies for {state.run_id} from durable "
+                "external adjudication checkpoint"
+            )
+        if (
+            checkpoint is not None
+            and checkpoint.application_status in {"cursor_pending", "cursor_scheduled"}
+            and lifecycle in {"fixing_external_feedback", "interrupted", "evaluating_bot_feedback"}
+        ):
+            if not state.cursor.chat_id and checkpoint.application_status == "cursor_scheduled":
+                raise ValidationError(
+                    "cannot resume scheduled external Cursor without a persisted chat id"
+                )
+            config = _require_github_config(Path(state.repository.root))
+            assert config.github is not None
+            cursor_already_done = _external_cursor_turn_completed(run_directory, state)
+            if not cursor_already_done:
+                # Full thread/baseline/prompt guards before Cursor. Skip only when
+                # durable iteration evidence proves the scheduled turn completed.
+                observed_pair = _observe_eligible_thread_set(
+                    state,
+                    github_command=config.github.command,
+                    reviewer_logins=config.github.reviewer_logins,
+                )
+                if observed_pair is not None:
+                    expected_ids, observed_ids = observed_pair
+                    if set(observed_ids) != set(expected_ids):
+                        _persist_eligible_thread_set_drift(
+                            run_directory,
+                            expected=expected_ids,
+                            observed=observed_ids,
+                            locks_held=True,
+                        )
+                        return (
+                            "Eligible thread set drifted from the frozen adjudication set; "
+                            "waiting for user attention. No local agent or GitHub writes ran."
+                        )
+                from ai_dev_loop.runners.git import validate_external_feedback_pre_cursor
+
+                try:
+                    validate_external_feedback_pre_cursor(state)
+                except ValidationError as exc:
+                    raise ValidationError(
+                        f"external adjudication resume requires a clean baseline: {exc}"
+                    ) from exc
+                prompt_rel = (
+                    state.github_pr_review.external_fix_prompt_path
+                    if state.github_pr_review is not None
+                    else None
+                ) or checkpoint.fix_prompt_path
+                if not prompt_rel:
+                    raise ValidationError(
+                        "external fix prompt path missing for adjudication resume"
+                    )
+                prompt_file = run_directory / prompt_rel
+                if not prompt_file.is_file():
+                    raise ValidationError(f"external fix prompt missing for resume: {prompt_rel}")
+                guard_sha = active_external_prompt_guard_sha256(state)
+                if guard_sha and sha256_file(prompt_file) != guard_sha:
+                    raise ValidationError(
+                        "external fix prompt hash drifted from the active adjudication "
+                        "checkpoint; refusing Cursor"
+                    )
+            scheduled = _schedule_external_cursor_from_checkpoint(run_directory, state, config)
+            if scheduled:
+                resume_workflow_run_id = state.run_id
+            else:
+                return (
+                    f"External adjudication checkpoint preserved for {state.run_id}; "
+                    "preflight blocked Cursor schedule"
+                )
+        elif (
+            state.recovery is not None
+            and recovery_matches_active_external_round(state, state.recovery)
+            and (
+                checkpoint is None
+                or checkpoint.application_status in {"cursor_pending", "cursor_scheduled"}
+            )
+            and lifecycle in {"fixing_external_feedback", "interrupted"}
+        ):
+            # Legacy successor without a hydrated checkpoint still resumes once
+            # when recovery lineage exactly matches the pending external round.
+            recovery = state.recovery
             if not state.cursor.chat_id:
                 raise ValidationError(
                     "cannot resume external_feedback_cursor recovery without a "
                     "persisted Cursor chat id"
                 )
-            if lifecycle not in {"fixing_external_feedback", "interrupted"}:
-                raise ValidationError(
-                    "external_feedback_cursor recovery resume requires lifecycle "
-                    f"fixing_external_feedback (got {lifecycle})"
-                )
             if (
-                state.github_pr_review.external_cursor_iteration is None
+                state.github_pr_review is None
+                or state.github_pr_review.external_cursor_iteration is None
                 or not state.github_pr_review.external_fix_prompt_path
             ):
                 raise ValidationError(
@@ -1563,8 +2110,6 @@ def resume_pr_review_cycle(
                 raise ValidationError(
                     f"external fix prompt missing for recovery resume: {prompt_rel}"
                 )
-            from ai_dev_loop.state import sha256_file
-
             if recovery.source_prompt_sha256 and sha256_file(prompt_file) != (
                 recovery.source_prompt_sha256
             ):
@@ -1614,6 +2159,7 @@ def resume_pr_review_cycle(
                     )
             # Keep interrupted; workflow resume restores reviewing from durable artifacts
             # and retries only local Codex review without Cursor, polling, or GitHub writes.
+            assert state.github_pr_review is not None
             state.github_pr_review = state.github_pr_review.model_copy(
                 update={"lifecycle": "fixing_external_feedback", "worker_outcome": None}
             )
@@ -1623,6 +2169,7 @@ def resume_pr_review_cycle(
         elif lifecycle in {"awaiting_bot_review", "interrupted"}:
             _mark_status(state, RunStatus.AWAITING_BOT_REVIEW)
             # Preserve expected_eligible_thread_ids across resume for exact-set checks.
+            assert state.github_pr_review is not None
             state.github_pr_review = state.github_pr_review.model_copy(
                 update={"lifecycle": "awaiting_bot_review", "worker_outcome": None}
             )
@@ -1636,6 +2183,7 @@ def resume_pr_review_cycle(
                     "cannot resume fixing_external_feedback without a persisted Cursor chat id"
                 )
             _mark_status(state, RunStatus.RUNNING_CURSOR)
+            assert state.github_pr_review is not None
             state.github_pr_review = state.github_pr_review.model_copy(
                 update={"lifecycle": "fixing_external_feedback"}
             )
@@ -1770,9 +2318,25 @@ def render_pr_review_status(run_id: str, *, output: str = "text") -> str:
             "worker_outcome": gpr.worker_outcome,
             "last_external_result_path": gpr.last_external_result_path,
             "last_snapshot_path": gpr.last_snapshot_path,
+            "external_adjudication": None,
             "bot_acknowledgement": None,
             "no_findings_completion": None,
         }
+        if gpr.external_adjudication is not None:
+            checkpoint = gpr.external_adjudication
+            payload["github_pr_review"]["external_adjudication"] = {
+                "cycle_number": checkpoint.cycle_number,
+                "bound_head_sha_prefix": checkpoint.bound_head_sha[:12],
+                "application_status": checkpoint.application_status,
+                "eligible_thread_count": len(checkpoint.eligible_thread_ids),
+                "result_path": checkpoint.result_path,
+                "snapshot_path": checkpoint.snapshot_path,
+                "fix_prompt_path": checkpoint.fix_prompt_path,
+                "has_fix_prompt_hash": checkpoint.fix_prompt_sha256 is not None,
+                "pending_reply_intent_count": sum(
+                    1 for item in checkpoint.reply_intents if item.status != "written"
+                ),
+            }
         if gpr.bot_acknowledgement is not None:
             ack = gpr.bot_acknowledgement
             payload["github_pr_review"]["bot_acknowledgement"] = {
@@ -2353,129 +2917,60 @@ def _run_pr_review_worker_loop_inner(run_id: str, run_directory: Path) -> None:
             bound_head_sha=gpr.bound_head_sha,
             pr_number=pr_number,
         )
+        if set(review.eligible_thread_ids) != set(observed_ids):
+            raise ValidationError(
+                "Codex external adjudication result thread set drifted from the "
+                "eligible observation used for this cycle"
+            )
 
         resume_workflow = False
         locks.acquire()
         try:
             state = load_run_state_fresh(run_directory)
             assert state.github_pr_review is not None
+            # Persist the durable adjudication checkpoint BEFORE remote preflight,
+            # chat creation, Cursor, replies, or publication.
+            application_status = "cursor_pending" if review.all_actionable else "replies_pending"
+            checkpoint = build_external_adjudication_checkpoint(
+                run_directory,
+                review,
+                cycle_number=state.github_pr_review.cycle_number,
+                bound_head_sha=state.github_pr_review.bound_head_sha,
+                eligible_thread_ids=observed_ids,
+                application_status=application_status,
+            )
             state.github_pr_review = state.github_pr_review.model_copy(
-                update={
-                    "last_external_result_path": artifacts.result_path,
-                    "last_snapshot_path": artifacts.snapshot_path,
-                }
+                update=gpr_updates_for_checkpoint(
+                    checkpoint,
+                    extra={"lifecycle": "evaluating_bot_feedback"},
+                )
             )
-            if not review.all_actionable:
-                for decision in review.thread_decisions:
-                    if decision.decision == "actionable":
-                        continue
-                    assert decision.inline_reply is not None
-                    if decision.thread_id in state.github_pr_review.replied_thread_ids:
-                        continue
-                    reply = reply_to_review_thread(
-                        github.command,
-                        cwd=state.repository.root,
-                        pull_request_review_thread_id=decision.thread_id,
-                        body=decision.inline_reply,
-                    )
-                    if not reply.ok:
-                        raise AiDevLoopError(
-                            reply.error.message if reply.error else "inline reply failed"
-                        )
-                    replied = list(state.github_pr_review.replied_thread_ids)
-                    replied.append(decision.thread_id)
-                    state.github_pr_review = state.github_pr_review.model_copy(
-                        update={"replied_thread_ids": replied}
-                    )
-                _mark_status(state, RunStatus.WAITING_FOR_USER_ATTENTION)
-                state.github_pr_review = state.github_pr_review.model_copy(
-                    update={"lifecycle": "waiting_for_user_attention"}
-                )
-                state.result = (
-                    "Non-actionable or uncertain bot finding(s) replied inline; "
-                    f"waiting for exact continue command from {github.user_mention}"
-                )
-                save_run_state(run_directory, state)
-                append_orchestrator_event(
-                    run_directory,
-                    run_id=state.run_id,
-                    component="orchestrator",
-                    event="pr_review_user_attention",
-                    status=state.status.value,
-                    detail={"replied_thread_count": len(state.github_pr_review.replied_thread_ids)},
-                )
-                return
-
-            assert artifacts.fix_prompt_path is not None
-            if _is_independent_origin(state.github_pr_review):
-                from ai_dev_loop.commands.pr_review_independent import (
-                    validate_independent_pre_cursor_baseline,
-                )
-
-                try:
-                    validate_independent_pre_cursor_baseline(state, config)
-                except ValidationError as exc:
-                    mark_interrupted(
-                        state,
-                        "Independent PR/local binding or clean baseline drifted before "
-                        f"Cursor chat creation: {exc}",
-                    )
-                    state.github_pr_review = state.github_pr_review.model_copy(
-                        update={
-                            "lifecycle": "interrupted",
-                            "worker_outcome": "pre_cursor_binding_drift",
-                            "external_fix_prompt_path": artifacts.fix_prompt_path,
-                        }
-                    )
-                    save_run_state(run_directory, state)
-                    append_orchestrator_event(
-                        run_directory,
-                        run_id=state.run_id,
-                        component="orchestrator",
-                        event="independent_pre_cursor_binding_drift",
-                        status=state.status.value,
-                        detail={"reason": "binding_or_baseline_drift"},
-                    )
-                    return
-            if state.cursor.chat_id is None:
-                ensure_independent_cursor_chat(run_directory, state)
-                state = load_run_state_fresh(run_directory)
-                assert state.github_pr_review is not None
-            if not state.cursor.chat_id:
-                raise ValidationError("Cursor chat id is required before fixing external feedback")
-            assert state.github_pr_review is not None
-            external_iteration = next_external_cursor_iteration(state)
-            # Keep current_review_iteration at the durable max so the planner
-            # schedules Cursor on external_iteration (max+1) and never reuses a
-            # completed historical iteration for staging. Reset the local review
-            # budget so a high artifact number does not exhaust max_review_iterations.
-            historical_max = max_iteration_number(state)
-            state.github_pr_review = state.github_pr_review.model_copy(
-                update={
-                    "lifecycle": "fixing_external_feedback",
-                    "external_fix_prompt_path": artifacts.fix_prompt_path,
-                    "external_cursor_iteration": external_iteration,
-                }
-            )
-            state.workflow = state.workflow.model_copy(
-                update={"current_review_iteration": historical_max}
-            )
-            begin_external_local_review_budget(state)
-            begin_running_cursor(state)
             save_run_state(run_directory, state)
             append_orchestrator_event(
                 run_directory,
                 run_id=state.run_id,
                 component="orchestrator",
-                event="external_feedback_cursor_scheduled",
+                event="external_adjudication_checkpoint_persisted",
                 status=state.status.value,
-                iteration=external_iteration,
                 detail={
-                    "external_cycle": state.github_pr_review.cycle_number,
-                    "historical_max_iteration": historical_max,
+                    "external_cycle": checkpoint.cycle_number,
+                    "application_status": checkpoint.application_status,
+                    "result_path": artifacts.result_path,
                 },
             )
-            resume_workflow = True
+
+            if not review.all_actionable:
+                state = _apply_non_actionable_replies_from_checkpoint(
+                    run_directory,
+                    state,
+                    github_command=github.command,
+                    user_mention=github.user_mention,
+                )
+                return
+
+            resume_workflow = _schedule_external_cursor_from_checkpoint(
+                run_directory, state, config
+            )
         finally:
             locks.release()
 
@@ -2483,6 +2978,36 @@ def _run_pr_review_worker_loop_inner(run_id: str, run_directory: Path) -> None:
             from ai_dev_loop.workflow_engine import resume_run
 
             resume_run(run_id)
+            # Phase 15.17: continue in-process through publication/polling instead
+            # of returning and leaving publishing_external_fix stranded.
+            state = load_run_state_fresh(run_directory)
+            gpr = state.github_pr_review
+            if gpr is None or state.status in TERMINAL_STATUSES:
+                return
+            if state.status == RunStatus.WAITING_FOR_USER_ATTENTION:
+                return
+            if state.status == RunStatus.INTERRUPTED:
+                return
+            if state.status == RunStatus.PUBLISHING_EXTERNAL_FIX or gpr.lifecycle in {
+                "publishing_external_fix",
+                "publishing_initial",
+            }:
+                _publish_external_fix(run_directory, state, config, schedule_worker=False)
+                state = load_run_state_fresh(run_directory)
+                gpr = state.github_pr_review
+                if (
+                    gpr is not None
+                    and state.status == RunStatus.AWAITING_BOT_REVIEW
+                    and gpr.lifecycle == "awaiting_bot_review"
+                ):
+                    continue
+                return
+            if (
+                state.status == RunStatus.AWAITING_BOT_REVIEW
+                and gpr.lifecycle == "awaiting_bot_review"
+            ):
+                continue
+            return
         return
 
     locks = _run_locks(run_directory, run_id=run_id, repository_path=state.repository.root)
@@ -2902,6 +3427,9 @@ def _run_publication_pipeline(
                         + list(state.github_pr_review.eligible_thread_ids)
                     )
                 ),
+                "external_adjudication": None,
+                "external_fix_prompt_path": None,
+                "external_cursor_iteration": None,
             }
         )
         mark_completed(
@@ -2953,6 +3481,11 @@ def _run_publication_pipeline(
             ),
             "bot_acknowledgement": None,
             "no_findings_completion": None,
+            # Retire the prior round's operational checkpoint; recovery lineage
+            # must not guard later cycles.
+            "external_adjudication": None,
+            "external_fix_prompt_path": None,
+            "external_cursor_iteration": None,
         }
     )
     state.repository = state.repository.model_copy(update={"initial_head": commit_sha})

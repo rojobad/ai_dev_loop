@@ -338,6 +338,29 @@ def test_successor_resume_reuses_session_and_skips_trigger(
         (run_directory / artifacts.fix_prompt_path).write_text(
             "Please fix both threads.", encoding="utf-8"
         )
+        result_path = run_directory / artifacts.result_path
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        if not result_path.is_file():
+            result_path.write_text(
+                json.dumps(review.model_dump(mode="json"), indent=2) + "\n",
+                encoding="utf-8",
+            )
+        snap_path = run_directory / artifacts.snapshot_path
+        snap_path.parent.mkdir(parents=True, exist_ok=True)
+        if not snap_path.is_file() or snap_path.read_text(encoding="utf-8").strip() in {"", "[]"}:
+            snap_path.write_text(
+                json.dumps(
+                    {
+                        "threads": [
+                            {"thread_id": tid, "body_sha256": "a" * 64}
+                            for tid in review.eligible_thread_ids
+                        ]
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
         return review, artifacts
 
     def fail_post(*_a, **_k):

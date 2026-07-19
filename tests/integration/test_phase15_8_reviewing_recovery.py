@@ -131,7 +131,18 @@ def _seed_failed_reviewing_pr_run(
     cycle_dir.mkdir(parents=True, exist_ok=True)
     (cycle_dir / "result.json").write_text('{"all_actionable": true}\n', encoding="utf-8")
     (cycle_dir / "report.md").write_text("# external\n", encoding="utf-8")
-    (cycle_dir / "threads.snapshot.json").write_text("[]\n", encoding="utf-8")
+    (cycle_dir / "threads.snapshot.json").write_text(
+        json.dumps(
+            {
+                "threads": [
+                    {"thread_id": tid, "body_sha256": "a" * 64} for tid in [THREAD_A, THREAD_B]
+                ]
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     (cycle_dir / "codex.events.jsonl").write_text("{}\n", encoding="utf-8")
     (cycle_dir / "codex.metadata.json").write_text("{}\n", encoding="utf-8")
     fix_prompt = run_path / "prompts/fixes/github-01.txt"

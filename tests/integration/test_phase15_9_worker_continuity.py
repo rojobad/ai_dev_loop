@@ -269,6 +269,29 @@ def test_worker_publish_continues_to_polling_without_self_spawn(
         }
         (run_directory / artifacts.fix_prompt_path).parent.mkdir(parents=True, exist_ok=True)
         (run_directory / artifacts.fix_prompt_path).write_text("fix cycle 2", encoding="utf-8")
+        result_path = run_directory / artifacts.result_path
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        if not result_path.is_file():
+            result_path.write_text(
+                json.dumps(review.model_dump(mode="json"), indent=2) + "\n",
+                encoding="utf-8",
+            )
+        snap_path = run_directory / artifacts.snapshot_path
+        snap_path.parent.mkdir(parents=True, exist_ok=True)
+        if not snap_path.is_file() or snap_path.read_text(encoding="utf-8").strip() in {"", "[]"}:
+            snap_path.write_text(
+                json.dumps(
+                    {
+                        "threads": [
+                            {"thread_id": tid, "body_sha256": "a" * 64}
+                            for tid in review.eligible_thread_ids
+                        ]
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
         return review, artifacts
 
     def track_comment(*_a, **_k):
@@ -340,9 +363,13 @@ def test_worker_publish_continues_to_polling_without_self_spawn(
     assert final.status == RunStatus.RUNNING_CURSOR
     assert final.github_pr_review is not None
     assert final.github_pr_review.cycle_number == 2
-    assert final.github_pr_review.expected_eligible_thread_ids is None
+    # Phase 15.17: after cycle-2 adjudication the durable checkpoint freezes the
+    # current window; publish had cleared the prior cycle's freeze first.
+    assert final.github_pr_review.expected_eligible_thread_ids == [THREAD_C2A, THREAD_C2B]
     assert THREAD_C1 in final.github_pr_review.processed_thread_ids
     assert set(final.github_pr_review.eligible_thread_ids) == {THREAD_C2A, THREAD_C2B}
+    assert final.github_pr_review.external_adjudication is not None
+    assert final.github_pr_review.external_adjudication.application_status == ("cursor_scheduled")
 
 
 def test_sync_publish_schedules_exactly_one_poller(
@@ -498,6 +525,29 @@ def test_cycle_reset_accepts_new_threads_and_keeps_processed(
         }
         (run_directory / artifacts.fix_prompt_path).parent.mkdir(parents=True, exist_ok=True)
         (run_directory / artifacts.fix_prompt_path).write_text("fix", encoding="utf-8")
+        result_path = run_directory / artifacts.result_path
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        if not result_path.is_file():
+            result_path.write_text(
+                json.dumps(review.model_dump(mode="json"), indent=2) + "\n",
+                encoding="utf-8",
+            )
+        snap_path = run_directory / artifacts.snapshot_path
+        snap_path.parent.mkdir(parents=True, exist_ok=True)
+        if not snap_path.is_file() or snap_path.read_text(encoding="utf-8").strip() in {"", "[]"}:
+            snap_path.write_text(
+                json.dumps(
+                    {
+                        "threads": [
+                            {"thread_id": tid, "body_sha256": "a" * 64}
+                            for tid in review.eligible_thread_ids
+                        ]
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
         return review, artifacts
 
     with (
@@ -790,6 +840,29 @@ def test_resume_comparable_cycle2_fixture_adjudicates_two_threads(
         (run_directory / artifacts.fix_prompt_path).write_text(
             "Please fix both cycle-2 threads.", encoding="utf-8"
         )
+        result_path = run_directory / artifacts.result_path
+        result_path.parent.mkdir(parents=True, exist_ok=True)
+        if not result_path.is_file():
+            result_path.write_text(
+                json.dumps(review.model_dump(mode="json"), indent=2) + "\n",
+                encoding="utf-8",
+            )
+        snap_path = run_directory / artifacts.snapshot_path
+        snap_path.parent.mkdir(parents=True, exist_ok=True)
+        if not snap_path.is_file() or snap_path.read_text(encoding="utf-8").strip() in {"", "[]"}:
+            snap_path.write_text(
+                json.dumps(
+                    {
+                        "threads": [
+                            {"thread_id": tid, "body_sha256": "a" * 64}
+                            for tid in review.eligible_thread_ids
+                        ]
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
         return review, artifacts
 
     with (
