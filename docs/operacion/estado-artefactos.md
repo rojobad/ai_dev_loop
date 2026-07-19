@@ -187,8 +187,13 @@ reason_code                   # incluye initial_staging_failed, correction_stagi
   terminaron pero falta el resultado local `codex/reviews/NN.json`;
 - `external_feedback_cursor` + `external_feedback_cursor_not_started` cuando la
   adjudicacion externa ya dejo resultado/prompt accionables pero la iteracion
-  fresca de Cursor no llego a empezar. El estado tambien puede registrar
-  `github_pr_review.external_cursor_iteration` para esa iteracion monotona;
+  fresca de Cursor no llego a empezar. Un directorio
+  `cursor/iterations/NN` vacio sin entrada `iterations[NN]` ni archivos
+  (metadata/events/status/fingerprint/diff/review) no es evidencia parcial; el
+  source sigue siendo elegible. El estado registra
+  `github_pr_review.external_cursor_iteration` para esa iteracion monotona. El
+  primer Cursor de la ronda externa usa baseline limpio del HEAD publicado; las
+  correcciones locales posteriores siguen exigiendo el patch staged anterior;
 - `publication_pre_commit` + `publication_pre_commit_interrupted` cuando la
   revision local acepto el staged patch y la publicacion quedo en
   `pre_commit` sin commit (p. ej. `ssh-agent` sin identidad). La elegibilidad

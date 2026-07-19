@@ -152,10 +152,14 @@ artefacto-dirigidos:
   sucesor reintenta solo la revision Codex B; no reejecuta Cursor ni toca GitHub;
 - `external_feedback_cursor` (`external_feedback_cursor_not_started`): la
   adjudicacion externa ya produjo un prompt accionable, pero la iteracion
-  fresca de Cursor nunca arranco (p. ej. staging vacio sobre artefactos
-  historicos). El sucesor reutiliza la adjudicacion persistida y, tras
-  `pr-review resume`, abre Cursor con el prompt externo exacto antes de
-  staging; no re-adjudica ni republica `@codex review`;
+  fresca de Cursor nunca arranco. Un directorio
+  `cursor/iterations/NN` vacio sin entrada durable ni archivos no cuenta como
+  intento parcial. El primer Cursor de esa ronda exige baseline limpio
+  (identidad Git, branch/HEAD enlazados, indice/worktree limpios) y no compara
+  el indice con un patch publicado anterior; solo las correcciones locales
+  posteriores exigen `git/diffs/(NN-1).patch`. El sucesor reutiliza la
+  adjudicacion persistida y, tras `pr-review resume`, abre Cursor con el prompt
+  externo exacto antes de staging; no re-adjudica ni republica `@codex review`;
 - `publication_pre_commit` (`publication_pre_commit_interrupted`): la revision
   local Codex acepto el patch staged y la publicacion quedo en
   `publication_phase: pre_commit` sin commit. El sucesor queda `interrupted`

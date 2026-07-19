@@ -277,8 +277,9 @@ mismo `pr-review recover` sobre ese run `failed`: el checkpoint será
 sesión B exacta, sin reejecutar Cursor ni republicar `@codex review`.
 
 Si la adjudicación externa ya dejó un prompt accionable
-(`prompts/fixes/github-NN.txt`) pero el orquestador falló antes de abrir la
-iteración fresca de Cursor (p. ej. staging vacío sobre `01` histórico), el
+(`prompts/fixes/github-NN.txt`) pero el orquestador falló antes de que Cursor
+realmente iniciara (por ejemplo, preflight que comparaba un índice limpio con
+un patch publicado, o solo un directorio `cursor/iterations/NN` vacío), el
 checkpoint es `external_feedback_cursor`. Tras aceptación de esta versión:
 
 ```bash
@@ -287,10 +288,12 @@ ai_dev_loop pr-review recover <failed-run-id> --output json
 ai_dev_loop pr-review resume <successor-run-id> --controller-session-id <sesion-A>
 ```
 
-Ese `resume` revalida PR/SHA/hilos/baseline y abre Cursor con el prompt externo
+Ese `resume` revalida PR/SHA/hilos y el baseline limpio del commit publicado
+(sin exigir el patch staged anterior) y abre Cursor con el prompt externo
 exacto en una iteración nueva monotona; no re-adjudica ni republica
-`@codex review`. El próximo trigger solo llega tras una publicación normal de
-corrección aceptada.
+`@codex review`. Dentro de la misma ronda, un finding local de Codex sí exige
+el patch staged de la iteración anterior. El próximo trigger solo llega tras
+una publicación normal de corrección aceptada.
 
 Si la revisión local ya aceptó el patch staged y la publicación quedó en
 `publication_phase: pre_commit` sin commit (por ejemplo `ssh-agent` sin

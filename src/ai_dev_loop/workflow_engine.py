@@ -28,6 +28,7 @@ from ai_dev_loop.errors import AiDevLoopError, CursorUsageLimitError, Validation
 from ai_dev_loop.event_log import EventLevel, append_orchestrator_event
 from ai_dev_loop.iterations import (
     cursor_prompt_path,
+    is_external_cursor_prompt_iteration,
     iteration_label,
     local_review_budget_used,
     max_iteration_number,
@@ -68,6 +69,7 @@ from ai_dev_loop.runners.cursor_output import (
 )
 from ai_dev_loop.runners.git import (
     validate_correction_pre_cursor,
+    validate_external_feedback_pre_cursor,
     validate_repository_identity,
     validate_usage_limit_recovery_correction_pre_cursor,
     validate_usage_limit_recovery_pre_cursor,
@@ -772,8 +774,9 @@ def _run_cursor_turn(
     iteration_number: int,
 ) -> str:
     iteration = iteration_label(iteration_number)
-    iteration_dir = run_directory / "cursor" / "iterations" / iteration
-    iteration_dir.mkdir(parents=True, exist_ok=True)
+    # Create attempt directories only after the correct semantic preflight passes.
+    # An empty cursor/iterations/NN directory is not durable execution evidence,
+    # but recovery must still ignore it only when no files or iteration entry exist.
 
     if _is_cursor_usage_limit_recovery_resume(state, iteration_number):
         try:
@@ -801,7 +804,20 @@ def _run_cursor_turn(
         except ValidationError as exc:
             _fail_run(run_directory, state, str(exc), event_name="correction_preflight_failed")
             raise AiDevLoopError(str(exc), exit_code=exc.exit_code) from exc
+    elif is_external_cursor_prompt_iteration(state, iteration_number):
+        # First Cursor turn of an external feedback round: published clean commit.
+        try:
+            validate_external_feedback_pre_cursor(state)
+        except ValidationError as exc:
+            _fail_run(
+                run_directory,
+                state,
+                str(exc),
+                event_name="external_feedback_preflight_failed",
+            )
+            raise AiDevLoopError(str(exc), exit_code=exc.exit_code) from exc
     elif iteration_number > 1:
+        # Local Codex finding correction: previous staged patch must still match.
         from ai_dev_loop.iterations import previous_iteration_git_patch_path
 
         try:
@@ -816,6 +832,9 @@ def _run_cursor_turn(
         except ValidationError as exc:
             _fail_run(run_directory, state, str(exc), event_name="correction_preflight_failed")
             raise AiDevLoopError(str(exc), exit_code=exc.exit_code) from exc
+
+    iteration_dir = run_directory / "cursor" / "iterations" / iteration
+    iteration_dir.mkdir(parents=True, exist_ok=True)
 
     if state.status != RunStatus.RUNNING_CURSOR:
         begin_running_cursor(state)

@@ -1549,10 +1549,10 @@ def resume_pr_review_cycle(
                         "Eligible thread set drifted from the frozen recovery set; "
                         "waiting for user attention. No local agent or GitHub writes ran."
                     )
-            from ai_dev_loop.runners.publish import validate_clean_worktree
+            from ai_dev_loop.runners.git import validate_external_feedback_pre_cursor
 
             try:
-                validate_clean_worktree(Path(state.repository.root))
+                validate_external_feedback_pre_cursor(state)
             except ValidationError as exc:
                 raise ValidationError(
                     f"external_feedback_cursor recovery resume requires a clean baseline: {exc}"
