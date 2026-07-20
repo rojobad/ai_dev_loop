@@ -22,7 +22,8 @@ from ai_dev_loop.commands.pr_review_recover import (
 from ai_dev_loop.commands.start import start_run
 from ai_dev_loop.github_pr_review_result import GithubPrReviewResult
 from ai_dev_loop.iterations import cursor_prompt_path, read_cursor_prompt
-from ai_dev_loop.resume_planner import WorkflowActionKind, plan_next_action
+from ai_dev_loop.legacy_pr_review_local_adapter import scheduled_cursor_turn_from_legacy_pr_state
+from ai_dev_loop.resume_planner import LocalInvocationContext, WorkflowActionKind, plan_next_action
 from ai_dev_loop.run_discovery import find_run_directory
 from ai_dev_loop.runners.codex_github import GithubAdjudicationArtifacts
 from ai_dev_loop.runners.github import GithubPullRequest, GithubReviewThread
@@ -37,6 +38,16 @@ from ai_dev_loop.state import (
     utc_now,
 )
 
+
+def _local_resume_result(
+    *, needs_external_continuation: bool = False, status: str = "running_cursor"
+):
+    result = MagicMock()
+    result.needs_external_continuation = needs_external_continuation
+    result.status = status
+    return result
+
+
 runner = CliRunner()
 CONTROLLER_A = "019abc00-aaaa-bbbb-cccc-ddddeeeeffff"
 REVIEWER_B = "019abc00-0000-0000-0000-0000000000bb"
@@ -47,6 +58,11 @@ THREAD_C2B = "PRRT_CYCLE2_B"
 THREAD_C2C = "PRRT_CYCLE2_C"
 HEAD_SHA = "c29e15e6608a1111222233334444555566667777"
 EXTERNAL_PROMPT = "Please fix all three cycle-2 actionable threads.\n"
+
+
+def _legacy_context(state, run_directory: Path) -> LocalInvocationContext:
+    turn = scheduled_cursor_turn_from_legacy_pr_state(state, run_directory)
+    return LocalInvocationContext(scheduled_first_cursor_turn=turn)
 
 
 def _enable_github(repo: Path) -> None:
@@ -348,12 +364,20 @@ def test_worker_schedules_fresh_iteration_and_exact_external_prompt(
     def capture_resume(run_id: str):
         resume_calls.append(run_id)
         planned = load_run_state(run_path / "state.json")
-        action = plan_next_action(planned, run_path)
+        action = plan_next_action(planned, run_path, context=_legacy_context(planned, run_path))
         assert action is not None
         assert action.kind == WorkflowActionKind.CURSOR
         assert action.iteration_number == 2
-        assert cursor_prompt_path(planned, 2) == "prompts/fixes/github-02.txt"
-        assert read_cursor_prompt(planned, run_path, 2) == EXTERNAL_PROMPT
+        turn = scheduled_cursor_turn_from_legacy_pr_state(planned, run_path)
+        assert turn is not None
+        assert cursor_prompt_path(planned, 2, scheduled_prompt_path=turn.prompt_path) == (
+            "prompts/fixes/github-02.txt"
+        )
+        assert (
+            read_cursor_prompt(planned, run_path, 2, scheduled_prompt_path=turn.prompt_path)
+            == EXTERNAL_PROMPT
+        )
+        return _local_resume_result()
 
     with (
         patch(
@@ -384,7 +408,10 @@ def test_worker_schedules_fresh_iteration_and_exact_external_prompt(
             ],
         ),
         patch("ai_dev_loop.commands.pr_review.run_codex_github_review", side_effect=fake_codex),
-        patch("ai_dev_loop.workflow_engine.resume_run", side_effect=capture_resume),
+        patch(
+            "ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop",
+            side_effect=capture_resume,
+        ),
         patch("ai_dev_loop.commands.pr_review.create_issue_comment") as post,
         patch(
             "ai_dev_loop.commands.pr_review.list_issue_comment_reactions",
@@ -467,17 +494,29 @@ def test_recover_creates_immutable_successor_and_resume_opens_cursor(
 
     cursor_prompts: list[str] = []
 
-    def fake_resume(run_id_arg: str) -> None:
+    def fake_resume(run_id_arg: str):
         planned = load_run_state(successor_dir / "state.json")
-        action = plan_next_action(planned, successor_dir)
+        action = plan_next_action(
+            planned, successor_dir, context=_legacy_context(planned, successor_dir)
+        )
         assert action is not None
         assert action.kind == WorkflowActionKind.CURSOR
         assert action.iteration_number == 2
-        cursor_prompts.append(read_cursor_prompt(planned, successor_dir, 2))
+        turn = scheduled_cursor_turn_from_legacy_pr_state(planned, successor_dir)
+        assert turn is not None
+        cursor_prompts.append(
+            read_cursor_prompt(planned, successor_dir, 2, scheduled_prompt_path=turn.prompt_path)
+        )
+        result = MagicMock()
+        result.needs_external_continuation = False
+        return result
 
     with (
         _mock_remote_pr(pr, threads),
-        patch("ai_dev_loop.workflow_engine.resume_run", side_effect=fake_resume),
+        patch(
+            "ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop",
+            side_effect=fake_resume,
+        ),
         patch("ai_dev_loop.commands.pr_review.create_issue_comment") as post,
     ):
         message = resume_pr_review_cycle(
@@ -668,17 +707,29 @@ def test_recover_allows_consumed_continue_comment_from_nested_freeze(
 
     cursor_prompts: list[str] = []
 
-    def fake_resume(run_id_arg: str) -> None:
+    def fake_resume(run_id_arg: str):
         planned = load_run_state(successor_dir / "state.json")
-        action = plan_next_action(planned, successor_dir)
+        action = plan_next_action(
+            planned, successor_dir, context=_legacy_context(planned, successor_dir)
+        )
         assert action is not None
         assert action.kind == WorkflowActionKind.CURSOR
         assert action.iteration_number == 2
-        cursor_prompts.append(read_cursor_prompt(planned, successor_dir, 2))
+        turn = scheduled_cursor_turn_from_legacy_pr_state(planned, successor_dir)
+        assert turn is not None
+        cursor_prompts.append(
+            read_cursor_prompt(planned, successor_dir, 2, scheduled_prompt_path=turn.prompt_path)
+        )
+        result = MagicMock()
+        result.needs_external_continuation = False
+        return result
 
     with (
         _mock_remote_pr(pr, threads),
-        patch("ai_dev_loop.workflow_engine.resume_run", side_effect=fake_resume),
+        patch(
+            "ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop",
+            side_effect=fake_resume,
+        ),
         patch("ai_dev_loop.commands.pr_review.create_issue_comment") as post,
         patch("ai_dev_loop.commands.pr_review.reply_to_review_thread") as reply,
         patch("ai_dev_loop.commands.pr_review.resolve_review_thread") as resolve,

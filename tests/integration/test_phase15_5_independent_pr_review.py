@@ -629,7 +629,7 @@ def test_uncertain_independent_keeps_chat_null(
             return_value=GithubWriteResult(ok=True, resource_id="R1"),
         ),
         patch(
-            "ai_dev_loop.workflow_engine.resume_run",
+            "ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop",
             side_effect=lambda *_a, **_k: cursor_called.__setitem__("value", True),
         ),
     ):
@@ -773,7 +773,7 @@ def test_actionable_independent_creates_one_chat(
             ),
         ),
         patch("ai_dev_loop.runners.cursor.create_chat", side_effect=fake_create_chat),
-        patch("ai_dev_loop.workflow_engine.resume_run"),
+        patch("ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop"),
     ):
         from ai_dev_loop.config import resolve_effective_config
 
@@ -1106,7 +1106,7 @@ def test_pre_cursor_pr_head_drift_interrupts_without_chat(
             ),
         ),
         patch(
-            "ai_dev_loop.workflow_engine.resume_run",
+            "ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop",
             side_effect=lambda *_a, **_k: cursor_called.__setitem__("value", True),
         ),
     ):
@@ -1300,7 +1300,7 @@ def test_independent_no_findings_completes_without_cursor(
             return_value=[],
         ),
         patch(
-            "ai_dev_loop.workflow_engine.resume_run",
+            "ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop",
             side_effect=lambda *_a, **_k: cursor_called.__setitem__("value", True),
         ),
     ):

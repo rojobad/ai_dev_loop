@@ -22,8 +22,12 @@ from ai_dev_loop.external_adjudication import (
     mark_checkpoint_status,
 )
 from ai_dev_loop.github_pr_review_result import GithubPrReviewResult
-from ai_dev_loop.iterations import is_external_cursor_prompt_iteration, read_cursor_prompt
-from ai_dev_loop.resume_planner import WorkflowActionKind, plan_next_action
+from ai_dev_loop.iterations import read_cursor_prompt
+from ai_dev_loop.legacy_pr_review_local_adapter import (
+    is_external_cursor_prompt_iteration,
+    scheduled_cursor_turn_from_legacy_pr_state,
+)
+from ai_dev_loop.resume_planner import LocalInvocationContext, WorkflowActionKind, plan_next_action
 from ai_dev_loop.runners.codex_github import GithubAdjudicationArtifacts
 from ai_dev_loop.runners.github import (
     GithubError,
@@ -46,6 +50,16 @@ from ai_dev_loop.state import (
     sha256_text,
     utc_now,
 )
+
+
+def _local_resume_result(
+    *, needs_external_continuation: bool = False, status: str = "running_cursor"
+):
+    result = MagicMock()
+    result.needs_external_continuation = needs_external_continuation
+    result.status = status
+    return result
+
 
 CONTROLLER_A = "019abc00-aaaa-bbbb-cccc-ddddeeeeffff"
 REVIEWER_B = "019abc00-0000-0000-0000-0000000000bb"
@@ -327,17 +341,30 @@ def test_resume_hydrates_github_05_despite_stale_pointers_and_old_recovery(
 
     def fake_resume(run_id_arg: str) -> None:
         planned = load_run_state(run_path / "state.json")
-        action = plan_next_action(planned, run_path)
+        context = LocalInvocationContext(
+            scheduled_first_cursor_turn=scheduled_cursor_turn_from_legacy_pr_state(
+                planned, run_path
+            )
+        )
+        action = plan_next_action(planned, run_path, context=context)
         assert action is not None
         assert action.kind == WorkflowActionKind.CURSOR
         assert action.iteration_number == 2
         assert is_external_cursor_prompt_iteration(planned, 2)
-        cursor_prompts.append(read_cursor_prompt(planned, run_path, 2))
+        turn = context.scheduled_first_cursor_turn
+        assert turn is not None
+        cursor_prompts.append(
+            read_cursor_prompt(planned, run_path, 2, scheduled_prompt_path=turn.prompt_path)
+        )
+        return _local_resume_result()
 
     repo = Path(str(prepared_run["repo"]))
     with (
         _mock_remote_pr(pr, threads, repo=repo),
-        patch("ai_dev_loop.workflow_engine.resume_run", side_effect=fake_resume),
+        patch(
+            "ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop",
+            side_effect=fake_resume,
+        ),
         patch(
             "ai_dev_loop.commands.pr_review.run_codex_github_review",
             side_effect=lambda *a, **k: codex_calls.append("called"),
@@ -466,14 +493,32 @@ def test_graphql_timeout_after_adjudication_keeps_checkpoint_for_resume(
 
     def fake_resume(_run_id: str) -> None:
         planned = load_run_state(run_path / "state.json")
-        action = plan_next_action(planned, run_path)
+        context = LocalInvocationContext(
+            scheduled_first_cursor_turn=scheduled_cursor_turn_from_legacy_pr_state(
+                planned, run_path
+            )
+        )
+        action = plan_next_action(planned, run_path, context=context)
         assert action is not None
         assert action.kind == WorkflowActionKind.CURSOR
-        cursor_prompts.append(read_cursor_prompt(planned, run_path, action.iteration_number))
+        turn = context.scheduled_first_cursor_turn
+        assert turn is not None
+        cursor_prompts.append(
+            read_cursor_prompt(
+                planned,
+                run_path,
+                action.iteration_number,
+                scheduled_prompt_path=turn.prompt_path,
+            )
+        )
+        return _local_resume_result()
 
     with (
         _mock_remote_pr(pr, threads, repo=repo),
-        patch("ai_dev_loop.workflow_engine.resume_run", side_effect=fake_resume),
+        patch(
+            "ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop",
+            side_effect=fake_resume,
+        ),
         patch(
             "ai_dev_loop.commands.pr_review.run_codex_github_review",
             side_effect=AssertionError("must not re-adjudicate"),
@@ -557,7 +602,7 @@ def test_non_actionable_reply_intent_avoids_duplicates_on_ambiguous_write(
             "ai_dev_loop.commands.pr_review.reply_to_review_thread",
             side_effect=flaky_reply,
         ),
-        patch("ai_dev_loop.workflow_engine.resume_run") as workflow,
+        patch("ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop") as workflow,
     ):
         run_pr_review_worker_loop(state.run_id)
 
@@ -582,7 +627,7 @@ def test_non_actionable_reply_intent_avoids_duplicates_on_ambiguous_write(
             "ai_dev_loop.commands.pr_review.reply_to_review_thread",
             side_effect=AssertionError("must not duplicate reply"),
         ) as reply,
-        patch("ai_dev_loop.workflow_engine.resume_run") as workflow2,
+        patch("ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop") as workflow2,
     ):
         message = resume_pr_review_cycle(state.run_id, controller_session_id=CONTROLLER_A)
     assert "non-actionable" in message.lower() or "Applied" in message
@@ -661,6 +706,7 @@ def test_worker_continues_publication_after_resume_run(
             }
         )
         save_run_state(run_path, current)
+        return _local_resume_result()
 
     def fake_publish(_run_directory, _state, _config, *, schedule_worker: bool = True) -> None:
         publish_calls.append(schedule_worker)
@@ -705,7 +751,10 @@ def test_worker_continues_publication_after_resume_run(
             return_value=(review, artifacts),
         ),
         patch("ai_dev_loop.commands.pr_review._load_thread_bodies", return_value=[]),
-        patch("ai_dev_loop.workflow_engine.resume_run", side_effect=fake_resume),
+        patch(
+            "ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop",
+            side_effect=fake_resume,
+        ),
         patch(
             "ai_dev_loop.commands.pr_review._publish_external_fix",
             side_effect=fake_publish,
@@ -790,7 +839,7 @@ def test_controller_driven_publication_still_spawns_once(
             "ai_dev_loop.commands.pr_review._spawn_pr_review_worker",
             side_effect=lambda *_a, **_k: spawn_calls.append("spawn"),
         ),
-        patch("ai_dev_loop.workflow_engine.resume_run") as workflow,
+        patch("ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop") as workflow,
     ):
         message = resume_pr_review_cycle(state.run_id, controller_session_id=CONTROLLER_A)
 
@@ -844,7 +893,7 @@ def test_old_recovery_hash_does_not_block_later_cycle_prompt(
     repo = Path(str(prepared_run["repo"]))
     with (
         _mock_remote_pr(pr, threads, repo=repo),
-        patch("ai_dev_loop.workflow_engine.resume_run"),
+        patch("ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop"),
     ):
         resume_pr_review_cycle(run_id, controller_session_id=CONTROLLER_A)
 
@@ -962,7 +1011,7 @@ def test_cursor_scheduled_resume_blocks_closed_pr_without_cursor(
 
     with (
         _mock_remote_pr_real_independent_preflight(closed, threads, repo=repo),
-        patch("ai_dev_loop.workflow_engine.resume_run") as workflow,
+        patch("ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop") as workflow,
         patch("ai_dev_loop.commands.pr_review.create_issue_comment") as post,
         patch("ai_dev_loop.commands.pr_review.reply_to_review_thread") as reply,
     ):
@@ -999,7 +1048,7 @@ def test_cursor_scheduled_resume_blocks_head_sha_drift_without_cursor(
 
     with (
         _mock_remote_pr_real_independent_preflight(pr, threads, repo=repo),
-        patch("ai_dev_loop.workflow_engine.resume_run") as workflow,
+        patch("ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop") as workflow,
         patch("ai_dev_loop.commands.pr_review.create_issue_comment") as post,
         patch("ai_dev_loop.commands.pr_review.reply_to_review_thread") as reply,
     ):
@@ -1084,7 +1133,7 @@ def test_inline_reply_timeout_return_marks_ambiguous_without_retry(
             "ai_dev_loop.commands.pr_review.reply_to_review_thread",
             side_effect=timeout_reply,
         ),
-        patch("ai_dev_loop.workflow_engine.resume_run") as workflow,
+        patch("ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop") as workflow,
     ):
         run_pr_review_worker_loop(state.run_id)
 
@@ -1104,7 +1153,7 @@ def test_inline_reply_timeout_return_marks_ambiguous_without_retry(
             "ai_dev_loop.commands.pr_review.reply_to_review_thread",
             side_effect=AssertionError("must not retry ambiguous reply"),
         ),
-        patch("ai_dev_loop.workflow_engine.resume_run") as workflow2,
+        patch("ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop") as workflow2,
     ):
         resume_pr_review_cycle(state.run_id, controller_session_id=CONTROLLER_A)
     workflow2.assert_not_called()
@@ -1184,7 +1233,7 @@ def test_inline_reply_writing_boundary_does_not_retry(
             "ai_dev_loop.commands.pr_review.reply_to_review_thread",
             side_effect=AssertionError("must not retry writing intent"),
         ) as reply,
-        patch("ai_dev_loop.workflow_engine.resume_run") as workflow,
+        patch("ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop") as workflow,
     ):
         resume_pr_review_cycle(state.run_id, controller_session_id=CONTROLLER_A)
 
@@ -1265,7 +1314,7 @@ def test_missing_or_empty_snapshot_cannot_schedule_cursor_or_github_writes(
             return_value=(review, artifacts),
         ),
         patch("ai_dev_loop.commands.pr_review._load_thread_bodies", return_value=[]),
-        patch("ai_dev_loop.workflow_engine.resume_run") as workflow,
+        patch("ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop") as workflow,
         patch("ai_dev_loop.commands.pr_review.create_issue_comment") as post,
         patch("ai_dev_loop.commands.pr_review.reply_to_review_thread") as reply,
         pytest.raises(ValidationError, match="snapshot missing"),
@@ -1297,7 +1346,7 @@ def test_missing_or_empty_snapshot_cannot_schedule_cursor_or_github_writes(
             return_value=(review, artifacts),
         ),
         patch("ai_dev_loop.commands.pr_review._load_thread_bodies", return_value=[]),
-        patch("ai_dev_loop.workflow_engine.resume_run") as workflow2,
+        patch("ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop") as workflow2,
         patch("ai_dev_loop.commands.pr_review.create_issue_comment") as post2,
         patch("ai_dev_loop.commands.pr_review.reply_to_review_thread") as reply2,
         pytest.raises(ValidationError, match="non-empty threads list"),

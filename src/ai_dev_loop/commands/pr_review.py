@@ -44,12 +44,14 @@ from ai_dev_loop.external_adjudication import (
     verify_checkpoint_artifacts,
 )
 from ai_dev_loop.iterations import (
-    begin_external_local_review_budget,
-    iteration_label,
     max_iteration_number,
-    next_external_cursor_iteration,
 )
 from ai_dev_loop.launcher import read_process_starttime
+from ai_dev_loop.legacy_pr_review_local_adapter import (
+    begin_external_local_review_budget,
+    next_external_cursor_iteration,
+    resume_legacy_pr_local_fix_loop,
+)
 from ai_dev_loop.locking import LockMetadata, RunLocks
 from ai_dev_loop.paths import ensure_dir, run_dir, runs_dir, set_sensitive_file_mode
 from ai_dev_loop.process import require_success, run_process
@@ -80,7 +82,6 @@ from ai_dev_loop.runners.github import (
 )
 from ai_dev_loop.runners.publish import (
     PublicationText,
-    publication_staged_patch_fingerprint,
     publish_accepted_staged_patch,
     validate_clean_except_staged,
 )
@@ -147,33 +148,17 @@ def refresh_external_publication_patch_fingerprint(
     *,
     iteration_number: int,
 ) -> str:
-    """Update ``gpr.staged_patch_sha256`` to the live raw fingerprint after acceptance.
+    """Update ``gpr.staged_patch_sha256`` after local acceptance (legacy bridge).
 
-    Call only for external-feedback corrections that completed a durable local
-    iteration with no actionable findings, under run/repository locks, before
-    transitioning to ``publishing_external_fix``. Validates baseline and
-    normalized artifact equivalence first; fails closed on real content drift.
+    Implemented in ``legacy_pr_review_local_adapter`` so reusable local modules
+    never import this command module. Kept here as a stable PR-caller alias.
     """
 
-    gpr = state.github_pr_review
-    if gpr is None:
-        raise ValidationError(
-            "github_pr_review is required to refresh publication patch fingerprint"
-        )
-    if gpr.lifecycle != "fixing_external_feedback":
-        raise ValidationError(
-            "publication patch fingerprint refresh requires lifecycle fixing_external_feedback"
-        )
-    label = iteration_label(iteration_number)
-    patch_artifact = run_directory / f"git/diffs/{label}.patch"
-    if not patch_artifact.is_file():
-        raise ValidationError(
-            f"staged patch artifact missing for publication fingerprint refresh: git/diffs/{label}.patch"
-        )
-    repo_root = Path(state.repository.root)
-    live_hash = publication_staged_patch_fingerprint(repo_root, patch_artifact)
-    state.github_pr_review = gpr.model_copy(update={"staged_patch_sha256": live_hash})
-    return live_hash
+    from ai_dev_loop.legacy_pr_review_local_adapter import (
+        refresh_external_publication_patch_fingerprint as _refresh,
+    )
+
+    return _refresh(run_directory, state, iteration_number=iteration_number)
 
 
 def _resolve_publication_resume_lifecycle(gpr: GithubPrReviewState) -> str | None:
@@ -2195,9 +2180,11 @@ def resume_pr_review_cycle(
         locks.release()
 
     if resume_workflow_run_id is not None:
-        from ai_dev_loop.workflow_engine import resume_run
-
-        resume_run(resume_workflow_run_id)
+        result = resume_legacy_pr_local_fix_loop(resume_workflow_run_id)
+        if result is not None and result.needs_external_continuation is True:
+            # Locks are released; spawn the PR worker for publication continuation.
+            successor_dir, _ = load_run(resume_workflow_run_id)
+            _spawn_pr_review_worker(successor_dir, resume_workflow_run_id)
         return f"Resumed local fix loop for {resume_workflow_run_id}"
     raise ValidationError("pr-review resume produced no next action")
 
@@ -2975,9 +2962,7 @@ def _run_pr_review_worker_loop_inner(run_id: str, run_directory: Path) -> None:
             locks.release()
 
         if resume_workflow:
-            from ai_dev_loop.workflow_engine import resume_run
-
-            resume_run(run_id)
+            resume_legacy_pr_local_fix_loop(run_id)
             # Phase 15.17: continue in-process through publication/polling instead
             # of returning and leaving publishing_external_fix stranded.
             state = load_run_state_fresh(run_directory)

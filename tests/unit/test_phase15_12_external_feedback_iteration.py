@@ -8,16 +8,19 @@ import pytest
 
 from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.iterations import (
-    begin_external_local_review_budget,
     cursor_prompt_path,
-    derive_external_cursor_iteration_for_recovery,
     local_review_budget_used,
-    next_external_cursor_iteration,
-    pending_external_cursor_iteration,
     read_cursor_prompt,
     record_local_review_for_budget,
 )
-from ai_dev_loop.resume_planner import WorkflowActionKind, plan_next_action
+from ai_dev_loop.legacy_pr_review_local_adapter import (
+    begin_external_local_review_budget,
+    derive_external_cursor_iteration_for_recovery,
+    next_external_cursor_iteration,
+    pending_external_cursor_iteration,
+    scheduled_cursor_turn_from_legacy_pr_state,
+)
+from ai_dev_loop.resume_planner import LocalInvocationContext, WorkflowActionKind, plan_next_action
 from ai_dev_loop.state import (
     CodexState,
     CursorState,
@@ -31,6 +34,7 @@ from ai_dev_loop.state import (
     WorkflowState,
     utc_now,
 )
+from ai_dev_loop.workflow_engine import _LocalLoopExecution
 
 HEAD_SHA = "c29e15e6608a1111222233334444555566667777"
 EXTERNAL_PROMPT = "Please fix the three cycle-2 threads exactly.\n"
@@ -123,6 +127,11 @@ def _sample_state(
     return state
 
 
+def _legacy_context(state: RunState, run_directory: Path) -> LocalInvocationContext:
+    turn = scheduled_cursor_turn_from_legacy_pr_state(state, run_directory)
+    return LocalInvocationContext(scheduled_first_cursor_turn=turn)
+
+
 def test_next_external_iteration_is_monotonic_over_completed_01() -> None:
     state = _sample_state(with_iteration_01=True)
     assert next_external_cursor_iteration(state) == 2
@@ -138,8 +147,10 @@ def test_plan_next_action_forces_cursor_on_fresh_iteration(tmp_path: Path) -> No
         '{"exit_code": 0, "timed_out": false}',
         encoding="utf-8",
     )
+    (run_directory / "prompts/fixes").mkdir(parents=True)
+    (run_directory / "prompts/fixes/github-02.txt").write_text(EXTERNAL_PROMPT, encoding="utf-8")
     state = _sample_state(status=RunStatus.RUNNING_CURSOR, with_iteration_01=True)
-    action = plan_next_action(state, run_directory)
+    action = plan_next_action(state, run_directory, context=_legacy_context(state, run_directory))
     assert action is not None
     assert action.kind == WorkflowActionKind.CURSOR
     assert action.iteration_number == 2
@@ -155,10 +166,12 @@ def test_interrupted_plan_forces_cursor_before_staging(tmp_path: Path) -> None:
     )
     (run_directory / "git" / "diffs").mkdir(parents=True)
     (run_directory / "git" / "diffs" / "01.patch").write_text("diff\n", encoding="utf-8")
+    (run_directory / "prompts/fixes").mkdir(parents=True)
+    (run_directory / "prompts/fixes/github-02.txt").write_text(EXTERNAL_PROMPT, encoding="utf-8")
     state = _sample_state(status=RunStatus.INTERRUPTED, with_iteration_01=True)
     # Historical buggy reset must still force Cursor when typed field is set.
     state.workflow.current_review_iteration = 0
-    action = plan_next_action(state, run_directory)
+    action = plan_next_action(state, run_directory, context=_legacy_context(state, run_directory))
     assert action is not None
     assert action.kind == WorkflowActionKind.CURSOR
     assert action.iteration_number == 2
@@ -177,8 +190,16 @@ def test_external_prompt_is_exact_github_02_bytes(tmp_path: Path) -> None:
         "local fix must not be used\n", encoding="utf-8"
     )
     state = _sample_state(with_iteration_01=True)
-    assert cursor_prompt_path(state, 2) == "prompts/fixes/github-02.txt"
-    assert read_cursor_prompt(state, run_directory, 2) == EXTERNAL_PROMPT
+    scheduled = scheduled_cursor_turn_from_legacy_pr_state(state, run_directory)
+    assert scheduled is not None
+    assert (
+        cursor_prompt_path(state, 2, scheduled_prompt_path=scheduled.prompt_path)
+        == "prompts/fixes/github-02.txt"
+    )
+    assert (
+        read_cursor_prompt(state, run_directory, 2, scheduled_prompt_path=scheduled.prompt_path)
+        == EXTERNAL_PROMPT
+    )
 
 
 def test_empty_external_prompt_fails_closed(tmp_path: Path) -> None:
@@ -188,15 +209,24 @@ def test_empty_external_prompt_fails_closed(tmp_path: Path) -> None:
     prompt.write_text("   \n", encoding="utf-8")
     state = _sample_state(with_iteration_01=True)
     with pytest.raises(ValidationError, match="cursor prompt is empty"):
-        read_cursor_prompt(state, run_directory, 2)
+        read_cursor_prompt(
+            state,
+            run_directory,
+            2,
+            scheduled_prompt_path="prompts/fixes/github-02.txt",
+        )
 
 
-def test_wrong_lifecycle_does_not_use_external_prompt() -> None:
+def test_wrong_lifecycle_does_not_use_external_prompt(tmp_path: Path) -> None:
+    run_directory = tmp_path / "run"
+    (run_directory / "prompts/fixes").mkdir(parents=True)
+    (run_directory / "prompts/fixes/github-02.txt").write_text(EXTERNAL_PROMPT, encoding="utf-8")
     state = _sample_state(with_iteration_01=True)
     assert state.github_pr_review is not None
     state.github_pr_review = state.github_pr_review.model_copy(
         update={"lifecycle": "awaiting_bot_review"}
     )
+    assert scheduled_cursor_turn_from_legacy_pr_state(state, run_directory) is None
     assert cursor_prompt_path(state, 2) == "prompts/fixes/01.txt"
 
 
@@ -273,12 +303,14 @@ def test_apply_review_result_uses_local_budget_not_artifact_number(tmp_path: Pat
             "summary": "needs fix",
         }
     )
+    execution = _LocalLoopExecution(invocation=LocalInvocationContext())
     _path, _msg, should_continue = _apply_review_result(
         run_directory,
         state,
         iteration_number=6,
         review=review,
         review_artifact_path="codex/reviews/06.json",
+        loop_ctx=execution,
     )
     assert should_continue is True
     assert state.status == RunStatus.RUNNING_CURSOR

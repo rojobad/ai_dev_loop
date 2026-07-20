@@ -344,7 +344,7 @@ def test_worker_publish_continues_to_polling_without_self_spawn(
             ],
         ),
         patch("ai_dev_loop.commands.pr_review.run_codex_github_review", side_effect=fake_codex),
-        patch("ai_dev_loop.workflow_engine.resume_run"),
+        patch("ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop"),
         patch(
             "ai_dev_loop.commands.pr_review.list_issue_comment_reactions",
             return_value=[],
@@ -586,7 +586,7 @@ def test_cycle_reset_accepts_new_threads_and_keeps_processed(
             ],
         ),
         patch("ai_dev_loop.commands.pr_review.run_codex_github_review", side_effect=fake_codex),
-        patch("ai_dev_loop.workflow_engine.resume_run"),
+        patch("ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop"),
         patch("ai_dev_loop.commands.pr_review.create_issue_comment") as post,
     ):
         run_pr_review_worker_loop(run_id)
@@ -656,7 +656,7 @@ def test_resume_reattaches_stale_awaiting_without_github_writes(
             side_effect=lambda *_a, **_k: spawn_calls.append("spawn") or True,
         ),
         patch("ai_dev_loop.commands.pr_review.create_issue_comment") as post,
-        patch("ai_dev_loop.workflow_engine.resume_run") as workflow,
+        patch("ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop") as workflow,
     ):
         message = resume_pr_review_cycle(run_id, controller_session_id=CONTROLLER_A)
 
@@ -926,7 +926,7 @@ def test_resume_comparable_cycle2_fixture_adjudicates_two_threads(
             ],
         ),
         patch("ai_dev_loop.commands.pr_review.run_codex_github_review", side_effect=fake_codex),
-        patch("ai_dev_loop.workflow_engine.resume_run"),
+        patch("ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop"),
         patch("ai_dev_loop.commands.pr_review.create_issue_comment") as post2,
     ):
         run_pr_review_worker_loop(run_id)

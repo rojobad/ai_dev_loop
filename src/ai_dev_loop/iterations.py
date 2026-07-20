@@ -80,75 +80,6 @@ def max_iteration_number(state: RunState) -> int:
     return max(numbers) if numbers else 0
 
 
-def next_external_cursor_iteration(state: RunState) -> int:
-    """Allocate the next durable iteration number for an external correction.
-
-    Always greater than any persisted iteration so historical Cursor/Codex
-    artifacts are never reused or overwritten.
-    """
-
-    return max_iteration_number(state) + 1
-
-
-def pending_external_cursor_iteration(state: RunState) -> int | None:
-    """Return the scheduled external Cursor iteration when one is pending.
-
-    Prefers the typed ``external_cursor_iteration`` field. For historical
-    independent first turns (no persisted iterations yet) without that field,
-    iteration ``1`` is the external prompt turn. Never derives ``max+1`` here:
-    that would keep scheduling new Cursor turns after a completed historical
-    iteration while lifecycle remains ``fixing_external_feedback``.
-    """
-
-    github = state.github_pr_review
-    if github is None:
-        return None
-    if github.lifecycle != "fixing_external_feedback":
-        return None
-    if not github.external_fix_prompt_path:
-        return None
-    if github.external_cursor_iteration is not None:
-        return github.external_cursor_iteration
-    if max_iteration_number(state) == 0:
-        return 1
-    return None
-
-
-def derive_external_cursor_iteration_for_recovery(state: RunState) -> int | None:
-    """Derive the fresh external Cursor iteration for recovery classification.
-
-    Used only when structured evidence shows Cursor never started for the
-    current external prompt. Prefers the typed field; otherwise allocates
-    ``max(persisted iterations) + 1``.
-    """
-
-    github = state.github_pr_review
-    if github is None:
-        return None
-    if github.lifecycle != "fixing_external_feedback":
-        return None
-    if not github.external_fix_prompt_path:
-        return None
-    if github.external_cursor_iteration is not None:
-        return github.external_cursor_iteration
-    return next_external_cursor_iteration(state)
-
-
-def is_external_cursor_prompt_iteration(state: RunState, iteration_number: int) -> bool:
-    """True when this iteration must deliver the exact external fix prompt."""
-
-    github = state.github_pr_review
-    if github is None or not github.external_fix_prompt_path:
-        return False
-    if github.lifecycle != "fixing_external_feedback":
-        return False
-    pending = pending_external_cursor_iteration(state)
-    if pending is not None:
-        return pending == iteration_number
-    # Historical independent first turn without typed field.
-    return iteration_number == 1 and max_iteration_number(state) == 0
-
-
 def local_review_budget_used(state: RunState) -> int:
     """Return how many local Codex reviews count toward ``max_review_iterations``.
 
@@ -161,16 +92,6 @@ def local_review_budget_used(state: RunState) -> int:
     if count is not None:
         return count
     return state.workflow.current_review_iteration
-
-
-def begin_external_local_review_budget(state: RunState) -> None:
-    """Start a fresh local review budget for a post-external Cursor segment.
-
-    Artifact iteration numbers remain monotonic via
-    ``external_cursor_iteration``; only the budget counter is reset.
-    """
-
-    state.workflow.local_review_count = 0
 
 
 def record_local_review_for_budget(state: RunState, *, iteration_number: int) -> int:
@@ -206,7 +127,12 @@ def usage_limit_continuation_path(iteration_number: int) -> str:
     )
 
 
-def cursor_prompt_path(state: RunState, iteration_number: int) -> str:
+def cursor_prompt_path(
+    state: RunState,
+    iteration_number: int,
+    *,
+    scheduled_prompt_path: str | None = None,
+) -> str:
     recovery = state.recovery
     if (
         recovery is not None
@@ -215,13 +141,8 @@ def cursor_prompt_path(state: RunState, iteration_number: int) -> str:
         and recovery.continuation_envelope_path
     ):
         return recovery.continuation_envelope_path
-    github = state.github_pr_review
-    if (
-        github is not None
-        and is_external_cursor_prompt_iteration(state, iteration_number)
-        and github.external_fix_prompt_path
-    ):
-        return github.external_fix_prompt_path
+    if scheduled_prompt_path is not None:
+        return scheduled_prompt_path
     if iteration_number == 1:
         return state.prompt.snapshot_path
     return fix_prompt_path(iteration_number - 1)
@@ -331,7 +252,13 @@ def _read_verified_continuation_envelope(
     return text
 
 
-def read_cursor_prompt(state: RunState, run_directory: Path, iteration_number: int) -> str:
+def read_cursor_prompt(
+    state: RunState,
+    run_directory: Path,
+    iteration_number: int,
+    *,
+    scheduled_prompt_path: str | None = None,
+) -> str:
     """Return the prompt text that should be sent to Cursor for this iteration.
 
     Iteration 1 uses the prepared initial prompt snapshot.
@@ -339,6 +266,8 @@ def read_cursor_prompt(state: RunState, run_directory: Path, iteration_number: i
     stored Codex fix prompt byte-for-byte, and persist that envelope for audit.
     Usage-limit recovery successors reuse the stored continuation envelope for
     the incomplete recovered iteration.
+    Caller-scheduled turns supply an explicit relative prompt path and are read
+    verbatim without a correction envelope.
     """
 
     recovery = state.recovery
@@ -364,8 +293,12 @@ def read_cursor_prompt(state: RunState, run_directory: Path, iteration_number: i
             rel_path=recovery.continuation_envelope_path,
         )
 
-    if iteration_number == 1 or is_external_cursor_prompt_iteration(state, iteration_number):
-        rel_path = cursor_prompt_path(state, iteration_number)
+    if scheduled_prompt_path is not None or iteration_number == 1:
+        rel_path = cursor_prompt_path(
+            state,
+            iteration_number,
+            scheduled_prompt_path=scheduled_prompt_path,
+        )
         prompt_file = run_directory / rel_path
         if not prompt_file.is_file():
             raise ValidationError(

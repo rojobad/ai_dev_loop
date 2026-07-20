@@ -191,7 +191,7 @@ def test_legacy_freeze_continue_clears_inherited_snapshot_and_spawns_once(
         patch("ai_dev_loop.commands.pr_review.reply_to_review_thread") as reply,
         patch("ai_dev_loop.commands.pr_review.resolve_review_thread") as resolve,
         patch("ai_dev_loop.commands.pr_review.run_codex_github_review") as codex,
-        patch("ai_dev_loop.workflow_engine.resume_run") as workflow,
+        patch("ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop") as workflow,
     ):
         cfg.return_value = load_project_config(Path(str(prepared_run["repo"])) / "ai_dev_loop.yaml")
         message = continue_pr_review_cycle(run_id)
@@ -367,7 +367,7 @@ def test_worker_after_legacy_clear_adjudicates_current_cycle_threads(
             ],
         ),
         patch("ai_dev_loop.commands.pr_review.run_codex_github_review", side_effect=fake_codex),
-        patch("ai_dev_loop.workflow_engine.resume_run"),
+        patch("ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop"),
         patch("ai_dev_loop.commands.pr_review.create_issue_comment") as post,
     ):
         run_pr_review_worker_loop(run_id)

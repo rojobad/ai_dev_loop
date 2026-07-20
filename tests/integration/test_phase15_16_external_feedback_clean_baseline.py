@@ -22,12 +22,16 @@ from ai_dev_loop.commands.pr_review_recover import (
 from ai_dev_loop.commands.start import start_run
 from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.iterations import (
-    begin_external_local_review_budget,
     cursor_prompt_path,
-    is_external_cursor_prompt_iteration,
     read_cursor_prompt,
 )
-from ai_dev_loop.resume_planner import WorkflowActionKind, plan_next_action
+from ai_dev_loop.legacy_pr_review_local_adapter import (
+    begin_external_local_review_budget,
+    finalize_legacy_pr_accepted_local_result,
+    is_external_cursor_prompt_iteration,
+    scheduled_cursor_turn_from_legacy_pr_state,
+)
+from ai_dev_loop.resume_planner import LocalInvocationContext, WorkflowActionKind, plan_next_action
 from ai_dev_loop.review_result import CodexReviewResult
 from ai_dev_loop.run_discovery import find_run_directory
 from ai_dev_loop.runners.github import GithubPullRequest, GithubReviewThread, GithubWriteResult
@@ -46,7 +50,30 @@ from ai_dev_loop.state import (
     sha256_file,
     sha256_text,
 )
-from ai_dev_loop.workflow_engine import _apply_review_result, _run_cursor_turn
+from ai_dev_loop.workflow_engine import _apply_review_result, _LocalLoopExecution, _run_cursor_turn
+
+
+def _local_resume_result(
+    *, needs_external_continuation: bool = False, status: str = "running_cursor"
+):
+    result = MagicMock()
+    result.needs_external_continuation = needs_external_continuation
+    result.status = status
+    return result
+
+
+def _legacy_execution(
+    state,
+    run_directory: Path,
+    *,
+    on_accepted=None,
+) -> _LocalLoopExecution:
+    turn = scheduled_cursor_turn_from_legacy_pr_state(state, run_directory)
+    return _LocalLoopExecution(
+        invocation=LocalInvocationContext(scheduled_first_cursor_turn=turn),
+        on_accepted=on_accepted,
+    )
+
 
 CONTROLLER_A = "019abc00-aaaa-bbbb-cccc-ddddeeeeffff"
 REVIEWER_B = "019abc00-0000-0000-0000-0000000000bb"
@@ -316,18 +343,31 @@ def test_empty_iteration_dir_is_recoverable_external_feedback_cursor(
 
     cursor_prompts: list[str] = []
 
-    def fake_resume(run_id_arg: str) -> None:
+    def fake_resume(run_id_arg: str):
         planned = load_run_state(successor_dir / "state.json")
-        action = plan_next_action(planned, successor_dir)
+        context = LocalInvocationContext(
+            scheduled_first_cursor_turn=scheduled_cursor_turn_from_legacy_pr_state(
+                planned, successor_dir
+            )
+        )
+        action = plan_next_action(planned, successor_dir, context=context)
         assert action is not None
         assert action.kind == WorkflowActionKind.CURSOR
         assert action.iteration_number == 3
         assert is_external_cursor_prompt_iteration(planned, 3)
-        cursor_prompts.append(read_cursor_prompt(planned, successor_dir, 3))
+        turn = context.scheduled_first_cursor_turn
+        assert turn is not None
+        cursor_prompts.append(
+            read_cursor_prompt(planned, successor_dir, 3, scheduled_prompt_path=turn.prompt_path)
+        )
+        return _local_resume_result()
 
     with (
         _mock_remote_pr(pr, threads),
-        patch("ai_dev_loop.workflow_engine.resume_run", side_effect=fake_resume),
+        patch(
+            "ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop",
+            side_effect=fake_resume,
+        ),
         patch("ai_dev_loop.commands.pr_review.create_issue_comment") as post,
         patch("ai_dev_loop.commands.pr_review.reply_to_review_thread") as reply,
         patch("ai_dev_loop.commands.pr_review.resolve_review_thread") as resolve,
@@ -582,14 +622,26 @@ def test_two_external_cycles_use_clean_baseline_not_published_patch(
     )
     save_run_state(run_path, state)
 
-    assert cursor_prompt_path(state, 3) == "prompts/fixes/github-03.txt"
-    assert read_cursor_prompt(state, run_path, 3) == EXTERNAL_PROMPT_C3
+    assert (
+        cursor_prompt_path(state, 3, scheduled_prompt_path="prompts/fixes/github-03.txt")
+        == "prompts/fixes/github-03.txt"
+    )
+    assert (
+        read_cursor_prompt(state, run_path, 3, scheduled_prompt_path="prompts/fixes/github-03.txt")
+        == EXTERNAL_PROMPT_C3
+    )
 
     with patch(
         "ai_dev_loop.workflow_engine.validate_correction_pre_cursor",
         side_effect=AssertionError("must not compare published patch for external turn"),
     ):
-        _run_cursor_turn(run_path, state, chat_id=chat_id, iteration_number=3)
+        _run_cursor_turn(
+            run_path,
+            state,
+            chat_id=chat_id,
+            iteration_number=3,
+            loop_ctx=_legacy_execution(state, run_path),
+        )
     state = load_run_state(run_path / "state.json")
     assert state.status == RunStatus.STAGING
     assert state.cursor.chat_id == chat_id
@@ -731,6 +783,11 @@ def test_two_external_cycles_use_clean_baseline_not_published_patch(
             iteration_number=3,
             review=accepted,
             review_artifact_path="codex/reviews/03.json",
+            loop_ctx=_legacy_execution(
+                state,
+                run_path,
+                on_accepted=finalize_legacy_pr_accepted_local_result,
+            ),
         )
         state = load_run_state(run_path / "state.json")
         assert state.status == RunStatus.PUBLISHING_EXTERNAL_FIX
@@ -789,7 +846,15 @@ def test_two_external_cycles_use_clean_baseline_not_published_patch(
     )
     save_run_state(run_path, published)
     assert is_external_cursor_prompt_iteration(published, next_iteration)
-    assert read_cursor_prompt(published, run_path, next_iteration) == EXTERNAL_PROMPT_C4
+    assert (
+        read_cursor_prompt(
+            published,
+            run_path,
+            next_iteration,
+            scheduled_prompt_path="prompts/fixes/github-04.txt",
+        )
+        == EXTERNAL_PROMPT_C4
+    )
 
     with patch(
         "ai_dev_loop.workflow_engine.validate_correction_pre_cursor",
@@ -800,6 +865,7 @@ def test_two_external_cycles_use_clean_baseline_not_published_patch(
             published,
             chat_id=chat_id,
             iteration_number=next_iteration,
+            loop_ctx=_legacy_execution(published, run_path),
         )
 
     final = load_run_state(run_path / "state.json")
