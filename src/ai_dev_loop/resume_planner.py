@@ -14,8 +14,8 @@ from ai_dev_loop.iterations import (
     iteration_staged_patch_rel_path,
     local_review_budget_used,
     max_iteration_number,
-    pending_external_cursor_iteration,
 )
+from ai_dev_loop.local_review_loop import ScheduledCursorTurn
 from ai_dev_loop.runners.codex import load_review_result_from_artifacts
 from ai_dev_loop.runners.git import (
     git_status_porcelain,
@@ -44,6 +44,13 @@ class WorkflowAction:
 class InterruptedCheckpoint:
     status: RunStatus
     iteration_number: int
+
+
+@dataclass(frozen=True)
+class LocalInvocationContext:
+    """Non-persisted local planning context for one start/resume invocation."""
+
+    scheduled_first_cursor_turn: ScheduledCursorTurn | None = None
 
 
 TERMINAL_STATUSES = frozenset(
@@ -139,8 +146,13 @@ def validate_recorded_staged_patch_for_review(
         raise ValidationError(f"untracked files detected before review: {joined}")
 
 
-def derive_interrupted_checkpoint(state: RunState, run_directory: Path) -> InterruptedCheckpoint:
-    action = _plan_from_interrupted(state, run_directory)
+def derive_interrupted_checkpoint(
+    state: RunState,
+    run_directory: Path,
+    *,
+    context: LocalInvocationContext | None = None,
+) -> InterruptedCheckpoint:
+    action = _plan_from_interrupted(state, run_directory, context=context)
     if action.kind == WorkflowActionKind.CURSOR:
         return InterruptedCheckpoint(RunStatus.RUNNING_CURSOR, action.iteration_number)
     if action.kind == WorkflowActionKind.STAGING:
@@ -148,8 +160,13 @@ def derive_interrupted_checkpoint(state: RunState, run_directory: Path) -> Inter
     return InterruptedCheckpoint(RunStatus.REVIEWING, action.iteration_number)
 
 
-def restore_workflow_checkpoint(state: RunState, run_directory: Path) -> InterruptedCheckpoint:
-    checkpoint = derive_interrupted_checkpoint(state, run_directory)
+def restore_workflow_checkpoint(
+    state: RunState,
+    run_directory: Path,
+    *,
+    context: LocalInvocationContext | None = None,
+) -> InterruptedCheckpoint:
+    checkpoint = derive_interrupted_checkpoint(state, run_directory, context=context)
     transition_status(state.status, checkpoint.status)
     state.status = checkpoint.status
     if checkpoint.status in {RunStatus.STAGING, RunStatus.REVIEWING}:
@@ -157,18 +174,40 @@ def restore_workflow_checkpoint(state: RunState, run_directory: Path) -> Interru
     return checkpoint
 
 
-def restore_interrupted_checkpoint(state: RunState, run_directory: Path) -> InterruptedCheckpoint:
+def restore_interrupted_checkpoint(
+    state: RunState,
+    run_directory: Path,
+    *,
+    context: LocalInvocationContext | None = None,
+) -> InterruptedCheckpoint:
     if state.status != RunStatus.INTERRUPTED:
         raise ValidationError(
             f"restore_interrupted_checkpoint requires interrupted status, not {state.status.value}"
         )
-    return restore_workflow_checkpoint(state, run_directory)
+    return restore_workflow_checkpoint(state, run_directory, context=context)
 
 
-def active_cursor_iteration(state: RunState, run_directory: Path) -> int:
-    pending_external = pending_external_cursor_iteration(state)
-    if pending_external is not None and not cursor_turn_complete(run_directory, pending_external):
-        return pending_external
+def _scheduled_incomplete_iteration(
+    run_directory: Path,
+    context: LocalInvocationContext | None,
+) -> int | None:
+    if context is None or context.scheduled_first_cursor_turn is None:
+        return None
+    scheduled = context.scheduled_first_cursor_turn
+    if cursor_turn_complete(run_directory, scheduled.iteration_number):
+        return None
+    return scheduled.iteration_number
+
+
+def active_cursor_iteration(
+    state: RunState,
+    run_directory: Path,
+    *,
+    context: LocalInvocationContext | None = None,
+) -> int:
+    pending_scheduled = _scheduled_incomplete_iteration(run_directory, context)
+    if pending_scheduled is not None:
+        return pending_scheduled
     if (
         state.workflow.current_review_iteration > 0
         and state.status in {RunStatus.WAITING_FOR_CURSOR_FIX, RunStatus.RUNNING_CURSOR}
@@ -184,13 +223,18 @@ def active_review_iteration(state: RunState, run_directory: Path) -> int:
     return max(max_iteration_number(state), 1)
 
 
-def plan_next_action(state: RunState, run_directory: Path) -> WorkflowAction | None:
+def plan_next_action(
+    state: RunState,
+    run_directory: Path,
+    *,
+    context: LocalInvocationContext | None = None,
+) -> WorkflowAction | None:
     if state.status in TERMINAL_STATUSES:
         return None
 
     if state.status == RunStatus.VALIDATING:
         if has_workflow_progress(state, run_directory):
-            return _plan_from_interrupted(state, run_directory)
+            return _plan_from_interrupted(state, run_directory, context=context)
         return WorkflowAction(WorkflowActionKind.CURSOR, 1)
 
     if state.status == RunStatus.WAITING_FOR_CURSOR_FIX:
@@ -204,13 +248,13 @@ def plan_next_action(state: RunState, run_directory: Path) -> WorkflowAction | N
         )
 
     if state.status == RunStatus.RUNNING_CURSOR:
-        iteration_number = active_cursor_iteration(state, run_directory)
+        iteration_number = active_cursor_iteration(state, run_directory, context=context)
         if not cursor_turn_complete(run_directory, iteration_number):
             return WorkflowAction(WorkflowActionKind.CURSOR, iteration_number)
         return WorkflowAction(WorkflowActionKind.STAGING, iteration_number)
 
     if state.status == RunStatus.STAGING:
-        iteration_number = active_cursor_iteration(state, run_directory)
+        iteration_number = active_cursor_iteration(state, run_directory, context=context)
         label = iteration_label(iteration_number)
         if not staging_complete_for_iteration(state, run_directory, label):
             return WorkflowAction(WorkflowActionKind.STAGING, iteration_number)
@@ -223,17 +267,22 @@ def plan_next_action(state: RunState, run_directory: Path) -> WorkflowAction | N
         return WorkflowAction(WorkflowActionKind.REVIEW, iteration_number)
 
     if state.status == RunStatus.INTERRUPTED:
-        return _plan_from_interrupted(state, run_directory)
+        return _plan_from_interrupted(state, run_directory, context=context)
 
     raise ValidationError(
         f"cannot determine next safe action for status {state.status.value}; inspect artifacts manually"
     )
 
 
-def _plan_from_interrupted(state: RunState, run_directory: Path) -> WorkflowAction:
-    pending_external = pending_external_cursor_iteration(state)
-    if pending_external is not None and not cursor_turn_complete(run_directory, pending_external):
-        return WorkflowAction(WorkflowActionKind.CURSOR, pending_external)
+def _plan_from_interrupted(
+    state: RunState,
+    run_directory: Path,
+    *,
+    context: LocalInvocationContext | None = None,
+) -> WorkflowAction:
+    pending_scheduled = _scheduled_incomplete_iteration(run_directory, context)
+    if pending_scheduled is not None:
+        return WorkflowAction(WorkflowActionKind.CURSOR, pending_scheduled)
 
     iteration_number = max(max_iteration_number(state), 1)
     label = iteration_label(iteration_number)

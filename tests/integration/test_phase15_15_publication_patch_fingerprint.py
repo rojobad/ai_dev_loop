@@ -21,7 +21,11 @@ from ai_dev_loop.commands.pr_review_recover import (
 )
 from ai_dev_loop.commands.start import start_run
 from ai_dev_loop.errors import ValidationError
-from ai_dev_loop.iterations import begin_external_local_review_budget
+from ai_dev_loop.legacy_pr_review_local_adapter import (
+    begin_external_local_review_budget,
+    finalize_legacy_pr_accepted_local_result,
+)
+from ai_dev_loop.resume_planner import LocalInvocationContext
 from ai_dev_loop.review_result import CodexReviewResult
 from ai_dev_loop.run_discovery import find_run_directory
 from ai_dev_loop.runners.git import normalize_patch_text
@@ -40,7 +44,7 @@ from ai_dev_loop.state import (
     sha256_file,
     sha256_text,
 )
-from ai_dev_loop.workflow_engine import _apply_review_result
+from ai_dev_loop.workflow_engine import _apply_review_result, _LocalLoopExecution
 
 CONTROLLER_A = "019abc00-aaaa-bbbb-cccc-ddddeeeeffff"
 REVIEWER_B = "019abc00-0000-0000-0000-0000000000bb"
@@ -343,13 +347,19 @@ def test_external_correction_refreshes_gpr_patch_hash_before_publish(
         "ai_dev_loop.commands.pr_review._spawn_pr_review_worker",
         side_effect=lambda *_a, **_k: None,
     ):
+        execution = _LocalLoopExecution(
+            invocation=LocalInvocationContext(),
+            on_accepted=finalize_legacy_pr_accepted_local_result,
+        )
         _apply_review_result(
             run_path,
             state,
             iteration_number=2,
             review=review,
             review_artifact_path="codex/reviews/02.json",
+            loop_ctx=execution,
         )
+        assert execution.needs_external_continuation is True
 
     assert state.status == RunStatus.PUBLISHING_EXTERNAL_FIX
     assert state.github_pr_review is not None
@@ -526,7 +536,7 @@ def test_historical_adoption_resume_publishes_only(
             side_effect=AssertionError("must reuse durable publication text"),
         ),
         patch(
-            "ai_dev_loop.workflow_engine.resume_run",
+            "ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop",
             side_effect=lambda *_a, **_k: workflow_calls.append("workflow"),
         ),
         patch(

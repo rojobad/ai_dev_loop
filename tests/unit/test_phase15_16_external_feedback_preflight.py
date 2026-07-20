@@ -9,11 +9,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ai_dev_loop.errors import AiDevLoopError, ValidationError
-from ai_dev_loop.iterations import (
+from ai_dev_loop.legacy_pr_review_local_adapter import (
     begin_external_local_review_budget,
     is_external_cursor_prompt_iteration,
+    scheduled_cursor_turn_from_legacy_pr_state,
 )
-from ai_dev_loop.resume_planner import WorkflowActionKind, plan_next_action
+from ai_dev_loop.resume_planner import LocalInvocationContext, WorkflowActionKind, plan_next_action
 from ai_dev_loop.runners.git import (
     validate_correction_pre_cursor,
     validate_external_feedback_pre_cursor,
@@ -33,7 +34,13 @@ from ai_dev_loop.state import (
     sha256_file,
     utc_now,
 )
-from ai_dev_loop.workflow_engine import _run_cursor_turn
+from ai_dev_loop.workflow_engine import _LocalLoopExecution, _run_cursor_turn
+
+
+def _legacy_execution(state: RunState, run_directory: Path) -> _LocalLoopExecution:
+    turn = scheduled_cursor_turn_from_legacy_pr_state(state, run_directory)
+    return _LocalLoopExecution(invocation=LocalInvocationContext(scheduled_first_cursor_turn=turn))
+
 
 EXTERNAL_PROMPT = "Please fix the two cycle-3 threads exactly.\n"
 LOCAL_FIX_PROMPT = "Local Codex finding for iteration 03.\n"
@@ -291,6 +298,7 @@ def test_run_cursor_turn_uses_clean_baseline_and_skips_patch_compare(
             state,
             chat_id=state.cursor.chat_id,
             iteration_number=3,
+            loop_ctx=_legacy_execution(state, run_directory),
         )
 
     assert message == ""
@@ -317,6 +325,7 @@ def test_run_cursor_turn_fails_before_creating_iteration_dir(
             state,
             chat_id=state.cursor.chat_id,
             iteration_number=3,
+            loop_ctx=_legacy_execution(state, run_directory),
         )
 
     assert not (run_directory / "cursor/iterations/03").exists()

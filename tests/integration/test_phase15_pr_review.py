@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
@@ -291,7 +291,10 @@ def test_uncertain_adjudication_stops_without_cursor(
             "ai_dev_loop.commands.pr_review.reply_to_review_thread",
             return_value=GithubWriteResult(ok=True, resource_id="R1"),
         ),
-        patch("ai_dev_loop.workflow_engine.resume_run", side_effect=fail_if_resume),
+        patch(
+            "ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop",
+            side_effect=fail_if_resume,
+        ),
     ):
         from ai_dev_loop.config import load_project_config
 
@@ -431,9 +434,13 @@ def test_resume_fixing_external_feedback_releases_locks(
         locks.acquire()
         order.append("lock_acquired_during_resume")
         locks.release()
-        return None
+        result = MagicMock()
+        result.needs_external_continuation = False
+        return result
 
-    with patch("ai_dev_loop.workflow_engine.resume_run", side_effect=fake_resume):
+    with patch(
+        "ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop", side_effect=fake_resume
+    ):
         message = resume_pr_review_cycle(state.run_id)
     assert "Resumed local fix loop" in message
     assert order == ["resume_run", "lock_acquired_during_resume"]
@@ -821,7 +828,7 @@ def test_create_push_failure_resume_via_cli_without_duplicate_commit(
 
     with (
         patch("ai_dev_loop.commands.pr_review._spawn_pr_review_worker") as spawn,
-        patch("ai_dev_loop.workflow_engine.resume_run"),
+        patch("ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop"),
     ):
         message = resume_pr_review_cycle(interrupted.run_id)
     assert "Resumed publication" in message
@@ -1520,7 +1527,10 @@ def test_no_findings_comment_completes_without_cursor(
             "ai_dev_loop.commands.pr_review.run_codex_github_review",
             side_effect=fail_codex,
         ),
-        patch("ai_dev_loop.workflow_engine.resume_run", side_effect=fail_cursor),
+        patch(
+            "ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop",
+            side_effect=fail_cursor,
+        ),
         patch(
             "ai_dev_loop.commands.pr_review.resolve_review_thread",
             side_effect=lambda *_a, **_k: forbidden.__setitem__("resolve", True),

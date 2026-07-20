@@ -28,7 +28,6 @@ from ai_dev_loop.errors import AiDevLoopError, CursorUsageLimitError, Validation
 from ai_dev_loop.event_log import EventLevel, append_orchestrator_event
 from ai_dev_loop.iterations import (
     cursor_prompt_path,
-    is_external_cursor_prompt_iteration,
     iteration_label,
     local_review_budget_used,
     max_iteration_number,
@@ -37,10 +36,21 @@ from ai_dev_loop.iterations import (
     source_prompt_for_usage_limit_recovery,
     upsert_iteration,
 )
+from ai_dev_loop.local_review_loop import (
+    AcceptedFinalizationResult,
+    AcceptedResultFinalizer,
+    AcceptedReviewDelivery,
+    LocalReviewFixRequest,
+    LocalReviewFixResult,
+    LocalReviewOperation,
+    outcome_from_status,
+    validate_scheduled_cursor_turn,
+)
 from ai_dev_loop.locking import LockMetadata, RunLocks
 from ai_dev_loop.paths import set_sensitive_file_mode
 from ai_dev_loop.resume_planner import (
     TERMINAL_STATUSES,
+    LocalInvocationContext,
     WorkflowActionKind,
     cursor_turn_complete,
     has_workflow_progress,
@@ -69,7 +79,6 @@ from ai_dev_loop.runners.cursor_output import (
 )
 from ai_dev_loop.runners.git import (
     validate_correction_pre_cursor,
-    validate_external_feedback_pre_cursor,
     validate_repository_identity,
     validate_usage_limit_recovery_correction_pre_cursor,
     validate_usage_limit_recovery_pre_cursor,
@@ -101,26 +110,41 @@ from ai_dev_loop.state import (
     sha256_file,
 )
 
+# Public A/B adapters continue to import WorkflowResult; it is the typed local result.
+WorkflowResult = LocalReviewFixResult
 
-@dataclass(frozen=True)
-class WorkflowResult:
-    run_id: str
-    status: str
-    chat_id: str
-    iteration_count: int
-    latest_staged_diff_path: str | None
-    latest_review_path: str | None
-    result_message: str
 
-    @property
-    def staged_diff_path(self) -> str | None:
-        return self.latest_staged_diff_path
+@dataclass
+class _LocalLoopExecution:
+    """Mutable per-invocation context held only for the duration of local locks."""
 
-    @property
-    def iteration_dir(self) -> str:
-        if self.iteration_count <= 0:
-            return "cursor/iterations/01"
-        return f"cursor/iterations/{self.iteration_count:02d}"
+    invocation: LocalInvocationContext
+    on_accepted: AcceptedResultFinalizer | None = None
+    needs_external_continuation: bool = False
+
+
+def _workflow_result(
+    *,
+    run_id: str,
+    status: str,
+    chat_id: str,
+    iteration_count: int,
+    latest_staged_diff_path: str | None,
+    latest_review_path: str | None,
+    result_message: str,
+    needs_external_continuation: bool = False,
+) -> LocalReviewFixResult:
+    return LocalReviewFixResult(
+        run_id=run_id,
+        status=status,
+        chat_id=chat_id,
+        iteration_count=iteration_count,
+        latest_staged_diff_path=latest_staged_diff_path,
+        latest_review_path=latest_review_path,
+        result_message=result_message,
+        outcome=outcome_from_status(status),
+        needs_external_continuation=needs_external_continuation,
+    )
 
 
 ABORT_RESULT_MESSAGE = (
@@ -174,9 +198,10 @@ def _workflow_aborted_result(
     chat_id: str,
     latest_staged_diff: str | None = None,
     latest_review_path: str | None = None,
+    needs_external_continuation: bool = False,
 ) -> WorkflowResult:
     message = _finalize_workflow_abort(run_directory, state)
-    return WorkflowResult(
+    return _workflow_result(
         run_id=state.run_id,
         status=RunStatus.ABORTED.value,
         chat_id=chat_id,
@@ -184,6 +209,7 @@ def _workflow_aborted_result(
         latest_staged_diff_path=latest_staged_diff or _latest_staged_diff(state),
         latest_review_path=latest_review_path or _latest_review_path(state),
         result_message=message,
+        needs_external_continuation=needs_external_continuation,
     )
 
 
@@ -223,14 +249,65 @@ def _fail_run(
     )
 
 
+def execute_local_review_fix(request: LocalReviewFixRequest) -> LocalReviewFixResult:
+    """Execute the reusable local review/fix loop for a typed request."""
+
+    if request.operation == LocalReviewOperation.START:
+        return _execute_start(request)
+    if request.operation == LocalReviewOperation.RESUME:
+        return _execute_resume(request)
+    raise ValidationError(f"unsupported local review operation: {request.operation}")
+
+
 def start_run(
     run_id: str,
     *,
     tool_policy: ToolCompatibilityPolicy | None = None,
 ) -> WorkflowResult:
+    return execute_local_review_fix(
+        LocalReviewFixRequest(
+            run_id=run_id,
+            operation=LocalReviewOperation.START,
+            tool_policy=tool_policy,
+        )
+    )
+
+
+def resume_run(
+    run_id: str,
+    *,
+    tool_policy: ToolCompatibilityPolicy | None = None,
+) -> WorkflowResult:
+    return execute_local_review_fix(
+        LocalReviewFixRequest(
+            run_id=run_id,
+            operation=LocalReviewOperation.RESUME,
+            tool_policy=tool_policy,
+        )
+    )
+
+
+def _execution_from_request(request: LocalReviewFixRequest) -> _LocalLoopExecution:
+    return _LocalLoopExecution(
+        invocation=LocalInvocationContext(
+            scheduled_first_cursor_turn=request.scheduled_first_cursor_turn,
+        ),
+        on_accepted=request.on_accepted,
+    )
+
+
+def _execute_start(request: LocalReviewFixRequest) -> LocalReviewFixResult:
+    run_id = request.run_id
     run_directory, state = load_run(run_id)
     metadata = _lock_metadata(run_id, state)
-    policy = tool_policy or default_policy(stdin_is_tty=False)
+    policy = request.tool_policy or default_policy(stdin_is_tty=False)
+    execution = _execution_from_request(request)
+    if request.scheduled_first_cursor_turn is not None:
+        validate_scheduled_cursor_turn(
+            request.scheduled_first_cursor_turn,
+            run_directory=run_directory,
+            state=state,
+        )
     with RunLocks(run_directory, metadata):
         _log_requested(run_directory, run_id, state, event="start_requested")
         try:
@@ -248,19 +325,23 @@ def start_run(
         save_run_state(run_directory, state)
         _run_preflight(run_directory, state, from_prepared=True)
         _run_probes(run_directory, state)
-        return _continue_workflow(run_directory, state)
+        return _continue_workflow(run_directory, state, loop_ctx=execution)
 
 
-def resume_run(
-    run_id: str,
-    *,
-    tool_policy: ToolCompatibilityPolicy | None = None,
-) -> WorkflowResult:
+def _execute_resume(request: LocalReviewFixRequest) -> LocalReviewFixResult:
     from ai_dev_loop.commands.start_preflight import validate_resume_status
 
+    run_id = request.run_id
     run_directory, state = load_run(run_id)
     metadata = _lock_metadata(run_id, state)
-    policy = tool_policy or default_policy(stdin_is_tty=False)
+    policy = request.tool_policy or default_policy(stdin_is_tty=False)
+    execution = _execution_from_request(request)
+    if request.scheduled_first_cursor_turn is not None:
+        validate_scheduled_cursor_turn(
+            request.scheduled_first_cursor_turn,
+            run_directory=run_directory,
+            state=state,
+        )
     with RunLocks(run_directory, metadata):
         _log_requested(run_directory, run_id, state, event="resume_requested")
         try:
@@ -270,7 +351,7 @@ def resume_run(
 
         from_prepared = state.status == RunStatus.PREPARED
         if state.status == RunStatus.INTERRUPTED:
-            restore_interrupted_checkpoint(state, run_directory)
+            restore_interrupted_checkpoint(state, run_directory, context=execution.invocation)
             save_run_state(run_directory, state)
 
         if _resume_may_invoke_agents(state):
@@ -293,7 +374,7 @@ def resume_run(
                 mark_max_iterations_reached(state, result_message_for_max_iterations())
                 save_run_state(run_directory, state)
                 chat_id = _require_cursor_chat_or_fail(run_directory, state)
-                return WorkflowResult(
+                return _workflow_result(
                     run_id=state.run_id,
                     status=state.status.value,
                     chat_id=chat_id,
@@ -305,7 +386,7 @@ def resume_run(
             begin_running_cursor(state)
             save_run_state(run_directory, state)
 
-        return _continue_workflow(run_directory, state)
+        return _continue_workflow(run_directory, state, loop_ctx=execution)
 
 
 def _lock_metadata(run_id: str, state: RunState) -> LockMetadata:
@@ -660,9 +741,15 @@ def _require_cursor_chat_or_fail(run_directory: Path, state: RunState) -> str:
         raise AiDevLoopError(str(exc), exit_code=exc.exit_code) from exc
 
 
-def _continue_workflow(run_directory: Path, state: RunState) -> WorkflowResult:
+def _continue_workflow(
+    run_directory: Path,
+    state: RunState,
+    *,
+    loop_ctx: _LocalLoopExecution | None = None,
+) -> WorkflowResult:
+    loop = loop_ctx or _LocalLoopExecution(invocation=LocalInvocationContext())
     if state.status == RunStatus.VALIDATING and has_workflow_progress(state, run_directory):
-        restore_workflow_checkpoint(state, run_directory)
+        restore_workflow_checkpoint(state, run_directory, context=loop.invocation)
         save_run_state(run_directory, state)
 
     if is_abort_requested(run_directory):
@@ -689,7 +776,7 @@ def _continue_workflow(run_directory: Path, state: RunState) -> WorkflowResult:
     try:
         while state.status not in TERMINAL_STATUSES:
             _raise_if_abort_requested(run_directory, state, chat_id=chat_id)
-            action = plan_next_action(state, run_directory)
+            action = plan_next_action(state, run_directory, context=loop.invocation)
             if action is None:
                 break
 
@@ -699,18 +786,21 @@ def _continue_workflow(run_directory: Path, state: RunState) -> WorkflowResult:
                     state,
                     chat_id=chat_id,
                     iteration_number=action.iteration_number,
+                    loop_ctx=loop,
                 )
             elif action.kind == WorkflowActionKind.STAGING:
                 latest_staged_diff = _run_staging_pass(
                     run_directory,
                     state,
                     iteration_number=action.iteration_number,
+                    loop_ctx=loop,
                 )
             elif action.kind == WorkflowActionKind.REVIEW:
                 latest_review_path, result_message, should_continue = _run_review_pass(
                     run_directory,
                     state,
                     iteration_number=action.iteration_number,
+                    loop_ctx=loop,
                 )
                 if not should_continue:
                     break
@@ -719,6 +809,7 @@ def _continue_workflow(run_directory: Path, state: RunState) -> WorkflowResult:
                     run_directory,
                     state,
                     iteration_number=action.iteration_number,
+                    loop_ctx=loop,
                 )
                 if not should_continue:
                     break
@@ -733,7 +824,7 @@ def _continue_workflow(run_directory: Path, state: RunState) -> WorkflowResult:
             latest_review_path=latest_review_path,
         )
 
-    return WorkflowResult(
+    return _workflow_result(
         run_id=state.run_id,
         status=state.status.value,
         chat_id=chat_id,
@@ -741,6 +832,7 @@ def _continue_workflow(run_directory: Path, state: RunState) -> WorkflowResult:
         latest_staged_diff_path=latest_staged_diff or _latest_staged_diff(state),
         latest_review_path=latest_review_path or _latest_review_path(state),
         result_message=result_message or (state.result or ""),
+        needs_external_continuation=loop.needs_external_continuation,
     )
 
 
@@ -772,11 +864,20 @@ def _run_cursor_turn(
     *,
     chat_id: str,
     iteration_number: int,
+    loop_ctx: _LocalLoopExecution | None = None,
 ) -> str:
     iteration = iteration_label(iteration_number)
     # Create attempt directories only after the correct semantic preflight passes.
     # An empty cursor/iterations/NN directory is not durable execution evidence,
     # but recovery must still ignore it only when no files or iteration entry exist.
+    loop = loop_ctx or _LocalLoopExecution(invocation=LocalInvocationContext())
+    scheduled = loop.invocation.scheduled_first_cursor_turn
+    scheduled_for_this_turn = (
+        scheduled is not None and scheduled.iteration_number == iteration_number
+    )
+    scheduled_prompt_path = (
+        scheduled.prompt_path if scheduled is not None and scheduled_for_this_turn else None
+    )
 
     if _is_cursor_usage_limit_recovery_resume(state, iteration_number):
         try:
@@ -804,16 +905,23 @@ def _run_cursor_turn(
         except ValidationError as exc:
             _fail_run(run_directory, state, str(exc), event_name="correction_preflight_failed")
             raise AiDevLoopError(str(exc), exit_code=exc.exit_code) from exc
-    elif is_external_cursor_prompt_iteration(state, iteration_number):
-        # First Cursor turn of an external feedback round: published clean commit.
+    elif scheduled_for_this_turn:
+        # Caller-scheduled first Cursor turn (e.g. external feedback via legacy adapter).
         try:
-            validate_external_feedback_pre_cursor(state)
+            assert scheduled is not None
+            validate_scheduled_cursor_turn(
+                scheduled,
+                run_directory=run_directory,
+                state=state,
+            )
+            if scheduled.pre_cursor_validator is not None:
+                scheduled.pre_cursor_validator(state, run_directory)
         except ValidationError as exc:
             _fail_run(
                 run_directory,
                 state,
                 str(exc),
-                event_name="external_feedback_preflight_failed",
+                event_name="scheduled_cursor_preflight_failed",
             )
             raise AiDevLoopError(str(exc), exit_code=exc.exit_code) from exc
     elif iteration_number > 1:
@@ -850,8 +958,17 @@ def _run_cursor_turn(
 
     cursor_started_at = datetime.now(tz=UTC)
     try:
-        prompt_rel = cursor_prompt_path(state, iteration_number)
-        prompt = read_cursor_prompt(state, run_directory, iteration_number)
+        prompt_rel = cursor_prompt_path(
+            state,
+            iteration_number,
+            scheduled_prompt_path=scheduled_prompt_path,
+        )
+        prompt = read_cursor_prompt(
+            state,
+            run_directory,
+            iteration_number,
+            scheduled_prompt_path=scheduled_prompt_path,
+        )
     except ValidationError as exc:
         _fail_run(run_directory, state, str(exc), event_name="cursor_prompt_failed")
         raise AiDevLoopError(str(exc), exit_code=exc.exit_code) from exc
@@ -1137,8 +1254,16 @@ def _run_staging_pass(
     state: RunState,
     *,
     iteration_number: int,
+    loop_ctx: _LocalLoopExecution | None = None,
 ) -> str:
     iteration = iteration_label(iteration_number)
+    loop = loop_ctx or _LocalLoopExecution(invocation=LocalInvocationContext())
+    scheduled = loop.invocation.scheduled_first_cursor_turn
+    scheduled_prompt_path = (
+        scheduled.prompt_path
+        if scheduled is not None and scheduled.iteration_number == iteration_number
+        else None
+    )
     if state.status == RunStatus.RUNNING_CURSOR:
         begin_staging(state)
         save_run_state(run_directory, state)
@@ -1157,7 +1282,11 @@ def _run_staging_pass(
     )
     cursor_started_at = datetime.now(tz=UTC)
     cursor_exit_code = 0
-    prompt_path = cursor_prompt_path(state, iteration_number)
+    prompt_path = cursor_prompt_path(
+        state,
+        iteration_number,
+        scheduled_prompt_path=scheduled_prompt_path,
+    )
     if entry:
         if isinstance(entry.get("started_at"), str):
             cursor_started_at = datetime.fromisoformat(entry["started_at"])
@@ -1226,6 +1355,7 @@ def _run_review_pass(
     state: RunState,
     *,
     iteration_number: int,
+    loop_ctx: _LocalLoopExecution | None = None,
 ) -> tuple[str | None, str, bool]:
     iteration = iteration_label(iteration_number)
     _ensure_reviewing_status(state, iteration_number)
@@ -1274,6 +1404,7 @@ def _run_review_pass(
         iteration_number=iteration_number,
         review=review_execution.result,
         review_artifact_path=review_execution.artifacts.result_path,
+        loop_ctx=loop_ctx,
     )
     return artifact_path, result_message, should_continue
 
@@ -1283,6 +1414,7 @@ def _process_review_outcome(
     state: RunState,
     *,
     iteration_number: int,
+    loop_ctx: _LocalLoopExecution | None = None,
 ) -> tuple[str | None, str, bool]:
     iteration = iteration_label(iteration_number)
     _ensure_reviewing_status(state, iteration_number)
@@ -1300,6 +1432,23 @@ def _process_review_outcome(
         iteration_number=iteration_number,
         review=review,
         review_artifact_path=result_path,
+        loop_ctx=loop_ctx,
+    )
+
+
+def _default_accepted_finalization(
+    delivery: AcceptedReviewDelivery,
+) -> AcceptedFinalizationResult:
+    review = delivery.review
+    result_message = delivery.result_message
+    state = delivery.state
+    if review.tests_status in {"failed", "blocked_environment", "skipped_findings_present"}:
+        mark_completed_with_residual_risk(state, result_message)
+    else:
+        mark_completed(state, result_message)
+    return AcceptedFinalizationResult(
+        needs_external_continuation=False,
+        result_message=result_message,
     )
 
 
@@ -1310,10 +1459,12 @@ def _apply_review_result(
     iteration_number: int,
     review: CodexReviewResult,
     review_artifact_path: str,
+    loop_ctx: _LocalLoopExecution | None = None,
 ) -> tuple[str | None, str, bool]:
     result_message = result_message_for_review(review)
     should_continue = False
     budget_used = record_local_review_for_budget(state, iteration_number=iteration_number)
+    loop = loop_ctx or _LocalLoopExecution(invocation=LocalInvocationContext())
 
     if review.has_actionable_findings:
         if budget_used >= state.workflow.max_review_iterations:
@@ -1345,68 +1496,54 @@ def _apply_review_result(
             begin_running_cursor(state)
             result_message = result_message_for_loop_continue()
             should_continue = True
-    elif (
-        state.github_pr_review is not None
-        and state.github_pr_review.lifecycle == "fixing_external_feedback"
-    ):
-        # Post-PR local review accepted: refresh the publication fingerprint from
-        # the latest durable iteration, then hand off to publication.
-        from ai_dev_loop.commands.pr_review import (
-            _spawn_pr_review_worker,
-            refresh_external_publication_patch_fingerprint,
-        )
-        from ai_dev_loop.state import transition_status
-
-        try:
-            patch_sha = refresh_external_publication_patch_fingerprint(
-                run_directory,
-                state,
-                iteration_number=iteration_number,
-            )
-        except ValidationError as exc:
-            _fail_run(
-                run_directory,
-                state,
-                str(exc),
-                event_name="publication_patch_fingerprint_failed",
-            )
-            raise AiDevLoopError(str(exc), exit_code=exc.exit_code) from exc
-
-        transition_status(state.status, RunStatus.PUBLISHING_EXTERNAL_FIX)
-        state.status = RunStatus.PUBLISHING_EXTERNAL_FIX
-        assert state.github_pr_review is not None
-        state.github_pr_review = state.github_pr_review.model_copy(
-            update={
-                "lifecycle": "publishing_external_fix",
-                "staged_patch_sha256": patch_sha,
-            }
-        )
-        # Residual-risk tests may continue when Codex recorded no corrective action.
-        if review.tests_status in {"failed", "blocked_environment", "skipped_findings_present"}:
-            state.result = (
-                f"{result_message} Residual risk recorded; continuing automatic publication."
-            )
-        else:
-            state.result = result_message
-        state.last_error = None
         save_run_state(run_directory, state)
+        append_run_log(run_directory, f"Codex review complete; status={state.status.value}")
         append_orchestrator_event(
             run_directory,
             run_id=state.run_id,
-            component="orchestrator",
-            event="pr_review_ready_to_publish",
+            component="codex",
+            event="review_complete",
             status=state.status.value,
             iteration=iteration_number,
-            detail={"staged_patch_sha256": patch_sha},
+            artifact_path=review_artifact_path,
+            detail={
+                "has_actionable_findings": review.has_actionable_findings,
+                "findings_count": review.findings_count,
+                "tests_status": review.tests_status,
+                "summary": review.summary,
+            },
         )
-        _spawn_pr_review_worker(run_directory, state.run_id)
-        return review_artifact_path, state.result or result_message, False
-    elif review.tests_status in {"failed", "blocked_environment", "skipped_findings_present"}:
-        mark_completed_with_residual_risk(state, result_message)
-    else:
-        mark_completed(state, result_message)
+        return review_artifact_path, result_message, should_continue
 
-    save_run_state(run_directory, state)
+    finalizer = loop.on_accepted or _default_accepted_finalization
+    delivery = AcceptedReviewDelivery(
+        run_directory=run_directory,
+        state=state,
+        iteration_number=iteration_number,
+        review=review,
+        review_artifact_path=review_artifact_path,
+        result_message=result_message,
+    )
+    try:
+        finalized = finalizer(delivery)
+    except ValidationError as exc:
+        _fail_run(
+            run_directory,
+            state,
+            str(exc),
+            event_name="accepted_finalization_failed",
+        )
+        raise AiDevLoopError(str(exc), exit_code=exc.exit_code) from exc
+    loop.needs_external_continuation = finalized.needs_external_continuation
+    if finalized.result_message is not None:
+        result_message = finalized.result_message
+    if loop.on_accepted is None:
+        # Default A/B finalizer mutates status; persist under the local locks.
+        save_run_state(run_directory, state)
+    if finalized.needs_external_continuation:
+        # Caller-owned finalizer already persisted publication-ready state.
+        return review_artifact_path, result_message, False
+
     append_run_log(run_directory, f"Codex review complete; status={state.status.value}")
     append_orchestrator_event(
         run_directory,
@@ -1423,7 +1560,7 @@ def _apply_review_result(
             "summary": review.summary,
         },
     )
-    return review_artifact_path, result_message, should_continue
+    return review_artifact_path, result_message, False
 
 
 def render_workflow_output(result: WorkflowResult) -> str:

@@ -407,7 +407,7 @@ def test_successor_resume_reuses_session_and_skips_trigger(
             "ai_dev_loop.commands.pr_review.create_issue_comment",
             side_effect=fail_post,
         ),
-        patch("ai_dev_loop.workflow_engine.resume_run"),
+        patch("ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop"),
     ):
         result = runner.invoke(
             app,

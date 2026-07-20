@@ -317,8 +317,8 @@ def test_resume_interrupted_after_staging_runs_review_only(
 
     original_staging = workflow_engine._run_staging_pass
 
-    def staging_then_interrupt(run_directory, state, *, iteration_number):
-        original_staging(run_directory, state, iteration_number=iteration_number)
+    def staging_then_interrupt(run_directory, state, *, iteration_number, **kwargs):
+        original_staging(run_directory, state, iteration_number=iteration_number, **kwargs)
         mark_interrupted(state, "interrupted after staging for test")
         save_run_state(run_directory, state)
         raise AiDevLoopError("interrupted after staging for test")

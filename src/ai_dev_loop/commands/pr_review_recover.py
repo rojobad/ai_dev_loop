@@ -42,9 +42,11 @@ from ai_dev_loop.event_log import append_orchestrator_event
 from ai_dev_loop.github_pr_review_result import GithubPrReviewResult
 from ai_dev_loop.integrations.codex.session_runtime import require_codex_session_id
 from ai_dev_loop.iterations import (
-    derive_external_cursor_iteration_for_recovery,
     iteration_label,
     max_iteration_number,
+)
+from ai_dev_loop.legacy_pr_review_local_adapter import (
+    derive_external_cursor_iteration_for_recovery,
     next_external_cursor_iteration,
 )
 from ai_dev_loop.paths import ensure_dir, run_dir, runs_dir, set_sensitive_file_mode

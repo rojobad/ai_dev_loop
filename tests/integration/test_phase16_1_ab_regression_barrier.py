@@ -734,21 +734,8 @@ def test_ab_recover_successor_preserves_identities_and_skips_completed_cursor(
 
     successor_path, successor = load_run(first.recovery_run_id)
     assert successor.status == RunStatus.INTERRUPTED
-    # CONTRACT CHECK (Phase 16.1 / A/B authority): local recover must preserve
-    # controller A on the successor so controller status / A-owned control works.
-    # Current product code in commands/recover.py::_create_successor_run omits
-    # controller= when building the successor RunState. Do not weaken this
-    # assertion without an amended plan; do not "fix" recover in 16.1.
-    if successor.controller is None:
-        pytest.fail(
-            "CONTRACT CONFLICT: local recover successor dropped controller metadata. "
-            "Source had controller A; successor.controller is None. "
-            "Evidence: src/ai_dev_loop/commands/recover.py _create_successor_run "
-            "constructs RunState without controller=source.controller. "
-            "Impact: controller status rejects the successor; A cannot discover it "
-            "by controller session id. Phase 16.1 stops here per plan — do not encode "
-            "the omission as desired behavior."
-        )
+    # Local recover preserves controller A on the successor so controller status
+    # and A-owned control remain available after recovery.
     assert successor.controller is not None
     assert successor.controller.controller_session_id == CONTROLLER_A
     assert successor.codex.session_id == REVIEWER_B

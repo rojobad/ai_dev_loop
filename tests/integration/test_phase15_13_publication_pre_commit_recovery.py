@@ -346,7 +346,7 @@ def test_publication_pre_commit_resume_publishes_only(
             side_effect=AssertionError("must reuse durable publication text"),
         ),
         patch(
-            "ai_dev_loop.workflow_engine.resume_run",
+            "ai_dev_loop.commands.pr_review.resume_legacy_pr_local_fix_loop",
             side_effect=lambda *_a, **_k: workflow_resume_calls.append("workflow"),
         ),
         patch(
