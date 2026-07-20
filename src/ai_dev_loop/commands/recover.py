@@ -920,6 +920,9 @@ def _create_successor_run(
             prompt=source.prompt.model_copy(deep=True),
             codex=successor_codex,
             cursor=successor_cursor,
+            controller=(
+                source.controller.model_copy(deep=True) if source.controller is not None else None
+            ),
             workflow=source.workflow.model_copy(
                 update={"current_review_iteration": max(analysis.iteration - 1, 0)}
                 if analysis.checkpoint == "cursor"

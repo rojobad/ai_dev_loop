@@ -283,3 +283,20 @@ Obtain the explicit contract decision for recover successors. If controller A is
 be preserved, complete and validate the tiny follow-on first. Only after the Phase
 16.1 barrier is green should the next agent analyze the repository and draft the
 implementable Phase 16.2 extraction plan.
+
+## Resolution update
+
+This update supersedes the unresolved-gate language retained elsewhere above as
+historical evidence. On 2026-07-20 the user selected the recommendation to preserve
+controller A on local recovery successors. The separately scoped follow-on
+deep-copies the optional controller state and keeps historical runs without a
+controller unchanged.
+
+- Phase 16.1 barrier: **12 passed**.
+- Focused local-loop baseline: **163 passed**.
+- Full live collection and suite: **829 collected, 829 passed**.
+- Ruff format/check, mypy, MkDocs strict build, sdist, and wheel: passed.
+
+The entry gate is resolved. The next safe action is to analyze the current
+repository and draft the dedicated Phase 16.2 plan and Cursor prompt; extraction
+must not begin until that plan and its `OpenQuestions` are reviewed and approved.
