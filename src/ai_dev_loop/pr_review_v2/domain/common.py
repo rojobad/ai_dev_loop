@@ -77,9 +77,11 @@ class TransientErrorKind(StrEnum):
     HTTP_429 = "http_429"
     PRIMARY_RATE_LIMIT = "primary_rate_limit"
     SECONDARY_RATE_LIMIT = "secondary_rate_limit"
+    HTTP_500 = "http_500"
     HTTP_502 = "http_502"
     HTTP_503 = "http_503"
     HTTP_504 = "http_504"
+    OTHER_HTTP_5XX = "other_http_5xx"
     TEMPORARY_CLI_FAILURE = "temporary_cli_failure"
 
 
@@ -87,9 +89,11 @@ class PauseReasonKind(StrEnum):
     RETRY_EXHAUSTED = "retry_exhausted"
     AUTHENTICATION = "authentication"
     PERMISSIONS = "permissions"
+    NOT_FOUND = "not_found"
     CLOSED_PR = "closed_pr"
     REPOSITORY_DRIFT = "repository_drift"
     HEAD_DRIFT = "head_drift"
+    BRANCH_DRIFT = "branch_drift"
     PATCH_DRIFT = "patch_drift"
     THREAD_DRIFT = "thread_drift"
     HTTP_VALIDATION_REJECTION = "http_validation_rejection"

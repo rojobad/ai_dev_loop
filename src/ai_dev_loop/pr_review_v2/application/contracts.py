@@ -182,6 +182,9 @@ class EffectCompletionRequest(AppModel):
     owner_id: NonEmptyId
     lease_generation: PositiveInt
     event: PrReviewEvent
+    # When True, complete_claim must fence as STALE/REJECTED before reducer mutation
+    # even if the durable lease row still appears active (e.g. best-effort release failed).
+    lease_authority_lost: bool = False
 
 
 class TimerFireReceipt(AppModel):

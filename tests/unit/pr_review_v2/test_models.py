@@ -152,9 +152,14 @@ def test_models_are_frozen_and_forbid_extras() -> None:
 
 def test_reason_vocabulary_covers_required_kinds() -> None:
     assert TransientErrorKind.HTTP_429.value == "http_429"
+    assert TransientErrorKind.HTTP_500.value == "http_500"
+    assert TransientErrorKind.OTHER_HTTP_5XX.value == "other_http_5xx"
     assert PauseReasonKind.AMBIGUOUS_WRITE_UNRESOLVED.value == "ambiguous_write_unresolved"
+    assert PauseReasonKind.NOT_FOUND.value == "not_found"
+    assert PauseReasonKind.BRANCH_DRIFT.value == "branch_drift"
     assert FailureReasonKind.HASH_MISMATCH.value == "hash_mismatch"
     ErrorSummary(kind=TransientErrorKind.TIMEOUT, safe_summary="timeout")
+    ErrorSummary(kind=TransientErrorKind.HTTP_500, safe_summary="server")
     SafeAction(kind=SafeActionKind.RESUME_SAME_EFFECT, condition="resume")
 
 

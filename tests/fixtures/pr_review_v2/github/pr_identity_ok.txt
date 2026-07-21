@@ -1,0 +1,6 @@
+HTTP/2 200
+Content-Type: application/json
+X-RateLimit-Remaining: 4999
+X-RateLimit-Reset: 1784650000
+
+{"data":{"repository":{"nameWithOwner":"acme/demo","pullRequest":{"number":7,"state":"OPEN","isCrossRepository":false,"headRefName":"feature","baseRefName":"main","headRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}}}

@@ -17,7 +17,7 @@ codex:
   sandbox: workspace-write
 
 workflow:
-  max_review_iterations: 5
+  max_review_iterations: 7
   require_clean_worktree: true
   stage_mode: all
   cursor_timeout_minutes: 90
