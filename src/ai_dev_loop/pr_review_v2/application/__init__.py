@@ -26,6 +26,7 @@ from ai_dev_loop.pr_review_v2.application.contracts import (
     WorkerStepResult,
 )
 from ai_dev_loop.pr_review_v2.application.engine import PrReviewEngine
+from ai_dev_loop.pr_review_v2.application.github_read import GitHubReadPolicy
 from ai_dev_loop.pr_review_v2.application.status import build_status
 
 __all__ = [
@@ -38,6 +39,7 @@ __all__ = [
     "EventDisposition",
     "EventSubmission",
     "FaultHook",
+    "GitHubReadPolicy",
     "IdFactory",
     "LeaseAcquireResult",
     "LeaseHeartbeatResult",

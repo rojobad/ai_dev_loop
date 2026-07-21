@@ -151,6 +151,18 @@ class PrReviewEngine:
     def store(self) -> SqlitePrReviewStore:
         return self._store
 
+    @property
+    def lease_ttl(self) -> timedelta:
+        """Read-only lease duration used for renew-interval validation."""
+
+        return self._lease_ttl
+
+    @property
+    def clock(self) -> Clock:
+        """Injected completion/observation clock (never claim wall time)."""
+
+        return self._clock
+
     def create_run(self, run_id: str, state: PreparedState) -> PrReviewStatus:
         now = self._clock.now()
         with self._store.begin_immediate() as conn:
@@ -1105,6 +1117,10 @@ class PrReviewEngine:
         owner: str,
         now: datetime,
     ) -> str | None:
+        # Explicit lost-authority signal from the worker: fence before any mutation
+        # regardless of whether best-effort durable lease relinquishment succeeded.
+        if request.lease_authority_lost:
+            return "worker reported lease authority lost"
         if dispatch["status"] != DispatchStatus.CLAIMED.value:
             return "dispatch is not claimed"
         if dispatch["claim_id"] != request.claim_id:

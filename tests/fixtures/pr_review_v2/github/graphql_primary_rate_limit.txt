@@ -1,0 +1,6 @@
+HTTP/2 200
+Content-Type: application/json
+X-RateLimit-Remaining: 0
+X-RateLimit-Reset: 9999999999
+
+{"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded"}]}
