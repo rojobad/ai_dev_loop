@@ -42,6 +42,9 @@ class CommitRecordedOutcome(DomainModel):
     kind: Literal["commit_recorded"] = "commit_recorded"
     commit_sha: GitSha40
     new_head_sha: GitSha40
+    # Required-but-nullable: omitted serialized fields fail closed; explicit null is
+    # the authoritative absent-ref baseline captured under the repository lock.
+    expected_remote_sha_before_push: GitSha40 | None
 
 
 class PushConfirmedOutcome(DomainModel):

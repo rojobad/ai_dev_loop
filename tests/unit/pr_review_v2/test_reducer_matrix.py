@@ -255,6 +255,7 @@ def _event_for(state_kind: str, event_kind: str, state, prepared_source):
                 bound_head_sha=SHA_A,
                 patch_ref=artifact("p.patch"),
                 expected_head_sha=SHA_A,
+                expected_branch="feature",
                 commit_message_ref=artifact("m.txt"),
             )
         )

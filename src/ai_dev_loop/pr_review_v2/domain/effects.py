@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import Field, PositiveInt, TypeAdapter, model_validator
+from pydantic import Field, PositiveInt, TypeAdapter, field_validator, model_validator
 
 from ai_dev_loop.pr_review_v2.domain.common import (
     ArtifactRef,
@@ -20,6 +20,8 @@ from ai_dev_loop.pr_review_v2.domain.common import (
     ThreadId,
     UtcInstant,
     build_effect_identity,
+    validate_argv_safe_branch_name,
+    validate_argv_safe_remote_ref,
 )
 
 
@@ -68,14 +70,28 @@ class CommitPatchEffect(EffectCommon):
     kind: Literal["commit_patch"] = "commit_patch"
     patch_ref: ArtifactRef
     expected_head_sha: GitSha40
+    expected_branch: NonEmptyStr
     commit_message_ref: ArtifactRef
+
+    @field_validator("expected_branch")
+    @classmethod
+    def validate_expected_branch(cls, value: str) -> str:
+        return validate_argv_safe_branch_name(value)
 
 
 class PushCommitEffect(EffectCommon):
     kind: Literal["push_commit"] = "push_commit"
     commit_sha: GitSha40
     remote_ref: NonEmptyStr
+    # Required-but-nullable: omitted serialized fields fail closed; explicit null is
+    # the authoritative absent-ref baseline captured before the preceding commit.
+    expected_remote_sha_before_push: GitSha40 | None
     force: Literal[False] = False
+
+    @field_validator("remote_ref")
+    @classmethod
+    def validate_remote_ref_field(cls, value: str) -> str:
+        return validate_argv_safe_remote_ref(value)
 
 
 class CreateOrUpdatePrEffect(EffectCommon):

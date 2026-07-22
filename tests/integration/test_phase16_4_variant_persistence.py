@@ -129,7 +129,11 @@ def _collect_effect_samples(prepared: PreparedState) -> dict[str, object]:
     state, effects = succeed(state, effects[0], publication_text_outcome())
     by_kind.setdefault(effects[0].kind, effects[0])
     state, effects = succeed(
-        state, effects[0], CommitRecordedOutcome(commit_sha=SHA_B, new_head_sha=SHA_B)
+        state,
+        effects[0],
+        CommitRecordedOutcome(
+            commit_sha=SHA_B, new_head_sha=SHA_B, expected_remote_sha_before_push=None
+        ),
     )
     by_kind.setdefault(effects[0].kind, effects[0])
     state, effects = succeed(
@@ -173,7 +177,11 @@ def _collect_effect_samples(prepared: PreparedState) -> dict[str, object]:
     by_kind.setdefault(cur_effects[0].kind, cur_effects[0])
     new_sha = "e" * 40
     cur, cur_effects = succeed(
-        cur, cur_effects[0], CommitRecordedOutcome(commit_sha=new_sha, new_head_sha=new_sha)
+        cur,
+        cur_effects[0],
+        CommitRecordedOutcome(
+            commit_sha=new_sha, new_head_sha=new_sha, expected_remote_sha_before_push=None
+        ),
     )
     by_kind.setdefault(cur_effects[0].kind, cur_effects[0])
     cur, cur_effects = succeed(

@@ -1,0 +1,6 @@
+{
+  "schema_name": "ai_dev_loop.pr_review_v2.commit_message",
+  "schema_version": 1,
+  "subject": "Synthetic commit subject",
+  "body": "Synthetic commit body"
+}

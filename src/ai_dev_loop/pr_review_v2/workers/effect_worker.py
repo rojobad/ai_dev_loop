@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import threading
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Protocol, runtime_checkable
 
 from ai_dev_loop.pr_review_v2.application.contracts import (
+    EffectClaim,
     EffectCompletionRequest,
     EffectExecutor,
     EventDisposition,
@@ -14,7 +15,23 @@ from ai_dev_loop.pr_review_v2.application.contracts import (
     WorkerStepResult,
 )
 from ai_dev_loop.pr_review_v2.application.engine import PrReviewEngine
+from ai_dev_loop.pr_review_v2.application.write_contracts import (
+    AuthorityLostError,
+    ClaimAuthorityGuard,
+    ClaimAuthorityResult,
+    ClaimAuthoritySnapshot,
+    MutatingEffectExecutor,
+)
+from ai_dev_loop.pr_review_v2.domain.common import (
+    EffectCompletionToken,
+    PauseReasonKind,
+    SafeAction,
+    SafeActionKind,
+)
+from ai_dev_loop.pr_review_v2.domain.effects import PrReviewEffect, is_mutating_effect
+from ai_dev_loop.pr_review_v2.domain.events import EffectBlocked, PrReviewEvent
 from ai_dev_loop.pr_review_v2.infrastructure.runtime import completion_submission_id
+from ai_dev_loop.pr_review_v2.workers.effect_executor_router import EffectExecutorRouter
 
 DEFAULT_HEARTBEAT_INTERVAL = timedelta(seconds=10)
 
@@ -149,13 +166,23 @@ class LeaseRenewalCoordinator:
             return
 
 
+class _EngineClaimAuthorityGuard:
+    """Thin adapter from ``PrReviewEngine.check_claim_authority``."""
+
+    def __init__(self, engine: PrReviewEngine) -> None:
+        self._engine = engine
+
+    def check_authority(self, snapshot: ClaimAuthoritySnapshot) -> ClaimAuthorityResult:
+        return self._engine.check_claim_authority(snapshot)
+
+
 class EffectWorker:
     """Acquire/recover/claim, execute outside the transaction, then complete."""
 
     def __init__(
         self,
         engine: PrReviewEngine,
-        executor: EffectExecutor,
+        executor: EffectExecutor | MutatingEffectExecutor | EffectExecutorRouter,
         *,
         owner_id: str,
         heartbeat_interval: timedelta | None = None,
@@ -170,6 +197,7 @@ class EffectWorker:
         )
         self._heartbeat_wait = heartbeat_wait
         self._heartbeat_interval_wait = heartbeat_interval_wait
+        self._authority = _EngineClaimAuthorityGuard(engine)
 
     def run_once(
         self,
@@ -200,20 +228,39 @@ class EffectWorker:
             interval_wait=self._heartbeat_interval_wait,
         )
         renewal.start()
+        authority_lost_by_guard = False
         try:
             # Claim is already committed before executor runs.
             # Use engine clock at execute entry; executor may also inject its own
             # post-read observation clock for occurred_at / next_attempt_at.
-            event = self._executor.execute(
+            event = self._execute_effect(
                 claim.effect,
                 claim.completion_token,
                 now=self._engine.clock.now(),
+                claim=claim,
+            )
+        except AuthorityLostError:
+            # Pre-mutation guard rejection: zero writes. Offer one benign result to
+            # complete_claim with lease_authority_lost so it fences deterministically.
+            renewal.stop()
+            authority_lost_by_guard = True
+            event = EffectBlocked(
+                occurred_at=self._engine.clock.now(),
+                token=claim.completion_token,
+                reason=PauseReasonKind.REQUIRED_OPERATOR_ACTION,
+                safe_action=SafeAction(
+                    kind=SafeActionKind.INSPECT_ARTIFACTS,
+                    condition="claim authority was lost before any mutation",
+                ),
+                safe_summary="claim authority lost before mutation; no write performed",
             )
         except Exception:
             renewal.stop()
             raise
         else:
             renewal.stop()
+
+        lease_authority_lost = renewal.lease_lost or authority_lost_by_guard
 
         submission_id = completion_submission_id(
             run_id=claim.run_id,
@@ -232,10 +279,10 @@ class EffectWorker:
                 owner_id=self._owner_id,
                 lease_generation=lease.generation,
                 event=event,
-                lease_authority_lost=renewal.lease_lost,
+                lease_authority_lost=lease_authority_lost,
             )
         )
-        if not renewal.lease_lost:
+        if not lease_authority_lost:
             self._engine.heartbeat_lease(run_id, self._owner_id, lease.generation)
         return WorkerStepResult(
             run_id=run_id,
@@ -246,6 +293,50 @@ class EffectWorker:
             dispatch_id=claim.dispatch_id,
             effect_kind=claim.effect.kind,
             safe_detail=receipt.safe_detail
-            if not renewal.lease_lost
+            if not lease_authority_lost
             else (receipt.safe_detail or "lease_lost_during_execution"),
         )
+
+    def _execute_effect(
+        self,
+        effect: PrReviewEffect,
+        token: EffectCompletionToken,
+        *,
+        now: datetime,
+        claim: EffectClaim,
+    ) -> PrReviewEvent:
+        executor = self._executor
+        if isinstance(executor, EffectExecutorRouter):
+            # Router always receives authority/claim; it ignores them for READ_ONLY.
+            return executor.execute(
+                effect,
+                token,
+                now=now,
+                authority=self._authority,
+                claim=claim,
+            )
+        if is_mutating_effect(effect):
+            if not isinstance(executor, MutatingEffectExecutor):
+                raise TypeError(
+                    "mutating effects require a MutatingEffectExecutor or EffectExecutorRouter"
+                )
+            return executor.execute(
+                effect,
+                token,
+                now=now,
+                authority=self._authority,
+                claim=claim,
+            )
+        if getattr(executor, "requires_authority", False):
+            return executor.execute(  # type: ignore[call-arg]
+                effect,
+                token,
+                now=now,
+                authority=self._authority,
+                claim=claim,
+            )
+        # Generic EffectExecutor path (read-only adapters).
+        return executor.execute(effect, token, now=now)  # type: ignore[call-arg]
+
+
+_: type[ClaimAuthorityGuard] = _EngineClaimAuthorityGuard

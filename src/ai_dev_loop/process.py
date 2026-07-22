@@ -9,7 +9,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO
+from typing import IO, Any
 
 from ai_dev_loop.errors import AiDevLoopError
 from ai_dev_loop.paths import SENSITIVE_FILE_MODE, set_sensitive_file_mode
@@ -51,6 +51,17 @@ def _open_capture_file(path: Path, *, sensitive: bool) -> IO[str]:
     return path.open("w", encoding="utf-8")
 
 
+@dataclass(frozen=True)
+class BinaryProcessResult:
+    """Byte-preserving subprocess result for binary-safe captures (for example Git diffs)."""
+
+    args: list[str]
+    returncode: int
+    stdout: bytes
+    stderr: bytes
+    timed_out: bool = False
+
+
 def run_process(
     args: Sequence[str],
     *,
@@ -58,35 +69,92 @@ def run_process(
     timeout: float | None = None,
     env: dict[str, str] | None = None,
 ) -> ProcessResult:
+    """Run a subprocess in its own process group; terminate and reap on timeout."""
+
     try:
-        completed = subprocess.run(
+        proc = subprocess.Popen(
             list(args),
             cwd=cwd,
-            timeout=timeout,
             env=env,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            check=False,
             shell=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode()
-        stderr = exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"").decode()
-        return ProcessResult(
-            args=list(args),
-            returncode=124,
-            stdout=stdout,
-            stderr=stderr,
-            timed_out=True,
+            start_new_session=True,
         )
     except FileNotFoundError as exc:
         raise AiDevLoopError(f"executable not found: {args[0]}") from exc
 
+    timed_out = False
+    try:
+        if timeout is None:
+            stdout, stderr = proc.communicate()
+        else:
+            try:
+                stdout, stderr = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                _terminate_process_group(proc)
+                stdout, stderr = proc.communicate()
+    except Exception:
+        _terminate_process_group(proc)
+        raise
+
+    returncode = proc.returncode if proc.returncode is not None else (124 if timed_out else 1)
     return ProcessResult(
         args=list(args),
-        returncode=completed.returncode,
-        stdout=completed.stdout,
-        stderr=completed.stderr,
+        returncode=returncode,
+        stdout=stdout or "",
+        stderr=stderr or "",
+        timed_out=timed_out,
+    )
+
+
+def run_process_bytes(
+    args: Sequence[str],
+    *,
+    cwd: str | None = None,
+    timeout: float | None = None,
+    env: dict[str, str] | None = None,
+) -> BinaryProcessResult:
+    """Run a subprocess capturing stdout/stderr as raw bytes (no text decoding)."""
+
+    try:
+        proc = subprocess.Popen(
+            list(args),
+            cwd=cwd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=False,
+            shell=False,
+            start_new_session=True,
+        )
+    except FileNotFoundError as exc:
+        raise AiDevLoopError(f"executable not found: {args[0]}") from exc
+
+    timed_out = False
+    try:
+        if timeout is None:
+            stdout, stderr = proc.communicate()
+        else:
+            try:
+                stdout, stderr = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                _terminate_process_group(proc)
+                stdout, stderr = proc.communicate()
+    except Exception:
+        _terminate_process_group(proc)
+        raise
+
+    returncode = proc.returncode if proc.returncode is not None else (124 if timed_out else 1)
+    return BinaryProcessResult(
+        args=list(args),
+        returncode=returncode,
+        stdout=stdout or b"",
+        stderr=stderr or b"",
+        timed_out=timed_out,
     )
 
 
@@ -218,7 +286,7 @@ def run_process_streaming(
     )
 
 
-def _terminate_process_group(proc: subprocess.Popen[str]) -> None:
+def _terminate_process_group(proc: subprocess.Popen[Any]) -> None:
     if proc.poll() is not None:
         return
     try:

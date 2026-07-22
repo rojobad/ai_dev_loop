@@ -12,8 +12,11 @@ PR_REVIEW_V2_DIRNAME = "pr-review-v2"
 DEFAULT_DB_FILENAME = "engine.sqlite3"
 ARTIFACTS_DIRNAME = "artifacts"
 RUNS_DIRNAME = "runs"
+WRITES_DIRNAME = "writes"
 
 _SAFE_RELATIVE_PATH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+_SAFE_EVIDENCE_KIND = re.compile(r"^[a-z][a-z0-9_-]*$")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def pr_review_v2_state_dir() -> Path:
@@ -64,6 +67,21 @@ def ensure_run_artifact_root(artifact_root: Path, run_id: str) -> Path:
     ensure_dir(artifact_root, mode=DIR_MODE)
     ensure_dir(artifact_root / RUNS_DIRNAME, mode=DIR_MODE)
     return ensure_dir(root, mode=DIR_MODE)
+
+
+def write_evidence_relative_path(kind: str, sha256: str) -> str:
+    """Return a run-relative content-addressed write-evidence path.
+
+    Example: ``writes/triggers/<sha256>.json``. ``kind`` is a safe directory
+    segment (for example ``triggers``) and ``sha256`` is the 64-hex digest of the
+    canonical evidence bytes.
+    """
+
+    if not _SAFE_EVIDENCE_KIND.match(kind):
+        raise ValueError("write-evidence kind is unsafe")
+    if not _SHA256_RE.match(sha256):
+        raise ValueError("write-evidence sha256 is invalid")
+    return f"{WRITES_DIRNAME}/{kind}/{sha256}.json"
 
 
 def resolve_run_relative_path(run_root: Path, relative_path: str) -> Path:

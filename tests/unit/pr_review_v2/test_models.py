@@ -218,6 +218,7 @@ def test_effect_classification_and_reconcile_cannot_embed_write_identity(
         bound_head_sha=SHA_A,
         patch_ref=artifact("p.patch"),
         expected_head_sha=SHA_A,
+        expected_branch="feature",
         commit_message_ref=artifact("m.txt"),
     )
     assert is_mutating_effect(request)

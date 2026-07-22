@@ -27,7 +27,7 @@ from ai_dev_loop.pr_review_v2.domain.common import (
     SafeAction,
     SafeActionKind,
     SourceRunOrigin,
-    build_effect_identity,
+    build_opaque_trigger_marker,
 )
 from ai_dev_loop.pr_review_v2.domain.effects import (
     AdjudicateThreadsEffect,
@@ -272,7 +272,7 @@ def _make_request_bot_review(
     binding: PullRequestBinding,
     max_attempts: int,
 ) -> RequestBotReviewEffect:
-    marker = build_effect_identity(run_id=run_id, cycle_number=cycle, operation="review-trigger")
+    marker = build_opaque_trigger_marker(run_id=run_id, cycle_number=cycle)
     effect_id, idem = stable_effect_ids(
         run_id=run_id, cycle_number=cycle, operation="request_bot_review"
     )
@@ -701,6 +701,7 @@ def _handle_success_publishing_initial(
             bound_head_sha=state.origin.expected_head_sha,
             patch_ref=state.origin.accepted_patch,
             expected_head_sha=state.origin.expected_head_sha,
+            expected_branch=state.origin.head_branch,
             commit_message_ref=outcome.commit_message_ref,
         )
         new_state = state.model_copy(
@@ -750,6 +751,7 @@ def _handle_success_publishing_initial(
             bound_head_sha=outcome.new_head_sha,
             commit_sha=outcome.commit_sha,
             remote_ref=state.origin.head_branch,
+            expected_remote_sha_before_push=outcome.expected_remote_sha_before_push,
             force=False,
         )
         new_state = state.model_copy(
@@ -1296,6 +1298,7 @@ def _handle_success_publishing_fix(
             bound_head_sha=state.old_head_sha,
             patch_ref=state.accepted_patch_ref,
             expected_head_sha=state.old_head_sha,
+            expected_branch=state.binding.head_branch,
             commit_message_ref=outcome.commit_message_ref,
         )
         new_state = state.model_copy(
@@ -1345,6 +1348,7 @@ def _handle_success_publishing_fix(
             bound_head_sha=outcome.new_head_sha,
             commit_sha=outcome.commit_sha,
             remote_ref=state.binding.head_branch,
+            expected_remote_sha_before_push=outcome.expected_remote_sha_before_push,
             force=False,
         )
         new_state = state.model_copy(

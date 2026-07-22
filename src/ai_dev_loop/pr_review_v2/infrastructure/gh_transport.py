@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol, runtime_checkable
@@ -39,6 +40,26 @@ _SAFE_COMMENT_ID_RE = re.compile(r"^[0-9]+$")
 
 # gh CLI: exit code 4 is the documented authentication / HTTP 401 class.
 _GH_AUTH_EXIT_CODE = 4
+
+_MINIMAL_GH_ENV_NAMES = (
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "GH_TOKEN",
+    "GH_HOST",
+    "GH_ENTERPRISE_TOKEN",
+    "GH_CONFIG_DIR",
+    "XDG_CONFIG_HOME",
+    "XDG_STATE_HOME",
+)
+
+
+def build_minimal_gh_env() -> dict[str, str]:
+    """Return only the environment variables GitHub CLI needs to operate."""
+
+    return {name: os.environ[name] for name in _MINIMAL_GH_ENV_NAMES if name in os.environ}
+
 
 PULL_REQUEST_IDENTITY_QUERY = """
 query PullRequestIdentity($owner: String!, $name: String!, $number: Int!) {
@@ -144,7 +165,12 @@ class DefaultGhProcessRunner:
         env: Mapping[str, str] | None = None,
     ) -> ProcessResult:
         try:
-            return run_process(args, cwd=cwd, timeout=timeout, env=dict(env) if env else None)
+            return run_process(
+                args,
+                cwd=cwd,
+                timeout=timeout,
+                env=dict(env) if env is not None else build_minimal_gh_env(),
+            )
         except AiDevLoopError as exc:
             message = str(exc).lower()
             if "executable not found" in message:
@@ -176,7 +202,7 @@ class GhApiTransport:
         self._cwd = cwd
         self._timeout = per_call_timeout_seconds
         self._runner = runner or DefaultGhProcessRunner()
-        self._env = dict(env) if env is not None else None
+        self._env = dict(env) if env is not None else build_minimal_gh_env()
 
     def fetch_pull_request_identity(
         self, *, owner: str, name: str, number: int, timeout_seconds: float | None = None
