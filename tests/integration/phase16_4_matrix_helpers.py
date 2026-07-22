@@ -112,7 +112,9 @@ def drive_to_waiting_for_bot(engine: PrReviewEngine, prepared, clock: FakeClock)
         lambda c: EffectSucceeded(
             occurred_at=clock.now(),
             token=c.completion_token,
-            outcome=CommitRecordedOutcome(commit_sha=SHA_B, new_head_sha=SHA_B),
+            outcome=CommitRecordedOutcome(
+                commit_sha=SHA_B, new_head_sha=SHA_B, expected_remote_sha_before_push=None
+            ),
         ),
     )
     step(

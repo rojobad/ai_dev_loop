@@ -84,12 +84,14 @@ def drive_initial_publication_to_waiting_for_bot(prepared):
     state, effects = succeed(
         state,
         effects[0],
-        CommitRecordedOutcome(commit_sha=SHA_B, new_head_sha=SHA_B),
+        CommitRecordedOutcome(
+            commit_sha=SHA_B, new_head_sha=SHA_B, expected_remote_sha_before_push=None
+        ),
     )
     state, effects = succeed(
         state,
         effects[0],
-        PushConfirmedOutcome(commit_sha=SHA_B, remote_ref="feature"),
+        PushConfirmedOutcome(commit_sha=SHA_B, remote_ref=prepared.origin.head_branch),
     )
     binding = PullRequestBinding(
         repository=prepared.origin.repository,
@@ -177,7 +179,9 @@ def drive_fix_publication(state, effects):
     state, effects = succeed(
         state,
         effects[0],
-        CommitRecordedOutcome(commit_sha=new_sha, new_head_sha=new_sha),
+        CommitRecordedOutcome(
+            commit_sha=new_sha, new_head_sha=new_sha, expected_remote_sha_before_push=None
+        ),
     )
     state, effects = succeed(
         state,

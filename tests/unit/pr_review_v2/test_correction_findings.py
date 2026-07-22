@@ -76,7 +76,9 @@ def test_mismatched_outcome_payload_with_valid_token_is_rejected(prepared_source
         EffectSucceeded(
             occurred_at=T2,
             token=token_for(commit),
-            outcome=CommitRecordedOutcome(commit_sha=SHA_B, new_head_sha=SHA_A),
+            outcome=CommitRecordedOutcome(
+                commit_sha=SHA_B, new_head_sha=SHA_A, expected_remote_sha_before_push=None
+            ),
         ),
     )
     assert isinstance(result, TransitionRejected)
@@ -88,7 +90,11 @@ def test_push_and_pr_binding_mismatches_rejected(prepared_source) -> None:
     state, effects = start(prepared_source)
     state, effects = succeed(state, effects[0], publication_text_outcome())
     state, effects = succeed(
-        state, effects[0], CommitRecordedOutcome(commit_sha=SHA_B, new_head_sha=SHA_B)
+        state,
+        effects[0],
+        CommitRecordedOutcome(
+            commit_sha=SHA_B, new_head_sha=SHA_B, expected_remote_sha_before_push=None
+        ),
     )
     push = effects[0]
     bad_push = reduce_pr_review(
@@ -317,6 +323,7 @@ def test_reconcile_write_effect_requires_exact_original_identity(repo) -> None:
         bound_head_sha=SHA_A,
         patch_ref=artifact("p.patch"),
         expected_head_sha=SHA_A,
+        expected_branch="feature",
         commit_message_ref=artifact("m.txt"),
     )
     base = {
@@ -446,7 +453,11 @@ def test_uncertain_rejects_same_id_divergent_push_and_marker_writes(
     state, effects = start(prepared_source)
     state, effects = succeed(state, effects[0], publication_text_outcome())
     state, effects = succeed(
-        state, effects[0], CommitRecordedOutcome(commit_sha=SHA_B, new_head_sha=SHA_B)
+        state,
+        effects[0],
+        CommitRecordedOutcome(
+            commit_sha=SHA_B, new_head_sha=SHA_B, expected_remote_sha_before_push=None
+        ),
     )
     push = effects[0]
     assert isinstance(push, PushCommitEffect)

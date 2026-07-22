@@ -221,7 +221,9 @@ def test_expired_readonly_requeues_same_dispatch(
         lambda c: EffectSucceeded(
             occurred_at=clock.now(),
             token=c.completion_token,
-            outcome=CommitRecordedOutcome(commit_sha="b" * 40, new_head_sha="b" * 40),
+            outcome=CommitRecordedOutcome(
+                commit_sha="b" * 40, new_head_sha="b" * 40, expected_remote_sha_before_push=None
+            ),
         ),
     )
     step(

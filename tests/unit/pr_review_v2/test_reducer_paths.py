@@ -331,7 +331,9 @@ def test_ambiguous_write_reconciliation_paths(prepared_source) -> None:
                 original_effect_id=commit.effect_id,
                 confirmed_outcome=__import__(
                     "ai_dev_loop.pr_review_v2.domain", fromlist=["CommitRecordedOutcome"]
-                ).CommitRecordedOutcome(commit_sha=SHA_B, new_head_sha=SHA_B),
+                ).CommitRecordedOutcome(
+                    commit_sha=SHA_B, new_head_sha=SHA_B, expected_remote_sha_before_push=None
+                ),
             ),
         ),
     )
@@ -426,6 +428,7 @@ def test_write_uncertain_rejected_for_read_only(prepared_existing) -> None:
                 bound_head_sha=state.binding.head_sha,
                 patch_ref=artifact("p.patch"),
                 expected_head_sha=state.binding.head_sha,
+                expected_branch=state.binding.head_branch,
                 commit_message_ref=artifact("m.txt"),
             ),
         ),

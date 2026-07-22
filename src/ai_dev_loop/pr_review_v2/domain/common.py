@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal, TypeVar
@@ -29,6 +30,38 @@ Sha256Hex = Annotated[
     str, StringConstraints(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
 ]
 ThreadId = Annotated[str, StringConstraints(min_length=1, max_length=256, pattern=r"^[^\s/\\]+$")]
+
+_ARGV_SAFE_BRANCH_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._/-"
+)
+
+
+def validate_argv_safe_branch_name(value: str) -> str:
+    """Reject empty or argv-unsafe Git branch names (no shell metacharacters)."""
+
+    if not value:
+        raise ValueError("branch name is unsafe or empty")
+    if not value[0].isalnum():
+        raise ValueError("branch name is unsafe or empty")
+    if any(ch not in _ARGV_SAFE_BRANCH_CHARS for ch in value):
+        raise ValueError("branch name is unsafe or empty")
+    if value.startswith("/") or value.endswith("/") or "//" in value:
+        raise ValueError("branch name is unsafe")
+    if ".." in value:
+        raise ValueError("branch name must not contain ..")
+    return value
+
+
+def validate_argv_safe_remote_ref(value: str) -> str:
+    """Reject empty or argv-unsafe push destination refs."""
+
+    if not value:
+        raise ValueError("remote ref is unsafe")
+    branch = value.removeprefix("refs/heads/") if value.startswith("refs/heads/") else value
+    validate_argv_safe_branch_name(branch)
+    if any(ch not in _ARGV_SAFE_BRANCH_CHARS for ch in value):
+        raise ValueError("remote ref is unsafe")
+    return value
 
 
 def coerce_utc_instant(value: object) -> datetime:
@@ -236,6 +269,13 @@ class PullRequestBinding(DomainModel):
     base_branch: NonEmptyStr
     head_sha: GitSha40
 
+    @field_validator("head_branch", "base_branch")
+    @classmethod
+    def validate_binding_branches(cls, value: str) -> str:
+        # Same argv-safe invariant as CommitPatchEffect.expected_branch so the
+        # reducer cannot emit a schema-invalid commit/push effect from a valid binding.
+        return validate_argv_safe_branch_name(value)
+
 
 class SourceRunOrigin(DomainModel):
     kind: Literal["source_run"] = "source_run"
@@ -246,6 +286,13 @@ class SourceRunOrigin(DomainModel):
     expected_head_sha: GitSha40
     accepted_patch: ArtifactRef
     execution_context_ref: ArtifactRef
+
+    @field_validator("head_branch", "base_branch")
+    @classmethod
+    def validate_origin_branches(cls, value: str) -> str:
+        # Same argv-safe invariant as CommitPatchEffect.expected_branch so initial
+        # publication cannot reach complete_claim with an unsound origin branch.
+        return validate_argv_safe_branch_name(value)
 
 
 class ExistingPrOrigin(DomainModel):
@@ -406,6 +453,34 @@ def build_effect_identity(
     if not target:
         raise ValueError("target must be non-empty when provided")
     return f"{base}:{target}"
+
+
+PUBLIC_MARKER_VERSION = "v1"
+
+
+def opaque_public_marker(logical_identity: str) -> str:
+    """Derive a versioned opaque public marker from a stable logical identity.
+
+    The digest never embeds raw run/session/claim/owner/generation identity in the
+    public marker text. Callers must pass the existing stable logical identity
+    (for example ``build_effect_identity(... operation=\"review-trigger\")``).
+    """
+
+    if not logical_identity or not logical_identity.strip():
+        raise ValueError("logical_identity must be non-empty")
+    digest = hashlib.sha256(logical_identity.encode("utf-8")).hexdigest()
+    return f"adl-{PUBLIC_MARKER_VERSION}:{digest}"
+
+
+def build_opaque_trigger_marker(*, run_id: str, cycle_number: int) -> str:
+    """Build the public trigger marker from the stable logical review-trigger identity."""
+
+    logical = build_effect_identity(
+        run_id=run_id,
+        cycle_number=cycle_number,
+        operation="review-trigger",
+    )
+    return opaque_public_marker(logical)
 
 
 def model_dump_jsonable(model: BaseModel) -> dict[str, Any]:

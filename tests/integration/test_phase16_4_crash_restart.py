@@ -242,7 +242,9 @@ def test_observation_not_before_delays_claim_without_retry_budget(
         lambda c: EffectSucceeded(
             occurred_at=clock.now(),
             token=c.completion_token,
-            outcome=CommitRecordedOutcome(commit_sha="b" * 40, new_head_sha="b" * 40),
+            outcome=CommitRecordedOutcome(
+                commit_sha="b" * 40, new_head_sha="b" * 40, expected_remote_sha_before_push=None
+            ),
         ),
     )
     complete_once(

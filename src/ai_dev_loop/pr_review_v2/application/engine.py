@@ -29,6 +29,11 @@ from ai_dev_loop.pr_review_v2.application.contracts import (
     TimerStatus,
 )
 from ai_dev_loop.pr_review_v2.application.status import build_status
+from ai_dev_loop.pr_review_v2.application.write_contracts import (
+    ClaimAuthorityResult,
+    ClaimAuthoritySnapshot,
+    WriteAuthorityStatus,
+)
 from ai_dev_loop.pr_review_v2.domain.common import (
     EffectClassification,
     EffectCompletionToken,
@@ -709,6 +714,123 @@ class PrReviewEngine:
         if row["expires_at"] is None:
             return False
         return parse_utc_instant(row["expires_at"]) > now
+
+    def check_claim_authority(self, snapshot: ClaimAuthoritySnapshot) -> ClaimAuthorityResult:
+        """Read-only pre-mutation authority check.
+
+        Validates the current lease, claimed dispatch, run version, and effect
+        identity without exposing SQL rows or holding a transaction across
+        repository locks or external processes.
+        """
+
+        now = self._clock.now()
+        try:
+            owner = validate_owner_id(snapshot.owner_id)
+        except PrReviewEngineError:
+            return ClaimAuthorityResult(
+                status=WriteAuthorityStatus.REJECTED,
+                safe_summary="owner_id is invalid",
+            )
+        with self._store.begin_read() as conn:
+            try:
+                state, version, _ = self._store.load_validated_snapshot(conn, snapshot.run_id)
+            except PrReviewEngineError:
+                return ClaimAuthorityResult(
+                    status=WriteAuthorityStatus.REJECTED,
+                    safe_summary="run snapshot is unavailable",
+                )
+            if state.kind in TERMINAL_KINDS:
+                return ClaimAuthorityResult(
+                    status=WriteAuthorityStatus.REJECTED,
+                    safe_summary="run is terminal",
+                )
+            lease = self._store.get_lease_row(conn, snapshot.run_id)
+            if not self._lease_matches(
+                lease,
+                owner=owner,
+                generation=snapshot.lease_generation,
+                now=now,
+            ):
+                return ClaimAuthorityResult(
+                    status=WriteAuthorityStatus.REJECTED,
+                    safe_summary="lease owner, generation, or expiry fence",
+                )
+            row = conn.execute(
+                """
+                SELECT * FROM pr_review_effects
+                WHERE run_id = ? AND dispatch_id = ?
+                """,
+                (snapshot.run_id, snapshot.dispatch_id),
+            ).fetchone()
+            if row is None:
+                return ClaimAuthorityResult(
+                    status=WriteAuthorityStatus.REJECTED,
+                    safe_summary="dispatch not found",
+                )
+            if row["status"] != DispatchStatus.CLAIMED.value:
+                return ClaimAuthorityResult(
+                    status=WriteAuthorityStatus.REJECTED,
+                    safe_summary="dispatch is not claimed",
+                )
+            if row["claim_id"] != snapshot.claim_id:
+                return ClaimAuthorityResult(
+                    status=WriteAuthorityStatus.REJECTED,
+                    safe_summary="claim_id mismatch",
+                )
+            if row["claim_owner_id"] != owner:
+                return ClaimAuthorityResult(
+                    status=WriteAuthorityStatus.REJECTED,
+                    safe_summary="claim owner mismatch",
+                )
+            if int(row["claim_lease_generation"] or 0) != snapshot.lease_generation:
+                return ClaimAuthorityResult(
+                    status=WriteAuthorityStatus.REJECTED,
+                    safe_summary="claim lease generation mismatch",
+                )
+            if int(row["claimed_run_version"] or 0) != snapshot.claimed_run_version:
+                return ClaimAuthorityResult(
+                    status=WriteAuthorityStatus.REJECTED,
+                    safe_summary="claimed run version mismatch",
+                )
+            if int(row["claimed_run_version"] or 0) != version:
+                return ClaimAuthorityResult(
+                    status=WriteAuthorityStatus.REJECTED,
+                    safe_summary="claimed run version is stale",
+                )
+            try:
+                effect = self._store.load_validated_effect(row)
+            except PrReviewEngineError:
+                return ClaimAuthorityResult(
+                    status=WriteAuthorityStatus.REJECTED,
+                    safe_summary="claimed effect payload is invalid",
+                )
+            if effect.effect_id != snapshot.effect_id:
+                return ClaimAuthorityResult(
+                    status=WriteAuthorityStatus.REJECTED,
+                    safe_summary="effect_id mismatch",
+                )
+            if int(effect.attempt) != snapshot.attempt:
+                return ClaimAuthorityResult(
+                    status=WriteAuthorityStatus.REJECTED,
+                    safe_summary="attempt mismatch",
+                )
+            if int(effect.cycle_number) != snapshot.cycle_number:
+                return ClaimAuthorityResult(
+                    status=WriteAuthorityStatus.REJECTED,
+                    safe_summary="cycle_number mismatch",
+                )
+            if effect.bound_head_sha != snapshot.bound_head_sha:
+                return ClaimAuthorityResult(
+                    status=WriteAuthorityStatus.REJECTED,
+                    safe_summary="bound_head_sha mismatch",
+                )
+            active = active_effect(state)
+            if active is None or active.effect_id != effect.effect_id:
+                return ClaimAuthorityResult(
+                    status=WriteAuthorityStatus.REJECTED,
+                    safe_summary="active effect mismatch",
+                )
+        return ClaimAuthorityResult(status=WriteAuthorityStatus.AUTHORIZED)
 
     def recover_expired_claims(self, run_id: str, owner_id: str, generation: int) -> int:
         owner = validate_owner_id(owner_id)

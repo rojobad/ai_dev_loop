@@ -22,6 +22,7 @@ ALLOWED_EXTERNAL = frozenset(
         "collections.abc",
         "datetime",
         "enum",
+        "hashlib",
         "typing",
         "pydantic",
         "pydantic.fields",
@@ -91,7 +92,7 @@ def _assert_allowed_import(module: str, filename: str) -> None:
     if module in ALLOWED_EXTERNAL:
         return
     root = module.split(".", 1)[0]
-    if root in {"pydantic", "collections", "typing", "enum", "__future__", "datetime"}:
+    if root in {"pydantic", "collections", "typing", "enum", "__future__", "datetime", "hashlib"}:
         return
     for fragment in FORBIDDEN_NAME_FRAGMENTS:
         if fragment in module:
@@ -202,3 +203,57 @@ def test_transport_exposes_only_typed_read_operations() -> None:
         "fetch_review_threads_page",
         "fetch_issue_comment_reactions_page",
     }.issubset(public)
+
+
+def test_write_transport_exposes_no_generic_methods() -> None:
+    from ai_dev_loop.pr_review_v2.infrastructure.gh_write_transport import GhWriteTransport
+    from ai_dev_loop.pr_review_v2.infrastructure.git_write_transport import GitWriteTransport
+
+    for cls in (GhWriteTransport, GitWriteTransport):
+        public = {
+            name for name in dir(cls) if not name.startswith("_") and callable(getattr(cls, name))
+        }
+        assert "graphql" not in public
+        assert "rest_get" not in public
+        assert "rest_write" not in public
+        assert "run_git" not in public
+
+
+def test_phase16_5_read_modules_remain_mutation_free() -> None:
+    gateway = (V2_ROOT / "infrastructure" / "github_read_gateway.py").read_text(encoding="utf-8")
+    transport = (V2_ROOT / "infrastructure" / "gh_transport.py").read_text(encoding="utf-8")
+    combined = gateway + transport
+    assert "create_pull_request" not in combined
+    assert "create_issue_comment" not in combined
+    assert "resolve_review_thread" not in combined
+    assert "push_non_force" not in combined
+    assert "commit_with_message_stdin" not in combined
+
+
+def test_write_modules_do_not_import_legacy_publisher() -> None:
+    write_files = [
+        V2_ROOT / "infrastructure" / "git_write_transport.py",
+        V2_ROOT / "infrastructure" / "git_publication_gateway.py",
+        V2_ROOT / "infrastructure" / "gh_write_transport.py",
+        V2_ROOT / "infrastructure" / "github_write_gateway.py",
+        V2_ROOT / "workers" / "write_executor.py",
+        V2_ROOT / "workers" / "reconcile_write_executor.py",
+    ]
+    forbidden = (
+        "ai_dev_loop.runners.publish",
+        "ai_dev_loop.runners.github",
+        "ai_dev_loop.runners.git",
+    )
+    for path in write_files:
+        text = path.read_text(encoding="utf-8")
+        tree = ast.parse(text, filename=str(path))
+        for node in ast.walk(tree):
+            modules: list[str] = []
+            if isinstance(node, ast.Import):
+                modules.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                modules.append(node.module)
+            for module in modules:
+                for item in forbidden:
+                    if module == item or module.startswith(item + "."):
+                        raise AssertionError(f"{path.name} imports {module}")
