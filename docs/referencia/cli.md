@@ -215,6 +215,7 @@ Cursor; `status` puede mostrar acuse `eyes` o diagnostico de timeout, pero eso
 nunca finaliza ni republica el trigger.
 
 `pr-review continue` también admite una recuperación histórica **lineage-bound**
+
 (Phase 15.10 / 15.11): si el run está en `waiting_for_user_attention` con
 `eligible_thread_set_drift` y la lineage prueba que el freeze
 `expected_eligible_thread_ids` pertenece a un ciclo anterior ya
@@ -228,6 +229,50 @@ PR, SHA, marker, sesiones A/B y chat Cursor; **no** republica `@codex review`,
 no crea sucesor y no relaja el drift legítimo del ciclo actual. Si un continue
 previo ya consumió el comentario, hace falta uno nuevo. No edites `state.json`
 a mano.
+
+## `pr-review-v2` (temporal / pre-cutover)
+
+Namespace aislado de Phase 16.7. **No** reemplaza `pr-review` hasta Phase 16.9.
+Requiere `pr_review_v2.enabled: true`. La evidencia automatizada de Phase 16.7 es
+simulada (fakes inyectados); la aceptacion live GitHub es Phase 16.8.
+
+```bash
+ai_dev_loop pr-review-v2 create <source-run-id> [--config-path PATH]
+ai_dev_loop pr-review-v2 prepare --repo OWNER/REPO --pr N \
+  --codex-session-id UUID --plan PATH --prompt PATH \
+  [--cursor-chat-id ID] [--review-model MODEL] [--repo-path PATH] [--config-path PATH]
+ai_dev_loop pr-review-v2 start <run-id>
+ai_dev_loop pr-review-v2 status <run-id> [--output text|json]
+ai_dev_loop pr-review-v2 history <run-id> [--limit N] [--newest] [--output text|json]
+ai_dev_loop pr-review-v2 resume <run-id> [--confirm-user-continuation]
+ai_dev_loop pr-review-v2 abort <run-id>
+```
+
+Contrato de seguridad:
+
+- `create` / `prepare` solo validan, congelan inputs y crean/reusan un
+  `PreparedState` durable. No arrancan workers/agentes, no escriben GitHub, no
+  hacen commit/push ni llamadas de modelo.
+- `create` acepta solo source runs `completed` /
+  `completed_with_residual_risk`, con snapshots plan/prompt/patch hash-verificados
+  y worktree (remote/branch/HEAD/staged patch exacto) alineado.
+- `prepare` exige `head_repo` same-repository, checkout local
+  (remote/branch/HEAD) igual al binding del PR, y plan/prompt confinados al repo.
+  El `cursor.chat_id` puede ser null hasta el primer local fix.
+- `start <run-id>` es la unica puerta a efectos externos: aplica el evento durable
+  y luego lanza/reusa el supervisor detached (`python -m
+  ai_dev_loop.pr_review_v2_supervisor_worker`) con metadata de ownership. Si el
+  spawn falla, reporta `spawn_failed` y no inventa un proceso vivo.
+- `resume` en `waiting_for_user` exige `--confirm-user-continuation` y evidencia
+  de operador protegida; no dispara timers futuros. Repara solo el supervisor
+  cuando el estado ya es activo.
+- `abort` persiste el abort durable antes de senalar procesos Cursor/Codex hijos
+  con ownership exacta y, despues, el supervisor owned (token, PID/PGID, start
+  time, executable, run binding). Rechaza metadata stale.
+- Status/history son acotados y redactados (sin prompts, patches, bodies, tokens,
+  session IDs completos, argv, PID/PGID ni environments). Los `safe_summary` de
+  adjudicacion en eventos/SQLite son operacionales fijos; el texto libre del
+  modelo queda solo en artefactos protegidos.
 
 ## `start`
 

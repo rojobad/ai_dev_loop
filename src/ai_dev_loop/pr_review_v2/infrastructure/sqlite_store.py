@@ -699,6 +699,54 @@ class SqlitePrReviewStore:
         ).fetchall()
         return [str(row["timer_id"]) for row in rows]
 
+    def list_due_timer_ids_for_run(
+        self, conn: sqlite3.Connection, run_id: str, now: datetime
+    ) -> list[str]:
+        rows = conn.execute(
+            """
+            SELECT timer_id FROM pr_review_timers
+            WHERE run_id = ? AND status = ? AND due_at <= ?
+            ORDER BY due_at ASC, timer_id ASC
+            """,
+            (run_id, TimerStatus.PENDING.value, encode_utc_instant(now)),
+        ).fetchall()
+        return [str(row["timer_id"]) for row in rows]
+
+    def list_nonterminal_run_rows(self, conn: sqlite3.Connection) -> list[sqlite3.Row]:
+        rows = conn.execute(
+            """
+            SELECT * FROM pr_review_runs
+            WHERE state_kind NOT IN ('completed', 'failed', 'aborted')
+            ORDER BY created_at ASC, run_id ASC
+            """
+        ).fetchall()
+        return [cast(sqlite3.Row, row) for row in rows]
+
+    def list_events_for_run(
+        self,
+        conn: sqlite3.Connection,
+        run_id: str,
+        *,
+        limit: int,
+        newest_first: bool,
+    ) -> list[sqlite3.Row]:
+        if limit < 1:
+            raise PrReviewEngineError(
+                PrReviewEngineErrorKind.VALIDATION,
+                "history limit must be positive",
+            )
+        order = "DESC" if newest_first else "ASC"
+        rows = conn.execute(
+            f"""
+            SELECT * FROM pr_review_events
+            WHERE run_id = ?
+            ORDER BY sequence {order}
+            LIMIT ?
+            """,
+            (run_id, limit),
+        ).fetchall()
+        return [cast(sqlite3.Row, row) for row in rows]
+
     def get_timer_row(self, conn: sqlite3.Connection, timer_id: str) -> sqlite3.Row | None:
         return cast(
             sqlite3.Row | None,

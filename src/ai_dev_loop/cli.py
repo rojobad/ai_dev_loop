@@ -57,6 +57,13 @@ config_app = typer.Typer(help="Configuration commands.")
 controller_app = typer.Typer(help="Controller-session status and control helpers.")
 github_app = typer.Typer(help="Optional GitHub CLI integration checks.")
 pr_review_app = typer.Typer(help="Optional autonomous GitHub PR review cycle commands.")
+pr_review_v2_app = typer.Typer(
+    help=(
+        "Temporary pre-cutover PR review v2 namespace (Phase 16.7). "
+        "create/prepare only freeze PreparedState; start is the sole external-effects gate. "
+        "Legacy pr-review remains unchanged."
+    ),
+)
 integrations_app = typer.Typer(help="Global Codex integration commands.")
 sessions_app = typer.Typer(help="Desktop session rollout bridge commands.")
 integrations_app.add_typer(sessions_app, name="sessions")
@@ -64,6 +71,7 @@ app.add_typer(config_app, name="config")
 app.add_typer(controller_app, name="controller")
 app.add_typer(github_app, name="github")
 app.add_typer(pr_review_app, name="pr-review")
+app.add_typer(pr_review_v2_app, name="pr-review-v2")
 app.add_typer(integrations_app, name="integrations")
 
 
@@ -693,6 +701,169 @@ def pr_review_abort_command(
         from ai_dev_loop.commands.pr_review import abort_pr_review_cycle
 
         typer.echo(abort_pr_review_cycle(run_id))
+
+    _handle(run)
+
+
+@pr_review_v2_app.command("create")
+def pr_review_v2_create_command(
+    source_run_id: Annotated[str, typer.Argument(help="Completed A/B source run ID.")],
+    config_path: Annotated[
+        Path | None,
+        typer.Option("--config-path", help="Optional project config path."),
+    ] = None,
+) -> None:
+    """Freeze a PreparedState from a completed source run (no workers/agents/writes)."""
+
+    def run() -> None:
+        from ai_dev_loop.commands.pr_review_v2 import create_from_source_run
+
+        typer.echo(create_from_source_run(source_run_id, config_path=config_path), nl=False)
+
+    _handle(run)
+
+
+@pr_review_v2_app.command("prepare")
+def pr_review_v2_prepare_command(
+    repo: Annotated[str, typer.Option("--repo", help="OWNER/REPO")],
+    pr: Annotated[int, typer.Option("--pr", help="Pull request number.")],
+    codex_session_id: Annotated[
+        str,
+        typer.Option("--codex-session-id", help="Exact Codex reviewer session UUID."),
+    ],
+    plan: Annotated[Path, typer.Option("--plan", help="Repository-relative plan path.")],
+    prompt: Annotated[Path, typer.Option("--prompt", help="Repository-relative prompt path.")],
+    cursor_chat_id: Annotated[
+        str | None,
+        typer.Option("--cursor-chat-id", help="Optional existing Cursor chat ID."),
+    ] = None,
+    review_model: Annotated[
+        str | None,
+        typer.Option("--review-model", help="Effective Codex review model override."),
+    ] = None,
+    config_path: Annotated[
+        Path | None,
+        typer.Option("--config-path", help="Optional project config path."),
+    ] = None,
+    repo_path: Annotated[
+        Path | None,
+        typer.Option("--repo-path", help="Local repository root."),
+    ] = None,
+) -> None:
+    """Freeze a PreparedState from an existing open PR (read-only; no start)."""
+
+    def run() -> None:
+        from ai_dev_loop.commands.pr_review_v2 import prepare_existing_pr
+
+        typer.echo(
+            prepare_existing_pr(
+                repo=repo,
+                pr_number=pr,
+                codex_session_id=codex_session_id,
+                plan_path=plan,
+                prompt_path=prompt,
+                cursor_chat_id=cursor_chat_id,
+                review_model=review_model,
+                config_path=config_path,
+                repo_path=repo_path,
+            ),
+            nl=False,
+        )
+
+    _handle(run)
+
+
+@pr_review_v2_app.command("start")
+def pr_review_v2_start_command(
+    run_id: Annotated[str, typer.Argument(help="Prepared pr-review-v2 run ID.")],
+) -> None:
+    """Apply start transition and launch/repair the v2 supervisor (sole effects gate)."""
+
+    def run() -> None:
+        from ai_dev_loop.commands.pr_review_v2 import start_run
+
+        typer.echo(start_run(run_id), nl=False)
+
+    _handle(run)
+
+
+@pr_review_v2_app.command("status")
+def pr_review_v2_status_command(
+    run_id: Annotated[str, typer.Argument(help="pr-review-v2 run ID.")],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Privacy-safe status from durable SQLite + launcher liveness."""
+
+    def run() -> None:
+        from ai_dev_loop.commands.pr_review_v2 import status_run
+
+        typer.echo(status_run(run_id, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@pr_review_v2_app.command("history")
+def pr_review_v2_history_command(
+    run_id: Annotated[str, typer.Argument(help="pr-review-v2 run ID.")],
+    limit: Annotated[int, typer.Option("--limit", help="Max journal entries.")] = 50,
+    newest: Annotated[
+        bool,
+        typer.Option("--newest", help="Return newest entries first."),
+    ] = False,
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Bounded redacted durable journal view."""
+
+    def run() -> None:
+        from ai_dev_loop.commands.pr_review_v2 import history_run
+
+        typer.echo(
+            history_run(
+                run_id,
+                limit=limit,
+                order="newest" if newest else "oldest",
+                output=output.value,
+            ),
+            nl=False,
+        )
+
+    _handle(run)
+
+
+@pr_review_v2_app.command("resume")
+def pr_review_v2_resume_command(
+    run_id: Annotated[str, typer.Argument(help="pr-review-v2 run ID.")],
+    confirm_user_continuation: Annotated[
+        bool,
+        typer.Option(
+            "--confirm-user-continuation",
+            help="Required when state is waiting_for_user.",
+        ),
+    ] = False,
+) -> None:
+    """Resume a paused/active run or acknowledge waiting_for_user continuation."""
+
+    def run() -> None:
+        from ai_dev_loop.commands.pr_review_v2 import resume_run
+
+        typer.echo(
+            resume_run(run_id, confirm_user_continuation=confirm_user_continuation),
+            nl=False,
+        )
+
+    _handle(run)
+
+
+@pr_review_v2_app.command("abort")
+def pr_review_v2_abort_command(
+    run_id: Annotated[str, typer.Argument(help="pr-review-v2 run ID.")],
+) -> None:
+    """Persist abort first, then signal only an exactly owned local supervisor."""
+
+    def run() -> None:
+        from ai_dev_loop.commands.pr_review_v2 import abort_run
+
+        typer.echo(abort_run(run_id), nl=False)
 
     _handle(run)
 

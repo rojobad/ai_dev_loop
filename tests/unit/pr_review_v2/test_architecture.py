@@ -131,6 +131,8 @@ def test_no_existing_production_modules_changed() -> None:
     assert "pr_review_v2" not in text
 
 
+ALLOWED_LOCAL_LOOP_FILES = frozenset({"local_fix_adapter.py", "local_executor.py"})
+
 FORBIDDEN_LEGACY_IMPORTS = (
     "ai_dev_loop.runners.github",
     "ai_dev_loop.state",
@@ -144,6 +146,17 @@ FORBIDDEN_LEGACY_IMPORTS = (
     "ai_dev_loop.iterations",
     "ai_dev_loop.resume_planner",
 )
+
+
+def _legacy_import_allowed(module: str, path: Path) -> bool:
+    if module == "ai_dev_loop.local_review_loop" or module.startswith(
+        "ai_dev_loop.local_review_loop."
+    ):
+        return path.name in ALLOWED_LOCAL_LOOP_FILES
+    if module == "ai_dev_loop.state" or module.startswith("ai_dev_loop.state."):
+        # LocalFixAdapter persists terminal carrier status under Phase 16.2 locks.
+        return path.name == "local_fix_adapter.py"
+    return False
 
 
 def _v2_non_domain_files() -> list[Path]:
@@ -169,6 +182,8 @@ def test_v2_modules_do_not_import_legacy_pr_or_lifecycle(path: Path) -> None:
         for module in modules:
             for forbidden in FORBIDDEN_LEGACY_IMPORTS:
                 if module == forbidden or module.startswith(forbidden + "."):
+                    if _legacy_import_allowed(module, path):
+                        continue
                     raise AssertionError(f"{path.name} imports forbidden module {module}")
 
 

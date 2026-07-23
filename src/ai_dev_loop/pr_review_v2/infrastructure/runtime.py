@@ -31,11 +31,19 @@ def safe_diagnostic(text: str) -> str:
 
 
 def dispatch_id_for(source_event_id: str, effect_ordinal: int) -> str:
-    return f"dispatch:{source_event_id}:{effect_ordinal}"
+    raw = f"dispatch:{source_event_id}:{effect_ordinal}"
+    if len(raw) <= 256:
+        return raw
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return f"dispatch:h:{digest}"
 
 
 def timer_id_for(source_event_id: str) -> str:
-    return f"timer:retry_due:{source_event_id}"
+    raw = f"timer:retry_due:{source_event_id}"
+    if len(raw) <= 256:
+        return raw
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return f"timer:h:{digest}"
 
 
 def recovery_submission_id(
@@ -67,9 +75,18 @@ def completion_submission_id(
     lease does not collide with a late completion from an earlier generation when
     claim-id factories reset after restart. ``result_key`` defaults to ``primary``;
     a corrected typed result for the same claim must use a distinct key.
+
+    When the composed identity would exceed the ``NonEmptyId`` 256-character limit
+    (common with content-addressed ``prv2-…`` run IDs nested inside dispatch/claim
+    ids), return a stable SHA-256 digest form instead. Do not truncate.
     """
 
-    return f"complete:{run_id}:{dispatch_id}:{claim_id}:gen-{lease_generation}:{result_key}"
+    raw = f"complete:{run_id}:{dispatch_id}:{claim_id}:gen-{lease_generation}:{result_key}"
+    # Keep headroom so derived ``dispatch:{submission_id}:N`` ids stay <= 256.
+    if len(raw) <= 200 and len(f"dispatch:{raw}:0") <= 256:
+        return raw
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return f"complete:h:{digest}"
 
 
 class SystemClock:

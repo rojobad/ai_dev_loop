@@ -61,6 +61,7 @@ from ai_dev_loop.pr_review_v2.domain.effects import (
     RunLocalFixEffect,
     UpdatePrTextEffect,
     classify_effect,
+    commit_patch_effect_target,
     is_local_effect,
     is_mutating_effect,
     is_read_only_effect,
@@ -240,4 +241,5 @@ __all__ = [
     "validate_argv_safe_branch_name",
     "validate_argv_safe_remote_ref",
     "with_attempt",
+    "commit_patch_effect_target",
 ]
