@@ -5,7 +5,7 @@ project:
 
 cursor:
   command: agent
-  model: cursor-grok-4.5-high-fast
+  model: composer-2.5-fast
   output_format: stream-json
   force: true
   trust_workspace: true
