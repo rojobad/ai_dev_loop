@@ -182,6 +182,61 @@ def test_commit_trailer_is_deterministic_digest() -> None:
     assert trailer == derive_commit_trailer(idempotency_key="pr-review:run:commit")
 
 
+def test_content_bound_commit_identities_differ_and_retry_preserves() -> None:
+    from ai_dev_loop.pr_review_v2.domain.common import ArtifactRef, RepositoryIdentity
+    from ai_dev_loop.pr_review_v2.domain.effects import (
+        CommitPatchEffect,
+        commit_patch_effect_target,
+        stable_effect_ids,
+        with_attempt,
+    )
+
+    repo = RepositoryIdentity(name_with_owner="acme/demo")
+    patch_a = ArtifactRef(relative_path="local/patches/a.patch", sha256="1" * 64)
+    patch_b = ArtifactRef(relative_path="local/patches/b.patch", sha256="2" * 64)
+    parent_a = "a" * 40
+    parent_b = "b" * 40
+    id_initial, key_initial = stable_effect_ids(
+        run_id="run-1",
+        cycle_number=1,
+        operation="commit_patch",
+        target=commit_patch_effect_target(expected_head_sha=parent_a, patch_sha256=patch_a.sha256),
+    )
+    id_fix, key_fix = stable_effect_ids(
+        run_id="run-1",
+        cycle_number=1,
+        operation="commit_patch",
+        target=commit_patch_effect_target(expected_head_sha=parent_b, patch_sha256=patch_b.sha256),
+    )
+    assert id_initial != id_fix
+    assert key_initial != key_fix
+    assert derive_commit_trailer(idempotency_key=key_initial) != derive_commit_trailer(
+        idempotency_key=key_fix
+    )
+
+    msg = ArtifactRef(relative_path="local/messages/m.json", sha256="3" * 64)
+    effect = CommitPatchEffect(
+        effect_id=id_initial,
+        idempotency_key=key_initial,
+        run_id="run-1",
+        cycle_number=1,
+        attempt=1,
+        max_attempts=6,
+        repository=repo,
+        bound_head_sha=parent_a,
+        patch_ref=patch_a,
+        expected_head_sha=parent_a,
+        expected_branch="feature",
+        commit_message_ref=msg,
+    )
+    retried = with_attempt(effect, 2)
+    assert retried.effect_id == id_initial
+    assert retried.idempotency_key == key_initial
+    assert derive_commit_trailer(idempotency_key=retried.idempotency_key) == derive_commit_trailer(
+        idempotency_key=key_initial
+    )
+
+
 # -- reconciliation identity + proof shapes --------------------------------
 
 

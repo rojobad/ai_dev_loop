@@ -21,7 +21,13 @@ from ai_dev_loop.process import (
 )
 from ai_dev_loop.response_schema import validate_codex_response_schema
 from ai_dev_loop.review_result import CodexReviewResult, completion_status_for_review
-from ai_dev_loop.state import CodexState, RunState, atomic_write_json, atomic_write_text
+from ai_dev_loop.state import (
+    CodexState,
+    RunState,
+    atomic_write_json,
+    atomic_write_text,
+    sha256_file,
+)
 
 PHASE_5_NO_FINDINGS_MESSAGE = (
     "Codex review found no actionable findings. Changes remain staged in the target repository."
@@ -313,6 +319,7 @@ def _update_iteration_review(
     artifacts: CodexReviewArtifacts,
     exit_code: int,
     review: CodexReviewResult,
+    result_sha256: str,
 ) -> None:
     number = int(iteration)
     existing = find_iteration(state, number)
@@ -325,6 +332,7 @@ def _update_iteration_review(
         "events_path": artifacts.events_path,
         "stderr_path": artifacts.stderr_path,
         "result_path": artifacts.result_path,
+        "result_sha256": result_sha256,
         "report_path": artifacts.report_path,
         "metadata_path": artifacts.metadata_path,
         "exit_code": exit_code,
@@ -457,6 +465,7 @@ def run_codex_review(
         )
 
     review = _load_review_result(result_path)
+    result_digest = sha256_file(result_path)
     atomic_write_text(report_path, review.review_markdown + "\n", sensitive=True)
     set_sensitive_file_mode(report_path)
 
@@ -476,6 +485,7 @@ def run_codex_review(
         artifacts=artifacts,
         exit_code=process.returncode,
         review=review,
+        result_sha256=result_digest,
     )
 
     completion_status = completion_status_for_review(review)

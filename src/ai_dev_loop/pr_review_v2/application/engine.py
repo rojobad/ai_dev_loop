@@ -28,6 +28,7 @@ from ai_dev_loop.pr_review_v2.application.contracts import (
     TimerFireReceipt,
     TimerStatus,
 )
+from ai_dev_loop.pr_review_v2.application.control_contracts import PreparedOwnershipKeys
 from ai_dev_loop.pr_review_v2.application.status import build_status
 from ai_dev_loop.pr_review_v2.application.write_contracts import (
     ClaimAuthorityResult,
@@ -173,6 +174,56 @@ class PrReviewEngine:
         with self._store.begin_immediate() as conn:
             self._store.insert_prepared_run(conn, run_id=run_id, state=state, now=now)
         return self.get_status(run_id)
+
+    def create_or_reuse_prepared_run(
+        self,
+        *,
+        run_id: str,
+        state: PreparedState,
+        ownership: PreparedOwnershipKeys,
+    ) -> tuple[PrReviewStatus, bool]:
+        """Atomically create a prepared run or reuse an exact prepared identity.
+
+        Conflicting active ownership (same source run, same PR, or same head
+        publication branch) is rejected. Exact prepared identity reuse returns
+        the existing run without mutation.
+        """
+
+        if state.run_id != run_id:
+            raise PrReviewEngineError(
+                PrReviewEngineErrorKind.VALIDATION,
+                "PreparedState.run_id must equal requested run_id",
+            )
+        now = self._clock.now()
+        with self._store.begin_immediate() as conn:
+            identity = _prepared_identity_fingerprint(state)
+            for row in self._store.list_nonterminal_run_rows(conn):
+                existing_state = self._store.load_state(row["state_payload"])
+                existing_id = str(row["run_id"])
+                if existing_id == run_id:
+                    if existing_state.kind != "prepared":
+                        raise PrReviewEngineError(
+                            PrReviewEngineErrorKind.CONFLICT,
+                            "run_id already exists in a non-prepared active state",
+                        )
+                    if _prepared_identity_fingerprint(existing_state) != identity:
+                        raise PrReviewEngineError(
+                            PrReviewEngineErrorKind.CONFLICT,
+                            "run_id already exists with a different prepared identity",
+                        )
+                    return self.get_status(run_id), True
+                if (
+                    existing_state.kind == "prepared"
+                    and _prepared_identity_fingerprint(existing_state) == identity
+                ):
+                    return self.get_status(existing_id), True
+                if _ownership_conflicts(existing_state, ownership):
+                    raise PrReviewEngineError(
+                        PrReviewEngineErrorKind.CONFLICT,
+                        "active ownership conflict for prepared run",
+                    )
+            self._store.insert_prepared_run(conn, run_id=run_id, state=state, now=now)
+        return self.get_status(run_id), False
 
     def apply_event(self, submission: EventSubmission) -> ApplicationReceipt:
         if submission.event.kind in FENCED_APPLY_EVENT_KINDS:
@@ -1305,6 +1356,15 @@ class PrReviewEngine:
             receipts.append(self._fire_one_timer(timer_id, now=now))
         return receipts
 
+    def fire_due_timers_for_run(self, run_id: str, *, limit: int = 100) -> list[TimerFireReceipt]:
+        now = self._clock.now()
+        with self._store.begin_read() as conn:
+            timer_ids = self._store.list_due_timer_ids_for_run(conn, run_id, now)[:limit]
+        receipts: list[TimerFireReceipt] = []
+        for timer_id in timer_ids:
+            receipts.append(self._fire_one_timer(timer_id, now=now))
+        return receipts
+
     def _fire_one_timer(self, timer_id: str, *, now: datetime) -> TimerFireReceipt:
         event_id = timer_event_id(timer_id)
         with self._store.begin_immediate() as conn:
@@ -1458,3 +1518,58 @@ class PrReviewEngine:
                 ),
                 now=now,
             )
+
+
+def _prepared_identity_fingerprint(state: PreparedState) -> str:
+    """Canonical fingerprint of prepared origin + limits (secret-free)."""
+
+    payload = {
+        "origin": state.origin.model_dump(mode="json"),
+        "limits": state.limits.model_dump(mode="json"),
+    }
+    return _canonical_sha(payload)
+
+
+def _canonical_sha(payload: dict[str, Any]) -> str:
+    import json
+
+    text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return payload_sha256(text + "\n")
+
+
+def _ownership_conflicts(state: PrReviewState, ownership: PreparedOwnershipKeys) -> bool:
+    origin = state.origin
+    if (
+        ownership.source_run_id is not None
+        and origin.kind == "source_run"
+        and origin.source_run_id == ownership.source_run_id
+    ):
+        return True
+    repo_name: str | None = None
+    pr_number: int | None = None
+    head_branch: str | None = None
+    if origin.kind == "source_run":
+        repo_name = origin.repository.name_with_owner
+        head_branch = origin.head_branch
+    elif origin.kind == "existing_pr":
+        repo_name = origin.binding.repository.name_with_owner
+        pr_number = origin.binding.pr_number
+        head_branch = origin.binding.head_branch
+    binding = getattr(state, "binding", None)
+    if binding is not None:
+        repo_name = binding.repository.name_with_owner
+        pr_number = binding.pr_number
+        head_branch = binding.head_branch
+    if (
+        ownership.pr_number is not None
+        and pr_number is not None
+        and repo_name == ownership.repository
+        and pr_number == ownership.pr_number
+    ):
+        return True
+    return (
+        ownership.head_branch is not None
+        and head_branch is not None
+        and repo_name == ownership.repository
+        and head_branch == ownership.head_branch
+    )

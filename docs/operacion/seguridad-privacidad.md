@@ -36,6 +36,17 @@ git stash
 
 Tras `pr-review create` (opt-in GitHub, origen `source_run`), el worker puede hacer `git commit` solo del patch staged aceptado y `git push` no-force de la rama preparada, despues de verificar el head remoto esperado. Tras `pr-review prepare` (origen `independent_pr`) no hay escritura GitHub hasta `pr-review start`, que publica el marcador de review y arranca el worker. Siguen prohibidos merge, force push, reset, clean, stash y unstage. Las credenciales GitHub viven solo en la sesion `gh` autenticada; el push Git usa SSH + `ssh-agent`.
 
+El namespace temporal `pr-review-v2` (Phase 16.7) separa preparacion de ejecucion:
+`create`/`prepare` solo congelan `PreparedState` (sin workers, agentes, writes,
+commits ni pushes). `start` es la unica puerta a efectos externos y lanza un
+supervisor detached con metadata de ownership (token/PID/PGID/start time/
+executable/run binding); nunca reporta `spawned` sin proceso propio. Status/history
+v2 no exponen prompts, patches, bodies de threads, tokens, session IDs
+completos, argv, PID/PGID ni environments; los resumenes de adjudicacion en
+eventos son operacionales fijos. Abort v2 persiste primero y solo senala
+procesos locales con ownership OS exacta. La evidencia automatizada de
+Phase 16.7 es simulada; la aceptacion live es Phase 16.8.
+
 ### Opcional: conservar la llave SSH durante la sesion WSL
 
 Si la llave SSH tiene passphrase, se puede usar `keychain` para cargarla una vez

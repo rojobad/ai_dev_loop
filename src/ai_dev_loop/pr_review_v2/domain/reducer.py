@@ -43,6 +43,7 @@ from ai_dev_loop.pr_review_v2.domain.effects import (
     ResolveThreadEffect,
     RunLocalFixEffect,
     UpdatePrTextEffect,
+    commit_patch_effect_target,
     is_mutating_effect,
     stable_effect_ids,
     strategy_for_mutating_effect,
@@ -688,7 +689,13 @@ def _handle_success_publishing_initial(
         if not isinstance(outcome, PublicationTextPreparedOutcome):
             return _reject(state, event, RejectionCode.MISMATCHED_OUTCOME_KIND)
         commit_id, commit_idem = stable_effect_ids(
-            run_id=state.run_id, cycle_number=state.cycle_number, operation="commit_patch"
+            run_id=state.run_id,
+            cycle_number=state.cycle_number,
+            operation="commit_patch",
+            target=commit_patch_effect_target(
+                expected_head_sha=state.origin.expected_head_sha,
+                patch_sha256=state.origin.accepted_patch.sha256,
+            ),
         )
         commit = CommitPatchEffect(
             effect_id=commit_id,
@@ -1183,6 +1190,9 @@ def _handle_success_local_fix(
             reason = PauseReasonKind.LOCAL_FIX_FAILED
         if outcome.safe_action is None:
             return _reject(state, event, RejectionCode.MISMATCHED_OUTCOME_BINDING)
+        resumable: RunningLocalFixState | None = None
+        if outcome.outcome is LocalFixOutcomeKind.PAUSED:
+            resumable = state
         return _apply(
             PausedState(
                 run_id=state.run_id,
@@ -1194,7 +1204,7 @@ def _handle_success_local_fix(
                 safe_summary=f"local fix ended with {outcome.outcome.value}",
                 paused_at=event.occurred_at,
                 binding=state.binding,
-                resumable=None,
+                resumable=resumable,
             )
         )
     if outcome.accepted_patch_ref is None or outcome.new_head_sha is None:
@@ -1285,7 +1295,13 @@ def _handle_success_publishing_fix(
         if state.new_head_sha is None:
             return _reject(state, event, RejectionCode.INVARIANT_VIOLATION)
         commit_id, commit_idem = stable_effect_ids(
-            run_id=state.run_id, cycle_number=state.cycle_number, operation="commit_patch"
+            run_id=state.run_id,
+            cycle_number=state.cycle_number,
+            operation="commit_patch",
+            target=commit_patch_effect_target(
+                expected_head_sha=state.old_head_sha,
+                patch_sha256=state.accepted_patch_ref.sha256,
+            ),
         )
         commit = CommitPatchEffect(
             effect_id=commit_id,

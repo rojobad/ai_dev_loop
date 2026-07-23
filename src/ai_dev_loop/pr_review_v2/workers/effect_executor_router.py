@@ -2,9 +2,10 @@
 
 The router is the single authority-aware executor handed to ``EffectWorker``. It
 dispatches READ_ONLY effects to the Phase 16.5 ``GitHubReadExecutor`` (no authority),
-MUTATING effects to the authority-aware ``WriteExecutor``, and RECONCILING effects to
-``ReconcileWriteExecutor``. LOCAL effects (Phase 16.7) and any unsupported kind are
-rejected before any process, artifact, or network activity.
+MUTATING effects to the authority-aware ``WriteExecutor``, RECONCILING effects to
+``ReconcileWriteExecutor``, and LOCAL effects to the Phase 16.7 ``LocalEffectExecutor``
+when injected. Unsupported kinds are rejected before any process, artifact, or
+network activity.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from ai_dev_loop.pr_review_v2.domain.events import (
     WriteOutcomeUncertain,
 )
 from ai_dev_loop.pr_review_v2.workers.github_read_executor import GitHubReadExecutor
+from ai_dev_loop.pr_review_v2.workers.local_executor import LocalEffectExecutor
 from ai_dev_loop.pr_review_v2.workers.reconcile_write_executor import ReconcileWriteExecutor
 from ai_dev_loop.pr_review_v2.workers.write_executor import WriteExecutor
 
@@ -47,10 +49,12 @@ class EffectExecutorRouter:
         read_executor: GitHubReadExecutor,
         write_executor: WriteExecutor,
         reconcile_executor: ReconcileWriteExecutor,
+        local_executor: LocalEffectExecutor | None = None,
     ) -> None:
         self._read = read_executor
         self._write = write_executor
         self._reconcile = reconcile_executor
+        self._local = local_executor
 
     def execute(
         self,
@@ -68,6 +72,10 @@ class EffectExecutorRouter:
             return self._write.execute(effect, token, now=now, authority=authority, claim=claim)
         if classification is EffectClassification.RECONCILING:
             return self._reconcile.execute(effect, token, now=now, authority=authority, claim=claim)
+        if classification is EffectClassification.LOCAL:
+            if self._local is None:
+                raise UnsupportedRoutedEffectError(effect.kind, classification.value)
+            return self._local.execute(effect, token, now=now, authority=authority, claim=claim)
         raise UnsupportedRoutedEffectError(effect.kind, classification.value)
 
 

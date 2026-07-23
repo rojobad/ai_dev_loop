@@ -122,6 +122,7 @@ def test_resume_allowed_via_apply_event(engine: PrReviewEngine, prepared: Prepar
 
 
 def test_application_modules_forbid_legacy_imports() -> None:
+    allowed_local_loop = frozenset({"local_fix_adapter.py", "local_executor.py"})
     roots = [
         V2_ROOT / "application",
         V2_ROOT / "infrastructure",
@@ -134,10 +135,27 @@ def test_application_modules_forbid_legacy_imports() -> None:
                 if isinstance(node, ast.ImportFrom):
                     module = node.module or ""
                     for forbidden in FORBIDDEN_LEGACY:
+                        if (
+                            forbidden == "ai_dev_loop.local_review_loop"
+                            and path.name in allowed_local_loop
+                        ):
+                            continue
+                        if forbidden == "ai_dev_loop.state" and path.name == "local_fix_adapter.py":
+                            continue
                         assert not module.startswith(forbidden), f"{path} imports {module}"
                 elif isinstance(node, ast.Import):
                     for alias in node.names:
                         for forbidden in FORBIDDEN_LEGACY:
+                            if (
+                                forbidden == "ai_dev_loop.local_review_loop"
+                                and path.name in allowed_local_loop
+                            ):
+                                continue
+                            if (
+                                forbidden == "ai_dev_loop.state"
+                                and path.name == "local_fix_adapter.py"
+                            ):
+                                continue
                             assert not alias.name.startswith(forbidden)
 
 

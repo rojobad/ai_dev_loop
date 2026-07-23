@@ -256,6 +256,47 @@ Prepare no escribe en GitHub; start publica el marcador de review.
 `set-cursor-model` solo aplica al ciclo independiente antes de crear el chat
 Cursor.
 
+## `pr_review_v2` (opcional, temporal / pre-cutover)
+
+Seccion aislada para el namespace CLI `pr-review-v2` (Phase 16.7). Ausente o
+`enabled: false` no afecta `pr-review` / `github`. Schema version permanece `1`.
+Campos de credenciales estan prohibidos (igual que `github`).
+
+```yaml
+pr_review_v2:
+  enabled: false
+  gh_command: gh
+  git_command: git
+  ssh_command: ssh
+  remote_name: origin
+  base_branch: master
+  reviewer_logins:
+    - chatgpt-codex-connector
+  review_trigger_body: "@codex review"
+  user_mention: rojobad
+  external_review_skill: review-github-pr-feedback
+  poll_interval_seconds: 60
+  max_external_cycles: 8
+  max_local_iterations: 3
+  per_call_timeout_seconds: 60
+  overall_timeout_seconds: 180
+  max_pages: 20
+  max_items: 500
+  max_server_directed_wait_seconds: 3600
+  no_findings:
+    enabled: false
+    accepted_comment_prefixes: []
+    reviewed_commit_prefix_length: 12
+  worker:
+    lease_ttl_seconds: 30
+    heartbeat_interval_seconds: 10
+    idle_poll_seconds: 1
+```
+
+Validacion cruzada: `heartbeat_interval_seconds < lease_ttl_seconds`; comandos
+argv-safe; prefixes no-findings no vacios si enabled; `extra=forbid`. Los valores
+efectivos de un run preparado se congelan en el execution context protegido.
+
 ## Validacion
 
 Inspecciona la configuracion efectiva antes de `prepare`:

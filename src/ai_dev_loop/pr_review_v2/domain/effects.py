@@ -302,6 +302,14 @@ def stable_effect_ids(
     return identity, identity
 
 
+def commit_patch_effect_target(*, expected_head_sha: str, patch_sha256: str) -> str:
+    """Content-bound target so initial vs fix commits never share an effect identity."""
+
+    if not expected_head_sha or not patch_sha256:
+        raise ValueError("commit_patch effect target requires parent HEAD and patch digest")
+    return f"{expected_head_sha}:{patch_sha256}"
+
+
 def strategy_for_mutating_effect(effect: MutatingEffect) -> ReconciliationStrategyKind:
     return _STRATEGY_FOR_MUTATING_KIND[effect.kind]
 
