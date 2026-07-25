@@ -10,6 +10,7 @@ import yaml
 
 from ai_dev_loop.commands.pr_review_v2 import prepare_existing_pr
 from ai_dev_loop.errors import ValidationError
+from ai_dev_loop.integrations.codex.session_runtime import CodexSessionRuntime
 from ai_dev_loop.pr_review_v2.infrastructure.existing_pr_discovery import ExistingPrDiscoverer
 
 SHA_A = "a" * 40
@@ -32,7 +33,7 @@ def _write_enabled_config(root: Path) -> Path:
         "version": 1,
         "project": {"name": "demo"},
         "cursor": {},
-        "codex": {"review_model": "gpt-5"},
+        "codex": {},
         "workflow": {},
         "prompt": {},
         "pr_review_v2": {"enabled": True},
@@ -100,6 +101,19 @@ def test_prepare_existing_pr_with_fake_discoverer(
         ["git", "remote", "add", "origin", "git@github.com:acme/demo.git"], cwd=root
     )
     cfg = _write_enabled_config(root)
+    runtime = CodexSessionRuntime(
+        session_id=SESSION,
+        model="gpt-5.6",
+        reasoning_effort="high",
+        origin="native_wsl",
+        source_event_type="thread_settings_applied",
+        source_timestamp="2026-07-25T00:00:00Z",
+    )
+    monkeypatch.setattr(
+        "ai_dev_loop.commands.pr_review_v2.read_codex_session_runtime",
+        lambda session_id: runtime,
+    )
+
     fake = _FakeGh(
         {
             "state": "open",
@@ -117,7 +131,6 @@ def test_prepare_existing_pr_with_fake_discoverer(
         codex_session_id=SESSION,
         plan_path=Path("plans/x.md"),
         prompt_path=Path("plans/prompt.txt"),
-        review_model="gpt-5",
         config_path=cfg,
         repo_path=root,
         discoverer=disc,
@@ -125,6 +138,19 @@ def test_prepare_existing_pr_with_fake_discoverer(
     assert "origin: existing_pr" in text
     assert "prepared run" in text
     assert "start" in text
+    from ai_dev_loop.commands.pr_review_v2 import _artifact_root, _open_engine
+    from ai_dev_loop.pr_review_v2.infrastructure.protected_result_store import ProtectedResultStore
+
+    run_id = text.split("prepared run ", 1)[1].splitlines()[0]
+    engine = _open_engine()
+    with engine.store.begin_read() as conn:
+        state, _, _ = engine.store.load_validated_snapshot(conn, run_id)
+    context = ProtectedResultStore(_artifact_root()).read_execution_context(
+        run_id=run_id,
+        ref=state.origin.execution_context_ref,
+    )
+    assert context.codex.review_model == "gpt-5.6"
+    assert context.codex.review_reasoning_effort == "high"
 
 
 def test_prepare_rejects_wrong_checkout_branch(
@@ -148,6 +174,18 @@ def test_prepare_rejects_wrong_checkout_branch(
         ["git", "remote", "add", "origin", "git@github.com:acme/demo.git"], cwd=root
     )
     cfg = _write_enabled_config(root)
+    monkeypatch.setattr(
+        "ai_dev_loop.commands.pr_review_v2.read_codex_session_runtime",
+        lambda session_id: CodexSessionRuntime(
+            session_id=SESSION,
+            model="gpt-5.6",
+            reasoning_effort="high",
+            origin="native_wsl",
+            source_event_type="thread_settings_applied",
+            source_timestamp="2026-07-25T00:00:00Z",
+        ),
+    )
+
     fake = _FakeGh(
         {
             "state": "open",

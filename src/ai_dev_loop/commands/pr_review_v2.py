@@ -6,6 +6,10 @@ from pathlib import Path
 
 from ai_dev_loop.config import ProjectConfig, PrReviewV2Section, resolve_effective_config
 from ai_dev_loop.errors import ValidationError
+from ai_dev_loop.integrations.codex.session_runtime import (
+    read_codex_session_runtime,
+    require_codex_session_id,
+)
 from ai_dev_loop.pr_review_v2.application.control import ControlPlaneService
 from ai_dev_loop.pr_review_v2.application.control_contracts import (
     ControlError,
@@ -33,6 +37,7 @@ from ai_dev_loop.pr_review_v2.infrastructure.paths import (
 )
 from ai_dev_loop.pr_review_v2.infrastructure.protected_result_store import ProtectedResultStore
 from ai_dev_loop.pr_review_v2.workers.supervisor import SupervisorLauncherStore
+from ai_dev_loop.review_runtime import resolve_effective_review_runtime
 from ai_dev_loop.run_discovery import load_run
 from ai_dev_loop.state import RunState, sha256_file
 
@@ -332,8 +337,7 @@ def prepare_existing_pr(
     root = (repo_path or Path.cwd()).resolve()
     config, _effective, _path = resolve_effective_config(repo_root=root, config_path=config_path)
     v2 = _require_v2_config(config)
-    if not codex_session_id.strip():
-        raise ValidationError("codex session id is required")
+    session_id = require_codex_session_id(codex_session_id)
 
     repo_info = discover_repository(root)
     if repo_info.root.resolve() != root.resolve():
@@ -356,12 +360,14 @@ def prepare_existing_pr(
     if local_owner_repo.lower() != repo.strip().lower():
         raise ValidationError("local checkout remote does not match --repo")
 
-    effective_model = review_model or config.codex.review_model
-    if not effective_model:
-        raise ValidationError(
-            "codex.review_model must be set in config or passed via --review-model"
-        )
-    review_effort = config.codex.review_reasoning_effort or "medium"
+    session_runtime = read_codex_session_runtime(session_id)
+    review_runtime = resolve_effective_review_runtime(
+        session=session_runtime,
+        configured_review_model=(
+            review_model if review_model is not None else config.codex.review_model
+        ),
+        configured_review_reasoning_effort=config.codex.review_reasoning_effort,
+    )
 
     disc: ExistingPrDiscoverer = discoverer or ExistingPrDiscoverer(
         gh_command=v2.gh_command,
@@ -398,9 +404,9 @@ def prepare_existing_pr(
             sandbox=config.cursor.sandbox,
         ),
         codex=ExecutionContextCodex(
-            session_id=codex_session_id.strip(),
-            review_model=effective_model,
-            review_reasoning_effort=review_effort,
+            session_id=session_id,
+            review_model=review_runtime.review_model,
+            review_reasoning_effort=review_runtime.review_reasoning_effort,
             command=config.codex.command,
             sandbox=config.codex.sandbox,
             review_skill=config.codex.review_skill,
