@@ -17,7 +17,10 @@ from typing import Any
 from ai_dev_loop.errors import AiDevLoopError
 from ai_dev_loop.pr_review_v2.application.control import EngineOriginContextResolver
 from ai_dev_loop.pr_review_v2.application.engine import PrReviewEngine
-from ai_dev_loop.pr_review_v2.application.execution_context import ExecutionContextArtifact
+from ai_dev_loop.pr_review_v2.application.execution_context import (
+    ExecutionContextArtifact,
+    ExecutionContextPrReviewV2,
+)
 from ai_dev_loop.pr_review_v2.application.github_read import GitHubReadPolicy
 from ai_dev_loop.pr_review_v2.application.write_contracts import (
     GitHubWritePolicy,
@@ -297,6 +300,37 @@ class ProcessCodexRunner:
             proc.wait(timeout=2)
 
 
+def build_github_read_policy(
+    v2: ExecutionContextPrReviewV2,
+    *,
+    repository_cwd: str,
+) -> GitHubReadPolicy:
+    """Build the read policy from frozen execution context with opt-in gating."""
+
+    timeout = float(v2.per_call_timeout_seconds)
+    overall = float(v2.overall_timeout_seconds)
+    if v2.no_findings_enabled:
+        accepted_prefixes = tuple(v2.no_findings_prefixes)
+        accept_thumbs = v2.accept_bot_thumbs_up
+    else:
+        accepted_prefixes = ()
+        accept_thumbs = False
+    return GitHubReadPolicy(
+        gh_command=v2.gh_command,
+        repository_cwd=repository_cwd,
+        per_call_timeout_seconds=timeout,
+        overall_timeout_seconds=overall,
+        max_pages=v2.max_pages,
+        max_items=v2.max_items,
+        reviewer_logins=v2.reviewer_logins,
+        poll_interval_seconds=v2.poll_interval_seconds,
+        accepted_no_findings_prefixes=accepted_prefixes,
+        accept_bot_thumbs_up=accept_thumbs,
+        reviewed_commit_prefix_length=v2.no_findings_prefix_length,
+        max_server_directed_wait_seconds=v2.max_server_directed_wait_seconds,
+    )
+
+
 def assemble_supervisor_runtime(run_id: str) -> AssembledSupervisorRuntime:
     """Load hash-verified execution context and assemble all effect executors."""
 
@@ -309,19 +343,7 @@ def assemble_supervisor_runtime(run_id: str) -> AssembledSupervisorRuntime:
     overall = float(v2.overall_timeout_seconds)
     input_reader = InputArtifactReader(artifact_root)
 
-    read_policy = GitHubReadPolicy(
-        gh_command=v2.gh_command,
-        repository_cwd=context.repository_root,
-        per_call_timeout_seconds=timeout,
-        overall_timeout_seconds=overall,
-        max_pages=v2.max_pages,
-        max_items=v2.max_items,
-        reviewer_logins=v2.reviewer_logins,
-        poll_interval_seconds=v2.poll_interval_seconds,
-        accepted_no_findings_prefixes=v2.no_findings_prefixes if v2.no_findings_enabled else (),
-        reviewed_commit_prefix_length=v2.no_findings_prefix_length,
-        max_server_directed_wait_seconds=v2.max_server_directed_wait_seconds,
-    )
+    read_policy = build_github_read_policy(v2, repository_cwd=context.repository_root)
     read_transport = GhApiTransport(
         command=v2.gh_command,
         cwd=context.repository_root,

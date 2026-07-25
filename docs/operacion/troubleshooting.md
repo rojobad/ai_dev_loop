@@ -642,3 +642,24 @@ live de `git diff --cached --binary` (el mismo que verificará la publicación).
 Eso no autoriza cambios de contenido distintos del artefacto ni edición del
 `state.json` del origen. El hash de bytes del archivo artefacto
 (`sha256_file`) no sustituye al fingerprint de publicación.
+
+## `pr-review-v2`: el bot reacciono pero el run no completa (Phase 16.8)
+
+Sintoma: hay una reaccion en GitHub pero `status` sigue en polling o pausa con
+evidencia contradictoria/malformada.
+
+Accion segura (no edites SQLite ni artefactos a mano):
+
+1. Confirma `pr_review_v2.no_findings.enabled: true` y al menos una regla:
+   `accepted_comment_prefixes` o `accept_bot_thumbs_up: true`.
+2. Con `accept_bot_thumbs_up`, solo cuenta `+1` del login en `reviewer_logins`
+   sobre el **comentario trigger exacto** del ciclo (marker opaco), con
+   timestamp posterior al trigger y **sin** hilos elegibles abiertos.
+3. `eyes` u otras reacciones no completan el run; varias `+1` validas fallan
+   cerrado.
+4. Si head/PR/trigger/hilos cambiaron, usa la accion segura de `status`/`history`
+   (`resume` documentado, `abort` si hay drift) y deja evidencia para rollback
+   manual.
+
+Gate A (automatizado) no implica aceptacion live; Gate B requiere el PR de
+aceptacion controlado en un checkout limpio de parish360-poc.

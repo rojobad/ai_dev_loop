@@ -14,6 +14,7 @@ from pydantic import Field, PositiveInt
 from ai_dev_loop.paths import DIR_MODE, SENSITIVE_FILE_MODE, ensure_dir, set_sensitive_file_mode
 from ai_dev_loop.pr_review_v2.application.contracts import AppModel
 from ai_dev_loop.pr_review_v2.application.github_read import (
+    MAX_TOTAL_SANITIZED_CHARS_LIMIT,
     GatewayBlockKind,
     ObservationEvidenceKind,
     ObservationSnapshot,
@@ -31,14 +32,22 @@ from ai_dev_loop.pr_review_v2.domain.common import (
     PullRequestBinding,
     UtcInstant,
 )
+from ai_dev_loop.pr_review_v2.infrastructure.input_artifacts import (
+    InputArtifactError,
+    InputArtifactErrorKind,
+    read_verified_sensitive_bytes,
+)
 from ai_dev_loop.pr_review_v2.infrastructure.paths import (
     ensure_run_artifact_root,
     resolve_run_relative_path,
-    run_artifact_root,
 )
 
 OBSERVATION_SCHEMA_VERSION = 1
 SANITIZATION_VERSION = 1
+# Sanitized text is bounded in characters by GithubReadPolicy. UTF-8 needs at
+# most four bytes per character; the fixed allowance covers bounded per-item
+# metadata and canonical JSON structure without making the reader unbounded.
+MAX_OBSERVATION_ARTIFACT_BYTES = 4 * MAX_TOTAL_SANITIZED_CHARS_LIMIT + 1_000_000
 
 
 class ArtifactStoreError(Exception):
@@ -71,6 +80,15 @@ class SanitizedNoFindingsArtifact(AppModel):
     reviewed_commit_prefix: NonEmptyStr
 
 
+class SanitizedReactionNoFindingsArtifact(AppModel):
+    rule_id: Literal["accept_bot_thumbs_up"] = "accept_bot_thumbs_up"
+    trigger_comment_id: NonEmptyStr
+    reaction_id: NonEmptyStr
+    user_login: NonEmptyStr
+    content: Literal["+1"] = "+1"
+    created_at: UtcInstant
+
+
 class ObservationArtifactManifest(AppModel):
     schema_version: Literal[1] = 1
     sanitization_version: Literal[1] = 1
@@ -87,6 +105,7 @@ class ObservationArtifactManifest(AppModel):
     trigger: ObservedTriggerComment
     eligible_threads: tuple[SanitizedThreadArtifact, ...] = ()
     no_findings: SanitizedNoFindingsArtifact | None = None
+    no_findings_reaction: SanitizedReactionNoFindingsArtifact | None = None
     reaction_ids: tuple[NonEmptyStr, ...] = ()
     source_hashes: dict[str, str] = Field(default_factory=dict)
 
@@ -109,6 +128,8 @@ class ReviewArtifactStore:
             manifest = _manifest_from_snapshot(snapshot)
             payload = manifest.model_dump(mode="json")
             canonical = _canonical_json_bytes(payload)
+            if len(canonical) > MAX_OBSERVATION_ARTIFACT_BYTES:
+                raise ArtifactStoreError("observation artifact exceeds maximum size")
             digest = hashlib.sha256(canonical).hexdigest()
             # Content-addressed path: competing claimants with different bytes cannot
             # overwrite an accepted ArtifactRef for the same cycle/poll.
@@ -120,20 +141,33 @@ class ReviewArtifactStore:
             target = resolve_run_relative_path(run_root, relative)
             ensure_dir(target.parent, mode=DIR_MODE)
             if target.exists():
-                existing = target.read_bytes()
-                existing_digest = hashlib.sha256(existing).hexdigest()
-                if existing_digest != digest:
-                    raise ArtifactStoreError(
-                        "content-addressed observation path collision with different bytes"
+                try:
+                    existing = read_verified_sensitive_bytes(
+                        self._root,
+                        run_id=run_id,
+                        relative_path=relative,
+                        expected_sha256=digest,
+                        max_bytes=MAX_OBSERVATION_ARTIFACT_BYTES,
                     )
+                except InputArtifactError as exc:
+                    raise _map_observation_input_error(exc) from exc
                 if existing != canonical:
                     raise ArtifactStoreError(
                         "content-addressed observation path collision with different bytes"
                     )
                 return ArtifactRef(relative_path=relative, sha256=digest)
             _atomic_write_bytes_exclusive(target, canonical)
-            verified = hashlib.sha256(target.read_bytes()).hexdigest()
-            if verified != digest:
+            try:
+                verified = read_verified_sensitive_bytes(
+                    self._root,
+                    run_id=run_id,
+                    relative_path=relative,
+                    expected_sha256=digest,
+                    max_bytes=MAX_OBSERVATION_ARTIFACT_BYTES,
+                )
+            except InputArtifactError as exc:
+                raise _map_observation_input_error(exc) from exc
+            if hashlib.sha256(verified).hexdigest() != digest:
                 raise ArtifactStoreError("post-write artifact hash mismatch")
             return ArtifactRef(relative_path=relative, sha256=digest)
         except ArtifactStoreError:
@@ -154,14 +188,16 @@ class ReviewArtifactStore:
         ref: ArtifactRef,
         expected_binding: PullRequestBinding | None = None,
     ) -> ObservationArtifactManifest:
-        run_root = run_artifact_root(self._root, run_id)
-        path = resolve_run_relative_path(run_root, ref.relative_path)
-        if not path.is_file() or path.is_symlink():
-            raise ArtifactStoreError("observation artifact missing or unsafe")
-        raw = path.read_bytes()
-        digest = hashlib.sha256(raw).hexdigest()
-        if digest != ref.sha256:
-            raise ArtifactStoreError("observation artifact hash mismatch")
+        try:
+            raw = read_verified_sensitive_bytes(
+                self._root,
+                run_id=run_id,
+                relative_path=ref.relative_path,
+                expected_sha256=ref.sha256,
+                max_bytes=MAX_OBSERVATION_ARTIFACT_BYTES,
+            )
+        except InputArtifactError as exc:
+            raise _map_observation_input_error(exc) from exc
         try:
             payload = json.loads(raw.decode("utf-8"))
             manifest = ObservationArtifactManifest.model_validate(payload)
@@ -209,6 +245,16 @@ def _manifest_from_snapshot(snapshot: ObservationSnapshot) -> ObservationArtifac
             body_sha256=comment.body_sha256,
             reviewed_commit_prefix=comment.reviewed_commit_prefix,
         )
+    no_findings_reaction = None
+    if snapshot.no_findings_reaction is not None:
+        reaction = snapshot.no_findings_reaction
+        no_findings_reaction = SanitizedReactionNoFindingsArtifact(
+            trigger_comment_id=reaction.trigger_comment_id,
+            reaction_id=reaction.reaction_id,
+            user_login=reaction.user_login,
+            content="+1",
+            created_at=reaction.created_at,
+        )
     source_hashes = {
         "trigger_body": snapshot.trigger.body_sha256,
     }
@@ -216,6 +262,11 @@ def _manifest_from_snapshot(snapshot: ObservationSnapshot) -> ObservationArtifac
         source_hashes[f"thread:{thread.thread_id}"] = thread.root_body_sha256
     if snapshot.no_findings_comment is not None:
         source_hashes["no_findings_body"] = snapshot.no_findings_comment.body_sha256
+    if snapshot.no_findings_reaction is not None:
+        source_hashes["no_findings_reaction"] = (
+            f"{snapshot.no_findings_reaction.reaction_id}:"
+            f"{snapshot.no_findings_reaction.user_login}:+1"
+        )
     return ObservationArtifactManifest(
         repository=snapshot.binding.repository.name_with_owner,
         pr_number=snapshot.binding.pr_number,
@@ -230,6 +281,7 @@ def _manifest_from_snapshot(snapshot: ObservationSnapshot) -> ObservationArtifac
         trigger=snapshot.trigger,
         eligible_threads=threads,
         no_findings=no_findings,
+        no_findings_reaction=no_findings_reaction,
         reaction_ids=tuple(item.reaction_id for item in snapshot.reactions),
         source_hashes=source_hashes,
     )
@@ -322,9 +374,18 @@ def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _map_observation_input_error(exc: InputArtifactError) -> ArtifactStoreError:
+    if exc.kind is InputArtifactErrorKind.HASH_MISMATCH:
+        return ArtifactStoreError("observation artifact hash mismatch")
+    if exc.kind is InputArtifactErrorKind.UNSAFE_MODE:
+        return ArtifactStoreError("observation artifact has unsafe permissions")
+    return ArtifactStoreError("observation artifact missing or unsafe")
+
+
 # Re-export observed types used by callers assembling manifests.
 __all__ = [
     "ArtifactStoreError",
+    "MAX_OBSERVATION_ARTIFACT_BYTES",
     "ObservationArtifactManifest",
     "ReviewArtifactStore",
     "SANITIZATION_VERSION",

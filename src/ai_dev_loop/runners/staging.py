@@ -22,7 +22,7 @@ from ai_dev_loop.runners.cursor_output import (
 from ai_dev_loop.runners.git import (
     git_add_all,
     git_diff_cached_name_only,
-    git_diff_cached_patch,
+    git_diff_cached_patch_bytes,
     git_diff_cached_stat,
     git_status_porcelain,
     staged_paths_from_name_only,
@@ -33,7 +33,7 @@ from ai_dev_loop.runners.git import (
     validate_stage_mode,
     validate_staged_paths_safe,
 )
-from ai_dev_loop.state import RunState, atomic_write_text, utc_now
+from ai_dev_loop.state import RunState, atomic_write_bytes, atomic_write_text, utc_now
 
 
 @dataclass(frozen=True)
@@ -226,11 +226,11 @@ def run_git_staging(
 
     stat_output = git_diff_cached_stat(repo_root)
     name_only_output = git_diff_cached_name_only(repo_root)
-    patch_output = git_diff_cached_patch(repo_root)
+    patch_bytes = git_diff_cached_patch_bytes(repo_root)
 
     atomic_write_text(stat_path, stat_output + ("\n" if stat_output else ""))
     atomic_write_text(name_only_path, name_only_output + ("\n" if name_only_output else ""))
-    atomic_write_text(patch_path, patch_output, sensitive=True)
+    atomic_write_bytes(patch_path, patch_bytes, sensitive=True)
 
     staged_paths = staged_paths_from_name_only(name_only_output)
     validate_staged_paths_safe(

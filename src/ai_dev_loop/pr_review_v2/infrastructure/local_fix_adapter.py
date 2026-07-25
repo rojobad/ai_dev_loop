@@ -236,6 +236,11 @@ class LocalFixAdapter:
         except Exception as exc:  # noqa: BLE001
             raise LocalFixAdapterError("carrier seed failed") from exc
 
+        # Cursor/Codex children live in independent process groups. After a carrier
+        # worker crash, fence any live owned child via production ownership metadata
+        # before START/RESUME can launch a duplicate invocation.
+        self._fence_orphaned_carrier_children(carrier_id)
+
         operation = LocalReviewOperation.RESUME if had_progress else LocalReviewOperation.START
         scheduled = ScheduledCursorTurn(
             iteration_number=1,
@@ -404,6 +409,42 @@ class LocalFixAdapter:
                 result_ref=result_ref,
             )
         raise LocalFixAdapterError("cached local fix is not an accepted terminal result")
+
+    def _fence_orphaned_carrier_children(self, carrier_id: str) -> None:
+        """Terminate live owned Cursor/Codex process groups left by a crashed worker.
+
+        Does not write an abort request: SIGTERM without a durable abort must not be
+        classified as user abort. Clears stale active-process metadata after a safe
+        signal/not-live outcome so resume can register a new child.
+        """
+
+        from ai_dev_loop.abort_control import (
+            ProcessSignalOutcome,
+            clear_active_process,
+            is_stale_live_process_signal,
+            read_active_process,
+            signal_active_process_group,
+        )
+        from ai_dev_loop.run_discovery import find_run_directory
+
+        try:
+            carrier_dir = find_run_directory(carrier_id)
+        except Exception:  # noqa: BLE001
+            return
+        if read_active_process(carrier_dir) is None:
+            return
+        result = signal_active_process_group(carrier_dir, run_id=carrier_id)
+        if is_stale_live_process_signal(result):
+            raise LocalFixAdapterError(
+                "ambiguous live active-process metadata blocks local-fix resume"
+            )
+        if result.outcome in {
+            ProcessSignalOutcome.SIGNALED,
+            ProcessSignalOutcome.NOT_LIVE,
+            ProcessSignalOutcome.STALE,
+            ProcessSignalOutcome.SKIPPED,
+        }:
+            clear_active_process(carrier_dir)
 
     def _map_result(
         self,

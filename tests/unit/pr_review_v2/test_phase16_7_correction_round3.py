@@ -272,7 +272,7 @@ def test_terminal_carrier_replay_without_resume(
 
     result_dir = run_artifact_root(store.root, RUN_ID) / LOCAL_FIX_RESULT_DIR
     removed = 0
-    for path in result_dir.glob("*.json"):
+    for path in list(result_dir.glob("*.json")) + list(result_dir.glob("*.commit")):
         path.unlink()
         removed += 1
     assert removed >= 1

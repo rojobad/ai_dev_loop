@@ -233,8 +233,11 @@ a mano.
 ## `pr-review-v2` (temporal / pre-cutover)
 
 Namespace aislado de Phase 16.7. **No** reemplaza `pr-review` hasta Phase 16.9.
-Requiere `pr_review_v2.enabled: true`. La evidencia automatizada de Phase 16.7 es
-simulada (fakes inyectados); la aceptacion live GitHub es Phase 16.8.
+Requiere `pr_review_v2.enabled: true`. **Gate A (Phase 16.8):** la aceptacion
+automatizada usa fakes/process boundaries y SQLite/artefactos persistentes; no
+implica aceptacion live. **Gate B:** aceptacion controlada en un PR nuevo de
+`rojobad/parish360-poc` solo despues de Gate A verde y review A/B sin hallazgos.
+Hasta Phase 16.9 este namespace no reemplaza `pr-review`.
 
 ```bash
 ai_dev_loop pr-review-v2 create <source-run-id> [--config-path PATH]

@@ -29,6 +29,9 @@ from ai_dev_loop.abort_control import (
 )
 from ai_dev_loop.paths import SENSITIVE_FILE_MODE
 
+_FAKE_START = "1"
+_FAKE_EXE = "/bin/false"
+
 
 def test_write_and_read_abort_request(tmp_path: Path) -> None:
     run_directory = tmp_path / "run"
@@ -64,11 +67,15 @@ def test_register_active_process_redacts_prompt(tmp_path: Path) -> None:
         parent_pid=os.getpid(),
         cwd=str(tmp_path),
         argv_redacted=["agent", "-p", "<prompt-redacted>"],
+        process_start_time=_FAKE_START,
+        executable=_FAKE_EXE,
     )
     assert metadata.argv_redacted[-1] == "<prompt-redacted>"
     loaded = read_active_process(run_directory)
     assert loaded is not None
     assert loaded.component == ActiveProcessComponent.CURSOR
+    assert loaded.process_start_time == _FAKE_START
+    assert loaded.executable == _FAKE_EXE
     assert (run_directory / ACTIVE_PROCESS_REL_PATH).is_file()
 
 
@@ -121,6 +128,56 @@ def test_signal_stale_run_id_mismatch_preserves_live_metadata(tmp_path: Path) ->
         proc.wait(timeout=2)
 
 
+def test_reused_pgid_with_stale_parent_lock_is_not_signaled(tmp_path: Path) -> None:
+    """Live PGID + matching parent lock is insufficient without starttime/exe match."""
+
+    from datetime import UTC, datetime
+
+    from ai_dev_loop.launcher import read_process_starttime
+    from ai_dev_loop.locking import FileLock, LockMetadata, run_lock_path
+
+    script = tmp_path / "sleeper.py"
+    script.write_text("import time\ntime.sleep(60)\n", encoding="utf-8")
+    proc = subprocess.Popen([sys.executable, str(script)], start_new_session=True)
+    pgid = os.getpgid(proc.pid)
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+    lock = FileLock(run_lock_path(run_directory))
+    lock.acquire(
+        LockMetadata(
+            pid=os.getpid(),
+            run_id="demo-run",
+            repository_path=str(tmp_path),
+            started_at=datetime.now(tz=UTC),
+        )
+    )
+    try:
+        real_start = read_process_starttime(proc.pid)
+        assert real_start is not None
+        register_active_process(
+            run_directory,
+            run_id="demo-run",
+            component="cursor",
+            iteration=1,
+            pid=proc.pid,
+            pgid=pgid,
+            parent_pid=os.getpid(),
+            cwd=str(tmp_path),
+            argv_redacted=["agent"],
+            process_start_time=str(real_start + 999999),
+            executable=str(Path(sys.executable).resolve()),
+        )
+        result = signal_active_process_group(run_directory, run_id="demo-run")
+        assert result.outcome == ProcessSignalOutcome.STALE
+        assert result.detail == "process start time mismatch"
+        assert proc.poll() is None
+    finally:
+        lock.release()
+        if proc.poll() is None:
+            os.killpg(pgid, signal.SIGKILL)
+        proc.wait(timeout=2)
+
+
 def test_signal_process_group_terminates_child(tmp_path: Path) -> None:
     script = tmp_path / "sleeper.py"
     script.write_text("import time\ntime.sleep(30)\n", encoding="utf-8")
@@ -153,6 +210,8 @@ def test_clear_active_process(tmp_path: Path) -> None:
         parent_pid=os.getpid(),
         cwd=str(tmp_path),
         argv_redacted=["codex"],
+        process_start_time=_FAKE_START,
+        executable=_FAKE_EXE,
     )
     clear_active_process(run_directory)
     assert read_active_process(run_directory) is None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,10 @@ from ai_dev_loop.pr_review_v2.application.execution_context import (
     ExecutionContextWorker,
     ExecutionContextWorkflow,
 )
+from ai_dev_loop.pr_review_v2.application.write_contracts import (
+    DEFAULT_MAX_TEXT_BYTES,
+    PublicationTextArtifact,
+)
 from ai_dev_loop.pr_review_v2.domain.common import ArtifactRef
 from ai_dev_loop.pr_review_v2.infrastructure.input_artifacts import InputArtifactReader
 from ai_dev_loop.pr_review_v2.infrastructure.paths import (
@@ -25,6 +30,10 @@ from ai_dev_loop.pr_review_v2.infrastructure.paths import (
     run_artifact_root,
 )
 from ai_dev_loop.pr_review_v2.infrastructure.protected_result_store import (
+    MAX_FIX_PROMPT_BYTES,
+    MAX_REPLY_TEXT_BYTES,
+    MAX_SOURCE_PLAN_BYTES,
+    MAX_SOURCE_PROMPT_BYTES,
     ProtectedResultStore,
     ProtectedResultStoreError,
 )
@@ -131,7 +140,7 @@ def test_symlink_artifact_rejected_on_read(tmp_path: Path) -> None:
         relative_path="local/link-context.json",
         sha256=ref.sha256,
     )
-    with pytest.raises(ProtectedResultStoreError, match="missing or unsafe"):
+    with pytest.raises(ProtectedResultStoreError, match="missing|unsafe"):
         store.read_execution_context(run_id=RUN_ID, ref=bad_ref)
 
 
@@ -182,3 +191,139 @@ def test_canonical_json_has_trailing_newline(tmp_path: Path) -> None:
     raw = (run_root / ref.relative_path).read_bytes()
     assert raw.endswith(b"\n")
     json.loads(raw.decode("utf-8"))
+
+
+@pytest.mark.parametrize(
+    ("kind", "max_bytes"),
+    (("plan", MAX_SOURCE_PLAN_BYTES), ("prompt", MAX_SOURCE_PROMPT_BYTES)),
+)
+def test_source_snapshot_size_boundary(
+    tmp_path: Path,
+    kind: str,
+    max_bytes: int,
+) -> None:
+    store = ProtectedResultStore(tmp_path / "art")
+    accepted = b"x" * max_bytes
+    if kind == "plan":
+        ref = store.persist_source_plan_bytes(run_id=RUN_ID, data=accepted)
+        loaded = store.read_source_plan_bytes(run_id=RUN_ID, expected_sha256=ref.sha256)
+        persist = store.persist_source_plan_bytes
+    else:
+        ref = store.persist_source_prompt_bytes(run_id=RUN_ID, data=accepted)
+        loaded = store.read_source_prompt_bytes(run_id=RUN_ID, expected_sha256=ref.sha256)
+        persist = store.persist_source_prompt_bytes
+    assert loaded == accepted
+
+    with pytest.raises(ProtectedResultStoreError, match="maximum size"):
+        persist(run_id=f"{RUN_ID}-oversized-{kind}", data=accepted + b"x")
+
+
+@pytest.mark.parametrize(
+    ("kind", "max_bytes"),
+    (("reply", MAX_REPLY_TEXT_BYTES), ("fix", MAX_FIX_PROMPT_BYTES)),
+)
+def test_plain_text_artifact_size_boundary(
+    tmp_path: Path,
+    kind: str,
+    max_bytes: int,
+) -> None:
+    store = ProtectedResultStore(tmp_path / "art")
+    accepted = "x" * max_bytes
+    if kind == "reply":
+        ref = store.persist_reply_text(run_id=RUN_ID, relative_hint="thread", text=accepted)
+        loaded = InputArtifactReader(tmp_path / "art").read_reply_text(run_id=RUN_ID, ref=ref)
+        assert loaded == accepted
+        persist = lambda run_id, text: store.persist_reply_text(  # noqa: E731
+            run_id=run_id, relative_hint="thread", text=text
+        )
+    else:
+        ref = store.persist_fix_prompt(run_id=RUN_ID, text=accepted)
+        assert ref.sha256
+        persist = store.persist_fix_prompt
+
+    with pytest.raises(ProtectedResultStoreError, match="maximum size"):
+        persist(run_id=f"{RUN_ID}-oversized-{kind}", text=accepted + "x")
+
+
+def test_publication_json_size_boundary_includes_serialization_overhead(tmp_path: Path) -> None:
+    store = ProtectedResultStore(tmp_path / "art")
+    empty = PublicationTextArtifact(title="t", body="").model_dump(mode="json")
+    overhead = len(
+        (
+            json.dumps(empty, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
+        ).encode()
+    )
+    accepted_body = "x" * (DEFAULT_MAX_TEXT_BYTES - overhead)
+
+    publication_ref, _commit_ref = store.persist_publication_text_and_commit_message(
+        run_id=RUN_ID,
+        title="t",
+        body=accepted_body,
+        subject="s",
+        commit_body="",
+    )
+    loaded = InputArtifactReader(tmp_path / "art").read_publication_text(
+        run_id=RUN_ID, ref=publication_ref
+    )
+    assert loaded.body == accepted_body
+
+    with pytest.raises(ProtectedResultStoreError, match="maximum size"):
+        store.persist_publication_text_and_commit_message(
+            run_id=f"{RUN_ID}-oversized-publication",
+            title="t",
+            body=accepted_body + "x",
+            subject="s",
+            commit_body="",
+        )
+
+
+def test_binding_valid_post_finalization_cache_mutation_fails_closed(tmp_path: Path) -> None:
+    from ai_dev_loop.pr_review_v2.application.execution_context import (
+        PublicationGenerationResultArtifact,
+    )
+    from ai_dev_loop.pr_review_v2.domain.common import ArtifactRef, RepositoryIdentity
+    from ai_dev_loop.pr_review_v2.domain.effects import GeneratePublicationTextEffect
+    from ai_dev_loop.pr_review_v2.infrastructure.paths import run_artifact_root
+
+    store = ProtectedResultStore(tmp_path / "art")
+    effect = GeneratePublicationTextEffect(
+        effect_id="effect-pub-mut",
+        idempotency_key="idem-mut",
+        run_id=RUN_ID,
+        cycle_number=1,
+        attempt=1,
+        max_attempts=3,
+        repository=RepositoryIdentity(name_with_owner="acme/demo"),
+        bound_head_sha=SHA_A,
+        evidence_ref=ArtifactRef(relative_path="e.json", sha256=HASH_1),
+        patch_ref=ArtifactRef(relative_path="p.patch", sha256=HASH_2),
+    )
+    artifact = PublicationGenerationResultArtifact(
+        title="Initial",
+        body="Body",
+        commit_subject="Subject",
+        commit_body="c",
+        run_id=RUN_ID,
+        cycle_number=1,
+        effect_id=effect.effect_id,
+        bound_head_sha=SHA_A,
+        evidence_ref_sha256=HASH_1,
+        patch_ref_sha256=HASH_2,
+    )
+    ref = store.persist_publication_generation(run_id=RUN_ID, artifact=artifact)
+    assert store.read_cached_publication_generation(effect) is not None
+    # Binding-valid content mutation: keep binding fields, change body text.
+    mutated = artifact.model_copy(update={"body": "Mutated body still binding-valid"})
+    canonical = (
+        json.dumps(
+            mutated.model_dump(mode="json"),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode()
+    target = run_artifact_root(store.root, RUN_ID) / ref.relative_path
+    target.write_bytes(canonical)
+    os.chmod(target, 0o600)
+    assert store.read_cached_publication_generation(effect) is None

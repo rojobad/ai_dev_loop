@@ -506,7 +506,7 @@ def test_terminal_crash_window_does_not_persist_on_patch_hash_drift(
     state.iterations = [latest]
     save_run_state(path, state)
     result_dir = run_artifact_root(store.root, RUN_ID) / LOCAL_FIX_RESULT_DIR
-    for item in result_dir.glob("*.json"):
+    for item in list(result_dir.glob("*.json")) + list(result_dir.glob("*.commit")):
         item.unlink()
     with pytest.raises(LocalFixAdapterError):
         adapter.execute(

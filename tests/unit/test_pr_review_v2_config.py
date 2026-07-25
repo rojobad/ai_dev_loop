@@ -93,3 +93,20 @@ def test_project_config_accepts_enabled_section(tmp_path: Path) -> None:
     )
     assert isinstance(config, ProjectConfig)
     assert config.pr_review_v2_enabled() is True
+
+
+def test_no_findings_enabled_requires_evidence_rule() -> None:
+    from ai_dev_loop.config import PrReviewV2NoFindingsSection
+
+    with pytest.raises(ValidationError, match="at least one evidence rule"):
+        PrReviewV2NoFindingsSection(enabled=True)
+    section = PrReviewV2NoFindingsSection(enabled=True, accept_bot_thumbs_up=True)
+    assert section.accept_bot_thumbs_up is True
+    assert section.accepted_comment_prefixes == []
+
+
+def test_no_findings_thumbs_up_defaults_disabled() -> None:
+    from ai_dev_loop.config import PrReviewV2NoFindingsSection
+
+    section = PrReviewV2NoFindingsSection()
+    assert section.accept_bot_thumbs_up is False

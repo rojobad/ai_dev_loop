@@ -54,6 +54,11 @@ class ActiveProcess(BaseModel):
     started_at: datetime
     cwd: str
     argv_redacted: list[str]
+    # OS identity used before signaling; required for new registrations.
+    process_start_time: str
+    executable: str
+    cleared_at: datetime | None = None
+    cleared_reason: str | None = None
 
 
 class ActiveProcessValidation(BaseModel):
@@ -118,6 +123,68 @@ def is_abort_requested(run_directory: Path) -> bool:
     return read_abort_request(run_directory) is not None
 
 
+def _read_process_executable(pid: int) -> str | None:
+    if pid <= 0:
+        return None
+    try:
+        return str(Path(f"/proc/{pid}/exe").resolve())
+    except OSError:
+        return None
+
+
+def _read_process_cmdline0(pid: int) -> str | None:
+    if pid <= 0:
+        return None
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return None
+    if not raw:
+        return None
+    first = raw.split(b"\0", 1)[0].decode("utf-8", errors="replace").strip()
+    return first or None
+
+
+def _capture_process_executable(pid: int) -> str | None:
+    """Capture a stable executable path for ownership checks.
+
+    Shebang launches via ``/usr/bin/env`` briefly expose ``env`` as ``/proc/<pid>/exe``
+    before exec. Wait briefly for the post-exec image so resume fencing does not treat
+    the same live process as an identity mismatch. If ``/proc/<pid>/exe`` is briefly
+    unavailable, fall back to cmdline[0].
+    """
+
+    exe = _read_process_executable(pid)
+    if exe is None:
+        return _read_process_cmdline0(pid)
+    if Path(exe).name != "env":
+        return exe
+    deadline = time.monotonic() + 0.25
+    latest = exe
+    while time.monotonic() < deadline:
+        time.sleep(0.01)
+        nxt = _read_process_executable(pid)
+        if nxt is None:
+            cmdline = _read_process_cmdline0(pid)
+            return cmdline or latest
+        latest = nxt
+        if Path(nxt).name != "env":
+            return nxt
+    return latest
+
+
+def _executable_identity_matches(*, recorded: str, current: str) -> bool:
+    try:
+        recorded_path = Path(recorded).resolve()
+        current_path = Path(current).resolve()
+    except OSError:
+        return False
+    if recorded_path == current_path:
+        return True
+    # Same process after /usr/bin/env shebang exec: starttime/pgid already matched.
+    return recorded_path.name == "env" and current_path.name != "env"
+
+
 def register_active_process(
     run_directory: Path,
     *,
@@ -129,12 +196,33 @@ def register_active_process(
     parent_pid: int,
     cwd: str,
     argv_redacted: list[str],
+    process_start_time: str | None = None,
+    executable: str | None = None,
 ) -> ActiveProcess:
+    from ai_dev_loop.launcher import read_process_starttime
+
     component_value = (
         component
         if isinstance(component, ActiveProcessComponent)
         else ActiveProcessComponent(str(component))
     )
+    if process_start_time is None:
+        start = read_process_starttime(pid)
+        if start is None:
+            raise ValidationError("failed to capture active process start time")
+        process_start_time = str(start)
+    if not str(process_start_time).strip():
+        raise ValidationError("active process start time must not be empty")
+    try:
+        int(process_start_time)
+    except ValueError as exc:
+        raise ValidationError("active process start time must be an integer") from exc
+    if executable is None:
+        executable = _capture_process_executable(pid)
+        if executable is None:
+            raise ValidationError("failed to capture active process executable")
+    if not str(executable).strip():
+        raise ValidationError("active process executable must not be empty")
     metadata = ActiveProcess(
         run_id=run_id,
         component=component_value,
@@ -145,6 +233,8 @@ def register_active_process(
         started_at=datetime.now(tz=UTC),
         cwd=cwd,
         argv_redacted=list(argv_redacted),
+        process_start_time=str(process_start_time),
+        executable=str(executable),
     )
     payload = metadata.model_dump(mode="json", by_alias=True)
     payload["started_at"] = metadata.started_at.isoformat()
@@ -206,6 +296,16 @@ def validate_active_process_metadata(
     active = metadata if metadata is not None else read_active_process(run_directory)
     if active is None:
         return None
+    if active.cleared_at is not None and not is_process_group_alive(active.pgid):
+        # Cleared metadata with a dead process group is stale. If the group is still
+        # live, continue into identity checks so fence/abort can signal orphans.
+        return ActiveProcessValidation(
+            metadata=active,
+            is_live=False,
+            is_stale=True,
+            pgid_checked_live=True,
+            stale_reason="active process metadata was cleared",
+        )
     if active.run_id != run_id:
         return ActiveProcessValidation(
             metadata=active,
@@ -243,6 +343,83 @@ def validate_active_process_metadata(
             is_stale=True,
             pgid_checked_live=True,
             stale_reason="parent workflow process is not clearly current",
+        )
+
+    # Fail closed unless OS identity matches recorded starttime + executable.
+    # A live PGID plus a stale matching parent lock alone is never enough.
+    from ai_dev_loop.launcher import read_process_pgid, read_process_starttime
+
+    if (
+        not str(getattr(active, "process_start_time", "") or "").strip()
+        or not str(getattr(active, "executable", "") or "").strip()
+    ):
+        return ActiveProcessValidation(
+            metadata=active,
+            is_live=True,
+            is_stale=True,
+            pgid_checked_live=True,
+            stale_reason="missing process identity metadata",
+        )
+    if not is_process_alive(active.pid):
+        return ActiveProcessValidation(
+            metadata=active,
+            is_live=True,
+            is_stale=True,
+            pgid_checked_live=True,
+            stale_reason="recorded pid is not live",
+        )
+    current_pgid = read_process_pgid(active.pid)
+    if current_pgid is None or current_pgid != active.pgid:
+        return ActiveProcessValidation(
+            metadata=active,
+            is_live=True,
+            is_stale=True,
+            pgid_checked_live=True,
+            stale_reason="pgid identity mismatch",
+        )
+    current_start = read_process_starttime(active.pid)
+    if current_start is None:
+        return ActiveProcessValidation(
+            metadata=active,
+            is_live=True,
+            is_stale=True,
+            pgid_checked_live=True,
+            stale_reason="process start time unavailable",
+        )
+    try:
+        recorded_start = int(active.process_start_time)
+    except ValueError:
+        return ActiveProcessValidation(
+            metadata=active,
+            is_live=True,
+            is_stale=True,
+            pgid_checked_live=True,
+            stale_reason="process start time metadata invalid",
+        )
+    if current_start != recorded_start:
+        return ActiveProcessValidation(
+            metadata=active,
+            is_live=True,
+            is_stale=True,
+            pgid_checked_live=True,
+            stale_reason="process start time mismatch",
+        )
+    exe = _read_process_executable(active.pid)
+    if exe is None:
+        return ActiveProcessValidation(
+            metadata=active,
+            is_live=True,
+            is_stale=True,
+            pgid_checked_live=True,
+            stale_reason="process executable unavailable",
+        )
+    if not _executable_identity_matches(recorded=active.executable, current=exe):
+        return ActiveProcessValidation(
+            metadata=active,
+            is_live=True,
+            is_stale=True,
+            pgid_checked_live=True,
+            stale_reason="executable identity mismatch",
         )
     return ActiveProcessValidation(
         metadata=active,

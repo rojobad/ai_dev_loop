@@ -242,6 +242,12 @@ LOCAL_KINDS = frozenset({"generate_publication_text", "adjudicate_threads", "run
 RECONCILING_KINDS = frozenset({"reconcile_write"})
 
 
+def all_pr_review_effect_kinds() -> frozenset[str]:
+    """Return every persisted PR review effect kind from the domain registry."""
+
+    return READ_ONLY_KINDS | LOCAL_KINDS | MUTATING_KINDS | RECONCILING_KINDS
+
+
 def parse_pr_review_effect(payload: object) -> PrReviewEffect:
     return PR_REVIEW_EFFECT_ADAPTER.validate_python(payload)
 

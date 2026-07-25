@@ -42,7 +42,14 @@ def test_policy_defaults() -> None:
     assert p.reviewer_logins == ("chatgpt-codex-connector",)
     assert p.poll_interval_seconds == 60
     assert p.no_findings_enabled is False
+    assert p.accept_bot_thumbs_up is False
     assert p.max_server_directed_wait_seconds == 3600
+
+
+def test_policy_no_findings_enabled_with_thumbs_up_only() -> None:
+    p = policy(accept_bot_thumbs_up=True)
+    assert p.no_findings_enabled is True
+    assert p.comment_no_findings_enabled is False
 
 
 def test_local_backoff_table_and_jitter_bounds() -> None:

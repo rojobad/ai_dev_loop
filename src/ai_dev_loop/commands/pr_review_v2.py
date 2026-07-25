@@ -142,6 +142,7 @@ def _execution_context_from_source(
             max_server_directed_wait_seconds=v2.max_server_directed_wait_seconds,
             no_findings_enabled=v2.no_findings.enabled,
             no_findings_prefixes=tuple(v2.no_findings.accepted_comment_prefixes),
+            accept_bot_thumbs_up=v2.no_findings.accept_bot_thumbs_up,
             no_findings_prefix_length=v2.no_findings.reviewed_commit_prefix_length,
             worker=ExecutionContextWorker(
                 lease_ttl_seconds=v2.worker.lease_ttl_seconds,
@@ -427,6 +428,7 @@ def prepare_existing_pr(
             max_server_directed_wait_seconds=v2.max_server_directed_wait_seconds,
             no_findings_enabled=v2.no_findings.enabled,
             no_findings_prefixes=tuple(v2.no_findings.accepted_comment_prefixes),
+            accept_bot_thumbs_up=v2.no_findings.accept_bot_thumbs_up,
             no_findings_prefix_length=v2.no_findings.reviewed_commit_prefix_length,
             worker=ExecutionContextWorker(
                 lease_ttl_seconds=v2.worker.lease_ttl_seconds,

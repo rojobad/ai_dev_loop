@@ -248,6 +248,26 @@ def git_diff_cached_patch(repo_root: Path) -> str:
     )
 
 
+def git_diff_cached_patch_bytes(repo_root: Path) -> bytes:
+    """Exact staged patch bytes for publication/commit identity checks.
+
+    Must match ``GitWriteTransport.read_staged_patch_bytes`` (``git diff --cached
+    --binary`` with no stdout stripping). Text-mode ``git_diff_cached_patch`` strips
+    trailing whitespace via ``require_success`` and is not suitable for content-bound
+    commit verification.
+    """
+
+    from ai_dev_loop.process import run_process_bytes
+
+    result = run_process_bytes(["git", "diff", "--cached", "--binary"], cwd=str(repo_root))
+    if result.timed_out:
+        raise ValidationError("git diff --cached --binary timed out")
+    if result.returncode != 0:
+        detail = (result.stderr or b"").decode("utf-8", errors="replace").strip() or "unknown error"
+        raise ValidationError(f"git diff --cached --binary failed: {detail}")
+    return result.stdout
+
+
 def git_add_all(repo_root: Path) -> ProcessResult:
     return _git(["add", "-A"], cwd=repo_root)
 

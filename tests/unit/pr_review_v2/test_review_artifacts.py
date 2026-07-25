@@ -12,6 +12,7 @@ from tests.unit.pr_review_v2.github_read_helpers import MARKER, binding
 from ai_dev_loop.pr_review_v2.application.github_read import (
     ObservationEvidenceKind,
     ObservationSnapshot,
+    ObservedReviewThread,
     ObservedTriggerComment,
 )
 from ai_dev_loop.pr_review_v2.domain.common import ArtifactRef
@@ -20,6 +21,7 @@ from ai_dev_loop.pr_review_v2.infrastructure.paths import (
     safe_run_directory_key,
 )
 from ai_dev_loop.pr_review_v2.infrastructure.review_artifacts import (
+    MAX_OBSERVATION_ARTIFACT_BYTES,
     ArtifactStoreError,
     ReviewArtifactStore,
     sha256_text,
@@ -107,3 +109,40 @@ def test_competing_claimants_cannot_overwrite_accepted_observation(tmp_path: Pat
     again = store.persist_observation_for_run(run_id="run-1", snapshot=expired_snapshot)
     assert again == accepted
     assert (run_root / accepted.relative_path).read_bytes() == accepted_bytes
+
+
+def _snapshot_with_sanitized_bodies(bodies: tuple[str, ...]) -> ObservationSnapshot:
+    snapshot = _snapshot()
+    threads = tuple(
+        ObservedReviewThread(
+            thread_id=f"thread-{index}",
+            is_resolved=False,
+            author_login="reviewer",
+            created_at=datetime(2026, 7, 21, 11, index, tzinfo=UTC),
+            commit_sha=binding().head_sha,
+            root_comment_id=f"comment-{index}",
+            root_body_sha256=sha256_text(body),
+            sanitized_root_body=body,
+        )
+        for index, body in enumerate(bodies)
+    )
+    return snapshot.model_copy(update={"eligible_threads": threads})
+
+
+def test_max_configured_sanitized_observation_roundtrips(tmp_path: Path) -> None:
+    store = ReviewArtifactStore(tmp_path / "artifacts")
+    snapshot = _snapshot_with_sanitized_bodies(("x" * 200_000,) * 10)
+
+    ref = store.persist_observation_for_run(run_id="run-max-observation", snapshot=snapshot)
+
+    loaded = store.read_and_verify(run_id="run-max-observation", ref=ref)
+    assert sum(len(thread.sanitized_root_body) for thread in loaded.eligible_threads) == 2_000_000
+
+
+def test_observation_writer_rejects_artifact_over_reader_limit(tmp_path: Path) -> None:
+    store = ReviewArtifactStore(tmp_path / "artifacts")
+    oversized_chars = (MAX_OBSERVATION_ARTIFACT_BYTES // 4) + 1
+    snapshot = _snapshot_with_sanitized_bodies(("😀" * oversized_chars,))
+
+    with pytest.raises(ArtifactStoreError, match="maximum size"):
+        store.persist_observation_for_run(run_id="run-oversized-observation", snapshot=snapshot)

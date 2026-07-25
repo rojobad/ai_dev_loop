@@ -20,7 +20,9 @@ from ai_dev_loop.pr_review_v2.application.execution_context import (
     PublicationGenerationResultArtifact,
 )
 from ai_dev_loop.pr_review_v2.application.write_contracts import (
+    DEFAULT_MAX_COMMIT_MESSAGE_BYTES,
     DEFAULT_MAX_PATCH_BYTES,
+    DEFAULT_MAX_TEXT_BYTES,
     CommitMessageArtifact,
     PublicationTextArtifact,
     reject_prohibited_controls,
@@ -31,7 +33,14 @@ from ai_dev_loop.pr_review_v2.domain.effects import (
     GeneratePublicationTextEffect,
     RunLocalFixEffect,
 )
-from ai_dev_loop.pr_review_v2.infrastructure.input_artifacts import InputArtifactReader
+from ai_dev_loop.pr_review_v2.infrastructure.input_artifacts import (
+    InputArtifactError,
+    InputArtifactErrorKind,
+    InputArtifactReader,
+    read_content_commitment_digest,
+    read_verified_bytes_under_run_root,
+    read_verified_sensitive_bytes,
+)
 from ai_dev_loop.pr_review_v2.infrastructure.paths import (
     ensure_run_artifact_root,
     resolve_run_relative_path,
@@ -57,6 +66,12 @@ PUBLICATION_TEXT_RELATIVE = "local/publication-text.json"
 COMMIT_MESSAGE_RELATIVE = "local/commit-message.json"
 FIX_PROMPT_RELATIVE = "local/fix-prompt.txt"
 FIX_PROMPTS_DIR = "local/fix-prompts"
+
+MAX_PROTECTED_RESULT_JSON_BYTES = 1_048_576
+MAX_SOURCE_PLAN_BYTES = DEFAULT_MAX_TEXT_BYTES
+MAX_SOURCE_PROMPT_BYTES = DEFAULT_MAX_TEXT_BYTES
+MAX_FIX_PROMPT_BYTES = DEFAULT_MAX_TEXT_BYTES
+MAX_REPLY_TEXT_BYTES = DEFAULT_MAX_TEXT_BYTES
 
 _SAFE_REPLY_HINT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -115,7 +130,7 @@ def _local_fix_binding_key(
     return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
 
 
-def adjudication_result_relative(
+def adjudication_result_commitment_relative(
     *,
     run_id: str,
     effect_id: str,
@@ -134,10 +149,33 @@ def adjudication_result_relative(
         execution_context_ref_sha256=execution_context_ref_sha256,
         frozen_thread_ids=frozen_thread_ids,
     )
-    return f"{ADJUDICATION_RESULT_DIR}/{key}.json"
+    return f"{ADJUDICATION_RESULT_DIR}/{key}.commit"
 
 
-def local_fix_result_relative(
+def adjudication_result_relative(
+    *,
+    run_id: str,
+    effect_id: str,
+    cycle_number: int,
+    bound_head_sha: str,
+    snapshot_ref_sha256: str,
+    execution_context_ref_sha256: str,
+    frozen_thread_ids: tuple[str, ...],
+) -> str:
+    """Legacy name: binding commitment path for effect-bound adjudication lookup."""
+
+    return adjudication_result_commitment_relative(
+        run_id=run_id,
+        effect_id=effect_id,
+        cycle_number=cycle_number,
+        bound_head_sha=bound_head_sha,
+        snapshot_ref_sha256=snapshot_ref_sha256,
+        execution_context_ref_sha256=execution_context_ref_sha256,
+        frozen_thread_ids=frozen_thread_ids,
+    )
+
+
+def local_fix_result_commitment_relative(
     *,
     run_id: str,
     effect_id: str,
@@ -154,7 +192,48 @@ def local_fix_result_relative(
         fix_prompt_ref_sha256=fix_prompt_ref_sha256,
         execution_context_ref_sha256=execution_context_ref_sha256,
     )
-    return f"{LOCAL_FIX_RESULT_DIR}/{key}.json"
+    return f"{LOCAL_FIX_RESULT_DIR}/{key}.commit"
+
+
+def local_fix_result_relative(
+    *,
+    run_id: str,
+    effect_id: str,
+    cycle_number: int,
+    bound_head_sha: str,
+    fix_prompt_ref_sha256: str,
+    execution_context_ref_sha256: str,
+) -> str:
+    """Legacy name: binding commitment path for effect-bound local-fix lookup."""
+
+    return local_fix_result_commitment_relative(
+        run_id=run_id,
+        effect_id=effect_id,
+        cycle_number=cycle_number,
+        bound_head_sha=bound_head_sha,
+        fix_prompt_ref_sha256=fix_prompt_ref_sha256,
+        execution_context_ref_sha256=execution_context_ref_sha256,
+    )
+
+
+def publication_generation_commitment_relative(
+    *,
+    run_id: str,
+    effect_id: str,
+    cycle_number: int,
+    bound_head_sha: str,
+    evidence_ref_sha256: str,
+    patch_ref_sha256: str,
+) -> str:
+    key = _publication_binding_key(
+        run_id=run_id,
+        effect_id=effect_id,
+        cycle_number=cycle_number,
+        bound_head_sha=bound_head_sha,
+        evidence_ref_sha256=evidence_ref_sha256,
+        patch_ref_sha256=patch_ref_sha256,
+    )
+    return f"{PUBLICATION_GENERATION_DIR}/{key}.commit"
 
 
 def publication_generation_relative(
@@ -166,6 +245,27 @@ def publication_generation_relative(
     evidence_ref_sha256: str,
     patch_ref_sha256: str,
 ) -> str:
+    """Legacy name: binding commitment path for effect-bound publication lookup."""
+
+    return publication_generation_commitment_relative(
+        run_id=run_id,
+        effect_id=effect_id,
+        cycle_number=cycle_number,
+        bound_head_sha=bound_head_sha,
+        evidence_ref_sha256=evidence_ref_sha256,
+        patch_ref_sha256=patch_ref_sha256,
+    )
+
+
+def publication_text_commitment_relative(
+    *,
+    run_id: str,
+    effect_id: str,
+    cycle_number: int,
+    bound_head_sha: str,
+    evidence_ref_sha256: str,
+    patch_ref_sha256: str,
+) -> str:
     key = _publication_binding_key(
         run_id=run_id,
         effect_id=effect_id,
@@ -174,7 +274,7 @@ def publication_generation_relative(
         evidence_ref_sha256=evidence_ref_sha256,
         patch_ref_sha256=patch_ref_sha256,
     )
-    return f"{PUBLICATION_GENERATION_DIR}/{key}.json"
+    return f"{PUBLICATION_TEXT_DIR}/{key}.commit"
 
 
 def publication_text_relative(
@@ -186,7 +286,7 @@ def publication_text_relative(
     evidence_ref_sha256: str,
     patch_ref_sha256: str,
 ) -> str:
-    key = _publication_binding_key(
+    return publication_text_commitment_relative(
         run_id=run_id,
         effect_id=effect_id,
         cycle_number=cycle_number,
@@ -194,10 +294,9 @@ def publication_text_relative(
         evidence_ref_sha256=evidence_ref_sha256,
         patch_ref_sha256=patch_ref_sha256,
     )
-    return f"{PUBLICATION_TEXT_DIR}/{key}.json"
 
 
-def commit_message_relative(
+def commit_message_commitment_relative(
     *,
     run_id: str,
     effect_id: str,
@@ -214,7 +313,30 @@ def commit_message_relative(
         evidence_ref_sha256=evidence_ref_sha256,
         patch_ref_sha256=patch_ref_sha256,
     )
-    return f"{COMMIT_MESSAGE_DIR}/{key}.json"
+    return f"{COMMIT_MESSAGE_DIR}/{key}.commit"
+
+
+def commit_message_relative(
+    *,
+    run_id: str,
+    effect_id: str,
+    cycle_number: int,
+    bound_head_sha: str,
+    evidence_ref_sha256: str,
+    patch_ref_sha256: str,
+) -> str:
+    return commit_message_commitment_relative(
+        run_id=run_id,
+        effect_id=effect_id,
+        cycle_number=cycle_number,
+        bound_head_sha=bound_head_sha,
+        evidence_ref_sha256=evidence_ref_sha256,
+        patch_ref_sha256=patch_ref_sha256,
+    )
+
+
+def _content_relative(directory: str, digest: str) -> str:
+    return f"{directory}/{digest}.json"
 
 
 class ProtectedResultStoreError(Exception):
@@ -251,16 +373,18 @@ class ProtectedResultStore:
         self, *, run_id: str, artifact: PublicationGenerationResultArtifact
     ) -> ArtifactRef:
         payload = artifact.model_dump(mode="json")
-        return self._persist_deterministic_json(
+        commitment = publication_generation_commitment_relative(
+            run_id=artifact.run_id,
+            effect_id=artifact.effect_id,
+            cycle_number=artifact.cycle_number,
+            bound_head_sha=artifact.bound_head_sha,
+            evidence_ref_sha256=artifact.evidence_ref_sha256,
+            patch_ref_sha256=artifact.patch_ref_sha256,
+        )
+        return self._persist_effect_bound_json(
             run_id=run_id,
-            relative_path=publication_generation_relative(
-                run_id=artifact.run_id,
-                effect_id=artifact.effect_id,
-                cycle_number=artifact.cycle_number,
-                bound_head_sha=artifact.bound_head_sha,
-                evidence_ref_sha256=artifact.evidence_ref_sha256,
-                patch_ref_sha256=artifact.patch_ref_sha256,
-            ),
+            directory=PUBLICATION_GENERATION_DIR,
+            commitment_relative=commitment,
             payload=payload,
         )
 
@@ -269,12 +393,10 @@ class ProtectedResultStore:
     ) -> PublicationGenerationResultArtifact:
         return self._read_json(run_id=run_id, ref=ref, model=PublicationGenerationResultArtifact)
 
-    def read_cached_publication_generation(
+    def resolve_cached_publication_generation_ref(
         self, effect: GeneratePublicationTextEffect
-    ) -> PublicationGenerationResultArtifact | None:
-        """Return effect-bound generation result only when all bindings match."""
-
-        relative = publication_generation_relative(
+    ) -> ArtifactRef | None:
+        commitment = publication_generation_commitment_relative(
             run_id=effect.run_id,
             effect_id=effect.effect_id,
             cycle_number=effect.cycle_number,
@@ -282,21 +404,23 @@ class ProtectedResultStore:
             evidence_ref_sha256=effect.evidence_ref.sha256,
             patch_ref_sha256=effect.patch_ref.sha256,
         )
-        run_root = run_artifact_root(self._root, effect.run_id)
-        try:
-            path = resolve_run_relative_path(run_root, relative)
-        except ValueError:
+        return self._resolve_commitment_ref(
+            run_id=effect.run_id,
+            directory=PUBLICATION_GENERATION_DIR,
+            commitment_relative=commitment,
+        )
+
+    def read_cached_publication_generation(
+        self, effect: GeneratePublicationTextEffect
+    ) -> PublicationGenerationResultArtifact | None:
+        """Return effect-bound generation result only when all bindings match."""
+
+        ref = self.resolve_cached_publication_generation_ref(effect)
+        if ref is None:
             return None
-        if not path.is_file() or path.is_symlink():
-            return None
         try:
-            raw = path.read_bytes()
-            digest = hashlib.sha256(raw).hexdigest()
-            artifact = self.read_publication_generation(
-                run_id=effect.run_id,
-                ref=ArtifactRef(relative_path=relative, sha256=digest),
-            )
-        except (OSError, UnicodeError, ProtectedResultStoreError, ValueError):
+            artifact = self.read_publication_generation(run_id=effect.run_id, ref=ref)
+        except ProtectedResultStoreError:
             return None
         if (
             artifact.run_id != effect.run_id
@@ -313,17 +437,19 @@ class ProtectedResultStore:
         self, *, run_id: str, artifact: ExternalAdjudicationResultArtifact
     ) -> ArtifactRef:
         payload = artifact.model_dump(mode="json")
-        return self._persist_deterministic_json(
+        commitment = adjudication_result_commitment_relative(
+            run_id=artifact.run_id,
+            effect_id=artifact.effect_id,
+            cycle_number=artifact.cycle_number,
+            bound_head_sha=artifact.bound_head_sha,
+            snapshot_ref_sha256=artifact.snapshot_ref_sha256,
+            execution_context_ref_sha256=artifact.execution_context_ref_sha256,
+            frozen_thread_ids=tuple(artifact.frozen_thread_ids),
+        )
+        return self._persist_effect_bound_json(
             run_id=run_id,
-            relative_path=adjudication_result_relative(
-                run_id=artifact.run_id,
-                effect_id=artifact.effect_id,
-                cycle_number=artifact.cycle_number,
-                bound_head_sha=artifact.bound_head_sha,
-                snapshot_ref_sha256=artifact.snapshot_ref_sha256,
-                execution_context_ref_sha256=artifact.execution_context_ref_sha256,
-                frozen_thread_ids=tuple(artifact.frozen_thread_ids),
-            ),
+            directory=ADJUDICATION_RESULT_DIR,
+            commitment_relative=commitment,
             payload=payload,
         )
 
@@ -332,12 +458,10 @@ class ProtectedResultStore:
     ) -> ExternalAdjudicationResultArtifact:
         return self._read_json(run_id=run_id, ref=ref, model=ExternalAdjudicationResultArtifact)
 
-    def read_cached_external_adjudication(
+    def resolve_cached_external_adjudication_ref(
         self, effect: AdjudicateThreadsEffect
-    ) -> ExternalAdjudicationResultArtifact | None:
-        """Return effect-bound adjudication only when every binding matches."""
-
-        relative = adjudication_result_relative(
+    ) -> ArtifactRef | None:
+        commitment = adjudication_result_commitment_relative(
             run_id=effect.run_id,
             effect_id=effect.effect_id,
             cycle_number=effect.cycle_number,
@@ -346,21 +470,23 @@ class ProtectedResultStore:
             execution_context_ref_sha256=effect.execution_context_ref.sha256,
             frozen_thread_ids=tuple(effect.frozen_thread_ids),
         )
-        run_root = run_artifact_root(self._root, effect.run_id)
-        try:
-            path = resolve_run_relative_path(run_root, relative)
-        except ValueError:
+        return self._resolve_commitment_ref(
+            run_id=effect.run_id,
+            directory=ADJUDICATION_RESULT_DIR,
+            commitment_relative=commitment,
+        )
+
+    def read_cached_external_adjudication(
+        self, effect: AdjudicateThreadsEffect
+    ) -> ExternalAdjudicationResultArtifact | None:
+        """Return effect-bound adjudication only when every binding matches."""
+
+        ref = self.resolve_cached_external_adjudication_ref(effect)
+        if ref is None:
             return None
-        if not path.is_file() or path.is_symlink():
-            return None
         try:
-            raw = path.read_bytes()
-            digest = hashlib.sha256(raw).hexdigest()
-            artifact = self.read_external_adjudication(
-                run_id=effect.run_id,
-                ref=ArtifactRef(relative_path=relative, sha256=digest),
-            )
-        except (OSError, UnicodeError, ProtectedResultStoreError, ValueError):
+            artifact = self.read_external_adjudication(run_id=effect.run_id, ref=ref)
+        except ProtectedResultStoreError:
             return None
         if (
             artifact.run_id != effect.run_id
@@ -378,28 +504,26 @@ class ProtectedResultStore:
         self, *, run_id: str, artifact: LocalFixResultArtifact
     ) -> ArtifactRef:
         payload = artifact.model_dump(mode="json")
-        return self._persist_deterministic_json(
+        commitment = local_fix_result_commitment_relative(
+            run_id=artifact.run_id,
+            effect_id=artifact.effect_id,
+            cycle_number=artifact.cycle_number,
+            bound_head_sha=artifact.bound_head_sha,
+            fix_prompt_ref_sha256=artifact.fix_prompt_ref_sha256,
+            execution_context_ref_sha256=artifact.execution_context_ref_sha256,
+        )
+        return self._persist_effect_bound_json(
             run_id=run_id,
-            relative_path=local_fix_result_relative(
-                run_id=artifact.run_id,
-                effect_id=artifact.effect_id,
-                cycle_number=artifact.cycle_number,
-                bound_head_sha=artifact.bound_head_sha,
-                fix_prompt_ref_sha256=artifact.fix_prompt_ref_sha256,
-                execution_context_ref_sha256=artifact.execution_context_ref_sha256,
-            ),
+            directory=LOCAL_FIX_RESULT_DIR,
+            commitment_relative=commitment,
             payload=payload,
         )
 
     def read_local_fix_result(self, *, run_id: str, ref: ArtifactRef) -> LocalFixResultArtifact:
         return self._read_json(run_id=run_id, ref=ref, model=LocalFixResultArtifact)
 
-    def read_cached_local_fix_result(
-        self, effect: RunLocalFixEffect
-    ) -> LocalFixResultArtifact | None:
-        """Return effect-bound local-fix result only when every binding matches."""
-
-        relative = local_fix_result_relative(
+    def resolve_cached_local_fix_result_ref(self, effect: RunLocalFixEffect) -> ArtifactRef | None:
+        commitment = local_fix_result_commitment_relative(
             run_id=effect.run_id,
             effect_id=effect.effect_id,
             cycle_number=effect.cycle_number,
@@ -407,21 +531,23 @@ class ProtectedResultStore:
             fix_prompt_ref_sha256=effect.fix_prompt_ref.sha256,
             execution_context_ref_sha256=effect.execution_context_ref.sha256,
         )
-        run_root = run_artifact_root(self._root, effect.run_id)
-        try:
-            path = resolve_run_relative_path(run_root, relative)
-        except ValueError:
+        return self._resolve_commitment_ref(
+            run_id=effect.run_id,
+            directory=LOCAL_FIX_RESULT_DIR,
+            commitment_relative=commitment,
+        )
+
+    def read_cached_local_fix_result(
+        self, effect: RunLocalFixEffect
+    ) -> LocalFixResultArtifact | None:
+        """Return effect-bound local-fix result only when every binding matches."""
+
+        ref = self.resolve_cached_local_fix_result_ref(effect)
+        if ref is None:
             return None
-        if not path.is_file() or path.is_symlink():
-            return None
         try:
-            raw = path.read_bytes()
-            digest = hashlib.sha256(raw).hexdigest()
-            artifact = self.read_local_fix_result(
-                run_id=effect.run_id,
-                ref=ArtifactRef(relative_path=relative, sha256=digest),
-            )
-        except (OSError, UnicodeError, ProtectedResultStoreError, ValueError):
+            artifact = self.read_local_fix_result(run_id=effect.run_id, ref=ref)
+        except ProtectedResultStoreError:
             return None
         if (
             artifact.run_id != effect.run_id
@@ -437,36 +563,52 @@ class ProtectedResultStore:
     def persist_source_plan_bytes(self, *, run_id: str, data: bytes) -> ArtifactRef:
         if not data:
             raise ProtectedResultStoreError("source plan bytes must not be empty")
-        return self._persist_bytes(run_id=run_id, relative_path=SOURCE_PLAN_RELATIVE, data=data)
+        return self._persist_bytes(
+            run_id=run_id,
+            relative_path=SOURCE_PLAN_RELATIVE,
+            data=data,
+            max_bytes=MAX_SOURCE_PLAN_BYTES,
+        )
 
     def persist_source_prompt_bytes(self, *, run_id: str, data: bytes) -> ArtifactRef:
         if not data.strip():
             raise ProtectedResultStoreError("source prompt bytes must not be empty")
-        return self._persist_bytes(run_id=run_id, relative_path=SOURCE_PROMPT_RELATIVE, data=data)
+        return self._persist_bytes(
+            run_id=run_id,
+            relative_path=SOURCE_PROMPT_RELATIVE,
+            data=data,
+            max_bytes=MAX_SOURCE_PROMPT_BYTES,
+        )
 
     def read_source_plan_bytes(self, *, run_id: str, expected_sha256: str) -> bytes:
         return self._read_bound_bytes(
-            run_id=run_id, relative_path=SOURCE_PLAN_RELATIVE, expected_sha256=expected_sha256
+            run_id=run_id,
+            relative_path=SOURCE_PLAN_RELATIVE,
+            expected_sha256=expected_sha256,
+            max_bytes=MAX_SOURCE_PLAN_BYTES,
         )
 
     def read_source_prompt_bytes(self, *, run_id: str, expected_sha256: str) -> bytes:
         return self._read_bound_bytes(
-            run_id=run_id, relative_path=SOURCE_PROMPT_RELATIVE, expected_sha256=expected_sha256
+            run_id=run_id,
+            relative_path=SOURCE_PROMPT_RELATIVE,
+            expected_sha256=expected_sha256,
+            max_bytes=MAX_SOURCE_PROMPT_BYTES,
         )
 
-    def _read_bound_bytes(self, *, run_id: str, relative_path: str, expected_sha256: str) -> bytes:
-        run_root = run_artifact_root(self._root, run_id)
+    def _read_bound_bytes(
+        self, *, run_id: str, relative_path: str, expected_sha256: str, max_bytes: int
+    ) -> bytes:
         try:
-            path = resolve_run_relative_path(run_root, relative_path)
-        except ValueError as exc:
-            raise ProtectedResultStoreError("source snapshot artifact missing") from exc
-        if not path.is_file() or path.is_symlink():
-            raise ProtectedResultStoreError("source snapshot artifact missing")
-        raw = path.read_bytes()
-        digest = hashlib.sha256(raw).hexdigest()
-        if digest != expected_sha256:
-            raise ProtectedResultStoreError("source snapshot hash mismatch")
-        return raw
+            return read_verified_sensitive_bytes(
+                self._root,
+                run_id=run_id,
+                relative_path=relative_path,
+                expected_sha256=expected_sha256,
+                max_bytes=max_bytes,
+            )
+        except InputArtifactError as exc:
+            raise self._map_input_error(exc, prefix="source snapshot") from exc
 
     def persist_operator_continuation(
         self, *, run_id: str, artifact: OperatorContinuationArtifact
@@ -506,7 +648,7 @@ class ProtectedResultStore:
             and evidence_ref_sha256 is not None
             and patch_ref_sha256 is not None
         ):
-            pub_path = publication_text_relative(
+            pub_commit = publication_text_commitment_relative(
                 run_id=run_id,
                 effect_id=effect_id,
                 cycle_number=cycle_number,
@@ -514,7 +656,7 @@ class ProtectedResultStore:
                 evidence_ref_sha256=evidence_ref_sha256,
                 patch_ref_sha256=patch_ref_sha256,
             )
-            commit_path = commit_message_relative(
+            commit_commit = commit_message_commitment_relative(
                 run_id=run_id,
                 effect_id=effect_id,
                 cycle_number=cycle_number,
@@ -522,18 +664,32 @@ class ProtectedResultStore:
                 evidence_ref_sha256=evidence_ref_sha256,
                 patch_ref_sha256=patch_ref_sha256,
             )
-        else:
-            pub_path = PUBLICATION_TEXT_RELATIVE
-            commit_path = COMMIT_MESSAGE_RELATIVE
+            pub_ref = self._persist_effect_bound_json(
+                run_id=run_id,
+                directory=PUBLICATION_TEXT_DIR,
+                commitment_relative=pub_commit,
+                payload=publication.model_dump(mode="json"),
+                max_bytes=DEFAULT_MAX_TEXT_BYTES,
+            )
+            commit_ref = self._persist_effect_bound_json(
+                run_id=run_id,
+                directory=COMMIT_MESSAGE_DIR,
+                commitment_relative=commit_commit,
+                payload=commit_message.model_dump(mode="json"),
+                max_bytes=DEFAULT_MAX_COMMIT_MESSAGE_BYTES,
+            )
+            return pub_ref, commit_ref
         pub_ref = self._persist_deterministic_json(
             run_id=run_id,
-            relative_path=pub_path,
+            relative_path=PUBLICATION_TEXT_RELATIVE,
             payload=publication.model_dump(mode="json"),
+            max_bytes=DEFAULT_MAX_TEXT_BYTES,
         )
         commit_ref = self._persist_deterministic_json(
             run_id=run_id,
-            relative_path=commit_path,
+            relative_path=COMMIT_MESSAGE_RELATIVE,
             payload=commit_message.model_dump(mode="json"),
+            max_bytes=DEFAULT_MAX_COMMIT_MESSAGE_BYTES,
         )
         return pub_ref, commit_ref
 
@@ -548,7 +704,12 @@ class ProtectedResultStore:
         data = text.encode("utf-8")
         digest = hashlib.sha256(data).hexdigest()
         relative = f"{REPLIES_DIR}/{digest}.txt"
-        return self._persist_bytes(run_id=run_id, relative_path=relative, data=data)
+        return self._persist_bytes(
+            run_id=run_id,
+            relative_path=relative,
+            data=data,
+            max_bytes=MAX_REPLY_TEXT_BYTES,
+        )
 
     def persist_fix_prompt(self, *, run_id: str, text: str) -> ArtifactRef:
         reject_prohibited_controls(text, field_name="fix prompt")
@@ -557,7 +718,12 @@ class ProtectedResultStore:
         data = text.encode("utf-8")
         digest = hashlib.sha256(data).hexdigest()
         relative = f"{FIX_PROMPTS_DIR}/{digest}.txt"
-        return self._persist_bytes(run_id=run_id, relative_path=relative, data=data)
+        return self._persist_bytes(
+            run_id=run_id,
+            relative_path=relative,
+            data=data,
+            max_bytes=MAX_FIX_PROMPT_BYTES,
+        )
 
     def latest_accepted_cursor_chat_id(self, *, run_id: str, before_cycle: int) -> str | None:
         """Return the exact chat from the latest prior accepted local-fix result."""
@@ -570,20 +736,20 @@ class ProtectedResultStore:
             return None
         best_cycle = 0
         best_chat: str | None = None
-        for path in sorted(result_dir.glob("*.json")):
+        for path in sorted(result_dir.glob("*.commit")):
             if not path.is_file() or path.is_symlink():
                 continue
+            commitment_relative = f"{LOCAL_FIX_RESULT_DIR}/{path.name}"
+            ref = self._resolve_commitment_ref(
+                run_id=run_id,
+                directory=LOCAL_FIX_RESULT_DIR,
+                commitment_relative=commitment_relative,
+            )
+            if ref is None:
+                continue
             try:
-                raw = path.read_bytes()
-                digest = hashlib.sha256(raw).hexdigest()
-                artifact = self.read_local_fix_result(
-                    run_id=run_id,
-                    ref=ArtifactRef(
-                        relative_path=f"{LOCAL_FIX_RESULT_DIR}/{path.name}",
-                        sha256=digest,
-                    ),
-                )
-            except (OSError, UnicodeError, ProtectedResultStoreError, ValueError):
+                artifact = self.read_local_fix_result(run_id=run_id, ref=ref)
+            except ProtectedResultStoreError:
                 continue
             if artifact.run_id != run_id:
                 continue
@@ -619,10 +785,12 @@ class ProtectedResultStore:
         dest_relative: str,
     ) -> ArtifactRef:
         try:
-            source_path = resolve_run_relative_path(source_run_root, source_ref.relative_path)
-            if not source_path.is_file() or source_path.is_symlink():
-                raise ProtectedResultStoreError("source artifact missing or unsafe")
-            raw = source_path.read_bytes()
+            raw = read_verified_bytes_under_run_root(
+                source_run_root,
+                source_ref.relative_path,
+                expected_sha256=source_ref.sha256,
+                max_bytes=MAX_PROTECTED_RESULT_JSON_BYTES,
+            )
             digest = hashlib.sha256(raw).hexdigest()
             if digest != source_ref.sha256:
                 raise ProtectedResultStoreError("source artifact hash mismatch")
@@ -630,19 +798,33 @@ class ProtectedResultStore:
             target = resolve_run_relative_path(dest_root, dest_relative)
             ensure_dir(target.parent, mode=DIR_MODE)
             if target.exists():
-                existing = target.read_bytes()
+                existing = read_verified_sensitive_bytes(
+                    self._root,
+                    run_id=dest_run_id,
+                    relative_path=dest_relative,
+                    expected_sha256=digest,
+                    max_bytes=MAX_PROTECTED_RESULT_JSON_BYTES,
+                )
                 if existing != raw:
                     raise ProtectedResultStoreError(
                         "destination artifact collision with different bytes"
                     )
                 return ArtifactRef(relative_path=dest_relative, sha256=digest)
             _atomic_write_bytes_exclusive(target, raw)
-            verified = hashlib.sha256(target.read_bytes()).hexdigest()
-            if verified != digest:
+            verified = read_verified_sensitive_bytes(
+                self._root,
+                run_id=dest_run_id,
+                relative_path=dest_relative,
+                expected_sha256=digest,
+                max_bytes=MAX_PROTECTED_RESULT_JSON_BYTES,
+            )
+            if hashlib.sha256(verified).hexdigest() != digest:
                 raise ProtectedResultStoreError("post-copy artifact hash mismatch")
             return ArtifactRef(relative_path=dest_relative, sha256=digest)
         except ProtectedResultStoreError:
             raise
+        except InputArtifactError as exc:
+            raise self._map_input_error(exc, prefix="source") from exc
         except OSError as exc:
             raise ProtectedResultStoreError("filesystem failure while copying artifact") from exc
         except ValueError as exc:
@@ -659,19 +841,85 @@ class ProtectedResultStore:
         self, *, run_id: str, relative_prefix: str, payload: dict[str, Any]
     ) -> ArtifactRef:
         canonical = _canonical_json_bytes(payload)
+        self._reject_oversized(canonical, max_bytes=MAX_PROTECTED_RESULT_JSON_BYTES)
         digest = hashlib.sha256(canonical).hexdigest()
         relative = f"{relative_prefix}/{digest}.json"
         return self._persist_canonical_bytes(run_id=run_id, relative_path=relative, data=canonical)
 
-    def _persist_deterministic_json(
-        self, *, run_id: str, relative_path: str, payload: dict[str, Any]
+    def _persist_effect_bound_json(
+        self,
+        *,
+        run_id: str,
+        directory: str,
+        commitment_relative: str,
+        payload: dict[str, Any],
+        max_bytes: int = MAX_PROTECTED_RESULT_JSON_BYTES,
     ) -> ArtifactRef:
         canonical = _canonical_json_bytes(payload)
+        self._reject_oversized(canonical, max_bytes=max_bytes)
+        digest = hashlib.sha256(canonical).hexdigest()
+        content_relative = _content_relative(directory, digest)
+        content_ref = self._persist_canonical_bytes(
+            run_id=run_id, relative_path=content_relative, data=canonical
+        )
+        commitment_bytes = f"{digest}\n".encode("ascii")
+        self._persist_canonical_bytes(
+            run_id=run_id, relative_path=commitment_relative, data=commitment_bytes
+        )
+        return content_ref
+
+    def _resolve_commitment_ref(
+        self,
+        *,
+        run_id: str,
+        directory: str,
+        commitment_relative: str,
+    ) -> ArtifactRef | None:
+        try:
+            digest = read_content_commitment_digest(
+                self._root,
+                run_id=run_id,
+                relative_path=commitment_relative,
+            )
+        except InputArtifactError:
+            return None
+        content_relative = _content_relative(directory, digest)
+        try:
+            read_verified_sensitive_bytes(
+                self._root,
+                run_id=run_id,
+                relative_path=content_relative,
+                expected_sha256=digest,
+                max_bytes=MAX_PROTECTED_RESULT_JSON_BYTES,
+            )
+        except InputArtifactError:
+            return None
+        return ArtifactRef(relative_path=content_relative, sha256=digest)
+
+    def _persist_deterministic_json(
+        self,
+        *,
+        run_id: str,
+        relative_path: str,
+        payload: dict[str, Any],
+        max_bytes: int = MAX_PROTECTED_RESULT_JSON_BYTES,
+    ) -> ArtifactRef:
+        canonical = _canonical_json_bytes(payload)
+        self._reject_oversized(canonical, max_bytes=max_bytes)
         return self._persist_canonical_bytes(
             run_id=run_id, relative_path=relative_path, data=canonical
         )
 
-    def _persist_bytes(self, *, run_id: str, relative_path: str, data: bytes) -> ArtifactRef:
+    def _persist_bytes(
+        self,
+        *,
+        run_id: str,
+        relative_path: str,
+        data: bytes,
+        max_bytes: int | None = None,
+    ) -> ArtifactRef:
+        if max_bytes is not None:
+            self._reject_oversized(data, max_bytes=max_bytes)
         digest = hashlib.sha256(data).hexdigest()
         self._persist_canonical_bytes(run_id=run_id, relative_path=relative_path, data=data)
         return ArtifactRef(relative_path=relative_path, sha256=digest)
@@ -685,39 +933,70 @@ class ProtectedResultStore:
             ensure_dir(target.parent, mode=DIR_MODE)
             digest = hashlib.sha256(data).hexdigest()
             if target.exists():
-                existing = target.read_bytes()
+                existing = read_verified_sensitive_bytes(
+                    self._root,
+                    run_id=run_id,
+                    relative_path=relative_path,
+                    expected_sha256=digest,
+                    max_bytes=max(len(data), 1),
+                )
                 if existing != data:
                     raise ProtectedResultStoreError("artifact path collision with different bytes")
                 return ArtifactRef(relative_path=relative_path, sha256=digest)
             _atomic_write_bytes_exclusive(target, data)
-            verified = hashlib.sha256(target.read_bytes()).hexdigest()
-            if verified != digest:
+            verified = read_verified_sensitive_bytes(
+                self._root,
+                run_id=run_id,
+                relative_path=relative_path,
+                expected_sha256=digest,
+                max_bytes=max(len(data), 1),
+            )
+            if hashlib.sha256(verified).hexdigest() != digest:
                 raise ProtectedResultStoreError("post-write artifact hash mismatch")
             return ArtifactRef(relative_path=relative_path, sha256=digest)
         except ProtectedResultStoreError:
             raise
+        except InputArtifactError as exc:
+            # Existing target with matching digest but unsafe mode must fail closed.
+            raise self._map_input_error(exc) from exc
         except OSError as exc:
             raise ProtectedResultStoreError("filesystem failure while writing artifact") from exc
         except ValueError as exc:
             raise ProtectedResultStoreError("artifact path is unsafe") from exc
 
     def _read_json(self, *, run_id: str, ref: ArtifactRef, model: type[_TArtifact]) -> _TArtifact:
-        run_root = run_artifact_root(self._root, run_id)
         try:
-            path = resolve_run_relative_path(run_root, ref.relative_path)
-        except ValueError as exc:
-            raise ProtectedResultStoreError("artifact missing or unsafe") from exc
-        if not path.is_file() or path.is_symlink():
-            raise ProtectedResultStoreError("artifact missing or unsafe")
-        raw = path.read_bytes()
-        digest = hashlib.sha256(raw).hexdigest()
-        if digest != ref.sha256:
-            raise ProtectedResultStoreError("artifact hash mismatch")
+            raw = read_verified_sensitive_bytes(
+                self._root,
+                run_id=run_id,
+                relative_path=ref.relative_path,
+                expected_sha256=ref.sha256,
+                max_bytes=MAX_PROTECTED_RESULT_JSON_BYTES,
+            )
+        except InputArtifactError as exc:
+            raise self._map_input_error(exc) from exc
         try:
             payload = json.loads(raw.decode("utf-8"))
             return model.model_validate(payload)
         except Exception as exc:  # noqa: BLE001
             raise ProtectedResultStoreError("artifact failed schema validation") from exc
+
+    @staticmethod
+    def _map_input_error(
+        exc: InputArtifactError, *, prefix: str = "artifact"
+    ) -> ProtectedResultStoreError:
+        if exc.kind is InputArtifactErrorKind.HASH_MISMATCH:
+            return ProtectedResultStoreError(f"{prefix} hash mismatch")
+        if exc.kind is InputArtifactErrorKind.UNSAFE_MODE:
+            return ProtectedResultStoreError(f"{prefix} has unsafe permissions")
+        if prefix == "source snapshot":
+            return ProtectedResultStoreError("source snapshot artifact missing")
+        return ProtectedResultStoreError("artifact missing or unsafe")
+
+    @staticmethod
+    def _reject_oversized(data: bytes, *, max_bytes: int) -> None:
+        if len(data) > max_bytes:
+            raise ProtectedResultStoreError("artifact exceeds maximum size")
 
 
 def _canonical_json_bytes(payload: dict[str, Any]) -> bytes:
@@ -774,4 +1053,12 @@ def _fsync_dir(directory: Path) -> None:
         os.close(dir_fd)
 
 
-__all__ = ["ProtectedResultStore", "ProtectedResultStoreError"]
+__all__ = [
+    "MAX_FIX_PROMPT_BYTES",
+    "MAX_PROTECTED_RESULT_JSON_BYTES",
+    "MAX_REPLY_TEXT_BYTES",
+    "MAX_SOURCE_PLAN_BYTES",
+    "MAX_SOURCE_PROMPT_BYTES",
+    "ProtectedResultStore",
+    "ProtectedResultStoreError",
+]

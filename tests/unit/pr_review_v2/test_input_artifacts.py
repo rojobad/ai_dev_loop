@@ -12,6 +12,7 @@ from tests.unit.pr_review_v2.github_write_helpers import RUN_ID, sha256_hex, wri
 from ai_dev_loop.pr_review_v2.domain.common import ArtifactRef
 from ai_dev_loop.pr_review_v2.infrastructure.input_artifacts import (
     InputArtifactError,
+    InputArtifactErrorKind,
     InputArtifactReader,
 )
 from ai_dev_loop.pr_review_v2.infrastructure.paths import (
@@ -150,8 +151,15 @@ def test_error_message_never_contains_content(tmp_path: Path) -> None:
     except InputArtifactError as exc:
         assert "supersecret" not in str(exc)
         assert "BEGIN PRIVATE KEY" not in str(exc)
+        assert exc.kind is InputArtifactErrorKind.HASH_MISMATCH
     else:
         raise AssertionError("expected InputArtifactError")
+
+
+def test_input_artifact_error_kind_is_structural() -> None:
+    err = InputArtifactError(InputArtifactErrorKind.UNSAFE_MODE)
+    assert err.kind is InputArtifactErrorKind.UNSAFE_MODE
+    assert "group/other" not in str(err)
 
 
 def test_run_root_is_hashed(tmp_path: Path) -> None:

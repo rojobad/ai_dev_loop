@@ -217,6 +217,8 @@ def test_abort_stale_metadata_is_not_signaled(tmp_path: Path, prepared_run) -> N
         parent_pid=999998,
         cwd=str(tmp_path),
         argv_redacted=["agent"],
+        process_start_time="1",
+        executable="/bin/false",
     )
     result = run_abort(prepared_run["run_id"])
     assert result.active_process_signaled is False
