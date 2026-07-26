@@ -335,10 +335,16 @@ def assemble_supervisor_runtime(run_id: str) -> AssembledSupervisorRuntime:
     """Load hash-verified execution context and assemble all effect executors."""
 
     artifact_root = pr_review_v2_state_dir() / "artifacts"
-    engine = PrReviewEngine.open(default_engine_db_path())
+    db_path = default_engine_db_path()
+    # Bootstrap engine is read-only for protected context resolution. Operational
+    # claims/heartbeats must use the frozen per-run lease TTL, not the engine default.
+    bootstrap = PrReviewEngine.open(db_path)
     store = ProtectedResultStore(artifact_root)
-    context, _ref = EngineOriginContextResolver(engine, store).resolve(run_id)
+    context, _ref = EngineOriginContextResolver(bootstrap, store).resolve(run_id)
     v2 = context.pr_review_v2
+    lease_ttl = timedelta(seconds=v2.worker.lease_ttl_seconds)
+    heartbeat_interval = timedelta(seconds=v2.worker.heartbeat_interval_seconds)
+    engine = PrReviewEngine.open(db_path, lease_ttl=lease_ttl)
     timeout = float(v2.per_call_timeout_seconds)
     overall = float(v2.overall_timeout_seconds)
     input_reader = InputArtifactReader(artifact_root)
@@ -445,7 +451,7 @@ def assemble_supervisor_runtime(run_id: str) -> AssembledSupervisorRuntime:
         engine,
         router,
         owner_id=owner_id,
-        heartbeat_interval=timedelta(seconds=v2.worker.heartbeat_interval_seconds),
+        heartbeat_interval=heartbeat_interval,
     )
     return AssembledSupervisorRuntime(
         engine=engine,

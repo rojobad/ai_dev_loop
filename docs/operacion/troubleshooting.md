@@ -643,6 +643,24 @@ Eso no autoriza cambios de contenido distintos del artefacto ni edición del
 `state.json` del origen. El hash de bytes del archivo artefacto
 (`sha256_file`) no sustituye al fingerprint de publicación.
 
+## `pr-review-v2`: supervisor muerto tras claim mutante (Phase 16.8 Gate B)
+
+Sintoma: `start` dejo el run en `waiting_for_bot` con `request_bot_review`
+claimed, el supervisor detached salio, y GitHub no muestra el trigger.
+
+Accion segura (no edites SQLite, claims ni comentarios a mano):
+
+1. Espera a que `status` reporte `resumable: true` y `next_action: resume`
+   (supervisor no vivo y lease expirado). Si `lease_active` sigue true, no
+   lances un `resume` competidor.
+2. Desde el controller A: `ai_dev_loop pr-review-v2 resume <run-id>`.
+3. El resume repara el supervisor; un claim mutante expirado entra primero a
+   reconciliacion. Solo si la evidencia prueba `PROVEN_NOT_APPLIED` se permite
+   exactamente un trigger posterior. `APPLIED` no duplica; `UNRESOLVED` falla
+   cerrado.
+4. No prepares un run nuevo ni publiques el trigger manualmente: eso puede
+   crear duplicados y pierde la evidencia de recovery.
+
 ## `pr-review-v2`: el bot reacciono pero el run no completa (Phase 16.8)
 
 Sintoma: hay una reaccion en GitHub pero `status` sigue en polling o pausa con

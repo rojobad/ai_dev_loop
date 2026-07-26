@@ -28,7 +28,10 @@ from ai_dev_loop.pr_review_v2.application.contracts import (
     NextActionCategory,
 )
 from ai_dev_loop.pr_review_v2.application.control import ControlPlaneService
-from ai_dev_loop.pr_review_v2.application.control_contracts import AbortProcessAction
+from ai_dev_loop.pr_review_v2.application.control_contracts import (
+    AbortProcessAction,
+    SafeNextAction,
+)
 from ai_dev_loop.pr_review_v2.application.engine import PrReviewEngine
 from ai_dev_loop.pr_review_v2.application.execution_context import (
     ExecutionContextArtifact,
@@ -895,3 +898,93 @@ def test_stale_owned_child_metadata_is_not_signaled(tmp_path: Path) -> None:
     result = control.abort(run_id)
     assert result.abort_persisted is True
     assert result.state_kind == "aborted"
+
+
+def test_status_dead_supervisor_expired_lease_recommends_resume(tmp_path: Path) -> None:
+    clock = FakeClock()
+    engine, control, run_id = _control_stack(tmp_path, clock)
+    control.start(run_id)
+    # Spawner returned "spawned" but no live launcher metadata => dead supervisor.
+    assert control._supervisor_live(run_id) is False  # noqa: SLF001
+    status = control.status(run_id)
+    assert status.state_kind == "publishing_initial"
+    assert status.lease_active is False
+    assert status.supervisor_live is False
+    assert status.resumable is True
+    assert status.next_action is SafeNextAction.RESUME
+    resumed = control.resume(run_id)
+    assert resumed.transition_applied is False
+    assert resumed.supervisor_action in {"spawned", "repaired"}
+    with engine.store.begin_read() as conn:
+        starts = int(
+            conn.execute(
+                "SELECT COUNT(*) AS n FROM pr_review_events "
+                "WHERE run_id=? AND event_kind='start_requested'",
+                (run_id,),
+            ).fetchone()["n"]
+        )
+    assert starts == 1
+
+
+def test_status_dead_supervisor_active_lease_does_not_race(tmp_path: Path) -> None:
+    from ai_dev_loop.pr_review_v2.application.contracts import LeaseStatus
+
+    clock = FakeClock()
+    engine, control, run_id = _control_stack(tmp_path, clock)
+    control.start(run_id)
+    lease = engine.acquire_lease(run_id, "lingering-owner")
+    assert lease.status is LeaseStatus.ACTIVE
+    status = control.status(run_id)
+    assert status.supervisor_live is False
+    assert status.lease_active is True
+    assert status.resumable is False
+    assert status.next_action is SafeNextAction.WAIT_UNTIL
+    engine.release_lease(run_id, "lingering-owner", lease.generation)
+    after = control.status(run_id)
+    assert after.lease_active is False
+    assert after.resumable is True
+    assert after.next_action is SafeNextAction.RESUME
+
+
+def test_status_paused_waiting_user_and_terminal_semantics(tmp_path: Path) -> None:
+    clock = FakeClock()
+    engine, control, run_id = _control_stack(tmp_path, clock)
+    control.start(run_id)
+    for attempt in range(1, 7):
+        if attempt > 1:
+            clock.advance(timedelta(seconds=31))
+            status = engine.get_status(run_id)
+            if status.next_eligible_at is not None:
+                clock.set(status.next_eligible_at)
+            engine.fire_due_timers_for_run(run_id)
+        lease, claim = claim_next(engine, run_id)
+        next_at = clock.now() + timedelta(seconds=30)
+        engine.complete_claim(
+            EffectCompletionRequest(
+                submission_id=f"fail-status-{attempt}",
+                dispatch_id=claim.dispatch_id,
+                claim_id=claim.claim_id,
+                owner_id="owner-a",
+                lease_generation=lease.generation,
+                event=EffectRetryableFailure(
+                    occurred_at=clock.now(),
+                    token=claim.completion_token,
+                    error=ErrorSummary(kind=TransientErrorKind.HTTP_429, safe_summary="rate"),
+                    failed_attempt=attempt,
+                    next_attempt_at=next_at,
+                ),
+            )
+        )
+        if engine.get_status(run_id).state_kind == "paused":
+            break
+    paused = control.status(run_id)
+    assert paused.state_kind == "paused"
+    assert paused.resumable is True
+    assert paused.next_action is SafeNextAction.RESUME
+
+    aborted = control.abort(run_id)
+    assert aborted.state_kind == "aborted"
+    terminal = control.status(run_id)
+    assert terminal.state_kind == "aborted"
+    assert terminal.resumable is False
+    assert terminal.next_action is SafeNextAction.NONE

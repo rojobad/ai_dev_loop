@@ -269,6 +269,11 @@ Contrato de seguridad:
 - `resume` en `waiting_for_user` exige `--confirm-user-continuation` y evidencia
   de operador protegida; no dispara timers futuros. Repara solo el supervisor
   cuando el estado ya es activo.
+- `status` marca `resumable: true` y `next_action: resume` solo cuando el run es
+  no terminal, el supervisor no esta vivo y el lease anterior ya expiro. Si el
+  lease sigue activo, `status` no recomienda un `resume` competidor
+  (`wait-until`). Un claim mutante expirado se reconcilia antes de cualquier
+  reintento de escritura.
 - `abort` persiste el abort durable antes de senalar procesos Cursor/Codex hijos
   con ownership exacta y, despues, el supervisor owned (token, PID/PGID, start
   time, executable, run binding). Rechaza metadata stale.
