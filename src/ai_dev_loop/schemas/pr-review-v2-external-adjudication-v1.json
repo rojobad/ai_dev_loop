@@ -3,7 +3,7 @@
   "title": "ai_dev_loop PR review v2 external adjudication v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["decisions"],
+  "required": ["decisions", "fix_prompt_text"],
   "properties": {
     "decisions": {
       "type": "array",
@@ -11,7 +11,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["thread_id", "decision", "safe_summary"],
+        "required": ["thread_id", "decision", "safe_summary", "reply_body"],
         "properties": {
           "thread_id": { "type": "string", "minLength": 1 },
           "decision": {

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -17,15 +20,26 @@ from ai_dev_loop.pr_review_v2.application.execution_context import (
     ExecutionContextRunBinding,
     ExecutionContextWorker,
     ExecutionContextWorkflow,
+    ExternalAdjudicationDecision,
+    ExternalAdjudicationResultArtifact,
 )
 from ai_dev_loop.pr_review_v2.domain.common import (
+    AdjudicationDecisionKind,
     ArtifactRef,
+    PullRequestBinding,
     RepositoryIdentity,
 )
-from ai_dev_loop.pr_review_v2.domain.effects import GeneratePublicationTextEffect
+from ai_dev_loop.pr_review_v2.domain.effects import (
+    AdjudicateThreadsEffect,
+    GeneratePublicationTextEffect,
+)
 from ai_dev_loop.pr_review_v2.infrastructure.codex_local_runners import (
+    EXTERNAL_ADJUDICATION_SCHEMA,
+    PUBLICATION_GENERATION_SCHEMA,
+    ExternalAdjudicationPayload,
     FakeCodexProcessRunner,
     PublicationTextRunner,
+    ThreadAdjudicationRunner,
     build_codex_resume_argv,
 )
 
@@ -34,6 +48,8 @@ SESSION_ID = "22222222-2222-4222-8222-222222222222"
 SHA_A = "a" * 40
 HASH_1 = "1" * 64
 HASH_2 = "2" * 64
+THREAD_ID = "PRRT_thread_1"
+CTX_HASH = "c" * 64
 
 
 def _execution_context() -> ExecutionContextArtifact:
@@ -114,6 +130,85 @@ def _publication_effect() -> GeneratePublicationTextEffect:
     )
 
 
+def _snapshot_bytes(*, thread_id: str = THREAD_ID) -> bytes:
+    payload = {
+        "head_sha": SHA_A,
+        "cycle_number": 1,
+        "eligible_threads": [{"thread_id": thread_id}],
+    }
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
+def _pr_binding() -> PullRequestBinding:
+    return PullRequestBinding(
+        repository=RepositoryIdentity(name_with_owner="acme/demo"),
+        pr_number=1,
+        head_sha=SHA_A,
+        head_branch="feature",
+        base_branch="main",
+    )
+
+
+def _adjudication_effect(snapshot: bytes) -> AdjudicateThreadsEffect:
+    digest = hashlib.sha256(snapshot).hexdigest()
+    return AdjudicateThreadsEffect(
+        effect_id="effect-adjudication-001",
+        idempotency_key="idem-adjudication-001",
+        run_id=RUN_ID,
+        cycle_number=1,
+        attempt=1,
+        max_attempts=3,
+        repository=RepositoryIdentity(name_with_owner="acme/demo"),
+        bound_head_sha=SHA_A,
+        binding=_pr_binding(),
+        frozen_thread_ids=(THREAD_ID,),
+        snapshot_ref=ArtifactRef(relative_path="local/snapshot.json", sha256=digest),
+        execution_context_ref=ArtifactRef(
+            relative_path="local/execution-context.json", sha256=CTX_HASH
+        ),
+    )
+
+
+def _load_packaged_schema(name: str) -> dict[str, Any]:
+    path = schema_path(name)
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    assert isinstance(loaded, dict)
+    return loaded
+
+
+def _assert_strict_structured_output_contract(
+    node: object,
+    *,
+    path: str,
+) -> None:
+    """Recursively enforce Codex strict output: every property key is required."""
+    if isinstance(node, list):
+        for index, item in enumerate(node):
+            _assert_strict_structured_output_contract(item, path=f"{path}[{index}]")
+        return
+    if not isinstance(node, dict):
+        return
+    properties = node.get("properties")
+    if isinstance(properties, dict):
+        assert node.get("additionalProperties") is False, (
+            f"{path}: closed Codex output objects must set additionalProperties=false"
+        )
+        required = node.get("required")
+        assert isinstance(required, list), f"{path}: required must be a list"
+        missing = set(properties) - set(required)
+        extra = set(required) - set(properties)
+        assert not missing and not extra, (
+            f"{path}: required must include every key in properties; "
+            f"missing={sorted(missing)} extra={sorted(extra)}"
+        )
+        for key, child in properties.items():
+            _assert_strict_structured_output_contract(child, path=f"{path}.properties.{key}")
+    for key, child in node.items():
+        if key == "properties":
+            continue
+        _assert_strict_structured_output_contract(child, path=f"{path}.{key}")
+
+
 def test_build_codex_resume_argv_contains_resume_and_session_id() -> None:
     argv = build_codex_resume_argv(
         codex_command="codex",
@@ -122,12 +217,109 @@ def test_build_codex_resume_argv_contains_resume_and_session_id() -> None:
         session_id=SESSION_ID,
         review_model="gpt-5",
         review_reasoning_effort="high",
-        schema_path_value=schema_path("pr-review-v2-publication-generation-v1.json"),
+        schema_path_value=schema_path(PUBLICATION_GENERATION_SCHEMA),
         result_path=Path("/tmp/result.json"),
     )
     assert "resume" in argv
     assert SESSION_ID in argv
     assert "--last" not in argv
+
+
+def test_codex_output_schemas_require_every_property_key() -> None:
+    for name in (PUBLICATION_GENERATION_SCHEMA, EXTERNAL_ADJUDICATION_SCHEMA):
+        schema = _load_packaged_schema(name)
+        _assert_strict_structured_output_contract(schema, path=name)
+
+
+def test_external_adjudication_schema_requires_nullable_keys() -> None:
+    schema = _load_packaged_schema(EXTERNAL_ADJUDICATION_SCHEMA)
+    assert set(schema["required"]) == {"decisions", "fix_prompt_text"}
+    fix_prompt = schema["properties"]["fix_prompt_text"]
+    assert fix_prompt["type"] == ["string", "null"]
+
+    item = schema["properties"]["decisions"]["items"]
+    assert set(item["required"]) == {
+        "thread_id",
+        "decision",
+        "safe_summary",
+        "reply_body",
+    }
+    assert item["properties"]["reply_body"]["type"] == ["string", "null"]
+    assert item["additionalProperties"] is False
+    assert item["properties"]["decision"]["enum"] == [
+        "actionable",
+        "not_applicable",
+        "uncertain",
+    ]
+    assert schema["additionalProperties"] is False
+
+
+def test_external_adjudication_payload_shapes_pass_parser_and_domain() -> None:
+    all_actionable = {
+        "decisions": [
+            {
+                "thread_id": THREAD_ID,
+                "decision": "actionable",
+                "safe_summary": "needs a fix",
+                "reply_body": None,
+            }
+        ],
+        "fix_prompt_text": "Please fix the reported issue",
+    }
+    parsed_actionable = ExternalAdjudicationPayload.model_validate(all_actionable)
+    assert parsed_actionable.decisions[0].reply_body is None
+    assert parsed_actionable.fix_prompt_text is not None
+    ExternalAdjudicationResultArtifact(
+        decisions=(
+            ExternalAdjudicationDecision(
+                thread_id=THREAD_ID,
+                decision=AdjudicationDecisionKind.ACTIONABLE,
+                safe_summary="needs a fix",
+                reply_body=None,
+            ),
+        ),
+        fix_prompt_text="Please fix the reported issue",
+        run_id=RUN_ID,
+        cycle_number=1,
+        effect_id="effect-adjudication-001",
+        bound_head_sha=SHA_A,
+        frozen_thread_ids=(THREAD_ID,),
+        snapshot_ref_sha256=HASH_1,
+        execution_context_ref_sha256=CTX_HASH,
+    )
+
+    reply_uncertain = {
+        "decisions": [
+            {
+                "thread_id": THREAD_ID,
+                "decision": "uncertain",
+                "safe_summary": "needs clarification",
+                "reply_body": "Please clarify the expected behavior",
+            }
+        ],
+        "fix_prompt_text": None,
+    }
+    parsed_reply = ExternalAdjudicationPayload.model_validate(reply_uncertain)
+    assert parsed_reply.fix_prompt_text is None
+    assert parsed_reply.decisions[0].reply_body is not None
+    ExternalAdjudicationResultArtifact(
+        decisions=(
+            ExternalAdjudicationDecision(
+                thread_id=THREAD_ID,
+                decision=AdjudicationDecisionKind.UNCERTAIN,
+                safe_summary="needs clarification",
+                reply_body="Please clarify the expected behavior",
+            ),
+        ),
+        fix_prompt_text=None,
+        run_id=RUN_ID,
+        cycle_number=1,
+        effect_id="effect-adjudication-001",
+        bound_head_sha=SHA_A,
+        frozen_thread_ids=(THREAD_ID,),
+        snapshot_ref_sha256=HASH_1,
+        execution_context_ref_sha256=CTX_HASH,
+    )
 
 
 def test_publication_runner_uses_resume_argv(tmp_path: Path) -> None:
@@ -158,8 +350,51 @@ def test_publication_runner_uses_resume_argv(tmp_path: Path) -> None:
     assert "resume" in fake.last_argv
     assert SESSION_ID in fake.last_argv
     assert "--last" not in fake.last_argv
+    assert str(schema_path(PUBLICATION_GENERATION_SCHEMA)) in fake.last_argv
     assert result.title == "Title"
     assert result.commit_subject == "Subject"
+
+
+def test_adjudication_runner_uses_external_schema_and_exact_session(tmp_path: Path) -> None:
+    snapshot = _snapshot_bytes()
+    fake = FakeCodexProcessRunner(
+        result_payload={
+            "decisions": [
+                {
+                    "thread_id": THREAD_ID,
+                    "decision": "actionable",
+                    "safe_summary": "needs fix",
+                    "reply_body": None,
+                }
+            ],
+            "fix_prompt_text": "Please fix",
+        }
+    )
+    runner = ThreadAdjudicationRunner(
+        artifact_root=tmp_path / "art",
+        process_runner=fake,
+        timeout_seconds=30.0,
+    )
+    effect = _adjudication_effect(snapshot)
+    result = runner.adjudicate(
+        run_id=RUN_ID,
+        session_id=SESSION_ID,
+        repo_root="/tmp/repo",
+        execution_context=_execution_context(),
+        effect=effect,
+        snapshot_artifact_bytes_or_path=snapshot,
+        frozen_thread_ids=(THREAD_ID,),
+    )
+    assert fake.last_argv is not None
+    assert "resume" in fake.last_argv
+    assert SESSION_ID in fake.last_argv
+    assert "--last" not in fake.last_argv
+    assert str(schema_path(EXTERNAL_ADJUDICATION_SCHEMA)) in fake.last_argv
+    assert "--output-schema" in fake.last_argv
+    schema_index = fake.last_argv.index("--output-schema")
+    assert fake.last_argv[schema_index + 1].endswith(EXTERNAL_ADJUDICATION_SCHEMA)
+    assert result.fix_prompt_text == "Please fix"
+    assert result.decisions[0].reply_body is None
 
 
 def test_publication_runner_rejects_session_mismatch(tmp_path: Path) -> None:
