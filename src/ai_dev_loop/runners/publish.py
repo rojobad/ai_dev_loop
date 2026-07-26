@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import stat
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +10,16 @@ from pathlib import Path
 from ai_dev_loop.errors import AiDevLoopError, SshAgentNoIdentityError, ValidationError
 from ai_dev_loop.process import ProcessResult, require_success, run_process
 from ai_dev_loop.runners.git import discover_repository, validate_staged_patch_matches_artifact
+from ai_dev_loop.ssh_agent import (
+    choose_effective_ssh_auth_sock,
+    ssh_destination_from_remote_url,
+)
+from ai_dev_loop.ssh_agent import (
+    parse_identity_agent_from_ssh_g as _parse_identity_agent_from_ssh_g,
+)
+from ai_dev_loop.ssh_agent import (
+    validate_ssh_destination as _validate_ssh_destination,
+)
 from ai_dev_loop.state import FULL_SHA_PATTERN, sha256_text
 
 
@@ -116,150 +125,6 @@ def expected_remote_head(repo_root: Path, remote: str, remote_branch: str) -> st
     return sha
 
 
-def _token_looks_like_option(token: str) -> bool:
-    return token.startswith("-")
-
-
-def _destination_has_unsafe_characters(destination: str) -> bool:
-    if not destination:
-        return True
-    for char in destination:
-        if char in {"\0", "\n", "\r", " ", "\t", "\f", "\v"}:
-            return True
-        if ord(char) < 32:
-            return True
-    return False
-
-
-def _validate_ssh_destination(destination: str) -> str:
-    """Return a single argv-safe ssh destination, or raise ValidationError."""
-
-    if _destination_has_unsafe_characters(destination):
-        raise ValidationError("SSH remote destination is empty or contains unsafe characters")
-    if _token_looks_like_option(destination):
-        raise ValidationError("SSH remote destination looks like an option")
-    if "@" in destination:
-        _user, host = destination.rsplit("@", 1)
-        if _token_looks_like_option(host):
-            raise ValidationError("SSH remote destination looks like an option")
-    return destination
-
-
-def _ssh_destination_from_scp_url(url: str) -> str:
-    # git@alias:owner/repo.git — preserve the Host alias, not a resolved hostname.
-    rest = url[len("git@") :]
-    if ":" not in rest:
-        raise ValidationError("malformed SCP SSH remote URL")
-    host, path = rest.split(":", 1)
-    if not host or not path or path.startswith("/"):
-        raise ValidationError("malformed SCP SSH remote URL")
-    if "/" in host or "@" in host:
-        raise ValidationError("malformed SCP SSH remote URL")
-    if _token_looks_like_option(host):
-        raise ValidationError("SSH remote destination looks like an option")
-    return _validate_ssh_destination(f"git@{host}")
-
-
-def _ssh_destination_from_ssh_url(url: str) -> str:
-    # ssh://user@alias[:port]/owner/repo.git — parse authority without lowercasing.
-    rest = url[len("ssh://") :]
-    if "/" not in rest:
-        raise ValidationError("malformed SSH remote URL")
-    authority, path = rest.split("/", 1)
-    if not authority or not path:
-        raise ValidationError("malformed SSH remote URL")
-    if authority.startswith("[") or _token_looks_like_option(authority):
-        raise ValidationError("unsupported SSH remote URL authority")
-
-    user: str | None
-    hostport: str
-    if "@" in authority:
-        user, hostport = authority.rsplit("@", 1)
-        if not user or not hostport or "@" in user:
-            raise ValidationError("malformed SSH remote URL")
-        if _token_looks_like_option(user):
-            raise ValidationError("SSH remote destination looks like an option")
-    else:
-        user = None
-        hostport = authority
-
-    if ":" in hostport:
-        host, port = hostport.rsplit(":", 1)
-        if not host or not port.isdigit():
-            raise ValidationError("malformed SSH remote URL")
-    else:
-        host = hostport
-    if not host or "/" in host:
-        raise ValidationError("malformed SSH remote URL")
-    if _token_looks_like_option(host):
-        raise ValidationError("SSH remote destination looks like an option")
-
-    destination = f"{user}@{host}" if user else host
-    return _validate_ssh_destination(destination)
-
-
-def ssh_destination_from_remote_url(url: str) -> str:
-    """Build the single ``ssh -G`` destination for a supported Git SSH remote."""
-
-    if url.startswith("https://") or url.startswith("http://"):
-        raise ValidationError(
-            "GitHub publication requires an SSH remote URL; "
-            "configure the remote for SSH and preload ssh-agent"
-        )
-    if url.startswith("git@"):
-        return _ssh_destination_from_scp_url(url)
-    if url.startswith("ssh://"):
-        return _ssh_destination_from_ssh_url(url)
-    raise ValidationError(f"unsupported remote URL scheme for publication: {url[:32]}")
-
-
-def _is_usable_agent_socket(path: Path) -> bool:
-    if not path.is_absolute():
-        return False
-    try:
-        mode = path.stat().st_mode
-    except OSError:
-        return False
-    return stat.S_ISSOCK(mode)
-
-
-def _parse_identity_agent_from_ssh_g(stdout: str) -> str | None:
-    """Return a validated IdentityAgent socket path, or None for absent/none.
-
-    Ambiguous, relative, missing, or non-socket values raise ValidationError.
-    Does not embed ``ssh -G`` output or socket paths in the error message.
-    """
-
-    values: list[str] = []
-    for raw_line in stdout.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        key, separator, remainder = line.partition(" ")
-        if key.lower() != "identityagent":
-            continue
-        if not separator:
-            values.append("")
-            continue
-        values.append(remainder.strip())
-
-    if not values:
-        return None
-    if len(values) > 1:
-        raise ValidationError("ambiguous IdentityAgent in effective SSH configuration")
-
-    value = values[0]
-    if not value or value.lower() == "none":
-        return None
-
-    path = Path(value)
-    if not path.is_absolute():
-        raise ValidationError("effective IdentityAgent must be an absolute socket path")
-    if not _is_usable_agent_socket(path):
-        raise ValidationError("effective IdentityAgent is not a usable SSH agent socket")
-    return str(path)
-
-
 def query_effective_identity_agent(destination: str, *, cwd: Path) -> str | None:
     """Resolve IdentityAgent via ``ssh -G`` for the remote destination."""
 
@@ -283,15 +148,9 @@ def resolve_effective_ssh_auth_sock(repo_root: Path, remote_url: str) -> str:
 
     destination = ssh_destination_from_remote_url(remote_url)
     identity_agent = query_effective_identity_agent(destination, cwd=repo_root)
-    if identity_agent is not None:
-        return identity_agent
-
-    inherited = os.environ.get("SSH_AUTH_SOCK", "").strip()
-    if inherited and _is_usable_agent_socket(Path(inherited)):
-        return inherited
-
-    raise SshAgentNoIdentityError(
-        "ssh-agent has no usable keys; preload the SSH key before publication"
+    return choose_effective_ssh_auth_sock(
+        identity_agent=identity_agent,
+        inherited_ssh_auth_sock=os.environ.get("SSH_AUTH_SOCK"),
     )
 
 

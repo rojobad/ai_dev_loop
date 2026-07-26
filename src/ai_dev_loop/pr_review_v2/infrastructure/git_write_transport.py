@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from ai_dev_loop.errors import AiDevLoopError
+from ai_dev_loop.errors import AiDevLoopError, SshAgentNoIdentityError, ValidationError
 from ai_dev_loop.pr_review_v2.application.github_read import (
     GatewayBlock,
     GatewayBlockKind,
@@ -31,6 +31,11 @@ from ai_dev_loop.pr_review_v2.application.write_contracts import (
 )
 from ai_dev_loop.pr_review_v2.domain.common import TransientErrorKind
 from ai_dev_loop.process import run_process_bytes, run_process_streaming
+from ai_dev_loop.ssh_agent import (
+    choose_effective_ssh_auth_sock,
+    parse_identity_agent_from_ssh_g,
+    ssh_destination_from_remote_url,
+)
 
 _ALLOWLISTED_ENV_KEYS = (
     "PATH",
@@ -345,10 +350,49 @@ class GitWriteTransport:
             )
         )
 
-    def check_ssh_agent(self) -> bool:
+    def prepare_ssh_agent_for_remote(self, remote_url: str) -> None:
+        """Resolve effective IdentityAgent, verify via ``ssh-add -l``, pin socket.
+
+        Uses direct-argv ``ssh -G`` for the bound remote destination, prefers a
+        validated ``IdentityAgent`` over inherited ``SSH_AUTH_SOCK``, verifies
+        loaded identities with a bounded ``ssh-add -l``, then stores the chosen
+        socket only in this transport's per-instance minimal environment. Does
+        not mutate process-global ``os.environ``. Failures raise a typed
+        authentication block without embedding socket paths, agent output, or
+        key material.
+        """
+
+        try:
+            destination = ssh_destination_from_remote_url(remote_url)
+        except ValidationError as exc:
+            raise _ssh_agent_auth_block() from exc
+
+        probe = self._run([self._ssh, "-G", destination])
+        if probe.timed_out or probe.returncode != 0:
+            raise _ssh_agent_auth_block()
+
+        try:
+            identity_agent = parse_identity_agent_from_ssh_g(probe.stdout)
+            sock = choose_effective_ssh_auth_sock(
+                identity_agent=identity_agent,
+                inherited_ssh_auth_sock=self._env.get("SSH_AUTH_SOCK"),
+            )
+        except (ValidationError, SshAgentNoIdentityError) as exc:
+            raise _ssh_agent_auth_block() from exc
+
+        verify_env = dict(self._env)
+        verify_env["SSH_AUTH_SOCK"] = sock
         # ssh-add -l: 0 => identities present, 1 => none, 2 => cannot contact agent.
-        outcome = self._run(["ssh-add", "-l"])
-        return outcome.returncode == 0
+        outcome = self._runner.run(
+            ["ssh-add", "-l"],
+            cwd=self._cwd,
+            timeout=self._call_timeout(),
+            env=verify_env,
+        )
+        if outcome.timed_out or outcome.returncode != 0:
+            raise _ssh_agent_auth_block()
+
+        self._env = verify_env
 
     # -- writes ----------------------------------------------------------
 
@@ -397,6 +441,15 @@ def _require_full_sha(sha: str) -> None:
                 detail="git returned a value that was not a full 40-character SHA",
             )
         )
+
+
+def _ssh_agent_auth_block() -> GitTransportError:
+    return GitTransportError(
+        block=block_for_kind(
+            GatewayBlockKind.AUTHENTICATION,
+            detail="no usable SSH agent identity for push",
+        )
+    )
 
 
 def path_matches_local_remote(remote_url: str, repository_cwd: str) -> bool:

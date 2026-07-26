@@ -556,6 +556,7 @@ class FakeReadTransport:
 class GitCall:
     args: list[str]
     stdin_text: str | None
+    env: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -581,10 +582,11 @@ class ScriptedGitRunner:
         from ai_dev_loop.pr_review_v2.infrastructure.git_write_transport import GitProcessOutcome
 
         args = list(args)
-        self.calls.append(GitCall(args=args, stdin_text=stdin_text))
+        self.calls.append(GitCall(args=args, stdin_text=stdin_text, env=dict(env)))
         joined = " ".join(args)
         for token in self.forbidden_tokens:
             assert token not in joined, f"forbidden git token used: {token}"
+        # Match argv after the executable so both ``git …`` and ``ssh``/``ssh-add`` work.
         tail = tuple(args[1:])
         for match, (rc, out, err, to) in self.scripts:
             if tail == match:
