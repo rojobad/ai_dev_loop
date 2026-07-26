@@ -360,17 +360,22 @@ class ThreadAdjudicationRunner:
                     _reject_oversized_utf8_field(item.reply_body, limit=DEFAULT_MAX_TEXT_BYTES)
             if parsed.fix_prompt_text is not None:
                 _reject_oversized_utf8_field(parsed.fix_prompt_text, limit=DEFAULT_MAX_TEXT_BYTES)
-            artifact = ExternalAdjudicationResultArtifact(
-                decisions=decisions,
-                fix_prompt_text=parsed.fix_prompt_text,
-                run_id=effect.run_id,
-                cycle_number=effect.cycle_number,
-                effect_id=effect.effect_id,
-                bound_head_sha=effect.bound_head_sha,
-                frozen_thread_ids=tuple(effect.frozen_thread_ids),
-                snapshot_ref_sha256=effect.snapshot_ref.sha256,
-                execution_context_ref_sha256=effect.execution_context_ref.sha256,
-            )
+            try:
+                artifact = ExternalAdjudicationResultArtifact(
+                    decisions=decisions,
+                    fix_prompt_text=parsed.fix_prompt_text,
+                    run_id=effect.run_id,
+                    cycle_number=effect.cycle_number,
+                    effect_id=effect.effect_id,
+                    bound_head_sha=effect.bound_head_sha,
+                    frozen_thread_ids=tuple(effect.frozen_thread_ids),
+                    snapshot_ref_sha256=effect.snapshot_ref.sha256,
+                    execution_context_ref_sha256=effect.execution_context_ref.sha256,
+                )
+            except PydanticValidationError as exc:
+                raise CodexLocalRunnerError(
+                    "codex adjudication result failed domain validation"
+                ) from exc
             _reject_oversized_enriched_artifact(artifact)
             return artifact
         finally:
@@ -510,6 +515,13 @@ def _adjudication_wrapper_prompt(
         "<<<SANITIZED_REVIEW_SNAPSHOT>>>\n"
         f"{snapshot_text}"
         "<<<END_SANITIZED_REVIEW_SNAPSHOT>>>\n"
+        "Emit exactly one decision per frozen thread ID; do not add or omit any "
+        "frozen thread.\n"
+        'If decision == "actionable", reply_body must be null.\n'
+        'If decision is "not_applicable" or "uncertain", reply_body must be a '
+        "non-empty string.\n"
+        "If every decision is actionable, fix_prompt_text must be a non-empty string.\n"
+        "If any decision is non-actionable, fix_prompt_text must be null.\n"
         "Return schema-constrained JSON only.\n"
     )
 

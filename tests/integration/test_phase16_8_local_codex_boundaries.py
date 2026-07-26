@@ -355,6 +355,56 @@ def test_local_executor_exact_session_and_protected_cache_replay(tmp_path: Path)
     assert fake2.last_argv is None
 
 
+def test_domain_invalid_adjudication_retries_then_blocks_at_limit(tmp_path: Path) -> None:
+    """Gate B contradiction is retryable before exhaustion, blocked only at max_attempts."""
+    store, _ctx, effect, token, holder = local_fixture(tmp_path, effect_kind="adjudication")
+    reply = "SENSITIVE_REPLY_BODY_DO_NOT_LEAK"
+    summary = "SENSITIVE_ADJUDICATION_SUMMARY_DO_NOT_LEAK"
+    fix_prompt = "SENSITIVE_FIX_PROMPT_DO_NOT_LEAK"
+    contradictory = {
+        "decisions": [
+            {
+                "thread_id": effect.frozen_thread_ids[0],
+                "decision": "actionable",
+                "safe_summary": summary,
+                "reply_body": reply,
+            }
+        ],
+        "fix_prompt_text": fix_prompt,
+    }
+    forbidden = (reply, summary, fix_prompt, SESSION, "forbids reply_body", "input_value")
+    domain_message = "codex adjudication result failed domain validation"
+
+    early = effect.model_copy(update={"attempt": 1})
+    assert early.attempt < early.max_attempts
+    early_fake = FakeCodexProcessRunner(result_payload=contradictory)
+    early_result = make_executor(store, ctx_ref=holder.ctx_ref, process_runner=early_fake).execute(
+        early, token, now=T0
+    )
+    assert isinstance(early_result, EffectRetryableFailure)
+    assert early_result.error.safe_summary == domain_message
+    assert early_result.failed_attempt == 1
+    assert store.read_cached_external_adjudication(early) is None
+    assert_safe_fields_exclude_sentinels(early_result, forbidden)
+    assert early_fake.last_argv is not None
+    assert SESSION in early_fake.last_argv
+    assert "--last" not in early_fake.last_argv
+    assert early_fake.last_stdin is not None
+    assert 'decision == "actionable", reply_body must be null' in early_fake.last_stdin
+
+    exhausted = effect.model_copy(update={"attempt": effect.max_attempts})
+    assert exhausted.attempt >= exhausted.max_attempts
+    late_fake = FakeCodexProcessRunner(result_payload=contradictory)
+    blocked = make_executor(store, ctx_ref=holder.ctx_ref, process_runner=late_fake).execute(
+        exhausted, token, now=T0
+    )
+    assert isinstance(blocked, EffectBlocked)
+    assert blocked.safe_summary == domain_message
+    assert blocked.safe_summary != "local effect failed"
+    assert store.read_cached_external_adjudication(exhausted) is None
+    assert_safe_fields_exclude_sentinels(blocked, forbidden)
+
+
 def test_publication_runner_blocking_codex_subprocess_ipc(tmp_path: Path) -> None:
     from ai_dev_loop.pr_review_v2.infrastructure.codex_local_runners import PublicationTextRunner
 

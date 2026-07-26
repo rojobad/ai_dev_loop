@@ -36,6 +36,7 @@ from ai_dev_loop.pr_review_v2.domain.effects import (
 from ai_dev_loop.pr_review_v2.infrastructure.codex_local_runners import (
     EXTERNAL_ADJUDICATION_SCHEMA,
     PUBLICATION_GENERATION_SCHEMA,
+    CodexLocalRunnerError,
     ExternalAdjudicationPayload,
     FakeCodexProcessRunner,
     PublicationTextRunner,
@@ -236,6 +237,7 @@ def test_external_adjudication_schema_requires_nullable_keys() -> None:
     assert set(schema["required"]) == {"decisions", "fix_prompt_text"}
     fix_prompt = schema["properties"]["fix_prompt_text"]
     assert fix_prompt["type"] == ["string", "null"]
+    assert "description" in fix_prompt
 
     item = schema["properties"]["decisions"]["items"]
     assert set(item["required"]) == {
@@ -245,6 +247,7 @@ def test_external_adjudication_schema_requires_nullable_keys() -> None:
         "reply_body",
     }
     assert item["properties"]["reply_body"]["type"] == ["string", "null"]
+    assert "description" in item["properties"]["reply_body"]
     assert item["additionalProperties"] is False
     assert item["properties"]["decision"]["enum"] == [
         "actionable",
@@ -320,6 +323,161 @@ def test_external_adjudication_payload_shapes_pass_parser_and_domain() -> None:
         snapshot_ref_sha256=HASH_1,
         execution_context_ref_sha256=CTX_HASH,
     )
+
+
+def test_gate_b_actionable_with_reply_and_fix_prompt_fails_domain_closed() -> None:
+    """Reproduce the sanitized Gate B contradiction: schema-valid, domain-invalid."""
+    contradictory = {
+        "decisions": [
+            {
+                "thread_id": THREAD_ID,
+                "decision": "actionable",
+                "safe_summary": "SENSITIVE_ADJUDICATION_SUMMARY_DO_NOT_LEAK",
+                "reply_body": "SENSITIVE_REPLY_BODY_DO_NOT_LEAK",
+            }
+        ],
+        "fix_prompt_text": "SENSITIVE_FIX_PROMPT_DO_NOT_LEAK",
+    }
+    parsed = ExternalAdjudicationPayload.model_validate(contradictory)
+    assert parsed.decisions[0].reply_body is not None
+    assert parsed.fix_prompt_text is not None
+    with pytest.raises(Exception, match="all-actionable adjudication forbids reply_body"):
+        ExternalAdjudicationResultArtifact(
+            decisions=(
+                ExternalAdjudicationDecision(
+                    thread_id=THREAD_ID,
+                    decision=AdjudicationDecisionKind.ACTIONABLE,
+                    safe_summary="SENSITIVE_ADJUDICATION_SUMMARY_DO_NOT_LEAK",
+                    reply_body="SENSITIVE_REPLY_BODY_DO_NOT_LEAK",
+                ),
+            ),
+            fix_prompt_text="SENSITIVE_FIX_PROMPT_DO_NOT_LEAK",
+            run_id=RUN_ID,
+            cycle_number=1,
+            effect_id="effect-adjudication-001",
+            bound_head_sha=SHA_A,
+            frozen_thread_ids=(THREAD_ID,),
+            snapshot_ref_sha256=HASH_1,
+            execution_context_ref_sha256=CTX_HASH,
+        )
+
+
+def test_adjudication_runner_converts_domain_invalid_to_privacy_safe_error(
+    tmp_path: Path,
+) -> None:
+    snapshot = _snapshot_bytes()
+    reply = "SENSITIVE_REPLY_BODY_DO_NOT_LEAK"
+    summary = "SENSITIVE_ADJUDICATION_SUMMARY_DO_NOT_LEAK"
+    fix_prompt = "SENSITIVE_FIX_PROMPT_DO_NOT_LEAK"
+    fake = FakeCodexProcessRunner(
+        result_payload={
+            "decisions": [
+                {
+                    "thread_id": THREAD_ID,
+                    "decision": "actionable",
+                    "safe_summary": summary,
+                    "reply_body": reply,
+                }
+            ],
+            "fix_prompt_text": fix_prompt,
+        }
+    )
+    runner = ThreadAdjudicationRunner(
+        artifact_root=tmp_path / "art",
+        process_runner=fake,
+        timeout_seconds=30.0,
+    )
+    effect = _adjudication_effect(snapshot)
+    with pytest.raises(CodexLocalRunnerError, match="failed domain validation") as raised:
+        runner.adjudicate(
+            run_id=RUN_ID,
+            session_id=SESSION_ID,
+            repo_root="/tmp/repo",
+            execution_context=_execution_context(),
+            effect=effect,
+            snapshot_artifact_bytes_or_path=snapshot,
+            frozen_thread_ids=(THREAD_ID,),
+        )
+    message = str(raised.value)
+    assert message == "codex adjudication result failed domain validation"
+    for needle in (reply, summary, fix_prompt, SESSION_ID, "forbids reply_body", "input_value"):
+        assert needle not in message
+    assert fake.last_stdin is not None
+    assert 'decision == "actionable", reply_body must be null' in fake.last_stdin
+    assert 'decision is "not_applicable" or "uncertain"' in fake.last_stdin
+    assert "every decision is actionable, fix_prompt_text must be a non-empty string" in (
+        fake.last_stdin
+    )
+    assert "any decision is non-actionable, fix_prompt_text must be null" in fake.last_stdin
+    assert "exactly one decision per frozen thread" in fake.last_stdin
+    assert "Return schema-constrained JSON only." in fake.last_stdin
+    assert fake.last_argv is not None
+    assert SESSION_ID in fake.last_argv
+    assert "--last" not in fake.last_argv
+
+
+def test_adjudication_runner_accepts_valid_all_actionable_and_non_actionable(
+    tmp_path: Path,
+) -> None:
+    snapshot = _snapshot_bytes()
+    effect = _adjudication_effect(snapshot)
+    actionable_fake = FakeCodexProcessRunner(
+        result_payload={
+            "decisions": [
+                {
+                    "thread_id": THREAD_ID,
+                    "decision": "actionable",
+                    "safe_summary": "needs fix",
+                    "reply_body": None,
+                }
+            ],
+            "fix_prompt_text": "Please fix",
+        }
+    )
+    actionable = ThreadAdjudicationRunner(
+        artifact_root=tmp_path / "art-a",
+        process_runner=actionable_fake,
+        timeout_seconds=30.0,
+    ).adjudicate(
+        run_id=RUN_ID,
+        session_id=SESSION_ID,
+        repo_root="/tmp/repo",
+        execution_context=_execution_context(),
+        effect=effect,
+        snapshot_artifact_bytes_or_path=snapshot,
+        frozen_thread_ids=(THREAD_ID,),
+    )
+    assert actionable.fix_prompt_text == "Please fix"
+    assert actionable.decisions[0].reply_body is None
+
+    reply_fake = FakeCodexProcessRunner(
+        result_payload={
+            "decisions": [
+                {
+                    "thread_id": THREAD_ID,
+                    "decision": "not_applicable",
+                    "safe_summary": "already addressed",
+                    "reply_body": "Thanks, this was already fixed.",
+                }
+            ],
+            "fix_prompt_text": None,
+        }
+    )
+    replied = ThreadAdjudicationRunner(
+        artifact_root=tmp_path / "art-b",
+        process_runner=reply_fake,
+        timeout_seconds=30.0,
+    ).adjudicate(
+        run_id=RUN_ID,
+        session_id=SESSION_ID,
+        repo_root="/tmp/repo",
+        execution_context=_execution_context(),
+        effect=effect,
+        snapshot_artifact_bytes_or_path=snapshot,
+        frozen_thread_ids=(THREAD_ID,),
+    )
+    assert replied.fix_prompt_text is None
+    assert replied.decisions[0].reply_body == "Thanks, this was already fixed."
 
 
 def test_publication_runner_uses_resume_argv(tmp_path: Path) -> None:

@@ -19,10 +19,16 @@
             "enum": ["actionable", "not_applicable", "uncertain"]
           },
           "safe_summary": { "type": "string", "minLength": 1 },
-          "reply_body": { "type": ["string", "null"] }
+          "reply_body": {
+            "description": "null when decision is actionable; non-empty string when not_applicable or uncertain",
+            "type": ["string", "null"]
+          }
         }
       }
     },
-    "fix_prompt_text": { "type": ["string", "null"] }
+    "fix_prompt_text": {
+      "description": "non-empty string when every decision is actionable; null when any decision is non-actionable",
+      "type": ["string", "null"]
+    }
   }
 }
