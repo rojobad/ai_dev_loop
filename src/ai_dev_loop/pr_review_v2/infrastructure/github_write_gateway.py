@@ -27,6 +27,7 @@ from ai_dev_loop.pr_review_v2.application.github_read import (
     block_for_kind,
 )
 from ai_dev_loop.pr_review_v2.application.write_contracts import (
+    AdoptedExistingPrPreimageArtifact,
     AmbiguousWriteError,
     AuthorityLostError,
     ContentBoundMarker,
@@ -495,7 +496,21 @@ class GitHubWriteGateway:
                 ),
                 already_applied=True,
             )
-        if state == "ambiguous" or not self._eligible_pr_preimage(current):
+        if state == "ambiguous":
+            raise _block(
+                GatewayBlockKind.CONTRADICTORY_EVIDENCE,
+                "bound PR lacks an intact owned preimage for text update",
+            )
+        if self._eligible_pr_preimage(current):
+            pass  # owned marker path
+        elif effect.adopted_preimage_ref is not None:
+            preimage = self._load_adopted_preimage(effect, run_id=run_id)
+            if not self._matches_unconsumed_adopted_preimage(current, preimage):
+                raise _block(
+                    GatewayBlockKind.CONTRADICTORY_EVIDENCE,
+                    "bound PR lacks an intact owned preimage for text update",
+                )
+        else:
             raise _block(
                 GatewayBlockKind.CONTRADICTORY_EVIDENCE,
                 "bound PR lacks an intact owned preimage for text update",
@@ -553,7 +568,22 @@ class GitHubWriteGateway:
                 ),
                 safe_summary="pr text carries the exact owned marker and content",
             )
-        if state != "ambiguous" and self._eligible_pr_preimage(current):
+        if state == "ambiguous":
+            return _unresolved(strategy, "pr text marker/content absent or ambiguous")
+        if effect.adopted_preimage_ref is not None:
+            try:
+                preimage = self._load_adopted_preimage(effect, run_id=run_id)
+            except GhTransportError:
+                return _unresolved(strategy, "adopted PR preimage artifact invalid")
+            if self._matches_unconsumed_adopted_preimage(current, preimage):
+                return proven_not_applied_proof(
+                    strategy=strategy,
+                    occurred_at=now,
+                    failed_attempt=effect.attempt,
+                    safe_summary="bound PR still matches the unconsumed adopted preimage",
+                )
+            return _unresolved(strategy, "pr text marker/content absent or ambiguous")
+        if self._eligible_pr_preimage(current):
             return proven_not_applied_proof(
                 strategy=strategy,
                 occurred_at=now,
@@ -1049,6 +1079,51 @@ class GitHubWriteGateway:
             and evidence.operation in {"create_or_update_pr", "update_pr_text"}
             and verify_owned_preimage_content(body=body, title=title, evidence=evidence)
         )
+
+    def _load_adopted_preimage(
+        self, effect: UpdatePrTextEffect, *, run_id: str
+    ) -> AdoptedExistingPrPreimageArtifact:
+        ref = effect.adopted_preimage_ref
+        if ref is None:
+            raise _block(
+                GatewayBlockKind.HTTP_VALIDATION_REJECTION,
+                "adopted PR preimage artifact invalid",
+            )
+        try:
+            artifact = self._reader.read_adopted_existing_pr_preimage(run_id=run_id, ref=ref)
+        except InputArtifactError as exc:
+            raise _block(
+                GatewayBlockKind.HTTP_VALIDATION_REJECTION,
+                "adopted PR preimage artifact invalid",
+            ) from exc
+        binding = effect.binding
+        if (
+            artifact.repository != binding.repository.name_with_owner
+            or artifact.pr_number != binding.pr_number
+            or artifact.head_branch != binding.head_branch
+            or artifact.base_branch != binding.base_branch
+        ):
+            raise _block(
+                GatewayBlockKind.CONTRADICTORY_EVIDENCE,
+                "adopted PR preimage binding mismatch",
+            )
+        return artifact
+
+    @staticmethod
+    def _matches_unconsumed_adopted_preimage(
+        pr: dict[str, Any], preimage: AdoptedExistingPrPreimageArtifact
+    ) -> bool:
+        """True when live title/body exactly equal the frozen preimage with no markers."""
+
+        live_title = str(pr.get("title") or "")
+        live_body = str(pr.get("body") or "")
+        if live_title != preimage.title or live_body != preimage.body:
+            return False
+        try:
+            evidence = parse_single_owned_preimage(live_body)
+        except ValueError:
+            return False
+        return evidence is None
 
     def _pr_bound(self, effect: CreateOrUpdatePrEffect, pr: dict[str, Any]) -> PrBoundOutcome:
         number = _require_int_field(pr, "number", "PR number malformed")

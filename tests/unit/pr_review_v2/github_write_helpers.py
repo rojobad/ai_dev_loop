@@ -115,6 +115,34 @@ def write_publication_text(artifact_root: Path, run_id: str, *, title: str, body
     return write_artifact(artifact_root, run_id, "artifacts/publication.json", data)
 
 
+def write_adopted_existing_pr_preimage(
+    artifact_root: Path,
+    run_id: str,
+    *,
+    title: str,
+    body: str = "",
+    pr_number: int = 7,
+    head_sha: str = SHA_A,
+    head_branch: str = "feature",
+    base_branch: str = "main",
+    repository: str = "acme/demo",
+):
+    payload = {
+        "schema_name": "ai_dev_loop.pr_review_v2.adopted_existing_pr_preimage",
+        "schema_version": 1,
+        "repository": repository,
+        "pr_number": pr_number,
+        "head_branch": head_branch,
+        "base_branch": base_branch,
+        "head_sha": head_sha,
+        "title": title,
+        "body": body,
+    }
+    data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    data = (data + "\n").encode("utf-8")
+    return write_artifact(artifact_root, run_id, "local/adopted-existing-pr-preimage.json", data)
+
+
 def write_reply_text(artifact_root: Path, run_id: str, *, text: str, name: str = "reply.txt"):
     return write_artifact(artifact_root, run_id, f"artifacts/{name}", text.encode("utf-8"))
 
@@ -218,7 +246,13 @@ def post_reply_effect(*, reply_ref, thread_id: str = "THREAD_1", attempt: int = 
     )
 
 
-def update_pr_text_effect(*, publication_text_ref, attempt: int = 1, run_id: str = RUN_ID):
+def update_pr_text_effect(
+    *,
+    publication_text_ref,
+    attempt: int = 1,
+    run_id: str = RUN_ID,
+    adopted_preimage_ref=None,
+):
     return UpdatePrTextEffect(
         effect_id="pr-review:run-16-6:cycle:01:update_pr_text",
         idempotency_key="pr-review:run-16-6:cycle:01:update_pr_text",
@@ -230,6 +264,7 @@ def update_pr_text_effect(*, publication_text_ref, attempt: int = 1, run_id: str
         bound_head_sha=SHA_B,
         binding=binding(),
         publication_text_ref=publication_text_ref,
+        adopted_preimage_ref=adopted_preimage_ref,
     )
 
 
@@ -711,6 +746,7 @@ __all__ = [
     "transient_error",
     "update_pr_text_effect",
     "write_artifact",
+    "write_adopted_existing_pr_preimage",
     "write_commit_message",
     "write_publication_text",
     "write_reply_text",

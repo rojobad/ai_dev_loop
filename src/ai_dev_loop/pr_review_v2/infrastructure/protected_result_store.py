@@ -23,6 +23,7 @@ from ai_dev_loop.pr_review_v2.application.write_contracts import (
     DEFAULT_MAX_COMMIT_MESSAGE_BYTES,
     DEFAULT_MAX_PATCH_BYTES,
     DEFAULT_MAX_TEXT_BYTES,
+    AdoptedExistingPrPreimageArtifact,
     CommitMessageArtifact,
     PublicationTextArtifact,
     reject_prohibited_controls,
@@ -61,6 +62,7 @@ PUBLICATION_TEXT_DIR = "local/publication-text"
 COMMIT_MESSAGE_DIR = "local/commit-message"
 SOURCE_PLAN_RELATIVE = "local/source/plan.md"
 SOURCE_PROMPT_RELATIVE = "local/source/prompt.txt"
+ADOPTED_EXISTING_PR_PREIMAGE_RELATIVE = "local/adopted-existing-pr-preimage.json"
 # Legacy fixed paths retained for older fixtures; new writes are effect-keyed.
 PUBLICATION_TEXT_RELATIVE = "local/publication-text.json"
 COMMIT_MESSAGE_RELATIVE = "local/commit-message.json"
@@ -579,6 +581,27 @@ class ProtectedResultStore:
             data=data,
             max_bytes=MAX_SOURCE_PROMPT_BYTES,
         )
+
+    def persist_adopted_existing_pr_preimage(
+        self, *, run_id: str, artifact: AdoptedExistingPrPreimageArtifact
+    ) -> ArtifactRef:
+        """Persist the prepare-time existing-PR title/body preimage (owner-only)."""
+
+        title_bytes = artifact.title.encode("utf-8")
+        body_bytes = artifact.body.encode("utf-8")
+        if len(title_bytes) > DEFAULT_MAX_TEXT_BYTES or len(body_bytes) > DEFAULT_MAX_TEXT_BYTES:
+            raise ProtectedResultStoreError("artifact exceeds maximum size")
+        return self._persist_deterministic_json(
+            run_id=run_id,
+            relative_path=ADOPTED_EXISTING_PR_PREIMAGE_RELATIVE,
+            payload=artifact.model_dump(mode="json"),
+            max_bytes=MAX_PROTECTED_RESULT_JSON_BYTES,
+        )
+
+    def read_adopted_existing_pr_preimage(
+        self, *, run_id: str, ref: ArtifactRef
+    ) -> AdoptedExistingPrPreimageArtifact:
+        return self._read_json(run_id=run_id, ref=ref, model=AdoptedExistingPrPreimageArtifact)
 
     def read_source_plan_bytes(self, *, run_id: str, expected_sha256: str) -> bytes:
         return self._read_bound_bytes(

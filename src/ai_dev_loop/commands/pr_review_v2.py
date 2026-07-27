@@ -464,6 +464,8 @@ def prepare_existing_pr(
             execution_context=ctx,
             plan_bytes=plan_bytes,
             prompt_bytes=prompt_bytes,
+            title=discovered.title,
+            body=discovered.body,
             accepted_patch_bytes=None,
         )
     )

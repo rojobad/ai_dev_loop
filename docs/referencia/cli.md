@@ -261,7 +261,11 @@ Contrato de seguridad:
   y worktree (remote/branch/HEAD/staged patch exacto) alineado.
 - `prepare` exige `head_repo` same-repository, checkout local
   (remote/branch/HEAD) igual al binding del PR, y plan/prompt confinados al repo.
-  El `cursor.chat_id` puede ser null hasta el primer local fix.
+  Congela un preimage protegido del title/body del PR existente; el primer
+  `update_pr_text` solo se autoriza si el texto live coincide exactamente con ese
+  preimage, y despues exige el marker `adl-v2` owned. Runs preparados antes de
+  este binding permanecen fail-closed. El `cursor.chat_id` puede ser null hasta
+  el primer local fix.
 - `start <run-id>` es la unica puerta a efectos externos: aplica el evento durable
   y luego lanza/reusa el supervisor detached (`python -m
   ai_dev_loop.pr_review_v2_supervisor_worker`) con metadata de ownership. Si el

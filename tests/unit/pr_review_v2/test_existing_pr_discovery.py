@@ -52,15 +52,20 @@ def test_discoverer_builds_binding_from_open_pr() -> None:
             "base_ref": "main",
             "head_sha": SHA_A,
             "head_repo": "acme/demo",
+            "title": "Existing feature",
+            "body": "Adopted PR body",
         }
     )
     disc = ExistingPrDiscoverer(runner=fake)
     found = disc.discover(owner_repo="acme/demo", pr_number=7)
     assert found.binding.pr_number == 7
     assert found.binding.head_sha == SHA_A
+    assert found.title == "Existing feature"
+    assert found.body == "Adopted PR body"
     assert fake.last_argv is not None
     assert fake.last_argv[0:2] == ["gh", "api"]
     assert "shell=True" not in " ".join(fake.last_argv)
+    assert "title:.title" in " ".join(fake.last_argv)
 
 
 def test_discoverer_rejects_closed_pr() -> None:
@@ -72,9 +77,28 @@ def test_discoverer_rejects_closed_pr() -> None:
             "base_ref": "main",
             "head_sha": SHA_A,
             "head_repo": "acme/demo",
+            "title": "x",
+            "body": "",
         }
     )
     with pytest.raises(ValidationError, match="open"):
+        ExistingPrDiscoverer(runner=fake).discover(owner_repo="acme/demo", pr_number=7)
+
+
+def test_discoverer_rejects_empty_title() -> None:
+    fake = _FakeGh(
+        {
+            "state": "open",
+            "number": 7,
+            "head_ref": "feature",
+            "base_ref": "main",
+            "head_sha": SHA_A,
+            "head_repo": "acme/demo",
+            "title": "  ",
+            "body": "ok",
+        }
+    )
+    with pytest.raises(ValidationError, match="title"):
         ExistingPrDiscoverer(runner=fake).discover(owner_repo="acme/demo", pr_number=7)
 
 
@@ -122,6 +146,8 @@ def test_prepare_existing_pr_with_fake_discoverer(
             "base_ref": "main",
             "head_sha": head,
             "head_repo": "acme/demo",
+            "title": "Existing feature",
+            "body": "Adopted PR body",
         }
     )
     disc = ExistingPrDiscoverer(runner=fake)
@@ -145,12 +171,65 @@ def test_prepare_existing_pr_with_fake_discoverer(
     engine = _open_engine()
     with engine.store.begin_read() as conn:
         state, _, _ = engine.store.load_validated_snapshot(conn, run_id)
-    context = ProtectedResultStore(_artifact_root()).read_execution_context(
+    assert state.origin.kind == "existing_pr"
+    assert state.origin.adopted_preimage_ref is not None
+    store = ProtectedResultStore(_artifact_root())
+    preimage = store.read_adopted_existing_pr_preimage(
+        run_id=run_id, ref=state.origin.adopted_preimage_ref
+    )
+    assert preimage.title == "Existing feature"
+    assert preimage.body == "Adopted PR body"
+    assert preimage.pr_number == 9
+    context = store.read_execution_context(
         run_id=run_id,
         ref=state.origin.execution_context_ref,
     )
     assert context.codex.review_model == "gpt-5.6"
     assert context.codex.review_reasoning_effort == "high"
+
+    # Idempotent reuse with identical preimage.
+    text2 = prepare_existing_pr(
+        repo="acme/demo",
+        pr_number=9,
+        codex_session_id=SESSION,
+        plan_path=Path("plans/x.md"),
+        prompt_path=Path("plans/prompt.txt"),
+        config_path=cfg,
+        repo_path=root,
+        discoverer=disc,
+    )
+    assert "reused prepared run" in text2
+    assert run_id in text2
+
+    # Changed live title/body must fail closed rather than replace the preimage.
+    drifted = _FakeGh(
+        {
+            "state": "open",
+            "number": 9,
+            "head_ref": "feature",
+            "base_ref": "main",
+            "head_sha": head,
+            "head_repo": "acme/demo",
+            "title": "Existing feature",
+            "body": "Drifted body",
+        }
+    )
+    from ai_dev_loop.pr_review_v2.application.control_contracts import ControlError
+
+    with pytest.raises(
+        (ValidationError, ControlError),
+        match="collision|identity|conflict|missing or unsafe|hash mismatch",
+    ):
+        prepare_existing_pr(
+            repo="acme/demo",
+            pr_number=9,
+            codex_session_id=SESSION,
+            plan_path=Path("plans/x.md"),
+            prompt_path=Path("plans/prompt.txt"),
+            config_path=cfg,
+            repo_path=root,
+            discoverer=ExistingPrDiscoverer(runner=drifted),
+        )
 
 
 def test_prepare_rejects_wrong_checkout_branch(
@@ -194,6 +273,8 @@ def test_prepare_rejects_wrong_checkout_branch(
             "base_ref": "main",
             "head_sha": head,
             "head_repo": "acme/demo",
+            "title": "Existing feature",
+            "body": "",
         }
     )
     with pytest.raises(ValidationError, match="branch"):

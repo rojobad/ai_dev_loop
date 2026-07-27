@@ -17,6 +17,11 @@ from ai_dev_loop.pr_review_v2.application.control_contracts import (
 )
 from ai_dev_loop.pr_review_v2.application.engine import PrReviewEngine
 from ai_dev_loop.pr_review_v2.application.execution_context import ExecutionContextArtifact
+from ai_dev_loop.pr_review_v2.application.write_contracts import (
+    DEFAULT_MAX_TEXT_BYTES,
+    AdoptedExistingPrPreimageArtifact,
+    reject_prohibited_controls,
+)
 from ai_dev_loop.pr_review_v2.domain.common import (
     ExistingPrOrigin,
     PullRequestBinding,
@@ -80,6 +85,8 @@ class ExistingPrSnapshot:
         "accepted_patch_bytes",
         "plan_bytes",
         "prompt_bytes",
+        "title",
+        "body",
     )
 
     def __init__(
@@ -89,12 +96,16 @@ class ExistingPrSnapshot:
         execution_context: ExecutionContextArtifact,
         plan_bytes: bytes,
         prompt_bytes: bytes,
+        title: str,
+        body: str = "",
         accepted_patch_bytes: bytes | None = None,
     ) -> None:
         self.binding = binding
         self.execution_context = execution_context
         self.plan_bytes = plan_bytes
         self.prompt_bytes = prompt_bytes
+        self.title = title
+        self.body = body
         self.accepted_patch_bytes = accepted_patch_bytes
 
 
@@ -202,6 +213,12 @@ class PreparationService:
                 ControlErrorKind.VALIDATION,
                 "execution context prepared_from must be existing_pr",
             )
+        try:
+            preimage = _adopted_preimage_from_snapshot(snapshot)
+        except ValueError as exc:
+            raise ControlError(
+                ControlErrorKind.VALIDATION, "existing PR preimage is invalid"
+            ) from exc
         run_id = deterministic_run_id(
             kind="existing_pr",
             identity=(
@@ -221,12 +238,19 @@ class PreparationService:
             if prompt_ref.sha256 != ctx.plan_prompt.prompt_sha256:
                 raise ProtectedResultStoreError("source prompt hash mismatch")
             context_ref = self._store.persist_execution_context(run_id=run_id, artifact=ctx)
+            preimage_ref = self._store.persist_adopted_existing_pr_preimage(
+                run_id=run_id, artifact=preimage
+            )
             if snapshot.accepted_patch_bytes is not None:
                 self._store.persist_patch_bytes(run_id=run_id, data=snapshot.accepted_patch_bytes)
         except ProtectedResultStoreError as exc:
             raise ControlError(ControlErrorKind.INTERNAL, str(exc)) from exc
 
-        origin = ExistingPrOrigin(binding=binding, execution_context_ref=context_ref)
+        origin = ExistingPrOrigin(
+            binding=binding,
+            execution_context_ref=context_ref,
+            adopted_preimage_ref=preimage_ref,
+        )
         return self._commit_prepared(
             run_id=run_id,
             origin=origin,
@@ -287,6 +311,29 @@ class PreparationService:
             next_action=SafeNextAction.START,
             execution_context_sha256=context_sha,
         )
+
+
+def _adopted_preimage_from_snapshot(
+    snapshot: ExistingPrSnapshot,
+) -> AdoptedExistingPrPreimageArtifact:
+    binding = snapshot.binding
+    title = reject_prohibited_controls(snapshot.title, field_name="adopted existing PR preimage")
+    body = reject_prohibited_controls(snapshot.body, field_name="adopted existing PR preimage")
+    if not title.strip():
+        raise ValueError("adopted existing PR title must be non-empty")
+    if len(title.encode("utf-8")) > DEFAULT_MAX_TEXT_BYTES:
+        raise ValueError("adopted existing PR title exceeds maximum size")
+    if len(body.encode("utf-8")) > DEFAULT_MAX_TEXT_BYTES:
+        raise ValueError("adopted existing PR body exceeds maximum size")
+    return AdoptedExistingPrPreimageArtifact(
+        repository=binding.repository.name_with_owner,
+        pr_number=binding.pr_number,
+        head_branch=binding.head_branch,
+        base_branch=binding.base_branch,
+        head_sha=binding.head_sha,
+        title=title.strip(),
+        body=body,
+    )
 
 
 __all__ = [

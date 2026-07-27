@@ -195,7 +195,7 @@ def init_existing_pr_git(tmp_path: Path) -> tuple[Path, Path, str]:
 def seed_owned_pr_preimage(
     *, title: str = "Existing feature", body: str = "Adopted PR body"
 ) -> tuple[str, str]:
-    """Return title/body carrying an intact v2 owned preimage (update_pr_text prerequisite)."""
+    """Return title/body carrying an intact v2 owned preimage (legacy marker path)."""
 
     marker = derive_content_bound_marker(
         operation="create_or_update_pr",
@@ -204,6 +204,14 @@ def seed_owned_pr_preimage(
         canonical_content=canonicalize_publication_text(title=title, body=body),
     )
     return title, append_owned_marker(body, marker.marker_text)
+
+
+def unmarked_existing_pr_text(
+    *, title: str = "Existing feature", body: str = "Adopted PR body"
+) -> tuple[str, str]:
+    """Return unmarked user-created PR title/body for prepare-time adoption."""
+
+    return title, body
 
 
 def build_execution_context(
@@ -482,9 +490,7 @@ class ObservationScriptingRouter:
         self._ledger.effect_ids.append(effect.effect_id)
         if isinstance(effect, PushCommitEffect):
             self._ledger.push_force_flags.append(bool(effect.force))
-        result = self._inner.execute(
-            effect, token, now=now, authority=authority, claim=claim
-        )
+        result = self._inner.execute(effect, token, now=now, authority=authority, claim=claim)
         if isinstance(result, EffectSucceeded):
             self._ledger.succeeded_kinds.append(effect.kind)
             self._after_success(effect, result)
@@ -751,9 +757,7 @@ def wait_for_supervisor_completed(
                 break
             time.sleep(0.1)
         else:
-            raise AssertionError(
-                f"timed out waiting for completed; last_state={last_kind!r}"
-            )
+            raise AssertionError(f"timed out waiting for completed; last_state={last_kind!r}")
     finally:
         code = registry.reap(run_id)
         if code is not None:
@@ -1059,7 +1063,7 @@ def assemble_existing_pr_happy_path_stack(
 
     work, bare, head_sha_value = init_existing_pr_git(tmp_path / "git")
     controller = StatefulFakeGhController(tmp_path / "gh-state.json")
-    title, body = seed_owned_pr_preimage()
+    title, body = unmarked_existing_pr_text()
     controller.state.fixture = {
         "owner": OWNER,
         "name": NAME,
@@ -1086,9 +1090,7 @@ def assemble_existing_pr_happy_path_stack(
         counter_path=codex_counter,
         delegate_codex=fake_clis["bin_dir"] / "codex",
     )
-    path = (
-        f"{codex_bin}:{fake_clis['bin_dir']}:{gh_path.parent}:{os.environ.get('PATH', '')}"
-    )
+    path = f"{codex_bin}:{fake_clis['bin_dir']}:{gh_path.parent}:{os.environ.get('PATH', '')}"
     monkeypatch.setenv("PATH", path)
 
     db_path = tmp_path / "engine.sqlite3"
@@ -1156,6 +1158,7 @@ __all__ = [
     "reload_ledger",
     "remote_head_sha",
     "seed_owned_pr_preimage",
+    "unmarked_existing_pr_text",
     "sha256_bytes",
     "spawn_happy_path_supervisor",
     "wait_for_supervisor_completed",

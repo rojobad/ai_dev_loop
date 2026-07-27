@@ -22,6 +22,7 @@ from tests.integration.phase16_8_existing_pr_happy_path_helpers import (
     head_sha,
     reload_ledger,
     remote_head_sha,
+    unmarked_existing_pr_text,
     wait_for_supervisor_completed,
 )
 from tests.unit.pr_review_v2.durable_helpers import FakeClock
@@ -79,6 +80,7 @@ def test_existing_pr_production_assembled_happy_path_reaches_completed(
         head_sha=stack.head_sha,
         gh_command=str(tmp_path / "gh-bin" / "gh"),
     )
+    title, body = unmarked_existing_pr_text()
 
     head_before = head_sha(stack.work)
     remote_before = remote_head_sha(stack.bare)
@@ -91,6 +93,8 @@ def test_existing_pr_production_assembled_happy_path_reaches_completed(
             plan_bytes=PLAN_BYTES,
             prompt_bytes=PROMPT_BYTES,
             execution_context=ctx,
+            title=title,
+            body=body,
             accepted_patch_bytes=None,
         )
     )

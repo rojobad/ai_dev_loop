@@ -348,6 +348,8 @@ def test_assemble_supervisor_runtime_uses_frozen_lease_ttl(
             binding=binding,
             plan_bytes=PLAN_BYTES,
             prompt_bytes=PROMPT_BYTES,
+            title="Existing feature",
+            body="Adopted PR body",
             execution_context=_worker_ctx(
                 repo_root=str(repo.resolve()),
                 lease_ttl_seconds=lease_ttl_seconds,
@@ -535,6 +537,8 @@ def _gate_b_prepare_claimed_trigger(
             binding=binding,
             plan_bytes=PLAN_BYTES,
             prompt_bytes=PROMPT_BYTES,
+            title="Existing feature",
+            body="Adopted PR body",
             execution_context=_worker_ctx(
                 repo_root=str(repo.resolve()),
                 lease_ttl_seconds=lease_ttl_seconds,

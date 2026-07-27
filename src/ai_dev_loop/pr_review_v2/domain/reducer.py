@@ -239,6 +239,24 @@ def _execution_context_ref(state: PrReviewState) -> ArtifactRef:
     return state.origin.execution_context_ref
 
 
+def _existing_pr_adoption_ref_for_update(state: PublishingFixState) -> ArtifactRef | None:
+    """Attach one-shot adopted preimage only for the first existing-PR text update.
+
+    Existing-PR runs start at cycle 1. Successful fix publication always advances
+    the cycle, so later cycles must rely on the written v2 marker. Legacy origins
+    without ``adopted_preimage_ref`` remain fail-closed.
+    """
+
+    origin = state.origin
+    if not isinstance(origin, ExistingPrOrigin):
+        return None
+    if origin.adopted_preimage_ref is None:
+        return None
+    if state.cycle_number != 1:
+        return None
+    return origin.adopted_preimage_ref
+
+
 def _make_generate_publication_text(
     *,
     run_id: str,
@@ -1395,6 +1413,7 @@ def _handle_success_publishing_fix(
         text_id, text_idem = stable_effect_ids(
             run_id=state.run_id, cycle_number=state.cycle_number, operation="update_pr_text"
         )
+        adopted_ref = _existing_pr_adoption_ref_for_update(state)
         update = UpdatePrTextEffect(
             effect_id=text_id,
             idempotency_key=text_idem,
@@ -1406,6 +1425,7 @@ def _handle_success_publishing_fix(
             bound_head_sha=binding.head_sha,
             binding=binding,
             publication_text_ref=state.publication_text_ref,
+            adopted_preimage_ref=adopted_ref,
         )
         new_state = state.model_copy(
             update={

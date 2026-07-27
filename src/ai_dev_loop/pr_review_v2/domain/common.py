@@ -299,6 +299,9 @@ class ExistingPrOrigin(DomainModel):
     kind: Literal["existing_pr"] = "existing_pr"
     binding: PullRequestBinding
     execution_context_ref: ArtifactRef
+    # New prepares always set this. Historical prepared states load with None and
+    # remain fail-closed for first text update (no retroactive adoption).
+    adopted_preimage_ref: ArtifactRef | None = None
 
 
 PrReviewOrigin = Annotated[SourceRunOrigin | ExistingPrOrigin, Field(discriminator="kind")]

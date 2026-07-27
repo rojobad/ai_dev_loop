@@ -25,6 +25,7 @@ from ai_dev_loop.pr_review_v2.application.write_contracts import (
     DEFAULT_MAX_COMMIT_MESSAGE_BYTES,
     DEFAULT_MAX_PATCH_BYTES,
     DEFAULT_MAX_TEXT_BYTES,
+    AdoptedExistingPrPreimageArtifact,
     CommitMessageArtifact,
     PublicationTextArtifact,
     reject_prohibited_controls,
@@ -279,6 +280,19 @@ class InputArtifactReader:
             run_root, ref.relative_path, expected_sha256=ref.sha256, max_bytes=max_bytes
         )
         return _load_json_model(raw, PublicationTextArtifact)
+
+    def read_adopted_existing_pr_preimage(
+        self,
+        *,
+        run_id: str,
+        ref: ArtifactRef,
+        max_bytes: int = 1_048_576,
+    ) -> AdoptedExistingPrPreimageArtifact:
+        run_root = _run_root(self._root, run_id)
+        raw = _verified_bytes(
+            run_root, ref.relative_path, expected_sha256=ref.sha256, max_bytes=max_bytes
+        )
+        return _load_json_model(raw, AdoptedExistingPrPreimageArtifact)
 
 
 def _load_json_model(raw: bytes, model: type[_TModel]) -> _TModel:

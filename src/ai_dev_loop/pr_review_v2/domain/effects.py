@@ -152,6 +152,10 @@ class RunLocalFixEffect(BindingAlignedEffect):
 class UpdatePrTextEffect(BindingAlignedEffect):
     kind: Literal["update_pr_text"] = "update_pr_text"
     publication_text_ref: ArtifactRef
+    # One-shot prepare-time adoption authority for unmarked existing PRs.
+    # Presence on the effect is the durable unconsumed indicator; later cycles
+    # omit it so removed markers cannot regain authority via old preimage text.
+    adopted_preimage_ref: ArtifactRef | None = None
 
 
 class ResolveThreadEffect(BindingAlignedEffect):
