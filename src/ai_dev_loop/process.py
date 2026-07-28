@@ -204,6 +204,7 @@ def run_process_streaming(
     registration_recorded = False
     if active_process is not None:
         from ai_dev_loop.abort_control import register_active_process
+        from ai_dev_loop.errors import ValidationError
 
         try:
             register_active_process(
@@ -219,19 +220,25 @@ def run_process_streaming(
             )
             registration_recorded = True
         except Exception as exc:
-            _terminate_process_group(proc)
-            try:
-                proc.communicate(timeout=1)
-            except subprocess.TimeoutExpired:
+            # Fast-exiting children (for example create-chat) may leave /proc before
+            # executable/starttime capture. If the child is already reaped/exited,
+            # there is nothing left to abort-control — continue without metadata.
+            if isinstance(exc, ValidationError) and proc.poll() is not None:
+                registration_recorded = False
+            else:
                 _terminate_process_group(proc)
-                proc.communicate(timeout=1)
-            if stdout_handle is not None:
-                stdout_handle.close()
-            if stderr_handle is not None:
-                stderr_handle.close()
-            raise AiDevLoopError(
-                "failed to register active child process metadata; child process group terminated"
-            ) from exc
+                try:
+                    proc.communicate(timeout=1)
+                except subprocess.TimeoutExpired:
+                    _terminate_process_group(proc)
+                    proc.communicate(timeout=1)
+                if stdout_handle is not None:
+                    stdout_handle.close()
+                if stderr_handle is not None:
+                    stderr_handle.close()
+                raise AiDevLoopError(
+                    "failed to register active child process metadata; child process group terminated"
+                ) from exc
 
     timed_out = False
     returncode = 1

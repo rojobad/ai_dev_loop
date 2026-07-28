@@ -33,6 +33,7 @@ DEFAULT_REVIEWER_LOGIN = "chatgpt-codex-connector"
 DEFAULT_POLL_INTERVAL_SECONDS = 60
 LOCAL_RETRY_BASE_DELAYS_SECONDS: tuple[int, ...] = (10, 30, 90, 180, 300)
 MAX_SERVER_DIRECTED_WAIT_SECONDS = 3600
+MAX_TOTAL_SANITIZED_CHARS_LIMIT = 2_000_000
 DEFAULT_REVIEWED_COMMIT_PREFIX_LENGTH = 12
 JITTER_MIN = -0.20
 JITTER_MAX = 0.20
@@ -86,6 +87,7 @@ class GitHubReadPolicy(AppModel):
     reviewer_logins: tuple[NonEmptyLogin, ...] = (DEFAULT_REVIEWER_LOGIN,)
     poll_interval_seconds: PositiveInt = Field(default=DEFAULT_POLL_INTERVAL_SECONDS, le=3600)
     accepted_no_findings_prefixes: tuple[str, ...] = ()
+    accept_bot_thumbs_up: bool = False
     reviewed_commit_prefix_length: int = Field(
         default=DEFAULT_REVIEWED_COMMIT_PREFIX_LENGTH, ge=7, le=40
     )
@@ -93,7 +95,9 @@ class GitHubReadPolicy(AppModel):
         default=MAX_SERVER_DIRECTED_WAIT_SECONDS, le=MAX_SERVER_DIRECTED_WAIT_SECONDS
     )
     max_sanitized_body_chars: PositiveInt = Field(default=16_384, le=200_000)
-    max_total_sanitized_chars: PositiveInt = Field(default=200_000, le=2_000_000)
+    max_total_sanitized_chars: PositiveInt = Field(
+        default=200_000, le=MAX_TOTAL_SANITIZED_CHARS_LIMIT
+    )
 
     @field_validator("accepted_no_findings_prefixes")
     @classmethod
@@ -117,6 +121,10 @@ class GitHubReadPolicy(AppModel):
 
     @property
     def no_findings_enabled(self) -> bool:
+        return bool(self.accepted_no_findings_prefixes) or self.accept_bot_thumbs_up
+
+    @property
+    def comment_no_findings_enabled(self) -> bool:
         return bool(self.accepted_no_findings_prefixes)
 
 
@@ -196,6 +204,17 @@ class ObservedReaction(AppModel):
     created_at: UtcInstant | None = None
 
 
+class ObservedNoFindingsReaction(AppModel):
+    """Verified thumbs-up reaction on the exact trigger comment."""
+
+    rule_id: Literal["accept_bot_thumbs_up"] = "accept_bot_thumbs_up"
+    trigger_comment_id: NonEmptyStr
+    reaction_id: NonEmptyStr
+    user_login: NonEmptyLogin
+    content: Literal["+1"] = "+1"
+    created_at: UtcInstant
+
+
 class ObservationSnapshot(AppModel):
     """Validated complete observation before artifact persistence."""
 
@@ -209,6 +228,7 @@ class ObservationSnapshot(AppModel):
     trigger: ObservedTriggerComment
     eligible_threads: tuple[ObservedReviewThread, ...] = ()
     no_findings_comment: ObservedIssueComment | None = None
+    no_findings_reaction: ObservedNoFindingsReaction | None = None
     reactions: tuple[ObservedReaction, ...] = ()
 
 

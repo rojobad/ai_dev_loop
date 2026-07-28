@@ -14,7 +14,9 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import stat
+from enum import StrEnum
 from pathlib import Path
 from typing import TypeVar
 
@@ -23,6 +25,7 @@ from ai_dev_loop.pr_review_v2.application.write_contracts import (
     DEFAULT_MAX_COMMIT_MESSAGE_BYTES,
     DEFAULT_MAX_PATCH_BYTES,
     DEFAULT_MAX_TEXT_BYTES,
+    AdoptedExistingPrPreimageArtifact,
     CommitMessageArtifact,
     PublicationTextArtifact,
     reject_prohibited_controls,
@@ -35,8 +38,28 @@ from ai_dev_loop.pr_review_v2.infrastructure.paths import (
 
 _TModel = TypeVar("_TModel", bound=AppModel)
 
-_UNSAFE_MODE_BITS = 0o022  # group/other writable
+_UNSAFE_MODE_BITS = 0o077  # any group/other permission bits (including world-readable 0644)
 _READ_CHUNK = 64 * 1024
+_SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
+
+
+class InputArtifactErrorKind(StrEnum):
+    MISSING = "missing"
+    SYMLINK = "symlink"
+    NOT_DIRECTORY = "not_directory"
+    NOT_REGULAR = "not_regular"
+    UNSAFE_MODE = "unsafe_mode"
+    UNSAFE_PATH = "unsafe_path"
+    HASH_MISMATCH = "hash_mismatch"
+    OVERSIZE = "oversize"
+    EMPTY = "empty"
+    INVALID_UTF8 = "invalid_utf8"
+    INVALID_JSON = "invalid_json"
+    SCHEMA = "schema"
+    PROHIBITED_CONTROLS = "prohibited_controls"
+    OPEN_FAILED = "open_failed"
+    INVALID_MAX_BYTES = "invalid_max_bytes"
+    INVALID_COMMITMENT = "invalid_commitment"
 
 
 class InputArtifactError(Exception):
@@ -46,9 +69,20 @@ class InputArtifactError(Exception):
     relative to the caller's home, and hashes are never embedded.
     """
 
-    def __init__(self, reason: str) -> None:
-        super().__init__(reason)
-        self.reason = reason
+    def __init__(
+        self,
+        kind: InputArtifactErrorKind | str,
+        reason: str | None = None,
+    ) -> None:
+        if isinstance(kind, InputArtifactErrorKind):
+            self.kind = kind
+            self.reason = reason if reason is not None else kind.value
+        else:
+            # Legacy string-only construction maps to OPEN_FAILED unless a known
+            # reason is supplied as the sole argument during transitional calls.
+            self.kind = InputArtifactErrorKind.OPEN_FAILED
+            self.reason = kind
+        super().__init__(self.reason)
 
 
 def _dir_flags() -> int:
@@ -64,6 +98,9 @@ def _file_flags() -> int:
     flags = os.O_RDONLY
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
+    # Avoid indefinite block on FIFOs / special files before the regular-file check.
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
     return flags
 
 
@@ -71,13 +108,13 @@ def _open_relative(parent_fd: int, name: str, flags: int) -> int:
     try:
         return os.open(name, flags, dir_fd=parent_fd)
     except FileNotFoundError as exc:
-        raise InputArtifactError("artifact is missing") from exc
+        raise InputArtifactError(InputArtifactErrorKind.MISSING) from exc
     except OSError as exc:
         if getattr(exc, "errno", None) in {getattr(os, "ELOOP", 40), 40}:
-            raise InputArtifactError("artifact path must not be a symlink") from exc
+            raise InputArtifactError(InputArtifactErrorKind.SYMLINK) from exc
         if getattr(exc, "errno", None) in {getattr(os, "ENOTDIR", 20), 20}:
-            raise InputArtifactError("artifact path component is not a directory") from exc
-        raise InputArtifactError("artifact could not be opened") from exc
+            raise InputArtifactError(InputArtifactErrorKind.NOT_DIRECTORY) from exc
+        raise InputArtifactError(InputArtifactErrorKind.OPEN_FAILED) from exc
 
 
 def _open_under_run_root(run_root: Path, relative_path: str) -> int:
@@ -87,17 +124,17 @@ def _open_under_run_root(run_root: Path, relative_path: str) -> int:
     try:
         resolve_run_relative_path(run_root, relative_path)
     except ValueError as exc:
-        raise InputArtifactError("artifact path is unsafe") from exc
+        raise InputArtifactError(InputArtifactErrorKind.UNSAFE_PATH) from exc
 
     parts = relative_path.split("/")
     try:
         root_fd = os.open(os.fspath(run_root), _dir_flags())
     except FileNotFoundError as exc:
-        raise InputArtifactError("artifact is missing") from exc
+        raise InputArtifactError(InputArtifactErrorKind.MISSING) from exc
     except OSError as exc:
         if getattr(exc, "errno", None) in {getattr(os, "ELOOP", 40), 40}:
-            raise InputArtifactError("artifact path must not be a symlink") from exc
-        raise InputArtifactError("artifact could not be opened") from exc
+            raise InputArtifactError(InputArtifactErrorKind.SYMLINK) from exc
+        raise InputArtifactError(InputArtifactErrorKind.OPEN_FAILED) from exc
 
     fd = root_fd
     try:
@@ -110,7 +147,7 @@ def _open_under_run_root(run_root: Path, relative_path: str) -> int:
                 st = os.fstat(fd)
                 if not stat.S_ISDIR(st.st_mode):
                     os.close(fd)
-                    raise InputArtifactError("artifact path component is not a directory")
+                    raise InputArtifactError(InputArtifactErrorKind.NOT_DIRECTORY)
         return fd
     except Exception:
         if fd >= 0:
@@ -119,17 +156,24 @@ def _open_under_run_root(run_root: Path, relative_path: str) -> int:
         raise
 
 
-def _verified_bytes_from_fd(fd: int, *, expected_sha256: str, max_bytes: int) -> bytes:
+def _verified_bytes_from_fd(
+    fd: int,
+    *,
+    expected_sha256: str | None,
+    max_bytes: int,
+) -> bytes:
     if max_bytes <= 0:
-        raise InputArtifactError("max_bytes must be positive")
+        raise InputArtifactError(InputArtifactErrorKind.INVALID_MAX_BYTES)
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
-            raise InputArtifactError("artifact is not a regular file")
+            raise InputArtifactError(InputArtifactErrorKind.NOT_REGULAR)
         if os.name != "nt" and (st.st_mode & _UNSAFE_MODE_BITS):
-            raise InputArtifactError("artifact has unsafe (group/other-writable) mode")
+            raise InputArtifactError(InputArtifactErrorKind.UNSAFE_MODE)
         if st.st_size > max_bytes:
-            raise InputArtifactError("artifact exceeds maximum size")
+            raise InputArtifactError(
+                InputArtifactErrorKind.OVERSIZE, "artifact exceeds maximum size"
+            )
         digest = hashlib.sha256()
         chunks: list[bytes] = []
         total = 0
@@ -139,19 +183,25 @@ def _verified_bytes_from_fd(fd: int, *, expected_sha256: str, max_bytes: int) ->
                 break
             total += len(chunk)
             if total > max_bytes:
-                raise InputArtifactError("artifact exceeds maximum size")
+                raise InputArtifactError(
+                    InputArtifactErrorKind.OVERSIZE, "artifact exceeds maximum size"
+                )
             digest.update(chunk)
             chunks.append(chunk)
         raw = b"".join(chunks)
-        if digest.hexdigest() != expected_sha256:
-            raise InputArtifactError("artifact hash mismatch")
+        if expected_sha256 is not None and digest.hexdigest() != expected_sha256:
+            raise InputArtifactError(InputArtifactErrorKind.HASH_MISMATCH)
         return raw
     finally:
         os.close(fd)
 
 
 def _verified_bytes(
-    run_root: Path, relative_path: str, *, expected_sha256: str, max_bytes: int
+    run_root: Path,
+    relative_path: str,
+    *,
+    expected_sha256: str | None,
+    max_bytes: int,
 ) -> bytes:
     fd = _open_under_run_root(run_root, relative_path)
     return _verified_bytes_from_fd(fd, expected_sha256=expected_sha256, max_bytes=max_bytes)
@@ -179,7 +229,7 @@ class InputArtifactReader:
             run_root, ref.relative_path, expected_sha256=ref.sha256, max_bytes=max_bytes
         )
         if not raw:
-            raise InputArtifactError("staged patch artifact is empty")
+            raise InputArtifactError(InputArtifactErrorKind.EMPTY, "staged patch artifact is empty")
         return raw
 
     def read_reply_text(
@@ -196,13 +246,13 @@ class InputArtifactReader:
         try:
             text = raw.decode("utf-8")
         except UnicodeDecodeError as exc:
-            raise InputArtifactError("reply artifact is not valid UTF-8") from exc
+            raise InputArtifactError(InputArtifactErrorKind.INVALID_UTF8) from exc
         try:
             reject_prohibited_controls(text, field_name="reply text")
         except ValueError as exc:
-            raise InputArtifactError("reply artifact contains prohibited controls") from exc
+            raise InputArtifactError(InputArtifactErrorKind.PROHIBITED_CONTROLS) from exc
         if not text.strip():
-            raise InputArtifactError("reply artifact is empty")
+            raise InputArtifactError(InputArtifactErrorKind.EMPTY, "reply artifact is empty")
         return text
 
     def read_commit_message(
@@ -231,23 +281,107 @@ class InputArtifactReader:
         )
         return _load_json_model(raw, PublicationTextArtifact)
 
+    def read_adopted_existing_pr_preimage(
+        self,
+        *,
+        run_id: str,
+        ref: ArtifactRef,
+        max_bytes: int = 1_048_576,
+    ) -> AdoptedExistingPrPreimageArtifact:
+        run_root = _run_root(self._root, run_id)
+        raw = _verified_bytes(
+            run_root, ref.relative_path, expected_sha256=ref.sha256, max_bytes=max_bytes
+        )
+        return _load_json_model(raw, AdoptedExistingPrPreimageArtifact)
+
 
 def _load_json_model(raw: bytes, model: type[_TModel]) -> _TModel:
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise InputArtifactError("artifact is not valid UTF-8") from exc
+        raise InputArtifactError(InputArtifactErrorKind.INVALID_UTF8) from exc
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise InputArtifactError("artifact is not valid JSON") from exc
+        raise InputArtifactError(InputArtifactErrorKind.INVALID_JSON) from exc
     try:
         return model.model_validate(payload)
     except Exception as exc:  # noqa: BLE001 - fail closed without leaking content
-        raise InputArtifactError("artifact failed schema validation") from exc
+        raise InputArtifactError(InputArtifactErrorKind.SCHEMA) from exc
+
+
+def read_verified_bytes_under_run_root(
+    run_root: Path,
+    relative_path: str,
+    *,
+    expected_sha256: str,
+    max_bytes: int,
+) -> bytes:
+    """Race-safe owner-only hash-verified read beneath an already-resolved run root."""
+
+    return _verified_bytes(
+        run_root, relative_path, expected_sha256=expected_sha256, max_bytes=max_bytes
+    )
+
+
+def read_verified_sensitive_bytes(
+    artifact_root: Path,
+    *,
+    run_id: str,
+    relative_path: str,
+    expected_sha256: str,
+    max_bytes: int,
+) -> bytes:
+    """Race-safe owner-only hash-verified read beneath a run artifact root."""
+
+    run_root = _run_root(artifact_root, run_id)
+    return _verified_bytes(
+        run_root, relative_path, expected_sha256=expected_sha256, max_bytes=max_bytes
+    )
+
+
+def read_owner_only_bounded_bytes(
+    artifact_root: Path,
+    *,
+    run_id: str,
+    relative_path: str,
+    max_bytes: int,
+) -> bytes:
+    """Owner-only no-follow regular-file read without an external hash commitment."""
+
+    run_root = _run_root(artifact_root, run_id)
+    return _verified_bytes(run_root, relative_path, expected_sha256=None, max_bytes=max_bytes)
+
+
+def read_content_commitment_digest(
+    artifact_root: Path,
+    *,
+    run_id: str,
+    relative_path: str,
+) -> str:
+    """Read a durable sha256 commitment file (64 lowercase hex chars + optional newline)."""
+
+    raw = read_owner_only_bounded_bytes(
+        artifact_root,
+        run_id=run_id,
+        relative_path=relative_path,
+        max_bytes=65,
+    )
+    try:
+        text = raw.decode("ascii").strip()
+    except UnicodeDecodeError as exc:
+        raise InputArtifactError(InputArtifactErrorKind.INVALID_COMMITMENT) from exc
+    if not _SHA256_HEX.fullmatch(text):
+        raise InputArtifactError(InputArtifactErrorKind.INVALID_COMMITMENT)
+    return text
 
 
 __all__ = [
     "InputArtifactError",
+    "InputArtifactErrorKind",
     "InputArtifactReader",
+    "read_content_commitment_digest",
+    "read_owner_only_bounded_bytes",
+    "read_verified_bytes_under_run_root",
+    "read_verified_sensitive_bytes",
 ]

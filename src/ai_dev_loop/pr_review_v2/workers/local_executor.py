@@ -54,17 +54,12 @@ from ai_dev_loop.pr_review_v2.infrastructure.local_fix_adapter import (
     LocalFixAdapter,
     LocalFixAdapterError,
 )
-from ai_dev_loop.pr_review_v2.infrastructure.paths import (
-    resolve_run_relative_path,
-    run_artifact_root,
-)
 from ai_dev_loop.pr_review_v2.infrastructure.protected_result_store import (
     ProtectedResultStore,
     ProtectedResultStoreError,
-    adjudication_result_relative,
-    local_fix_result_relative,
 )
 from ai_dev_loop.pr_review_v2.infrastructure.review_artifacts import (
+    MAX_OBSERVATION_ARTIFACT_BYTES,
     ArtifactStoreError,
     ReviewArtifactStore,
 )
@@ -210,7 +205,9 @@ class LocalEffectExecutor:
         try:
             # Deliver exact on-disk hash-verified bytes (not a re-serialized copy).
             snapshot_bytes = self._reader.read_patch_bytes(
-                run_id=effect.run_id, ref=effect.snapshot_ref
+                run_id=effect.run_id,
+                ref=effect.snapshot_ref,
+                max_bytes=MAX_OBSERVATION_ARTIFACT_BYTES,
             )
         except InputArtifactError as exc:
             raise ProtectedResultStoreError(str(exc)) from exc
@@ -315,19 +312,7 @@ class LocalEffectExecutor:
         cached = self._store.read_cached_external_adjudication(effect)
         if cached is None:
             return None
-        result_ref = _effect_bound_result_ref(
-            self._store,
-            run_id=effect.run_id,
-            relative_path=adjudication_result_relative(
-                run_id=effect.run_id,
-                effect_id=effect.effect_id,
-                cycle_number=effect.cycle_number,
-                bound_head_sha=effect.bound_head_sha,
-                snapshot_ref_sha256=effect.snapshot_ref.sha256,
-                execution_context_ref_sha256=effect.execution_context_ref.sha256,
-                frozen_thread_ids=tuple(effect.frozen_thread_ids),
-            ),
-        )
+        result_ref = self._store.resolve_cached_external_adjudication_ref(effect)
         if result_ref is None:
             return None
         try:
@@ -338,7 +323,11 @@ class LocalEffectExecutor:
             trigger_marker = observation.trigger_marker
         except ArtifactStoreError:
             trigger_marker = _trigger_marker_from_snapshot(
-                self._reader.read_patch_bytes(run_id=effect.run_id, ref=effect.snapshot_ref)
+                self._reader.read_patch_bytes(
+                    run_id=effect.run_id,
+                    ref=effect.snapshot_ref,
+                    max_bytes=MAX_OBSERVATION_ARTIFACT_BYTES,
+                )
             )
         return EffectSucceeded(
             occurred_at=now,
@@ -377,18 +366,7 @@ class LocalEffectExecutor:
                 self._reader.read_patch_bytes(run_id=effect.run_id, ref=patch_ref)
             except InputArtifactError:
                 return None
-        result_ref = _effect_bound_result_ref(
-            self._store,
-            run_id=effect.run_id,
-            relative_path=local_fix_result_relative(
-                run_id=effect.run_id,
-                effect_id=effect.effect_id,
-                cycle_number=effect.cycle_number,
-                bound_head_sha=effect.bound_head_sha,
-                fix_prompt_ref_sha256=effect.fix_prompt_ref.sha256,
-                execution_context_ref_sha256=effect.execution_context_ref.sha256,
-            ),
-        )
+        result_ref = self._store.resolve_cached_local_fix_result_ref(effect)
         if result_ref is None:
             return None
         if accepted:
@@ -514,22 +492,6 @@ def _trigger_marker_from_snapshot(snapshot_bytes: bytes) -> str:
     if not isinstance(marker, str) or not marker.strip():
         raise ProtectedResultStoreError("snapshot missing trigger_marker")
     return marker.strip()
-
-
-def _effect_bound_result_ref(
-    store: ProtectedResultStore,
-    *,
-    run_id: str,
-    relative_path: str,
-) -> ArtifactRef | None:
-    try:
-        path = resolve_run_relative_path(run_artifact_root(store.root, run_id), relative_path)
-    except ValueError:
-        return None
-    if not path.is_file() or path.is_symlink():
-        return None
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    return ArtifactRef(relative_path=relative_path, sha256=digest)
 
 
 def _pause_fields_from_outcome(

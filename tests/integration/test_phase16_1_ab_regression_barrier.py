@@ -259,6 +259,7 @@ def _wait_for_active_component(
     run_id: str,
     component: str,
     timeout: float = 45.0,
+    min_iteration: int | None = None,
 ) -> None:
     """Wait until active-process metadata matches this disposable run and component."""
 
@@ -270,10 +271,15 @@ def _wait_for_active_component(
                 payload = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 payload = None
+            iteration = payload.get("iteration") if isinstance(payload, dict) else None
             if (
                 isinstance(payload, dict)
                 and payload.get("run_id") == run_id
                 and payload.get("component") == component
+                and (
+                    min_iteration is None
+                    or (isinstance(iteration, int) and iteration >= min_iteration)
+                )
             ):
                 return
         time.sleep(0.05)
@@ -805,6 +811,7 @@ def test_ab_abort_during_detached_cursor_preserves_repo_and_identities(
             run_id=prepared.run_id,
             component="cursor",
             timeout=30.0,
+            min_iteration=1,
         )
 
         abort_result = abort_run(prepared.run_id)

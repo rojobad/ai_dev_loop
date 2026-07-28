@@ -18,6 +18,7 @@ from ai_dev_loop.pr_review_v2.application.github_read import (
     ObservationEvidenceKind,
     ObservationSnapshot,
     ObservedIssueComment,
+    ObservedNoFindingsReaction,
     ObservedReaction,
     ObservedReviewThread,
     ObservedTriggerComment,
@@ -169,19 +170,26 @@ class GitHubReadGateway:
             bound_head_sha=effect.binding.head_sha,
             trigger_created_at=trigger.created_at,
         )
-        no_findings = self._select_no_findings(
+        comment_no_findings = self._select_comment_no_findings(
             comments,
             bound_head_sha=effect.binding.head_sha,
             trigger_created_at=trigger.created_at,
         )
-        if no_findings is not None and eligible:
-            raise GhTransportError(block=block_for_kind(GatewayBlockKind.CONTRADICTORY_EVIDENCE))
         reactions = self._fetch_trigger_reactions(
             owner=owner,
             name=name,
             comment_id=trigger.comment_id,
             deadline=deadline,
         )
+        reaction_no_findings = self._select_no_findings_from_reactions(
+            reactions,
+            trigger_comment_id=trigger.comment_id,
+            trigger_created_at=trigger.created_at,
+        )
+        if comment_no_findings is not None and reaction_no_findings is not None:
+            raise GhTransportError(block=block_for_kind(GatewayBlockKind.CONTRADICTORY_EVIDENCE))
+        if eligible and (comment_no_findings is not None or reaction_no_findings is not None):
+            raise GhTransportError(block=block_for_kind(GatewayBlockKind.CONTRADICTORY_EVIDENCE))
         total_sanitized = 0
         if eligible:
             evidence_kind = ObservationEvidenceKind.ELIGIBLE_THREADS
@@ -198,14 +206,22 @@ class GitHubReadGateway:
                     )
                 observed_threads.append(observed)
             observed_no_findings = None
-        elif no_findings is not None:
+            observed_no_findings_reaction = None
+        elif comment_no_findings is not None:
             evidence_kind = ObservationEvidenceKind.VERIFIED_NO_FINDINGS
             observed_threads = []
-            observed_no_findings = no_findings
+            observed_no_findings = comment_no_findings
+            observed_no_findings_reaction = None
+        elif reaction_no_findings is not None:
+            evidence_kind = ObservationEvidenceKind.VERIFIED_NO_FINDINGS
+            observed_threads = []
+            observed_no_findings = None
+            observed_no_findings_reaction = reaction_no_findings
         else:
             evidence_kind = ObservationEvidenceKind.BOT_STILL_WAITING
             observed_threads = []
             observed_no_findings = None
+            observed_no_findings_reaction = None
         snapshot = ObservationSnapshot(
             binding=effect.binding,
             cycle_number=effect.cycle_number,
@@ -221,6 +237,7 @@ class GitHubReadGateway:
             ),
             eligible_threads=tuple(observed_threads),
             no_findings_comment=observed_no_findings,
+            no_findings_reaction=observed_no_findings_reaction,
             reactions=tuple(reactions),
         )
         try:
@@ -614,14 +631,14 @@ class GitHubReadGateway:
             eligible.append(thread)
         return eligible
 
-    def _select_no_findings(
+    def _select_comment_no_findings(
         self,
         comments: list[_EphemeralComment],
         *,
         bound_head_sha: str,
         trigger_created_at: datetime,
     ) -> ObservedIssueComment | None:
-        if not self._policy.no_findings_enabled:
+        if not self._policy.comment_no_findings_enabled:
             return None
         allowed = {login.lower() for login in self._policy.reviewer_logins}
         prefix_len = self._policy.reviewed_commit_prefix_length
@@ -666,6 +683,54 @@ class GitHubReadGateway:
                 )
             )
         return matches[0] if matches else None
+
+    def _select_no_findings_from_reactions(
+        self,
+        reactions: list[ObservedReaction],
+        *,
+        trigger_comment_id: str,
+        trigger_created_at: datetime,
+    ) -> ObservedNoFindingsReaction | None:
+        if not self._policy.accept_bot_thumbs_up:
+            return None
+        allowed = {login.lower() for login in self._policy.reviewer_logins}
+        matches: list[ObservedReaction] = []
+        for reaction in reactions:
+            if reaction.user_login.lower() not in allowed:
+                continue
+            if reaction.content != "+1":
+                continue
+            # Eligible allowlisted +1 on the selected trigger with missing/unusable
+            # timestamp is typed fail-closed evidence, not normal bot polling.
+            if reaction.created_at is None:
+                raise GhTransportError(
+                    block=block_for_kind(
+                        GatewayBlockKind.MALFORMED_EVIDENCE,
+                        detail="no-findings reaction timestamp was missing",
+                    )
+                )
+            if reaction.created_at <= trigger_created_at:
+                continue
+            matches.append(reaction)
+        if len(matches) > 1:
+            raise GhTransportError(
+                block=block_for_kind(
+                    GatewayBlockKind.CONTRADICTORY_EVIDENCE,
+                    detail="multiple conflicting no-findings reactions were found",
+                )
+            )
+        if not matches:
+            return None
+        chosen = matches[0]
+        created_at = chosen.created_at
+        assert created_at is not None
+        return ObservedNoFindingsReaction(
+            trigger_comment_id=trigger_comment_id,
+            reaction_id=chosen.reaction_id,
+            user_login=chosen.user_login,
+            content="+1",
+            created_at=created_at,
+        )
 
     def _fetch_trigger_reactions(
         self, *, owner: str, name: str, comment_id: str, deadline: float

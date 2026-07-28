@@ -152,6 +152,10 @@ class RunLocalFixEffect(BindingAlignedEffect):
 class UpdatePrTextEffect(BindingAlignedEffect):
     kind: Literal["update_pr_text"] = "update_pr_text"
     publication_text_ref: ArtifactRef
+    # One-shot prepare-time adoption authority for unmarked existing PRs.
+    # Presence on the effect is the durable unconsumed indicator; later cycles
+    # omit it so removed markers cannot regain authority via old preimage text.
+    adopted_preimage_ref: ArtifactRef | None = None
 
 
 class ResolveThreadEffect(BindingAlignedEffect):
@@ -240,6 +244,12 @@ MUTATING_KINDS = frozenset(
 READ_ONLY_KINDS = frozenset({"observe_bot_review"})
 LOCAL_KINDS = frozenset({"generate_publication_text", "adjudicate_threads", "run_local_fix"})
 RECONCILING_KINDS = frozenset({"reconcile_write"})
+
+
+def all_pr_review_effect_kinds() -> frozenset[str]:
+    """Return every persisted PR review effect kind from the domain registry."""
+
+    return READ_ONLY_KINDS | LOCAL_KINDS | MUTATING_KINDS | RECONCILING_KINDS
 
 
 def parse_pr_review_effect(payload: object) -> PrReviewEffect:

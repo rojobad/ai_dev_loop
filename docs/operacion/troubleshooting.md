@@ -133,6 +133,18 @@ composer-2.5-fast - Composer 2.5 Fast
 
 Configura `cursor.model` con el identificador exacto, por ejemplo `composer-2.5-fast`.
 
+## Cursor chat creation timeout o fallo ambiguo
+
+`agent create-chat` corre con timeout acotado, registro de proceso activo y
+control de abort igual que los turnos de implementacion. Si la creacion hace
+timeout, sale con codigo distinto de cero, devuelve un ID invalido, o se aborta
+antes de persistir un chat ID durable, el run falla cerrado como `failed` o
+`aborted` terminal.
+
+- Inspecciona artefactos protegidos bajo `cursor/create-chat/` en el directorio del run.
+- No `resume` el mismo run esperando un chat de reemplazo; prepara un run nuevo.
+- Una prueba standalone exitosa de `agent create-chat` no repara un run ambiguo.
+
 ## Codex review model no soportado
 
 Sintoma comun:
@@ -642,3 +654,42 @@ live de `git diff --cached --binary` (el mismo que verificará la publicación).
 Eso no autoriza cambios de contenido distintos del artefacto ni edición del
 `state.json` del origen. El hash de bytes del archivo artefacto
 (`sha256_file`) no sustituye al fingerprint de publicación.
+
+## `pr-review-v2`: supervisor muerto tras claim mutante (Phase 16.8 Gate B)
+
+Sintoma: `start` dejo el run en `waiting_for_bot` con `request_bot_review`
+claimed, el supervisor detached salio, y GitHub no muestra el trigger.
+
+Accion segura (no edites SQLite, claims ni comentarios a mano):
+
+1. Espera a que `status` reporte `resumable: true` y `next_action: resume`
+   (supervisor no vivo y lease expirado). Si `lease_active` sigue true, no
+   lances un `resume` competidor.
+2. Desde el controller A: `ai_dev_loop pr-review-v2 resume <run-id>`.
+3. El resume repara el supervisor; un claim mutante expirado entra primero a
+   reconciliacion. Solo si la evidencia prueba `PROVEN_NOT_APPLIED` se permite
+   exactamente un trigger posterior. `APPLIED` no duplica; `UNRESOLVED` falla
+   cerrado.
+4. No prepares un run nuevo ni publiques el trigger manualmente: eso puede
+   crear duplicados y pierde la evidencia de recovery.
+
+## `pr-review-v2`: el bot reacciono pero el run no completa (Phase 16.8)
+
+Sintoma: hay una reaccion en GitHub pero `status` sigue en polling o pausa con
+evidencia contradictoria/malformada.
+
+Accion segura (no edites SQLite ni artefactos a mano):
+
+1. Confirma `pr_review_v2.no_findings.enabled: true` y al menos una regla:
+   `accepted_comment_prefixes` o `accept_bot_thumbs_up: true`.
+2. Con `accept_bot_thumbs_up`, solo cuenta `+1` del login en `reviewer_logins`
+   sobre el **comentario trigger exacto** del ciclo (marker opaco), con
+   timestamp posterior al trigger y **sin** hilos elegibles abiertos.
+3. `eyes` u otras reacciones no completan el run; varias `+1` validas fallan
+   cerrado.
+4. Si head/PR/trigger/hilos cambiaron, usa la accion segura de `status`/`history`
+   (`resume` documentado, `abort` si hay drift) y deja evidencia para rollback
+   manual.
+
+Gate A (automatizado) no implica aceptacion live; Gate B requiere el PR de
+aceptacion controlado en un checkout limpio de parish360-poc.

@@ -10,6 +10,7 @@ import hashlib
 from dataclasses import dataclass
 from typing import Protocol
 
+from ai_dev_loop.errors import AiDevLoopError
 from ai_dev_loop.local_review_loop import (
     AcceptedFinalizationResult,
     AcceptedReviewDelivery,
@@ -40,6 +41,19 @@ from ai_dev_loop.pr_review_v2.infrastructure.protected_result_store import (
 from ai_dev_loop.state import RunStatus, save_run_state, transition_status
 
 CARRIER_FIX_PROMPT_RELATIVE = "prompts/fixes/01.txt"
+
+CARRIER_CHAT_CREATE_FAILURE_SAFE = (
+    "local fix carrier failed before cursor chat persistence; inspect protected artifacts"
+)
+
+_PRE_CHAT_CARRIER_FAILURE_MESSAGES = frozenset(
+    {
+        "Cursor chat creation timed out before a chat ID was received; "
+        "inspect protected create-chat artifacts and prepare a new run",
+        "Cursor chat creation failed; inspect protected create-chat artifacts and prepare a new run",
+        "Cursor chat creation returned an invalid chat ID",
+    }
+)
 
 
 class LocalFixAdapterError(Exception):
@@ -116,6 +130,22 @@ class LocalCarrierRuntime(Protocol):
 def carrier_run_id(v2_run_id: str, cycle_number: int, effect_id: str) -> str:
     digest = hashlib.sha256(f"{v2_run_id}:{cycle_number}:{effect_id}".encode()).hexdigest()[:32]
     return f"prv2c-{digest}"
+
+
+def _is_pre_chat_carrier_failure(carrier_run_id: str, exc: AiDevLoopError) -> bool:
+    from ai_dev_loop.run_discovery import load_run
+
+    if str(exc) not in _PRE_CHAT_CARRIER_FAILURE_MESSAGES:
+        return False
+    try:
+        _run_directory, carrier_state = load_run(carrier_run_id)
+    except Exception:  # noqa: BLE001
+        return True
+    if carrier_state.cursor.chat_id:
+        return False
+    if (_run_directory / "cursor" / "chat.json").is_file():
+        return False
+    return not carrier_state.iterations
 
 
 class LocalFixAdapter:
@@ -236,6 +266,11 @@ class LocalFixAdapter:
         except Exception as exc:  # noqa: BLE001
             raise LocalFixAdapterError("carrier seed failed") from exc
 
+        # Cursor/Codex children live in independent process groups. After a carrier
+        # worker crash, fence any live owned child via production ownership metadata
+        # before START/RESUME can launch a duplicate invocation.
+        self._fence_orphaned_carrier_children(carrier_id)
+
         operation = LocalReviewOperation.RESUME if had_progress else LocalReviewOperation.START
         scheduled = ScheduledCursorTurn(
             iteration_number=1,
@@ -300,7 +335,12 @@ class LocalFixAdapter:
             on_accepted=_on_accepted,
         )
         # Sole Phase 16.2 correction boundary — never the legacy PR-review adapter.
-        result = run_local_review_fix(request)
+        try:
+            result = run_local_review_fix(request)
+        except AiDevLoopError as exc:
+            if _is_pre_chat_carrier_failure(carrier_id, exc):
+                raise LocalFixAdapterError(CARRIER_CHAT_CREATE_FAILURE_SAFE) from exc
+            raise LocalFixAdapterError("local fix carrier failed") from exc
         return self._map_result(
             run_id=run_id,
             effect=effect,
@@ -404,6 +444,42 @@ class LocalFixAdapter:
                 result_ref=result_ref,
             )
         raise LocalFixAdapterError("cached local fix is not an accepted terminal result")
+
+    def _fence_orphaned_carrier_children(self, carrier_id: str) -> None:
+        """Terminate live owned Cursor/Codex process groups left by a crashed worker.
+
+        Does not write an abort request: SIGTERM without a durable abort must not be
+        classified as user abort. Clears stale active-process metadata after a safe
+        signal/not-live outcome so resume can register a new child.
+        """
+
+        from ai_dev_loop.abort_control import (
+            ProcessSignalOutcome,
+            clear_active_process,
+            is_stale_live_process_signal,
+            read_active_process,
+            signal_active_process_group,
+        )
+        from ai_dev_loop.run_discovery import find_run_directory
+
+        try:
+            carrier_dir = find_run_directory(carrier_id)
+        except Exception:  # noqa: BLE001
+            return
+        if read_active_process(carrier_dir) is None:
+            return
+        result = signal_active_process_group(carrier_dir, run_id=carrier_id)
+        if is_stale_live_process_signal(result):
+            raise LocalFixAdapterError(
+                "ambiguous live active-process metadata blocks local-fix resume"
+            )
+        if result.outcome in {
+            ProcessSignalOutcome.SIGNALED,
+            ProcessSignalOutcome.NOT_LIVE,
+            ProcessSignalOutcome.STALE,
+            ProcessSignalOutcome.SKIPPED,
+        }:
+            clear_active_process(carrier_dir)
 
     def _map_result(
         self,

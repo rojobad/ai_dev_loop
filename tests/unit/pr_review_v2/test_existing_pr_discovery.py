@@ -10,6 +10,7 @@ import yaml
 
 from ai_dev_loop.commands.pr_review_v2 import prepare_existing_pr
 from ai_dev_loop.errors import ValidationError
+from ai_dev_loop.integrations.codex.session_runtime import CodexSessionRuntime
 from ai_dev_loop.pr_review_v2.infrastructure.existing_pr_discovery import ExistingPrDiscoverer
 
 SHA_A = "a" * 40
@@ -32,7 +33,7 @@ def _write_enabled_config(root: Path) -> Path:
         "version": 1,
         "project": {"name": "demo"},
         "cursor": {},
-        "codex": {"review_model": "gpt-5"},
+        "codex": {},
         "workflow": {},
         "prompt": {},
         "pr_review_v2": {"enabled": True},
@@ -51,15 +52,20 @@ def test_discoverer_builds_binding_from_open_pr() -> None:
             "base_ref": "main",
             "head_sha": SHA_A,
             "head_repo": "acme/demo",
+            "title": "Existing feature",
+            "body": "Adopted PR body",
         }
     )
     disc = ExistingPrDiscoverer(runner=fake)
     found = disc.discover(owner_repo="acme/demo", pr_number=7)
     assert found.binding.pr_number == 7
     assert found.binding.head_sha == SHA_A
+    assert found.title == "Existing feature"
+    assert found.body == "Adopted PR body"
     assert fake.last_argv is not None
     assert fake.last_argv[0:2] == ["gh", "api"]
     assert "shell=True" not in " ".join(fake.last_argv)
+    assert "title:.title" in " ".join(fake.last_argv)
 
 
 def test_discoverer_rejects_closed_pr() -> None:
@@ -71,9 +77,28 @@ def test_discoverer_rejects_closed_pr() -> None:
             "base_ref": "main",
             "head_sha": SHA_A,
             "head_repo": "acme/demo",
+            "title": "x",
+            "body": "",
         }
     )
     with pytest.raises(ValidationError, match="open"):
+        ExistingPrDiscoverer(runner=fake).discover(owner_repo="acme/demo", pr_number=7)
+
+
+def test_discoverer_rejects_empty_title() -> None:
+    fake = _FakeGh(
+        {
+            "state": "open",
+            "number": 7,
+            "head_ref": "feature",
+            "base_ref": "main",
+            "head_sha": SHA_A,
+            "head_repo": "acme/demo",
+            "title": "  ",
+            "body": "ok",
+        }
+    )
+    with pytest.raises(ValidationError, match="title"):
         ExistingPrDiscoverer(runner=fake).discover(owner_repo="acme/demo", pr_number=7)
 
 
@@ -100,6 +125,19 @@ def test_prepare_existing_pr_with_fake_discoverer(
         ["git", "remote", "add", "origin", "git@github.com:acme/demo.git"], cwd=root
     )
     cfg = _write_enabled_config(root)
+    runtime = CodexSessionRuntime(
+        session_id=SESSION,
+        model="gpt-5.6",
+        reasoning_effort="high",
+        origin="native_wsl",
+        source_event_type="thread_settings_applied",
+        source_timestamp="2026-07-25T00:00:00Z",
+    )
+    monkeypatch.setattr(
+        "ai_dev_loop.commands.pr_review_v2.read_codex_session_runtime",
+        lambda session_id: runtime,
+    )
+
     fake = _FakeGh(
         {
             "state": "open",
@@ -108,6 +146,8 @@ def test_prepare_existing_pr_with_fake_discoverer(
             "base_ref": "main",
             "head_sha": head,
             "head_repo": "acme/demo",
+            "title": "Existing feature",
+            "body": "Adopted PR body",
         }
     )
     disc = ExistingPrDiscoverer(runner=fake)
@@ -117,7 +157,6 @@ def test_prepare_existing_pr_with_fake_discoverer(
         codex_session_id=SESSION,
         plan_path=Path("plans/x.md"),
         prompt_path=Path("plans/prompt.txt"),
-        review_model="gpt-5",
         config_path=cfg,
         repo_path=root,
         discoverer=disc,
@@ -125,6 +164,72 @@ def test_prepare_existing_pr_with_fake_discoverer(
     assert "origin: existing_pr" in text
     assert "prepared run" in text
     assert "start" in text
+    from ai_dev_loop.commands.pr_review_v2 import _artifact_root, _open_engine
+    from ai_dev_loop.pr_review_v2.infrastructure.protected_result_store import ProtectedResultStore
+
+    run_id = text.split("prepared run ", 1)[1].splitlines()[0]
+    engine = _open_engine()
+    with engine.store.begin_read() as conn:
+        state, _, _ = engine.store.load_validated_snapshot(conn, run_id)
+    assert state.origin.kind == "existing_pr"
+    assert state.origin.adopted_preimage_ref is not None
+    store = ProtectedResultStore(_artifact_root())
+    preimage = store.read_adopted_existing_pr_preimage(
+        run_id=run_id, ref=state.origin.adopted_preimage_ref
+    )
+    assert preimage.title == "Existing feature"
+    assert preimage.body == "Adopted PR body"
+    assert preimage.pr_number == 9
+    context = store.read_execution_context(
+        run_id=run_id,
+        ref=state.origin.execution_context_ref,
+    )
+    assert context.codex.review_model == "gpt-5.6"
+    assert context.codex.review_reasoning_effort == "high"
+
+    # Idempotent reuse with identical preimage.
+    text2 = prepare_existing_pr(
+        repo="acme/demo",
+        pr_number=9,
+        codex_session_id=SESSION,
+        plan_path=Path("plans/x.md"),
+        prompt_path=Path("plans/prompt.txt"),
+        config_path=cfg,
+        repo_path=root,
+        discoverer=disc,
+    )
+    assert "reused prepared run" in text2
+    assert run_id in text2
+
+    # Changed live title/body must fail closed rather than replace the preimage.
+    drifted = _FakeGh(
+        {
+            "state": "open",
+            "number": 9,
+            "head_ref": "feature",
+            "base_ref": "main",
+            "head_sha": head,
+            "head_repo": "acme/demo",
+            "title": "Existing feature",
+            "body": "Drifted body",
+        }
+    )
+    from ai_dev_loop.pr_review_v2.application.control_contracts import ControlError
+
+    with pytest.raises(
+        (ValidationError, ControlError),
+        match="collision|identity|conflict|missing or unsafe|hash mismatch",
+    ):
+        prepare_existing_pr(
+            repo="acme/demo",
+            pr_number=9,
+            codex_session_id=SESSION,
+            plan_path=Path("plans/x.md"),
+            prompt_path=Path("plans/prompt.txt"),
+            config_path=cfg,
+            repo_path=root,
+            discoverer=ExistingPrDiscoverer(runner=drifted),
+        )
 
 
 def test_prepare_rejects_wrong_checkout_branch(
@@ -148,6 +253,18 @@ def test_prepare_rejects_wrong_checkout_branch(
         ["git", "remote", "add", "origin", "git@github.com:acme/demo.git"], cwd=root
     )
     cfg = _write_enabled_config(root)
+    monkeypatch.setattr(
+        "ai_dev_loop.commands.pr_review_v2.read_codex_session_runtime",
+        lambda session_id: CodexSessionRuntime(
+            session_id=SESSION,
+            model="gpt-5.6",
+            reasoning_effort="high",
+            origin="native_wsl",
+            source_event_type="thread_settings_applied",
+            source_timestamp="2026-07-25T00:00:00Z",
+        ),
+    )
+
     fake = _FakeGh(
         {
             "state": "open",
@@ -156,6 +273,8 @@ def test_prepare_rejects_wrong_checkout_branch(
             "base_ref": "main",
             "head_sha": head,
             "head_repo": "acme/demo",
+            "title": "Existing feature",
+            "body": "",
         }
     )
     with pytest.raises(ValidationError, match="branch"):

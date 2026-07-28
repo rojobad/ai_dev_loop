@@ -233,8 +233,11 @@ a mano.
 ## `pr-review-v2` (temporal / pre-cutover)
 
 Namespace aislado de Phase 16.7. **No** reemplaza `pr-review` hasta Phase 16.9.
-Requiere `pr_review_v2.enabled: true`. La evidencia automatizada de Phase 16.7 es
-simulada (fakes inyectados); la aceptacion live GitHub es Phase 16.8.
+Requiere `pr_review_v2.enabled: true`. **Gate A (Phase 16.8):** la aceptacion
+automatizada usa fakes/process boundaries y SQLite/artefactos persistentes; no
+implica aceptacion live. **Gate B:** aceptacion controlada en un PR nuevo de
+`rojobad/parish360-poc` solo despues de Gate A verde y review A/B sin hallazgos.
+Hasta Phase 16.9 este namespace no reemplaza `pr-review`.
 
 ```bash
 ai_dev_loop pr-review-v2 create <source-run-id> [--config-path PATH]
@@ -258,7 +261,11 @@ Contrato de seguridad:
   y worktree (remote/branch/HEAD/staged patch exacto) alineado.
 - `prepare` exige `head_repo` same-repository, checkout local
   (remote/branch/HEAD) igual al binding del PR, y plan/prompt confinados al repo.
-  El `cursor.chat_id` puede ser null hasta el primer local fix.
+  Congela un preimage protegido del title/body del PR existente; el primer
+  `update_pr_text` solo se autoriza si el texto live coincide exactamente con ese
+  preimage, y despues exige el marker `adl-v2` owned. Runs preparados antes de
+  este binding permanecen fail-closed. El `cursor.chat_id` puede ser null hasta
+  el primer local fix.
 - `start <run-id>` es la unica puerta a efectos externos: aplica el evento durable
   y luego lanza/reusa el supervisor detached (`python -m
   ai_dev_loop.pr_review_v2_supervisor_worker`) con metadata de ownership. Si el
@@ -266,6 +273,11 @@ Contrato de seguridad:
 - `resume` en `waiting_for_user` exige `--confirm-user-continuation` y evidencia
   de operador protegida; no dispara timers futuros. Repara solo el supervisor
   cuando el estado ya es activo.
+- `status` marca `resumable: true` y `next_action: resume` solo cuando el run es
+  no terminal, el supervisor no esta vivo y el lease anterior ya expiro. Si el
+  lease sigue activo, `status` no recomienda un `resume` competidor
+  (`wait-until`). Un claim mutante expirado se reconcilia antes de cualquier
+  reintento de escritura.
 - `abort` persiste el abort durable antes de senalar procesos Cursor/Codex hijos
   con ownership exacta y, despues, el supervisor owned (token, PID/PGID, start
   time, executable, run binding). Rechaza metadata stale.

@@ -262,6 +262,39 @@ class PublicationTextArtifact(AppModel):
         return reject_prohibited_controls(value, field_name="publication text")
 
 
+class AdoptedExistingPrPreimageArtifact(AppModel):
+    """Immutable prepare-time title/body snapshot for one-shot existing-PR adoption.
+
+    Bound to the discovered open PR identity. Empty body is allowed (GitHub
+    semantics); title must be non-empty after strip. Never print title/body in
+    status, history, events, or exception messages.
+    """
+
+    schema_name: Literal["ai_dev_loop.pr_review_v2.adopted_existing_pr_preimage"] = (
+        "ai_dev_loop.pr_review_v2.adopted_existing_pr_preimage"
+    )
+    schema_version: Literal[1] = 1
+    repository: Annotated[
+        str, StringConstraints(min_length=3, pattern=r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+    ]
+    pr_number: PositiveInt
+    head_branch: NonEmptyStr
+    base_branch: NonEmptyStr
+    head_sha: GitSha40
+    title: NonEmptyStr
+    body: str = ""
+
+    @field_validator("title", "body")
+    @classmethod
+    def reject_control(cls, value: str) -> str:
+        return reject_prohibited_controls(value, field_name="adopted existing PR preimage")
+
+    @field_validator("head_branch", "base_branch")
+    @classmethod
+    def validate_branches(cls, value: str) -> str:
+        return validate_argv_safe_branch_name(value)
+
+
 class TriggerEvidenceArtifact(AppModel):
     schema_name: Literal["ai_dev_loop.pr_review_v2.trigger_evidence"] = (
         "ai_dev_loop.pr_review_v2.trigger_evidence"
@@ -618,6 +651,7 @@ def repository_lock_contention_transient() -> GatewayTransient:
 
 # Re-export helpers commonly needed by gateways/executors.
 __all__ = [
+    "AdoptedExistingPrPreimageArtifact",
     "AllowlistedHeaders",
     "AmbiguousWriteError",
     "AuthorityLostError",

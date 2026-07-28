@@ -8,6 +8,10 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from ai_dev_loop.errors import ValidationError
+from ai_dev_loop.pr_review_v2.application.write_contracts import (
+    DEFAULT_MAX_TEXT_BYTES,
+    reject_prohibited_controls,
+)
 from ai_dev_loop.pr_review_v2.domain.common import PullRequestBinding, RepositoryIdentity
 
 _OWNER_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -17,6 +21,8 @@ _SHA40_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 @dataclass(frozen=True)
 class DiscoveredExistingPr:
     binding: PullRequestBinding
+    title: str
+    body: str
 
 
 class GhJsonRunner(Protocol):
@@ -31,6 +37,23 @@ class ProcessGhJsonRunner:
 
         result = run_process(argv, cwd=cwd, timeout=timeout)
         return result.returncode, result.stdout or "", result.stderr or ""
+
+
+def _bounded_pr_text(value: object, *, field_name: str) -> str:
+    if value is None:
+        text = ""
+    elif isinstance(value, str):
+        text = value
+    else:
+        raise ValidationError(f"pull request {field_name} must be a string")
+    try:
+        reject_prohibited_controls(text, field_name=f"pull request {field_name}")
+    except ValueError as exc:
+        raise ValidationError(f"pull request {field_name} is unsafe") from exc
+    encoded = text.encode("utf-8")
+    if len(encoded) > DEFAULT_MAX_TEXT_BYTES:
+        raise ValidationError(f"pull request {field_name} exceeds maximum size")
+    return text
 
 
 class ExistingPrDiscoverer:
@@ -63,7 +86,7 @@ class ExistingPrDiscoverer:
             (
                 "{state:.state,number:.number,"
                 "head_ref:.head.ref,base_ref:.base.ref,head_sha:.head.sha,"
-                "head_repo:.head.repo.full_name}"
+                "head_repo:.head.repo.full_name,title:.title,body:.body}"
             ),
         ]
         code, stdout, _stderr = self._runner.run(argv, cwd=self._cwd, timeout=self._timeout)
@@ -94,6 +117,10 @@ class ExistingPrDiscoverer:
         number = int(payload.get("number") or 0)
         if number != pr_number:
             raise ValidationError("pull request number mismatch")
+        title = _bounded_pr_text(payload.get("title"), field_name="title").strip()
+        if not title:
+            raise ValidationError("pull request title is missing")
+        body = _bounded_pr_text(payload.get("body"), field_name="body")
         return DiscoveredExistingPr(
             binding=PullRequestBinding(
                 repository=RepositoryIdentity(name_with_owner=owner_repo),
@@ -101,7 +128,9 @@ class ExistingPrDiscoverer:
                 head_branch=head_ref,
                 base_branch=base_ref,
                 head_sha=head_sha.lower(),
-            )
+            ),
+            title=title,
+            body=body,
         )
 
 

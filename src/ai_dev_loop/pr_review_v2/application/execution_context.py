@@ -219,6 +219,7 @@ class ExecutionContextPrReviewV2(AppModel):
     max_server_directed_wait_seconds: PositiveInt
     no_findings_enabled: bool
     no_findings_prefixes: tuple[str, ...] = ()
+    accept_bot_thumbs_up: bool = False
     no_findings_prefix_length: PositiveInt = 12
     worker: ExecutionContextWorker
 
@@ -252,8 +253,15 @@ class ExecutionContextPrReviewV2(AppModel):
     def validate_timeout_relationship(self) -> ExecutionContextPrReviewV2:
         if self.per_call_timeout_seconds > self.overall_timeout_seconds:
             raise ValueError("per_call_timeout_seconds must be <= overall_timeout_seconds")
-        if self.no_findings_enabled and not self.no_findings_prefixes:
-            raise ValueError("no_findings_prefixes must be non-empty when no_findings_enabled")
+        if (
+            self.no_findings_enabled
+            and not self.no_findings_prefixes
+            and not self.accept_bot_thumbs_up
+        ):
+            raise ValueError(
+                "no_findings requires at least one evidence rule when enabled: "
+                "non-empty no_findings_prefixes or accept_bot_thumbs_up"
+            )
         return self
 
 

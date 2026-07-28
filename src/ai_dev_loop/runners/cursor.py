@@ -8,11 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ai_dev_loop.errors import ValidationError
+from ai_dev_loop.errors import AiDevLoopError, ValidationError
+from ai_dev_loop.paths import set_sensitive_file_mode
 from ai_dev_loop.process import (
     ActiveProcessRegistration,
     StreamingProcessResult,
-    run_process,
     run_process_streaming,
 )
 from ai_dev_loop.redaction import redact_text
@@ -20,11 +20,36 @@ from ai_dev_loop.runners.cursor_failure import (
     CursorFailureClassification,
     classify_cursor_failure_text,
 )
-from ai_dev_loop.state import CursorState
+from ai_dev_loop.state import CursorState, atomic_write_json
 
 CHAT_ID_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
+)
+
+# Pre-Cursor active-process identity for bounded create-chat registration.
+CREATE_CHAT_ITERATION = 0
+
+CREATE_CHAT_ARTIFACT_DIR = "cursor/create-chat"
+CREATE_CHAT_STDOUT_REL = f"{CREATE_CHAT_ARTIFACT_DIR}/stdout.txt"
+CREATE_CHAT_STDERR_REL = f"{CREATE_CHAT_ARTIFACT_DIR}/stderr.txt"
+CREATE_CHAT_METADATA_REL = f"{CREATE_CHAT_ARTIFACT_DIR}/metadata.json"
+
+CURSOR_CHAT_CREATE_TIMEOUT_MESSAGE = (
+    "Cursor chat creation timed out before a chat ID was received; "
+    "inspect protected create-chat artifacts and prepare a new run"
+)
+CURSOR_CHAT_CREATE_FAILED_MESSAGE = (
+    "Cursor chat creation failed; inspect protected create-chat artifacts and prepare a new run"
+)
+CURSOR_CHAT_CREATE_INVALID_ID_MESSAGE = "Cursor chat creation returned an invalid chat ID"
+
+CURSOR_CHAT_CREATE_FAILURE_MESSAGES = frozenset(
+    {
+        CURSOR_CHAT_CREATE_TIMEOUT_MESSAGE,
+        CURSOR_CHAT_CREATE_FAILED_MESSAGE,
+        CURSOR_CHAT_CREATE_INVALID_ID_MESSAGE,
+    }
 )
 
 
@@ -51,14 +76,76 @@ class CursorExecutionResult:
         return self.failure.code.value
 
 
-def create_chat(cursor_command: str) -> str:
-    result = run_process([cursor_command, "create-chat"])
-    if result.returncode != 0:
-        detail = redact_text(result.stderr.strip() or result.stdout.strip() or "create-chat failed")
-        raise ValidationError(f"Cursor chat creation failed: {detail}")
-    chat_id = result.stdout.strip()
+def redact_create_chat_args(args: list[str]) -> list[str]:
+    return list(args)
+
+
+def _write_create_chat_metadata(
+    metadata_path: Path,
+    process: StreamingProcessResult,
+    *,
+    failure_category: str | None,
+) -> None:
+    payload: dict[str, object] = {
+        "args": redact_create_chat_args(process.args),
+        "exit_code": process.returncode,
+        "elapsed_seconds": process.elapsed_seconds,
+        "timed_out": process.timed_out,
+    }
+    if failure_category is not None:
+        payload["failure_category"] = failure_category
+    atomic_write_json(metadata_path, payload, sensitive=True)
+    set_sensitive_file_mode(metadata_path)
+
+
+def create_chat(
+    cursor_command: str,
+    *,
+    repo_root: str,
+    timeout_seconds: float,
+    run_directory: Path,
+    run_id: str,
+) -> str:
+    """Run bounded, abort-controllable ``agent create-chat`` with protected artifacts."""
+
+    args = [cursor_command, "create-chat"]
+    stdout_path = run_directory / CREATE_CHAT_STDOUT_REL
+    stderr_path = run_directory / CREATE_CHAT_STDERR_REL
+    metadata_path = run_directory / CREATE_CHAT_METADATA_REL
+    active_process = ActiveProcessRegistration(
+        run_directory=run_directory,
+        run_id=run_id,
+        component="cursor",
+        iteration=CREATE_CHAT_ITERATION,
+        argv_redacted=redact_create_chat_args(args),
+    )
+    try:
+        process = run_process_streaming(
+            args,
+            cwd=repo_root,
+            timeout=timeout_seconds,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            sensitive=True,
+            active_process=active_process,
+        )
+    except AiDevLoopError as exc:
+        raise ValidationError(CURSOR_CHAT_CREATE_FAILED_MESSAGE) from exc
+
+    if process.timed_out:
+        _write_create_chat_metadata(metadata_path, process, failure_category="timeout")
+        raise ValidationError(CURSOR_CHAT_CREATE_TIMEOUT_MESSAGE)
+
+    if process.returncode != 0:
+        _write_create_chat_metadata(metadata_path, process, failure_category="nonzero_exit")
+        raise ValidationError(CURSOR_CHAT_CREATE_FAILED_MESSAGE)
+
+    chat_id = process.stdout.strip()
     if not chat_id or not CHAT_ID_PATTERN.match(chat_id):
-        raise ValidationError("Cursor chat creation returned an invalid chat ID")
+        _write_create_chat_metadata(metadata_path, process, failure_category="invalid_chat_id")
+        raise ValidationError(CURSOR_CHAT_CREATE_INVALID_ID_MESSAGE)
+
+    _write_create_chat_metadata(metadata_path, process, failure_category=None)
     return chat_id
 
 

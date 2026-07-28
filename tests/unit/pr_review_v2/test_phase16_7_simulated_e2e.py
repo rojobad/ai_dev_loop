@@ -626,6 +626,8 @@ def test_existing_pr_multi_round_to_no_findings(
             binding=binding,
             plan_bytes=PLAN_BYTES,
             prompt_bytes=PROMPT_BYTES,
+            title="Existing feature",
+            body="Adopted PR body",
             execution_context=ctx,
             accepted_patch_bytes=None,
         )
@@ -847,6 +849,8 @@ def test_existing_pr_two_actionable_cycles_preserve_exact_chat(
             binding=binding,
             plan_bytes=PLAN_BYTES,
             prompt_bytes=PROMPT_BYTES,
+            title="Existing feature",
+            body="Adopted PR body",
             execution_context=ctx,
             accepted_patch_bytes=None,
         )

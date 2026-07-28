@@ -190,6 +190,7 @@
               "type": "array",
               "items": { "type": "string", "minLength": 1 }
             },
+            "accept_bot_thumbs_up": { "type": "boolean" },
             "reviewed_commit_prefix_length": {
               "type": "integer",
               "minimum": 7,

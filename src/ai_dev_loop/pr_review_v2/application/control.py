@@ -335,6 +335,13 @@ class ControlPlaneService:
             max_ext = state.limits.max_external_cycles
             max_local = state.limits.max_local_iterations
         history = self.history(run_id, limit=recent_limit, order="newest")
+        supervisor_live = self._supervisor_live(run_id)
+        resumable, next_action = self._status_recovery_guidance(
+            state_kind=engine_status.state_kind,
+            engine_next_action=engine_status.next_action,
+            supervisor_live=supervisor_live,
+            lease_active=engine_status.lease_active,
+        )
         return ControlStatus(
             run_id=run_id,
             origin_kind=origin_kind,
@@ -359,21 +366,40 @@ class ControlPlaneService:
             last_durable_transition_at=engine_status.updated_at,
             last_error_kind=engine_status.last_error_kind,
             last_error_summary=engine_status.last_error_summary,
-            resumable=engine_status.state_kind in {"paused", "waiting_for_user"}
-            or (
-                engine_status.state_kind not in {"prepared", "completed", "failed", "aborted"}
-                and not self._supervisor_live(run_id)
-            ),
-            supervisor_live=self._supervisor_live(run_id),
+            resumable=resumable,
+            supervisor_live=supervisor_live,
             lease_active=engine_status.lease_active,
             safe_action_kind=engine_status.safe_action_kind,
             safe_action_condition=engine_status.safe_action_condition,
             engine_next_action=engine_status.next_action,
-            next_action=map_engine_next_action(
-                engine_status.next_action, state_kind=engine_status.state_kind
-            ),
+            next_action=next_action,
             recent_history=history.entries,
         )
+
+    def _status_recovery_guidance(
+        self,
+        *,
+        state_kind: str,
+        engine_next_action: NextActionCategory,
+        supervisor_live: bool,
+        lease_active: bool,
+    ) -> tuple[bool, SafeNextAction]:
+        """Map status to a safe operator action without racing a live lease."""
+
+        mapped = map_engine_next_action(engine_next_action, state_kind=state_kind)
+        if state_kind in {"prepared", "completed", "failed", "aborted"}:
+            return False, mapped
+        if state_kind == "waiting_for_user":
+            return True, mapped
+        if state_kind == "paused":
+            return True, mapped
+        if supervisor_live:
+            return False, mapped
+        # Nonterminal active run with no live supervisor.
+        if lease_active:
+            # Do not advise a competing resume while old ownership may still be live.
+            return False, SafeNextAction.WAIT_UNTIL
+        return True, SafeNextAction.RESUME
 
     def history(
         self,

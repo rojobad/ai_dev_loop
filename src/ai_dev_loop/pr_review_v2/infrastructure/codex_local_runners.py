@@ -21,6 +21,10 @@ from ai_dev_loop.pr_review_v2.application.execution_context import (
     ExternalAdjudicationResultArtifact,
     PublicationGenerationResultArtifact,
 )
+from ai_dev_loop.pr_review_v2.application.write_contracts import (
+    DEFAULT_MAX_COMMIT_MESSAGE_BYTES,
+    DEFAULT_MAX_TEXT_BYTES,
+)
 from ai_dev_loop.pr_review_v2.domain.common import AdjudicationDecisionKind, ArtifactRef
 from ai_dev_loop.pr_review_v2.domain.effects import (
     AdjudicateThreadsEffect,
@@ -30,12 +34,18 @@ from ai_dev_loop.pr_review_v2.infrastructure.paths import (
     ensure_run_artifact_root,
     resolve_run_relative_path,
 )
+from ai_dev_loop.pr_review_v2.infrastructure.protected_result_store import (
+    MAX_PROTECTED_RESULT_JSON_BYTES,
+)
+from ai_dev_loop.pr_review_v2.infrastructure.review_artifacts import (
+    MAX_OBSERVATION_ARTIFACT_BYTES,
+)
 
 PUBLICATION_GENERATION_SCHEMA = "pr-review-v2-publication-generation-v1.json"
 EXTERNAL_ADJUDICATION_SCHEMA = "pr-review-v2-external-adjudication-v1.json"
-# Bounded stdin delivery for sanitized observation manifests (fail closed above this).
-MAX_ADJUDICATION_SNAPSHOT_BYTES = 512_000
-MAX_CODEX_RESULT_FILE_BYTES = 1_048_576
+# Observation bytes accepted by ReviewArtifactStore must remain adjudicable.
+MAX_ADJUDICATION_SNAPSHOT_BYTES = MAX_OBSERVATION_ARTIFACT_BYTES
+MAX_CODEX_RESULT_FILE_BYTES = MAX_PROTECTED_RESULT_JSON_BYTES
 
 
 class CodexLocalRunnerError(Exception):
@@ -243,7 +253,13 @@ class PublicationTextRunner:
                 raise CodexLocalRunnerError(
                     "codex publication result failed schema validation"
                 ) from exc
-            return PublicationGenerationResultArtifact(
+            _reject_oversized_utf8_field(parsed.title, limit=DEFAULT_MAX_TEXT_BYTES)
+            _reject_oversized_utf8_field(parsed.body, limit=DEFAULT_MAX_TEXT_BYTES)
+            _reject_oversized_utf8_field(
+                parsed.commit_subject, limit=DEFAULT_MAX_COMMIT_MESSAGE_BYTES
+            )
+            _reject_oversized_utf8_field(parsed.commit_body, limit=DEFAULT_MAX_COMMIT_MESSAGE_BYTES)
+            artifact = PublicationGenerationResultArtifact(
                 title=parsed.title,
                 body=parsed.body,
                 commit_subject=parsed.commit_subject,
@@ -255,6 +271,8 @@ class PublicationTextRunner:
                 evidence_ref_sha256=evidence_ref.sha256,
                 patch_ref_sha256=patch_ref.sha256,
             )
+            _reject_oversized_enriched_artifact(artifact)
+            return artifact
         finally:
             _cleanup_scratch(scratch)
 
@@ -336,19 +354,50 @@ class ThreadAdjudicationRunner:
                 raise CodexLocalRunnerError(
                     "codex adjudication result failed schema validation"
                 ) from exc
-            return ExternalAdjudicationResultArtifact(
-                decisions=decisions,
-                fix_prompt_text=parsed.fix_prompt_text,
-                run_id=effect.run_id,
-                cycle_number=effect.cycle_number,
-                effect_id=effect.effect_id,
-                bound_head_sha=effect.bound_head_sha,
-                frozen_thread_ids=tuple(effect.frozen_thread_ids),
-                snapshot_ref_sha256=effect.snapshot_ref.sha256,
-                execution_context_ref_sha256=effect.execution_context_ref.sha256,
-            )
+            for item in decisions:
+                _reject_oversized_utf8_field(item.safe_summary, limit=DEFAULT_MAX_TEXT_BYTES)
+                if item.reply_body is not None:
+                    _reject_oversized_utf8_field(item.reply_body, limit=DEFAULT_MAX_TEXT_BYTES)
+            if parsed.fix_prompt_text is not None:
+                _reject_oversized_utf8_field(parsed.fix_prompt_text, limit=DEFAULT_MAX_TEXT_BYTES)
+            try:
+                artifact = ExternalAdjudicationResultArtifact(
+                    decisions=decisions,
+                    fix_prompt_text=parsed.fix_prompt_text,
+                    run_id=effect.run_id,
+                    cycle_number=effect.cycle_number,
+                    effect_id=effect.effect_id,
+                    bound_head_sha=effect.bound_head_sha,
+                    frozen_thread_ids=tuple(effect.frozen_thread_ids),
+                    snapshot_ref_sha256=effect.snapshot_ref.sha256,
+                    execution_context_ref_sha256=effect.execution_context_ref.sha256,
+                )
+            except PydanticValidationError as exc:
+                raise CodexLocalRunnerError(
+                    "codex adjudication result failed domain validation"
+                ) from exc
+            _reject_oversized_enriched_artifact(artifact)
+            return artifact
         finally:
             _cleanup_scratch(scratch)
+
+
+def _canonical_json_bytes(payload: dict[str, object]) -> bytes:
+    text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return (text + "\n").encode("utf-8")
+
+
+def _reject_oversized_utf8_field(value: str, *, limit: int) -> None:
+    if len(value.encode("utf-8")) > limit:
+        raise CodexLocalRunnerError("codex result field exceeds downstream size bound")
+
+
+def _reject_oversized_enriched_artifact(
+    artifact: PublicationGenerationResultArtifact | ExternalAdjudicationResultArtifact,
+) -> None:
+    canonical = _canonical_json_bytes(artifact.model_dump(mode="json"))
+    if len(canonical) > MAX_PROTECTED_RESULT_JSON_BYTES:
+        raise CodexLocalRunnerError("codex enriched result exceeds protected store size bound")
 
 
 def _scratch_dir(artifact_root: Path, run_id: str, effect_id: str, kind: str) -> Path:
@@ -466,6 +515,13 @@ def _adjudication_wrapper_prompt(
         "<<<SANITIZED_REVIEW_SNAPSHOT>>>\n"
         f"{snapshot_text}"
         "<<<END_SANITIZED_REVIEW_SNAPSHOT>>>\n"
+        "Emit exactly one decision per frozen thread ID; do not add or omit any "
+        "frozen thread.\n"
+        'If decision == "actionable", reply_body must be null.\n'
+        'If decision is "not_applicable" or "uncertain", reply_body must be a '
+        "non-empty string.\n"
+        "If every decision is actionable, fix_prompt_text must be a non-empty string.\n"
+        "If any decision is non-actionable, fix_prompt_text must be null.\n"
         "Return schema-constrained JSON only.\n"
     )
 

@@ -372,6 +372,7 @@ class PrReviewV2NoFindingsSection(BaseModel):
 
     enabled: bool = False
     accepted_comment_prefixes: list[str] = Field(default_factory=list)
+    accept_bot_thumbs_up: bool = False
     reviewed_commit_prefix_length: int = 12
 
     @field_validator("accepted_comment_prefixes")
@@ -396,10 +397,11 @@ class PrReviewV2NoFindingsSection(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def require_prefixes_when_enabled(self) -> PrReviewV2NoFindingsSection:
-        if self.enabled and not self.accepted_comment_prefixes:
+    def require_evidence_rule_when_enabled(self) -> PrReviewV2NoFindingsSection:
+        if self.enabled and not self.accepted_comment_prefixes and not self.accept_bot_thumbs_up:
             raise ValueError(
-                "pr_review_v2.no_findings.accepted_comment_prefixes must be non-empty when enabled"
+                "pr_review_v2.no_findings requires at least one evidence rule when enabled: "
+                "non-empty accepted_comment_prefixes or accept_bot_thumbs_up: true"
             )
         return self
 

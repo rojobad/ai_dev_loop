@@ -1130,9 +1130,15 @@ def ensure_independent_cursor_chat(run_directory: Path, state: RunState) -> str:
             "cursor/chat.json exists without state.cursor.chat_id; refusing a replacement chat"
         )
 
-    from ai_dev_loop.runners.cursor import create_chat
+    from ai_dev_loop.runners.cursor import CREATE_CHAT_METADATA_REL, create_chat
 
-    chat_id = create_chat(state.cursor.command)
+    chat_id = create_chat(
+        state.cursor.command,
+        repo_root=state.repository.root,
+        timeout_seconds=state.workflow.cursor_timeout_minutes * 60,
+        run_directory=run_directory,
+        run_id=state.run_id,
+    )
     state.cursor.chat_id = chat_id
     save_run_state(run_directory, state)
     atomic_write_json(
@@ -1142,6 +1148,7 @@ def ensure_independent_cursor_chat(run_directory: Path, state: RunState) -> str:
             "created_at": utc_now().isoformat(),
             "command": state.cursor.command,
             "origin": "independent_pr",
+            "create_chat_metadata_path": CREATE_CHAT_METADATA_REL,
         },
         sensitive=True,
     )

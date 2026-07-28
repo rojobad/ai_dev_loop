@@ -44,8 +44,11 @@ executable/run binding); nunca reporta `spawned` sin proceso propio. Status/hist
 v2 no exponen prompts, patches, bodies de threads, tokens, session IDs
 completos, argv, PID/PGID ni environments; los resumenes de adjudicacion en
 eventos son operacionales fijos. Abort v2 persiste primero y solo senala
-procesos locales con ownership OS exacta. La evidencia automatizada de
-Phase 16.7 es simulada; la aceptacion live es Phase 16.8.
+procesos locales con ownership OS exacta. Phase 16.8 (Gate A) anade evidencia
+fail-closed de reaccion `+1` sobre el trigger exacto (`accept_bot_thumbs_up`);
+los artefactos protegidos guardan proveniencia tipada y hash-verificada, no solo
+un reaction ID. **Gate A** valida con fakes/process boundaries; **Gate B** es
+aceptacion live pendiente hasta completar el ciclo controlado en parish360-poc.
 
 ### Opcional: conservar la llave SSH durante la sesion WSL
 

@@ -127,6 +127,8 @@ def test_start_marks_failed_when_create_chat_returns_invalid_id(
     state = load_run_state(prepared_run["run_path"] / "state.json")
     assert state.status == RunStatus.FAILED
     assert state.last_error == "Cursor chat creation returned an invalid chat ID"
+    assert not (prepared_run["run_path"] / "cursor" / "chat.json").is_file()
+    assert (prepared_run["run_path"] / "cursor" / "create-chat" / "metadata.json").is_file()
 
 
 def test_start_marks_failed_when_execute_prompt_raises(

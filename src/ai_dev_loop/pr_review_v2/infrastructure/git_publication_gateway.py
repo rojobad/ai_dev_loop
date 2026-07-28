@@ -646,13 +646,14 @@ class GitPublicationGateway:
 
     def _require_ssh_agent_if_needed(self) -> None:
         if (
-            self._policy.remote_scheme is GitRemoteScheme.SSH
-            and self._policy.require_ssh_agent_identity
-            and not self._transport.check_ssh_agent()
+            self._policy.remote_scheme is not GitRemoteScheme.SSH
+            or not self._policy.require_ssh_agent_identity
         ):
-            raise _block_error(
-                GatewayBlockKind.AUTHENTICATION, "no usable SSH agent identity for push"
-            )
+            return
+        # Bound remote URL is the only agent-resolution input; never accept a
+        # socket from model output, run state, or public project config.
+        remote_url = self._transport.read_remote_url(self._remote)
+        self._transport.prepare_ssh_agent_for_remote(remote_url)
 
     def _is_owned_commit(self, head: str, effect: CommitPatchEffect, trailer: str) -> bool:
         try:

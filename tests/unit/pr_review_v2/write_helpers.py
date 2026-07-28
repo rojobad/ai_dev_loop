@@ -11,7 +11,9 @@ from pathlib import Path
 from ai_dev_loop.pr_review_v2.application.contracts import EffectClaim
 from ai_dev_loop.pr_review_v2.application.github_read import (
     AllowlistedHeaders,
+    GatewayBlockKind,
     GhTransportResult,
+    block_for_kind,
 )
 from ai_dev_loop.pr_review_v2.application.write_contracts import (
     ClaimAuthorityResult,
@@ -38,7 +40,10 @@ from ai_dev_loop.pr_review_v2.domain.effects import (
     ResolveThreadEffect,
     UpdatePrTextEffect,
 )
-from ai_dev_loop.pr_review_v2.infrastructure.git_write_transport import GitProcessOutcome
+from ai_dev_loop.pr_review_v2.infrastructure.git_write_transport import (
+    GitProcessOutcome,
+    GitTransportError,
+)
 from ai_dev_loop.pr_review_v2.infrastructure.input_artifacts import InputArtifactReader
 from ai_dev_loop.pr_review_v2.infrastructure.paths import ensure_run_artifact_root
 
@@ -327,6 +332,7 @@ class FakeGitTransport:
     push_result: GitProcessOutcome | None = None
     commits: list[str] = field(default_factory=list)
     pushes: list[str] = field(default_factory=list)
+    ssh_prepare_urls: list[str] = field(default_factory=list)
 
     def inspect_repository_root(self) -> str:
         return self.root
@@ -367,8 +373,16 @@ class FakeGitTransport:
     def is_ancestor(self, ancestor_sha: str, descendant_sha: str) -> bool:
         return (ancestor_sha, descendant_sha) in self.ancestors
 
-    def check_ssh_agent(self) -> bool:
-        return self.ssh_ok
+    def prepare_ssh_agent_for_remote(self, remote_url: str) -> None:
+        self.ssh_prepare_urls.append(remote_url)
+        if self.ssh_ok:
+            return
+        raise GitTransportError(
+            block=block_for_kind(
+                GatewayBlockKind.AUTHENTICATION,
+                detail="no usable SSH agent identity for push",
+            )
+        )
 
     def commit_with_message_stdin(self, message: str) -> GitProcessOutcome:
         self.commits.append(message)
@@ -380,9 +394,13 @@ class FakeGitTransport:
         self, *, remote_name: str, commit_sha: str, remote_ref: str
     ) -> GitProcessOutcome:
         self.pushes.append(commit_sha)
-        return self.push_result or GitProcessOutcome(
+        outcome = self.push_result or GitProcessOutcome(
             returncode=0, stdout="", stderr="", timed_out=False, argv=("git", "push")
         )
+        if outcome.returncode == 0 and not outcome.timed_out:
+            ref = remote_ref if remote_ref.startswith("refs/heads/") else f"refs/heads/{remote_ref}"
+            self.remote_shas[ref] = commit_sha
+        return outcome
 
 
 def gh_result(body: object, *, status: int = 200) -> GhTransportResult:

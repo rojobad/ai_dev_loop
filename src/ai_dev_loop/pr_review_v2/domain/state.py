@@ -11,6 +11,7 @@ from ai_dev_loop.pr_review_v2.domain.common import (
     ArtifactRef,
     DomainModel,
     ErrorSummary,
+    ExistingPrOrigin,
     FailureReasonKind,
     FrozenThreadSet,
     GitSha40,
@@ -432,6 +433,20 @@ class PublishingFixState(DomainModel):
                     raise ValueError("update_pr_text effect binding must match state")
                 if self.active_effect.publication_text_ref != self.publication_text_ref:
                     raise ValueError("update_pr_text effect text ref must match state")
+                adopted = self.active_effect.adopted_preimage_ref
+                if adopted is not None:
+                    if not isinstance(self.origin, ExistingPrOrigin):
+                        raise ValueError(
+                            "adopted_preimage_ref is only valid for existing_pr origin"
+                        )
+                    if self.origin.adopted_preimage_ref != adopted:
+                        raise ValueError(
+                            "adopted_preimage_ref must match origin.adopted_preimage_ref"
+                        )
+                    if self.cycle_number != 1:
+                        raise ValueError(
+                            "adopted_preimage_ref is only valid on the first fix cycle"
+                        )
         elif self.step is PublicationStep.RESOLVE_THREAD:
             if not self.remaining_resolutions:
                 raise ValueError("resolve step requires remaining resolutions")

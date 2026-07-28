@@ -286,6 +286,7 @@ pr_review_v2:
   no_findings:
     enabled: false
     accepted_comment_prefixes: []
+    accept_bot_thumbs_up: false
     reviewed_commit_prefix_length: 12
   worker:
     lease_ttl_seconds: 30
@@ -294,8 +295,23 @@ pr_review_v2:
 ```
 
 Validacion cruzada: `heartbeat_interval_seconds < lease_ttl_seconds`; comandos
-argv-safe; prefixes no-findings no vacios si enabled; `extra=forbid`. Los valores
-efectivos de un run preparado se congelan en el execution context protegido.
+argv-safe; si `no_findings.enabled: true` hace falta al menos una regla de
+evidencia (`accepted_comment_prefixes` no vacio o `accept_bot_thumbs_up: true`);
+`extra=forbid`. Los valores efectivos de un run preparado se congelan en el
+execution context protegido.
+
+### `no_findings` (Phase 16.8)
+
+- Omision o `enabled: false` conserva el comportamiento Phase 16.7.
+- `accept_bot_thumbs_up: true` reconoce solo reacciones GitHub `+1` del
+  `reviewer_logins` allowlist sobre el comentario trigger exacto del ciclo
+  (marker/opaco), con timestamp estrictamente posterior al trigger y sin hilos
+  elegibles. Cero coincidencias sigue siendo polling normal; varias coincidencias,
+  evidencia contradictoria o proveniencia incompleta fallan cerrado.
+- `eyes` u otras reacciones no completan el run.
+- La observacion verificada persiste evidencia tipada de reaccion (no solo un ID)
+  en el artefacto protegido hash-verificado; los resumenes SQLite/status/history
+  siguen acotados y redactados.
 
 ## Validacion
 

@@ -198,6 +198,12 @@ class EffectWorker:
         self._heartbeat_wait = heartbeat_wait
         self._heartbeat_interval_wait = heartbeat_interval_wait
         self._authority = _EngineClaimAuthorityGuard(engine)
+        # Fail closed before any lease, claim, or external side effect. Keep
+        # LeaseRenewalCoordinator validation as defense in depth.
+        if self._heartbeat_interval.total_seconds() <= 0:
+            raise ValueError("heartbeat interval must be positive")
+        if self._heartbeat_interval >= engine.lease_ttl:
+            raise ValueError("heartbeat interval must be strictly less than lease_ttl")
 
     def run_once(
         self,
