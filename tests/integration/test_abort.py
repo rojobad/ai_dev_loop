@@ -38,13 +38,21 @@ def _wait_for_file(path: Path, *, timeout: float = 10.0) -> None:
     raise AssertionError(f"timed out waiting for {path}")
 
 
-def _wait_for_active_component(run_path: Path, component: str, *, timeout: float = 20.0) -> None:
+def _wait_for_active_component(
+    run_path: Path,
+    component: str,
+    *,
+    iteration: int | None = None,
+    timeout: float = 20.0,
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         path = run_path / ACTIVE_PROCESS_REL_PATH
         if path.is_file():
             payload = json.loads(path.read_text(encoding="utf-8"))
-            if payload.get("component") == component:
+            if payload.get("component") == component and (
+                iteration is None or payload.get("iteration") == iteration
+            ):
                 return
         time.sleep(0.05)
     raise AssertionError(f"timed out waiting for active {component} process")
@@ -85,7 +93,7 @@ def test_abort_running_cursor_process(prepared_run, fake_clis, monkeypatch) -> N
     thread.start()
     try:
         run_path = prepared_run["run_path"]
-        _wait_for_file(run_path / ACTIVE_PROCESS_REL_PATH)
+        _wait_for_active_component(run_path, "cursor", iteration=1)
         abort_result = run_abort(prepared_run["run_id"])
         assert abort_result.active_process_signaled is True
         thread.join(timeout=15)

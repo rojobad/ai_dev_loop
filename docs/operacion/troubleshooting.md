@@ -133,6 +133,18 @@ composer-2.5-fast - Composer 2.5 Fast
 
 Configura `cursor.model` con el identificador exacto, por ejemplo `composer-2.5-fast`.
 
+## Cursor chat creation timeout o fallo ambiguo
+
+`agent create-chat` corre con timeout acotado, registro de proceso activo y
+control de abort igual que los turnos de implementacion. Si la creacion hace
+timeout, sale con codigo distinto de cero, devuelve un ID invalido, o se aborta
+antes de persistir un chat ID durable, el run falla cerrado como `failed` o
+`aborted` terminal.
+
+- Inspecciona artefactos protegidos bajo `cursor/create-chat/` en el directorio del run.
+- No `resume` el mismo run esperando un chat de reemplazo; prepara un run nuevo.
+- Una prueba standalone exitosa de `agent create-chat` no repara un run ambiguo.
+
 ## Codex review model no soportado
 
 Sintoma comun:

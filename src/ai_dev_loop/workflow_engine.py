@@ -718,13 +718,38 @@ def _require_cursor_chat(run_directory: Path, state: RunState) -> str:
         raise ValidationError(
             "cursor chat id is missing from checkpointed run state; cannot create a new chat"
         )
-    chat_id = create_chat(state.cursor.command)
+    if is_abort_requested(run_directory):
+        raise WorkflowAbortedError(ABORT_RESULT_MESSAGE)
+
+    from ai_dev_loop.runners.cursor import CREATE_CHAT_METADATA_REL
+
+    try:
+        chat_id = create_chat(
+            state.cursor.command,
+            repo_root=state.repository.root,
+            timeout_seconds=state.workflow.cursor_timeout_minutes * 60,
+            run_directory=run_directory,
+            run_id=state.run_id,
+        )
+    except WorkflowAbortedError:
+        raise
+    except ValidationError as exc:
+        if is_abort_requested(run_directory):
+            raise WorkflowAbortedError(ABORT_RESULT_MESSAGE) from exc
+        raise
+    except AiDevLoopError as exc:
+        raise ValidationError(str(exc)) from exc
+
+    if is_abort_requested(run_directory):
+        raise WorkflowAbortedError(ABORT_RESULT_MESSAGE)
+
     state.cursor.chat_id = chat_id
     save_run_state(run_directory, state)
     chat_payload = {
         "chat_id": chat_id,
         "created_at": datetime.now(tz=UTC).isoformat(),
         "command": state.cursor.command,
+        "create_chat_metadata_path": CREATE_CHAT_METADATA_REL,
     }
     chat_path = run_directory / "cursor" / "chat.json"
     atomic_write_json(chat_path, chat_payload, sensitive=True)
@@ -736,6 +761,8 @@ def _require_cursor_chat(run_directory: Path, state: RunState) -> str:
 def _require_cursor_chat_or_fail(run_directory: Path, state: RunState) -> str:
     try:
         return _require_cursor_chat(run_directory, state)
+    except WorkflowAbortedError:
+        raise
     except ValidationError as exc:
         _fail_run(run_directory, state, str(exc), event_name="cursor_chat_failed")
         raise AiDevLoopError(str(exc), exit_code=exc.exit_code) from exc
@@ -759,7 +786,14 @@ def _continue_workflow(
             chat_id=state.cursor.chat_id or "",
         )
 
-    chat_id = _require_cursor_chat_or_fail(run_directory, state)
+    try:
+        chat_id = _require_cursor_chat_or_fail(run_directory, state)
+    except WorkflowAbortedError:
+        return _workflow_aborted_result(
+            run_directory,
+            state,
+            chat_id=state.cursor.chat_id or "",
+        )
     latest_staged_diff: str | None = None
     latest_review_path: str | None = None
     result_message = ""

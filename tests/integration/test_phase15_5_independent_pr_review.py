@@ -729,7 +729,7 @@ def test_actionable_independent_creates_one_chat(
     )
     chats: list[str] = []
 
-    def fake_create_chat(_command: str) -> str:
+    def fake_create_chat(_command: str, **_kwargs: object) -> str:
         chat_id = "019abc00-9999-8888-7777-666655554444"
         chats.append(chat_id)
         return chat_id

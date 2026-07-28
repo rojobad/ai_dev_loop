@@ -379,8 +379,18 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
             sys.exit(0)
         if args[0] == "create-chat":
             chat_id = os.environ.get("FAKE_AGENT_CHAT_ID", "019abc00-1111-2222-3333-444444444444")
+            create_mode = os.environ.get("FAKE_AGENT_CREATE_CHAT_MODE", "success")
             log("ARGS:" + repr(args))
             log("CREATE_CHAT:" + chat_id)
+            if create_mode == "fail":
+                print("create-chat failed", file=sys.stderr)
+                sys.exit(2)
+            if create_mode == "sleep":
+                ready = os.environ.get("FAKE_AGENT_CREATE_CHAT_READY")
+                if ready:
+                    with open(ready, "w", encoding="utf-8") as handle:
+                        handle.write(f"{{os.getpid()}}\\n{{os.getpgid(0)}}\\n")
+                time.sleep(float(os.environ.get("FAKE_AGENT_CREATE_CHAT_SLEEP_SECONDS", "60")))
             print(chat_id)
             sys.exit(0)
         if args[0] == "status":
