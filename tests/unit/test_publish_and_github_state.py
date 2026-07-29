@@ -1,4 +1,4 @@
-"""Unit tests for publication helpers and GitHub PR-review state."""
+"""Unit tests for publication helpers."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 from ai_dev_loop.runners.publish import (
     PublicationText,
@@ -15,7 +14,7 @@ from ai_dev_loop.runners.publish import (
     publish_accepted_staged_patch,
     validate_clean_except_staged,
 )
-from ai_dev_loop.state import GithubPrReviewState, RunStatus, transition_status
+from ai_dev_loop.state import RunStatus, transition_status
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -63,65 +62,12 @@ def test_validate_clean_except_staged_rejects_untracked(tmp_path: Path) -> None:
         validate_clean_except_staged(repo)
 
 
-def test_github_pr_review_state_requires_full_sha() -> None:
-    with pytest.raises(ValidationError):
-        GithubPrReviewState(
-            source_run_id="src",
-            lifecycle="awaiting_bot_review",
-            cycle_number=1,
-            max_external_cycles=8,
-            pr_number=1,
-            head_branch="feature",
-            bound_head_sha="abc",
-        )
-
-
-def test_github_pr_review_legacy_origin_default() -> None:
-    """Historical Phase 15 payloads without origin deserialize as source_run."""
-
-    payload = {
-        "schema_version": 1,
-        "source_run_id": "legacy-source",
-        "lifecycle": "awaiting_bot_review",
-        "cycle_number": 1,
-        "max_external_cycles": 8,
-        "pr_number": 3,
-        "head_branch": "feature",
-        "base_branch": "master",
-        "bound_head_sha": "a" * 40,
-    }
-    state = GithubPrReviewState.model_validate(payload)
-    assert state.origin == "source_run"
-    assert state.source_run_id == "legacy-source"
-    assert state.bot_acknowledgement is None
-    assert state.no_findings_completion is None
-
-
-def test_github_pr_review_no_findings_evidence_rejects_body_field() -> None:
-    from ai_dev_loop.state import GithubNoFindingsCompletionEvidence
-
-    with pytest.raises(ValidationError):
-        GithubNoFindingsCompletionEvidence.model_validate(
-            {
-                "comment_id": "1",
-                "created_at": "2026-07-17T12:00:00+00:00",
-                "rule_id": "accepted_comment_prefix:0",
-                "body_sha256": "a" * 64,
-                "reviewed_commit_prefix": "abcd12345678",
-                "body": "must not be stored",
-            }
-        )
-
-
 def test_github_status_transitions() -> None:
-    transition_status(RunStatus.AWAITING_BOT_REVIEW, RunStatus.EVALUATING_BOT_FEEDBACK)
-    transition_status(RunStatus.EVALUATING_BOT_FEEDBACK, RunStatus.WAITING_FOR_USER_ATTENTION)
-    transition_status(RunStatus.EVALUATING_BOT_FEEDBACK, RunStatus.RUNNING_CURSOR)
-    transition_status(RunStatus.REVIEWING, RunStatus.PUBLISHING_EXTERNAL_FIX)
-    transition_status(RunStatus.PUBLISHING_EXTERNAL_FIX, RunStatus.AWAITING_BOT_REVIEW)
-    transition_status(RunStatus.PREPARED, RunStatus.AWAITING_BOT_REVIEW)
+    transition_status(RunStatus.REVIEWING, RunStatus.WAITING_FOR_CURSOR_FIX)
+    transition_status(RunStatus.WAITING_FOR_CURSOR_FIX, RunStatus.RUNNING_CURSOR)
+    transition_status(RunStatus.REVIEWING, RunStatus.COMPLETED)
     with pytest.raises(ValueError):
-        transition_status(RunStatus.COMPLETED, RunStatus.AWAITING_BOT_REVIEW)
+        transition_status(RunStatus.COMPLETED, RunStatus.REVIEWING)
 
 
 def test_publication_text_fields() -> None:

@@ -60,11 +60,6 @@ def render_status(run_id: str, *, output: str = "text") -> str:
                 "cursor_model_fallback": state.recovery.cursor_model_fallback,
                 "continuation_envelope_path": state.recovery.continuation_envelope_path,
                 "usage_limit_fingerprint_sha256": state.recovery.usage_limit_fingerprint_sha256,
-                "expected_thread_count": (
-                    len(state.recovery.expected_eligible_thread_ids)
-                    if state.recovery.expected_eligible_thread_ids is not None
-                    else None
-                ),
             },
         }
         return json.dumps(payload, indent=2) + "\n"

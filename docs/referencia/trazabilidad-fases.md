@@ -200,7 +200,15 @@ Documentado en:
 
 ## Fase 15
 
-Ciclo opt-in post-PR con `gh` autenticado (sin tokens en YAML/state): `github doctor`, `pr-review create|status|continue|resume|abort`, commit/push no-force del patch staged aceptado, PR a `master`, polling de review del bot configurado, adjudicacion con la sesion Codex exacta, fix con el Cursor chat exacto, y parada con `@rojobad` ante hallazgos no aplicables/inciertos.
+> **Nota Phase 16.9:** el motor v1 (`RunState.github_pr_review`, worker v1,
+> `continue`/`recover`/`set-cursor-model`) fue retirado. El comportamiento actual
+> del CLI publico `pr-review` es el motor SQLite v2; ver Fase 16 y
+> [Referencia CLI](cli.md).
+
+Ciclo opt-in post-PR con `gh` autenticado (sin tokens en YAML/state): historico
+v1 con `github doctor`, commit/push no-force, PR a `master`, polling del bot,
+adjudicacion con sesion Codex exacta, fix con Cursor chat exacto, y parada con
+`@rojobad` ante hallazgos no aplicables/inciertos.
 
 ## Fase 15.5
 

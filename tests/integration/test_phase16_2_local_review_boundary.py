@@ -1,4 +1,4 @@
-"""Phase 16.2 integration: reusable local boundary without GithubPrReviewState."""
+"""Phase 16.2 integration: reusable local boundary without PR-review durable state."""
 
 from __future__ import annotations
 
@@ -31,7 +31,6 @@ def test_local_boundary_full_loop_without_github_pr_state(
     repo = Path(prepared_run["repo"])
 
     before = load_run_state(run_path / "state.json")
-    assert before.github_pr_review is None
     prompt_sha = before.prompt.sha256
     plan_sha = before.plan.sha256
     session_id = before.codex.session_id
@@ -57,7 +56,6 @@ def test_local_boundary_full_loop_without_github_pr_state(
 
     state = load_run_state(run_path / "state.json")
     assert state.status == RunStatus.COMPLETED
-    assert state.github_pr_review is None
     assert state.cursor.chat_id == result.chat_id
     assert state.codex.session_id == session_id
     assert state.codex.review_model == review_model
@@ -119,5 +117,3 @@ def test_public_start_adapter_preserves_status_and_outcome_fields(
     assert result.status == "completed"
     assert result.outcome is LocalReviewOutcome.ACCEPTED
     assert result.needs_external_continuation is False
-    state = load_run_state(Path(prepared_run["run_path"]) / "state.json")
-    assert state.github_pr_review is None

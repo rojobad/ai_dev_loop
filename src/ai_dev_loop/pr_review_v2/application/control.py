@@ -1,4 +1,4 @@
-"""Control-plane operations for ``pr-review-v2`` (start/status/history/resume/abort)."""
+"""Control-plane operations for ``pr-review`` (start/status/history/resume/abort)."""
 
 from __future__ import annotations
 

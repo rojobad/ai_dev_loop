@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
             cancel_check=lambda: cancel["requested"],
         ).run_until_idle()
     except Exception as exc:  # noqa: BLE001
-        print(f"pr-review-v2 supervisor failed: {exc}", file=sys.stderr)
+        print(f"pr-review supervisor failed: {exc}", file=sys.stderr)
         return 1
     finally:
         current = launchers.read(run_id)

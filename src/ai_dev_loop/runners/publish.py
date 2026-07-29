@@ -10,6 +10,7 @@ from pathlib import Path
 from ai_dev_loop.errors import AiDevLoopError, SshAgentNoIdentityError, ValidationError
 from ai_dev_loop.process import ProcessResult, require_success, run_process
 from ai_dev_loop.runners.git import discover_repository, validate_staged_patch_matches_artifact
+from ai_dev_loop.runners.github import FULL_SHA_PATTERN
 from ai_dev_loop.ssh_agent import (
     choose_effective_ssh_auth_sock,
     ssh_destination_from_remote_url,
@@ -20,7 +21,7 @@ from ai_dev_loop.ssh_agent import (
 from ai_dev_loop.ssh_agent import (
     validate_ssh_destination as _validate_ssh_destination,
 )
-from ai_dev_loop.state import FULL_SHA_PATTERN, sha256_text
+from ai_dev_loop.state import sha256_text
 
 
 @dataclass(frozen=True)

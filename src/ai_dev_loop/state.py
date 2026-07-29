@@ -36,23 +36,10 @@ class RunStatus(StrEnum):
     INTERRUPTED = "interrupted"
     FAILED = "failed"
     ABORTED = "aborted"
-    # Optional post-PR GitHub review cycle (Phase 15). Local Cursor/staging/review
-    # segments still use the existing statuses above while github_pr_review is set.
-    AWAITING_BOT_REVIEW = "awaiting_bot_review"
-    EVALUATING_BOT_FEEDBACK = "evaluating_bot_feedback"
-    WAITING_FOR_USER_ATTENTION = "waiting_for_user_attention"
-    PUBLISHING_EXTERNAL_FIX = "publishing_external_fix"
 
 
 ALLOWED_STATUS_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
-    RunStatus.PREPARED: frozenset(
-        {
-            RunStatus.VALIDATING,
-            RunStatus.AWAITING_BOT_REVIEW,
-            RunStatus.ABORTED,
-            RunStatus.FAILED,
-        }
-    ),
+    RunStatus.PREPARED: frozenset({RunStatus.VALIDATING, RunStatus.ABORTED, RunStatus.FAILED}),
     RunStatus.VALIDATING: frozenset(
         {
             RunStatus.RUNNING_CURSOR,
@@ -63,13 +50,7 @@ ALLOWED_STATUS_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
         }
     ),
     RunStatus.RUNNING_CURSOR: frozenset(
-        {
-            RunStatus.STAGING,
-            RunStatus.WAITING_FOR_USER_ATTENTION,
-            RunStatus.INTERRUPTED,
-            RunStatus.FAILED,
-            RunStatus.ABORTED,
-        }
+        {RunStatus.STAGING, RunStatus.INTERRUPTED, RunStatus.FAILED, RunStatus.ABORTED}
     ),
     RunStatus.STAGING: frozenset({RunStatus.REVIEWING, RunStatus.FAILED, RunStatus.ABORTED}),
     RunStatus.REVIEWING: frozenset(
@@ -78,8 +59,6 @@ ALLOWED_STATUS_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
             RunStatus.COMPLETED,
             RunStatus.COMPLETED_WITH_RESIDUAL_RISK,
             RunStatus.MAX_ITERATIONS_REACHED,
-            RunStatus.PUBLISHING_EXTERNAL_FIX,
-            RunStatus.WAITING_FOR_USER_ATTENTION,
             RunStatus.INTERRUPTED,
             RunStatus.FAILED,
             RunStatus.ABORTED,
@@ -106,61 +85,12 @@ ALLOWED_STATUS_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
             RunStatus.RUNNING_CURSOR,
             RunStatus.STAGING,
             RunStatus.REVIEWING,
-            RunStatus.AWAITING_BOT_REVIEW,
-            RunStatus.EVALUATING_BOT_FEEDBACK,
-            RunStatus.WAITING_FOR_USER_ATTENTION,
-            RunStatus.PUBLISHING_EXTERNAL_FIX,
             RunStatus.ABORTED,
             RunStatus.FAILED,
         }
     ),
     RunStatus.FAILED: frozenset(),
     RunStatus.ABORTED: frozenset(),
-    RunStatus.AWAITING_BOT_REVIEW: frozenset(
-        {
-            RunStatus.EVALUATING_BOT_FEEDBACK,
-            RunStatus.WAITING_FOR_USER_ATTENTION,
-            RunStatus.INTERRUPTED,
-            RunStatus.FAILED,
-            RunStatus.ABORTED,
-            RunStatus.COMPLETED,
-            RunStatus.COMPLETED_WITH_RESIDUAL_RISK,
-        }
-    ),
-    RunStatus.EVALUATING_BOT_FEEDBACK: frozenset(
-        {
-            RunStatus.WAITING_FOR_USER_ATTENTION,
-            RunStatus.RUNNING_CURSOR,
-            RunStatus.AWAITING_BOT_REVIEW,
-            RunStatus.INTERRUPTED,
-            RunStatus.FAILED,
-            RunStatus.ABORTED,
-            RunStatus.COMPLETED,
-            RunStatus.COMPLETED_WITH_RESIDUAL_RISK,
-        }
-    ),
-    RunStatus.WAITING_FOR_USER_ATTENTION: frozenset(
-        {
-            RunStatus.EVALUATING_BOT_FEEDBACK,
-            RunStatus.AWAITING_BOT_REVIEW,
-            RunStatus.INTERRUPTED,
-            RunStatus.FAILED,
-            RunStatus.ABORTED,
-            RunStatus.COMPLETED,
-            RunStatus.COMPLETED_WITH_RESIDUAL_RISK,
-        }
-    ),
-    RunStatus.PUBLISHING_EXTERNAL_FIX: frozenset(
-        {
-            RunStatus.AWAITING_BOT_REVIEW,
-            RunStatus.WAITING_FOR_USER_ATTENTION,
-            RunStatus.COMPLETED,
-            RunStatus.COMPLETED_WITH_RESIDUAL_RISK,
-            RunStatus.INTERRUPTED,
-            RunStatus.FAILED,
-            RunStatus.ABORTED,
-        }
-    ),
 }
 
 
@@ -281,9 +211,6 @@ RECOVERY_REASON_CODES = frozenset(
         "correction_staging_failed",
         "initial_staging_failed",
         "cursor_usage_limit",
-        "github_adjudication_schema_incompatible",
-        "external_feedback_cursor_not_started",
-        "publication_pre_commit_interrupted",
     }
 )
 RECOVERY_CHECKPOINTS = frozenset(
@@ -292,9 +219,6 @@ RECOVERY_CHECKPOINTS = frozenset(
         "reviewing",
         "process_review",
         "cursor",
-        "external_adjudication",
-        "external_feedback_cursor",
-        "publication_pre_commit",
     }
 )
 
@@ -324,7 +248,6 @@ class RecoveryState(BaseModel):
     usage_limit_fingerprint_path: str | None = None
     continuation_envelope_path: str | None = None
     continuation_envelope_sha256: str | None = None
-    expected_eligible_thread_ids: list[str] | None = None
 
     @field_validator("source_run_id")
     @classmethod
@@ -394,19 +317,6 @@ class RecoveryState(BaseModel):
             raise ValueError("optional string recovery fields must be non-empty when set")
         return value
 
-    @field_validator("expected_eligible_thread_ids")
-    @classmethod
-    def validate_expected_thread_ids(cls, value: list[str] | None) -> list[str] | None:
-        if value is None:
-            return value
-        if not value:
-            raise ValueError("expected_eligible_thread_ids must be non-empty when set")
-        if any(not item or not str(item).strip() for item in value):
-            raise ValueError("expected_eligible_thread_ids entries must be non-empty")
-        if len(value) != len(set(value)):
-            raise ValueError("expected_eligible_thread_ids must contain unique thread IDs")
-        return value
-
     @model_validator(mode="after")
     def validate_checkpoint_fields(self) -> RecoveryState:
         cursor_only = (
@@ -425,11 +335,6 @@ class RecoveryState(BaseModel):
             if self.source_staged_patch_sha256 is not None:
                 raise ValueError(
                     "source_staged_patch_sha256 must be null for cursor recovery checkpoints"
-                )
-            if self.expected_eligible_thread_ids is not None:
-                raise ValueError(
-                    "expected_eligible_thread_ids is only valid for external_adjudication, "
-                    "external_feedback_cursor, and publication_pre_commit recovery checkpoints"
                 )
             if self.cursor_output_fingerprint_sha256 is not None:
                 raise ValueError(
@@ -478,150 +383,6 @@ class RecoveryState(BaseModel):
                     "required for cursor recovery checkpoints"
                 )
             return self
-
-        if self.recovered_checkpoint == "external_adjudication":
-            if self.reason_code != "github_adjudication_schema_incompatible":
-                raise ValueError(
-                    "external_adjudication reason_code must be "
-                    "github_adjudication_schema_incompatible"
-                )
-            if self.source_staged_patch_sha256 is not None:
-                raise ValueError(
-                    "source_staged_patch_sha256 must be null for external_adjudication checkpoints"
-                )
-            if any(value is not None for value in cursor_only):
-                raise ValueError(
-                    "cursor recovery fields are only valid for cursor recovery checkpoints"
-                )
-            if self.cursor_output_fingerprint_sha256 is not None:
-                raise ValueError(
-                    "cursor_output_fingerprint_sha256 is only valid for staging recovery checkpoints"
-                )
-            if self.previous_staged_patch_sha256 is not None:
-                raise ValueError(
-                    "previous_staged_patch_sha256 is only valid for staging recovery checkpoints"
-                )
-            if self.legacy_cursor_output_adopted:
-                raise ValueError(
-                    "legacy_cursor_output_adopted is only valid for staging recovery checkpoints"
-                )
-            if self.legacy_cursor_usage_limit_adopted:
-                raise ValueError(
-                    "legacy_cursor_usage_limit_adopted is only valid for cursor recovery checkpoints"
-                )
-            if not self.expected_eligible_thread_ids:
-                raise ValueError(
-                    "expected_eligible_thread_ids is required for external_adjudication checkpoints"
-                )
-            return self
-
-        if self.recovered_checkpoint == "external_feedback_cursor":
-            if self.reason_code != "external_feedback_cursor_not_started":
-                raise ValueError(
-                    "external_feedback_cursor reason_code must be "
-                    "external_feedback_cursor_not_started"
-                )
-            if self.source_staged_patch_sha256 is not None:
-                raise ValueError(
-                    "source_staged_patch_sha256 must be null for "
-                    "external_feedback_cursor checkpoints"
-                )
-            if not self.expected_eligible_thread_ids:
-                raise ValueError(
-                    "expected_eligible_thread_ids is required for "
-                    "external_feedback_cursor checkpoints"
-                )
-            if not self.source_prompt_path or not self.source_prompt_sha256:
-                raise ValueError(
-                    "source_prompt_path and source_prompt_sha256 are required for "
-                    "external_feedback_cursor checkpoints"
-                )
-            usage_limit_only = (
-                self.source_cursor_model,
-                self.cursor_model_fallback,
-                self.usage_limit_fingerprint_sha256,
-                self.usage_limit_fingerprint_path,
-                self.continuation_envelope_path,
-                self.continuation_envelope_sha256,
-            )
-            if any(value is not None for value in usage_limit_only):
-                raise ValueError(
-                    "cursor usage-limit recovery fields are only valid for "
-                    "cursor recovery checkpoints"
-                )
-            if self.cursor_output_fingerprint_sha256 is not None:
-                raise ValueError(
-                    "cursor_output_fingerprint_sha256 is only valid for staging recovery checkpoints"
-                )
-            if self.previous_staged_patch_sha256 is not None:
-                raise ValueError(
-                    "previous_staged_patch_sha256 is only valid for staging recovery checkpoints"
-                )
-            if self.legacy_cursor_output_adopted:
-                raise ValueError(
-                    "legacy_cursor_output_adopted is only valid for staging recovery checkpoints"
-                )
-            if self.legacy_cursor_usage_limit_adopted:
-                raise ValueError(
-                    "legacy_cursor_usage_limit_adopted is only valid for cursor recovery checkpoints"
-                )
-            return self
-
-        if self.recovered_checkpoint == "publication_pre_commit":
-            if self.reason_code != "publication_pre_commit_interrupted":
-                raise ValueError(
-                    "publication_pre_commit reason_code must be publication_pre_commit_interrupted"
-                )
-            if self.source_staged_patch_sha256 is None:
-                raise ValueError(
-                    "source_staged_patch_sha256 is required for publication_pre_commit checkpoints"
-                )
-            if not self.expected_eligible_thread_ids:
-                raise ValueError(
-                    "expected_eligible_thread_ids is required for "
-                    "publication_pre_commit checkpoints"
-                )
-            usage_limit_only = (
-                self.source_cursor_model,
-                self.cursor_model_fallback,
-                self.usage_limit_fingerprint_sha256,
-                self.usage_limit_fingerprint_path,
-                self.continuation_envelope_path,
-                self.continuation_envelope_sha256,
-            )
-            if any(value is not None for value in usage_limit_only):
-                raise ValueError(
-                    "cursor usage-limit recovery fields are only valid for "
-                    "cursor recovery checkpoints"
-                )
-            if self.source_prompt_path is not None or self.source_prompt_sha256 is not None:
-                raise ValueError(
-                    "source_prompt_path and source_prompt_sha256 are only valid for "
-                    "cursor and external_feedback_cursor recovery checkpoints"
-                )
-            if self.cursor_output_fingerprint_sha256 is not None:
-                raise ValueError(
-                    "cursor_output_fingerprint_sha256 is only valid for staging recovery checkpoints"
-                )
-            if self.previous_staged_patch_sha256 is not None:
-                raise ValueError(
-                    "previous_staged_patch_sha256 is only valid for staging recovery checkpoints"
-                )
-            if self.legacy_cursor_output_adopted:
-                raise ValueError(
-                    "legacy_cursor_output_adopted is only valid for staging recovery checkpoints"
-                )
-            if self.legacy_cursor_usage_limit_adopted:
-                raise ValueError(
-                    "legacy_cursor_usage_limit_adopted is only valid for cursor recovery checkpoints"
-                )
-            return self
-
-        if self.expected_eligible_thread_ids is not None:
-            raise ValueError(
-                "expected_eligible_thread_ids is only valid for external_adjudication, "
-                "external_feedback_cursor, and publication_pre_commit recovery checkpoints"
-            )
 
         if any(value is not None for value in cursor_only):
             raise ValueError(
@@ -705,407 +466,6 @@ class ControllerState(BaseModel):
     controller_session_id: str
 
 
-FULL_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
-
-GITHUB_PR_ORIGINS = frozenset({"source_run", "independent_pr"})
-GITHUB_PR_LIFECYCLES = frozenset(
-    {
-        "prepared_independent",
-        "publishing_initial",
-        "awaiting_bot_review",
-        "evaluating_bot_feedback",
-        "waiting_for_user_attention",
-        "fixing_external_feedback",
-        "publishing_external_fix",
-        "max_external_cycles_reached",
-        "completed",
-        "failed",
-        "aborted",
-        "interrupted",
-    }
-)
-GITHUB_PUBLICATION_PHASES = frozenset(
-    {
-        "pre_commit",
-        "committed",
-        "pushed",
-        "pr_bound",
-    }
-)
-EXTERNAL_ADJUDICATION_APPLICATION_STATUSES = frozenset(
-    {
-        "cursor_pending",
-        "cursor_scheduled",
-        "replies_pending",
-        "consumed",
-    }
-)
-EXTERNAL_REPLY_INTENT_STATUSES = frozenset({"pending", "writing", "written", "ambiguous"})
-EXTERNAL_REPLY_DECISIONS = frozenset({"not_applicable", "uncertain"})
-_SAFE_RUN_RELATIVE_PATH = re.compile(r"^(?!/)(?!.*(?:^|/)\.\.(?:/|$))[A-Za-z0-9._/-]+$")
-
-
-class GithubBotAcknowledgementState(BaseModel):
-    """Best-effort trigger acknowledgement telemetry (never completion evidence)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    trigger_comment_id: str = Field(min_length=1)
-    reaction: str = Field(min_length=1)
-    first_observed_at: str | None = None
-    acknowledgement_cleared_at: str | None = None
-    timeout_diagnostic_at: str | None = None
-
-
-class GithubNoFindingsCompletionEvidence(BaseModel):
-    """Auditable metadata for a verified no-findings completion comment.
-
-    Never stores the comment body—only ``body_sha256`` and rule identity.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    comment_id: str = Field(min_length=1)
-    created_at: str = Field(min_length=1)
-    rule_id: str = Field(min_length=1)
-    body_sha256: str = Field(min_length=64, max_length=64)
-    reviewed_commit_prefix: str = Field(min_length=7, max_length=40)
-
-    @field_validator("body_sha256")
-    @classmethod
-    def validate_body_hash(cls, value: str) -> str:
-        if not re.fullmatch(r"[a-f0-9]{64}", value):
-            raise ValueError("body_sha256 must be a lowercase hex SHA-256 digest")
-        return value
-
-
-class ExternalReplyIntent(BaseModel):
-    """Per-thread non-actionable reply intent for durable write idempotency.
-
-    Stores only the reply body hash — never the reply text itself.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    thread_id: str = Field(min_length=1)
-    decision: str
-    inline_reply_sha256: str = Field(min_length=64, max_length=64)
-    status: str = "pending"
-
-    @field_validator("decision")
-    @classmethod
-    def validate_decision(cls, value: str) -> str:
-        if value not in EXTERNAL_REPLY_DECISIONS:
-            raise ValueError(
-                f"reply intent decision must be one of: {sorted(EXTERNAL_REPLY_DECISIONS)}"
-            )
-        return value
-
-    @field_validator("status")
-    @classmethod
-    def validate_status(cls, value: str) -> str:
-        if value not in EXTERNAL_REPLY_INTENT_STATUSES:
-            raise ValueError(
-                f"reply intent status must be one of: {sorted(EXTERNAL_REPLY_INTENT_STATUSES)}"
-            )
-        return value
-
-    @field_validator("inline_reply_sha256")
-    @classmethod
-    def validate_reply_hash(cls, value: str) -> str:
-        if not re.fullmatch(r"[a-f0-9]{64}", value):
-            raise ValueError("inline_reply_sha256 must be a lowercase hex SHA-256 digest")
-        return value
-
-
-class ExternalAdjudicationCheckpoint(BaseModel):
-    """Durable checkpoint for the current external GitHub adjudication round.
-
-    Persisted under ``github_pr_review`` immediately after Codex B returns a
-    validated structured result, before remote preflight, Cursor, replies, or
-    publication. Historical ``RecoveryState`` remains lineage only.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    cycle_number: int = Field(ge=1)
-    bound_head_sha: str
-    eligible_thread_ids: list[str] = Field(min_length=1)
-    result_path: str = Field(min_length=1)
-    result_sha256: str = Field(min_length=64, max_length=64)
-    snapshot_path: str = Field(min_length=1)
-    snapshot_sha256: str = Field(min_length=64, max_length=64)
-    report_path: str | None = None
-    report_sha256: str | None = None
-    fix_prompt_path: str | None = None
-    fix_prompt_sha256: str | None = None
-    application_status: str
-    reply_intents: list[ExternalReplyIntent] = Field(default_factory=list)
-
-    @field_validator("bound_head_sha")
-    @classmethod
-    def validate_bound_sha(cls, value: str) -> str:
-        if not FULL_SHA_PATTERN.match(value):
-            raise ValueError("bound_head_sha must be a 40-character lowercase hex digest")
-        return value
-
-    @field_validator("result_sha256", "snapshot_sha256", "report_sha256", "fix_prompt_sha256")
-    @classmethod
-    def validate_artifact_hash(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        if not re.fullmatch(r"[a-f0-9]{64}", value):
-            raise ValueError("artifact hash fields must be lowercase sha256 hex digests")
-        return value
-
-    @field_validator(
-        "result_path",
-        "snapshot_path",
-        "report_path",
-        "fix_prompt_path",
-    )
-    @classmethod
-    def validate_relative_path(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        if not value.strip() or not _SAFE_RUN_RELATIVE_PATH.fullmatch(value):
-            raise ValueError("external adjudication artifact paths must be safe run-relative paths")
-        return value
-
-    @field_validator("application_status")
-    @classmethod
-    def validate_application_status(cls, value: str) -> str:
-        if value not in EXTERNAL_ADJUDICATION_APPLICATION_STATUSES:
-            raise ValueError(
-                "application_status must be one of: "
-                f"{sorted(EXTERNAL_ADJUDICATION_APPLICATION_STATUSES)}"
-            )
-        return value
-
-    @field_validator("eligible_thread_ids")
-    @classmethod
-    def validate_thread_ids(cls, value: list[str]) -> list[str]:
-        if not value:
-            raise ValueError("eligible_thread_ids must be non-empty")
-        if any(not item or not str(item).strip() for item in value):
-            raise ValueError("eligible_thread_ids entries must be non-empty")
-        if len(value) != len(set(value)):
-            raise ValueError("eligible_thread_ids must contain unique thread IDs")
-        return value
-
-    @model_validator(mode="after")
-    def validate_checkpoint_shape(self) -> ExternalAdjudicationCheckpoint:
-        label = f"{self.cycle_number:02d}"
-        expected_result = f"github/cycles/{label}/result.json"
-        expected_snapshot = f"github/cycles/{label}/threads.snapshot.json"
-        expected_report = f"github/cycles/{label}/report.md"
-        expected_prompt = f"prompts/fixes/github-{label}.txt"
-        if self.result_path != expected_result:
-            raise ValueError(f"result_path must be {expected_result} for cycle {self.cycle_number}")
-        if self.snapshot_path != expected_snapshot:
-            raise ValueError(
-                f"snapshot_path must be {expected_snapshot} for cycle {self.cycle_number}"
-            )
-        if self.report_path is not None and self.report_path != expected_report:
-            raise ValueError(f"report_path must be {expected_report} for cycle {self.cycle_number}")
-        if self.report_path is None and self.report_sha256 is not None:
-            raise ValueError("report_sha256 requires report_path")
-        if self.report_path is not None and self.report_sha256 is None:
-            raise ValueError("report_path requires report_sha256")
-        if self.fix_prompt_path is None and self.fix_prompt_sha256 is not None:
-            raise ValueError("fix_prompt_sha256 requires fix_prompt_path")
-        if self.fix_prompt_path is not None and self.fix_prompt_sha256 is None:
-            raise ValueError("fix_prompt_path requires fix_prompt_sha256")
-        if self.fix_prompt_path is not None and self.fix_prompt_path != expected_prompt:
-            raise ValueError(
-                f"fix_prompt_path must be {expected_prompt} for cycle {self.cycle_number}"
-            )
-
-        intent_ids = [item.thread_id for item in self.reply_intents]
-        if len(intent_ids) != len(set(intent_ids)):
-            raise ValueError("reply_intents must have unique thread_id values")
-        if any(item.thread_id not in set(self.eligible_thread_ids) for item in self.reply_intents):
-            raise ValueError("reply_intents thread_id values must be in eligible_thread_ids")
-
-        if self.application_status in {"cursor_pending", "cursor_scheduled"}:
-            if not self.fix_prompt_path or not self.fix_prompt_sha256:
-                raise ValueError(
-                    "cursor_pending/cursor_scheduled require fix_prompt_path and fix_prompt_sha256"
-                )
-            if self.reply_intents:
-                raise ValueError("cursor_pending/cursor_scheduled must not carry reply_intents")
-        elif self.application_status == "replies_pending":
-            if self.fix_prompt_path is not None or self.fix_prompt_sha256 is not None:
-                raise ValueError("replies_pending must not carry a fix prompt")
-            if not self.reply_intents:
-                raise ValueError("replies_pending requires at least one reply intent")
-        return self
-
-
-class GithubPrReviewState(BaseModel):
-    """Optional post-PR cycle binding and lineage (Phase 15 / 15.5).
-
-    Source completed runs remain terminal and immutable. Source-run successors
-    store this section with the inherited exact Cursor chat and Codex reviewer
-    session. Independent cycles bind an already-open PR with no source run and
-    create a Cursor chat only after actionable external feedback.
-
-    Historical Phase 15 payloads without ``origin`` deserialize as
-    ``source_run``. Sensitive comment bodies live only in dedicated artifacts.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    schema_version: int = Field(default=1, alias="schema_version")
-    origin: str = "source_run"
-    source_run_id: str | None = None
-    lifecycle: str
-    cycle_number: int = Field(ge=1)
-    max_external_cycles: int = Field(ge=1)
-    pr_number: int | None = Field(default=None, ge=1)
-    pr_url: str | None = None
-    repository_name_with_owner: str | None = None
-    head_branch: str = Field(min_length=1)
-    base_branch: str = "master"
-    bound_head_sha: str
-    request_comment_id: str | None = None
-    request_marker: str | None = None
-    request_created_at: str | None = None
-    eligible_thread_ids: list[str] = Field(default_factory=list)
-    processed_thread_ids: list[str] = Field(default_factory=list)
-    replied_thread_ids: list[str] = Field(default_factory=list)
-    resolved_thread_ids: list[str] = Field(default_factory=list)
-    publication_commit_sha: str | None = None
-    staged_patch_sha256: str | None = None
-    last_external_result_path: str | None = None
-    last_snapshot_path: str | None = None
-    continue_comment_id: str | None = None
-    worker_outcome: str | None = None
-    expected_eligible_thread_ids: list[str] | None = None
-    external_fix_prompt_path: str | None = None
-    external_cursor_iteration: int | None = Field(default=None, ge=1)
-    publication_phase: str | None = None
-    local_commit_sha: str | None = None
-    expected_remote_sha_before_push: str | None = None
-    publication_remote: str | None = None
-    publication_remote_branch: str | None = None
-    publication_text_path: str | None = None
-    bot_acknowledgement: GithubBotAcknowledgementState | None = None
-    no_findings_completion: GithubNoFindingsCompletionEvidence | None = None
-    external_adjudication: ExternalAdjudicationCheckpoint | None = None
-
-    @field_validator("origin")
-    @classmethod
-    def validate_origin(cls, value: str) -> str:
-        if value not in GITHUB_PR_ORIGINS:
-            raise ValueError(f"github_pr_review.origin must be one of: {sorted(GITHUB_PR_ORIGINS)}")
-        return value
-
-    @field_validator("lifecycle")
-    @classmethod
-    def validate_lifecycle(cls, value: str) -> str:
-        if value not in GITHUB_PR_LIFECYCLES:
-            raise ValueError(
-                f"github_pr_review.lifecycle must be one of: {sorted(GITHUB_PR_LIFECYCLES)}"
-            )
-        return value
-
-    @field_validator("publication_phase")
-    @classmethod
-    def validate_publication_phase(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        if value not in GITHUB_PUBLICATION_PHASES:
-            raise ValueError(
-                "github_pr_review.publication_phase must be one of: "
-                f"{sorted(GITHUB_PUBLICATION_PHASES)}"
-            )
-        return value
-
-    @field_validator(
-        "bound_head_sha",
-        "publication_commit_sha",
-        "local_commit_sha",
-        "expected_remote_sha_before_push",
-    )
-    @classmethod
-    def validate_sha(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        if not FULL_SHA_PATTERN.match(value):
-            raise ValueError("SHA must be a 40-character lowercase hex digest")
-        return value
-
-    @field_validator("source_run_id")
-    @classmethod
-    def validate_source_run_id(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        if not value.strip():
-            raise ValueError("source_run_id must be a non-empty string when set")
-        return value
-
-    @model_validator(mode="after")
-    def validate_origin_and_binding(self) -> GithubPrReviewState:
-        for field_name in (
-            "eligible_thread_ids",
-            "processed_thread_ids",
-            "replied_thread_ids",
-            "resolved_thread_ids",
-        ):
-            values = getattr(self, field_name)
-            if len(values) != len(set(values)):
-                raise ValueError(f"{field_name} must contain unique thread IDs")
-        if self.expected_eligible_thread_ids is not None:
-            expected = self.expected_eligible_thread_ids
-            if not expected:
-                raise ValueError("expected_eligible_thread_ids must be non-empty when set")
-            if len(expected) != len(set(expected)):
-                raise ValueError("expected_eligible_thread_ids must contain unique thread IDs")
-            if any(not item or not str(item).strip() for item in expected):
-                raise ValueError("expected_eligible_thread_ids entries must be non-empty")
-
-        if self.origin == "source_run":
-            if self.source_run_id is None:
-                raise ValueError("source_run_id is required when origin is source_run")
-            if self.lifecycle == "prepared_independent":
-                raise ValueError(
-                    "prepared_independent lifecycle is only valid for independent_pr origin"
-                )
-        elif self.origin == "independent_pr":
-            if self.source_run_id is not None:
-                raise ValueError("source_run_id must be null when origin is independent_pr")
-            if self.lifecycle == "publishing_initial":
-                raise ValueError("publishing_initial lifecycle is only valid for source_run origin")
-            if self.pr_number is None:
-                raise ValueError("pr_number is required for independent_pr origin")
-            if not self.repository_name_with_owner:
-                raise ValueError("repository_name_with_owner is required for independent_pr origin")
-
-        if self.lifecycle == "publishing_initial" and self.pr_number is None:
-            return self
-        if (
-            self.lifecycle not in {"publishing_initial", "failed", "aborted", "interrupted"}
-            and self.pr_number is None
-        ):
-            raise ValueError("pr_number is required after the PR is bound")
-        if (
-            self.external_adjudication is not None
-            and self.external_adjudication.application_status != "consumed"
-        ):
-            checkpoint = self.external_adjudication
-            if checkpoint.cycle_number != self.cycle_number:
-                raise ValueError(
-                    "external_adjudication.cycle_number must match github_pr_review.cycle_number"
-                )
-            if checkpoint.bound_head_sha != self.bound_head_sha:
-                raise ValueError(
-                    "external_adjudication.bound_head_sha must match "
-                    "github_pr_review.bound_head_sha"
-                )
-        return self
-
-
 class RunState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1126,7 +486,6 @@ class RunState(BaseModel):
     last_error: str | None = None
     recovery: RecoveryState | None = None
     controller: ControllerState | None = None
-    github_pr_review: GithubPrReviewState | None = None
 
 
 class ManifestArtifact(BaseModel):

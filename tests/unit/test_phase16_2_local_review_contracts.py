@@ -159,7 +159,6 @@ def test_plan_next_action_uses_explicit_scheduled_turn(tmp_path: Path) -> None:
     )
     state = _sample_state(status=RunStatus.RUNNING_CURSOR)
     # Without GitHub state: only the explicit scheduled turn forces iteration 3.
-    assert state.github_pr_review is None
     context = LocalInvocationContext(
         scheduled_first_cursor_turn=ScheduledCursorTurn(
             iteration_number=3,
@@ -180,13 +179,8 @@ def test_local_modules_have_no_pr_github_publication_imports() -> None:
         "ai_dev_loop.commands.pr_review",
         "ai_dev_loop.commands.pr_review_recover",
         "ai_dev_loop.commands.pr_review_independent",
-        "ai_dev_loop.legacy_pr_review_local_adapter",
-        "ai_dev_loop.pr_review_worker",
         "ai_dev_loop.runners.github",
         "ai_dev_loop.runners.publish",
-        "ai_dev_loop.runners.codex_github",
-        "ai_dev_loop.github_pr_review_result",
-        "ai_dev_loop.external_adjudication",
     }
     modules = (
         "local_review_loop.py",
@@ -205,10 +199,4 @@ def test_local_modules_have_no_pr_github_publication_imports() -> None:
                 module = node.module or ""
                 assert module not in forbidden_modules, f"{name} imports from {module}"
                 for alias in node.names:
-                    assert alias.name != "github_pr_review", f"{name} imports github_pr_review"
-                    assert alias.name != "GithubPrReviewState", (
-                        f"{name} imports GithubPrReviewState"
-                    )
-        # Attribute access to github_pr_review on state must not appear.
-        source = path.read_text(encoding="utf-8")
-        assert "state.github_pr_review" not in source, f"{name} accesses state.github_pr_review"
+                    assert alias.name not in forbidden_modules, f"{name} imports {alias.name}"

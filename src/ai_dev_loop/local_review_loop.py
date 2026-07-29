@@ -2,7 +2,8 @@
 
 Invocation types are non-persisted. Durable identities and configuration remain
 authoritative in ``RunState`` selected by ``run_id``. This module must not import
-PR commands, workers, GitHub/publication runners, or inspect ``github_pr_review``.
+PR-review commands, supervisor workers, GitHub/publication runners, or the SQLite
+PR-review durable engine.
 """
 
 from __future__ import annotations

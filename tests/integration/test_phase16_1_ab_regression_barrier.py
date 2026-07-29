@@ -89,8 +89,6 @@ def _assert_no_github_side_effects(
     gh_log: Path,
     initial_commit_count: int,
 ) -> None:
-    state = load_run_state(run_directory / "state.json")
-    assert state.github_pr_review is None
     assert not (run_directory / "github").exists()
     assert gh_log.read_text(encoding="utf-8") == ""
 
@@ -394,7 +392,6 @@ def test_ab_prepare_github_absent_persists_identities_without_agents(
     assert state.controller.controller_session_id == CONTROLLER_A
     assert state.codex.session_id == REVIEWER_B
     assert state.cursor.chat_id is None
-    assert state.github_pr_review is None
     assert state.codex.review_model == "gpt-5.6-sol"
     assert state.codex.review_reasoning_effort == "high"
     assert state.codex.review_model_source == "session"
@@ -452,8 +449,6 @@ def test_ab_prepare_github_explicitly_disabled(
         monkeypatch,
         github_disabled_explicit=True,
     )
-    state = load_run_state(prepared.run_directory / "state.json")
-    assert state.github_pr_review is None
     effective = (prepared.run_directory / "effective-config.yaml").read_text(encoding="utf-8")
     assert "github:" in effective
     assert "enabled: false" in effective
@@ -498,7 +493,6 @@ def test_ab_detached_launch_multi_iteration_completed_without_github(
     assert state.controller.controller_session_id == CONTROLLER_A
     assert state.codex.session_id == REVIEWER_B
     assert state.cursor.chat_id == CURSOR_CHAT
-    assert state.github_pr_review is None
     assert len(state.iterations) == 2
     assert state.iterations[0]["kind"] == "initial_implementation"
     assert state.iterations[1]["kind"] == "cursor_correction"
@@ -748,7 +742,6 @@ def test_ab_recover_successor_preserves_identities_and_skips_completed_cursor(
     assert successor.cursor.chat_id == CURSOR_CHAT
     assert successor.codex.review_model == source.codex.review_model
     assert successor.codex.review_reasoning_effort == source.codex.review_reasoning_effort
-    assert successor.github_pr_review is None
     assert successor.recovery is not None
     assert successor.recovery.source_run_id == prepared.run_id
     assert successor.recovery.recovered_checkpoint == "reviewing"
@@ -830,7 +823,6 @@ def test_ab_abort_during_detached_cursor_preserves_repo_and_identities(
     assert state.controller is not None
     assert state.controller.controller_session_id == CONTROLLER_A
     assert state.codex.session_id == REVIEWER_B
-    assert state.github_pr_review is None
 
     status_after, staged_after, head_after = _repo_fingerprint(git_repo)
     assert head_after == head_before
@@ -917,7 +909,6 @@ def test_ab_result_completed_with_residual_risk(
     assert result.status == "completed_with_residual_risk"
     state = load_run_state(prepared.run_directory / "state.json")
     assert state.status == RunStatus.COMPLETED_WITH_RESIDUAL_RISK
-    assert state.github_pr_review is None
     assert state.controller is not None
     assert state.controller.controller_session_id == CONTROLLER_A
     assert state.codex.session_id == REVIEWER_B
@@ -943,7 +934,6 @@ def test_ab_result_failed_on_codex_nonzero(
         start_run(prepared.run_id)
     state = load_run_state(prepared.run_directory / "state.json")
     assert state.status == RunStatus.FAILED
-    assert state.github_pr_review is None
     assert state.last_error is not None
     assert "codex/events/" in state.last_error
     assert "exit code 2" in state.last_error
@@ -986,7 +976,6 @@ def test_ab_result_interrupted_on_codex_timeout(
         start_run(prepared.run_id)
     state = load_run_state(prepared.run_directory / "state.json")
     assert state.status == RunStatus.INTERRUPTED
-    assert state.github_pr_review is None
     assert state.controller is not None
     assert state.controller.controller_session_id == CONTROLLER_A
     assert state.codex.session_id == REVIEWER_B
@@ -1008,7 +997,6 @@ def test_ab_status_logs_inspect_expose_loop_without_github_fields(
 
     status_json = json.loads(render_status(prepared.run_id, output="json"))
     assert status_json["status"] == "completed"
-    assert status_json.get("github_pr_review") in (None, {})
     inspect_json = json.loads(render_inspect(prepared.run_id, output="json"))
     assert inspect_json["status"] == "completed"
     logs = render_logs(prepared.run_id, component="codex")
