@@ -33,9 +33,6 @@ FORBIDDEN_LEGACY = (
     "ai_dev_loop.local_review_loop",
     "ai_dev_loop.commands",
     "ai_dev_loop.runners",
-    "ai_dev_loop.external_adjudication",
-    "ai_dev_loop.github_pr_review_result",
-    "ai_dev_loop.pr_review_worker",
     "ai_dev_loop.iterations",
     "ai_dev_loop.resume_planner",
 )

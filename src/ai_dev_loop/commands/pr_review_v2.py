@@ -1,4 +1,4 @@
-"""CLI command implementations for temporary ``pr-review-v2`` namespace."""
+"""CLI command implementations for ``pr-review`` (SQLite-backed v2 engine)."""
 
 from __future__ import annotations
 
@@ -67,8 +67,7 @@ def _open_engine(db_path: Path | None = None) -> PrReviewEngine:
 def _require_v2_config(config: ProjectConfig) -> PrReviewV2Section:
     if config.pr_review_v2 is None or not config.pr_review_v2.enabled:
         raise ValidationError(
-            "pr_review_v2 is disabled or absent; set pr_review_v2.enabled: true "
-            "(temporary pre-cutover namespace; legacy pr-review is unchanged)"
+            "pr_review_v2 is disabled or absent; set pr_review_v2.enabled: true in ai_dev_loop.yaml"
         )
     return config.pr_review_v2
 
@@ -307,9 +306,9 @@ def create_from_source_run(source_run_id: str, *, config_path: Path | None = Non
     )
     reused = "reused" if result.reused else "created"
     return (
-        f"pr-review-v2 {reused} prepared run {result.run_id}\n"
+        f"pr-review {reused} prepared run {result.run_id}\n"
         f"origin: source_run\n"
-        f"next: ai_dev_loop pr-review-v2 start {result.run_id}\n"
+        f"next: ai_dev_loop pr-review start {result.run_id}\n"
     )
 
 
@@ -471,10 +470,10 @@ def prepare_existing_pr(
     )
     reused = "reused" if result.reused else "created"
     return (
-        f"pr-review-v2 {reused} prepared run {result.run_id}\n"
+        f"pr-review {reused} prepared run {result.run_id}\n"
         f"origin: existing_pr\n"
         f"pr: {binding.pr_number}\n"
-        f"next: ai_dev_loop pr-review-v2 start {result.run_id}\n"
+        f"next: ai_dev_loop pr-review start {result.run_id}\n"
     )
 
 
@@ -498,7 +497,7 @@ def start_run(run_id: str) -> str:
     except ControlError as exc:
         raise ValidationError(exc.safe_message) from exc
     return (
-        f"pr-review-v2 start {result.run_id}\n"
+        f"pr-review start {result.run_id}\n"
         f"state: {result.state_kind}\n"
         f"transition_applied: {result.transition_applied}\n"
         f"supervisor: {result.supervisor_action}\n"
@@ -581,7 +580,7 @@ def resume_run(run_id: str, *, confirm_user_continuation: bool = False) -> str:
     except ControlError as exc:
         raise ValidationError(exc.safe_message) from exc
     return (
-        f"pr-review-v2 resume {result.run_id}\n"
+        f"pr-review resume {result.run_id}\n"
         f"state: {result.state_kind}\n"
         f"transition_applied: {result.transition_applied}\n"
         f"supervisor: {result.supervisor_action}\n"
@@ -599,7 +598,7 @@ def abort_run(run_id: str) -> str:
     except ControlError as exc:
         raise ValidationError(exc.safe_message) from exc
     return (
-        f"pr-review-v2 abort {result.run_id}\n"
+        f"pr-review abort {result.run_id}\n"
         f"state: {result.state_kind}\n"
         f"abort_persisted: {result.abort_persisted}\n"
         f"process_action: {result.process_action.value}\n"

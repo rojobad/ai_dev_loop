@@ -1,4 +1,4 @@
-"""Read-only discovery of an already-open pull request for ``pr-review-v2 prepare``."""
+"""Read-only discovery of an already-open pull request for ``pr-review prepare``."""
 
 from __future__ import annotations
 

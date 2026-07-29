@@ -21,14 +21,25 @@
     "last_error"
   ],
   "properties": {
-    "schema_version": { "type": "integer", "const": 1 },
-    "run_id": { "type": "string", "minLength": 1 },
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
     "project": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name"],
+      "required": [
+        "name"
+      ],
       "properties": {
-        "name": { "type": "string", "minLength": 1 }
+        "name": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "status": {
@@ -45,15 +56,17 @@
         "max_iterations_reached",
         "interrupted",
         "failed",
-        "aborted",
-        "awaiting_bot_review",
-        "evaluating_bot_feedback",
-        "waiting_for_user_attention",
-        "publishing_external_fix"
+        "aborted"
       ]
     },
-    "created_at": { "type": "string", "format": "date-time" },
-    "updated_at": { "type": "string", "format": "date-time" },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
     "repository": {
       "type": "object",
       "additionalProperties": false,
@@ -66,32 +79,76 @@
         "baseline_status_path"
       ],
       "properties": {
-        "root": { "type": "string", "minLength": 1 },
-        "git_common_dir": { "type": "string", "minLength": 1 },
-        "git_dir": { "type": "string", "minLength": 1 },
-        "branch": { "type": "string", "minLength": 1 },
-        "initial_head": { "type": "string", "minLength": 1 },
-        "baseline_status_path": { "type": "string", "minLength": 1 }
+        "root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "git_common_dir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "git_dir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "initial_head": {
+          "type": "string",
+          "minLength": 1
+        },
+        "baseline_status_path": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "plan": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["repository_path", "snapshot_path", "sha256"],
+      "required": [
+        "repository_path",
+        "snapshot_path",
+        "sha256"
+      ],
       "properties": {
-        "repository_path": { "type": "string", "minLength": 1 },
-        "snapshot_path": { "type": "string", "minLength": 1 },
-        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        "repository_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "snapshot_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
       }
     },
     "prompt": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["source_repository_path", "snapshot_path", "sha256"],
+      "required": [
+        "source_repository_path",
+        "snapshot_path",
+        "sha256"
+      ],
       "properties": {
-        "source_repository_path": { "type": "string", "minLength": 1 },
-        "snapshot_path": { "type": "string", "minLength": 1 },
-        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        "source_repository_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "snapshot_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
       }
     },
     "codex": {
@@ -106,54 +163,113 @@
         "sandbox"
       ],
       "properties": {
-        "command": { "type": "string", "minLength": 1 },
-        "session_id": { "type": "string", "minLength": 1 },
-        "session_model": { "type": ["string", "null"] },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "session_reasoning_effort": {
           "anyOf": [
             {
               "type": "string",
-              "enum": ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
+              "enum": [
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max",
+                "ultra"
+              ]
             },
-            { "type": "null" }
+            {
+              "type": "null"
+            }
           ]
         },
         "review_model": {
           "anyOf": [
-            { "type": "string", "minLength": 1 },
-            { "type": "null" }
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "review_reasoning_effort": {
           "anyOf": [
             {
               "type": "string",
-              "enum": ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
+              "enum": [
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max",
+                "ultra"
+              ]
             },
-            { "type": "null" }
+            {
+              "type": "null"
+            }
           ]
         },
         "review_model_source": {
           "anyOf": [
             {
               "type": "string",
-              "enum": ["session", "explicit", "legacy_inherit"]
+              "enum": [
+                "session",
+                "explicit",
+                "legacy_inherit"
+              ]
             },
-            { "type": "null" }
+            {
+              "type": "null"
+            }
           ]
         },
         "review_reasoning_source": {
           "anyOf": [
             {
               "type": "string",
-              "enum": ["session", "explicit", "legacy_inherit"]
+              "enum": [
+                "session",
+                "explicit",
+                "legacy_inherit"
+              ]
             },
-            { "type": "null" }
+            {
+              "type": "null"
+            }
           ]
         },
-        "model_family_warning": { "type": ["string", "null"] },
-        "review_skill": { "type": "string", "minLength": 1 },
-        "sandbox": { "type": "string", "minLength": 1 }
+        "model_family_warning": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "review_skill": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sandbox": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "cursor": {
@@ -169,13 +285,34 @@
         "chat_id"
       ],
       "properties": {
-        "command": { "type": "string", "minLength": 1 },
-        "model": { "type": "string", "minLength": 1 },
-        "output_format": { "type": "string", "minLength": 1 },
-        "force": { "type": "boolean" },
-        "trust_workspace": { "type": "boolean" },
-        "sandbox": { "type": "string", "minLength": 1 },
-        "chat_id": { "type": ["string", "null"] }
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "output_format": {
+          "type": "string",
+          "minLength": 1
+        },
+        "force": {
+          "type": "boolean"
+        },
+        "trust_workspace": {
+          "type": "boolean"
+        },
+        "sandbox": {
+          "type": "string",
+          "minLength": 1
+        },
+        "chat_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
     "workflow": {
@@ -189,344 +326,72 @@
         "codex_timeout_minutes"
       ],
       "properties": {
-        "max_review_iterations": { "type": "integer", "minimum": 1 },
-        "current_review_iteration": { "type": "integer", "minimum": 0 },
+        "max_review_iterations": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "current_review_iteration": {
+          "type": "integer",
+          "minimum": 0
+        },
         "local_review_count": {
           "anyOf": [
-            { "type": "integer", "minimum": 0 },
-            { "type": "null" }
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
           ]
         },
-        "stage_mode": { "type": "string", "minLength": 1 },
-        "cursor_timeout_minutes": { "type": "integer", "minimum": 1 },
-        "codex_timeout_minutes": { "type": "integer", "minimum": 1 }
+        "stage_mode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cursor_timeout_minutes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "codex_timeout_minutes": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
-    "iterations": { "type": "array" },
-    "result": { "type": ["string", "null"] },
-    "last_error": { "type": ["string", "null"] },
+    "iterations": {
+      "type": "array"
+    },
+    "result": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "last_error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "controller": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "controller_session_id"],
+      "required": [
+        "schema_version",
+        "controller_session_id"
+      ],
       "properties": {
-        "schema_version": { "type": "integer", "const": 1 },
+        "schema_version": {
+          "type": "integer",
+          "const": 1
+        },
         "controller_session_id": {
           "type": "string",
           "minLength": 1,
           "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
         }
       }
-    },
-    "github_pr_review": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "schema_version",
-        "lifecycle",
-        "cycle_number",
-        "max_external_cycles",
-        "head_branch",
-        "base_branch",
-        "bound_head_sha"
-      ],
-      "properties": {
-        "schema_version": { "type": "integer", "const": 1 },
-        "origin": {
-          "type": "string",
-          "enum": ["source_run", "independent_pr"],
-          "default": "source_run"
-        },
-        "source_run_id": {
-          "anyOf": [
-            { "type": "string", "minLength": 1 },
-            { "type": "null" }
-          ]
-        },
-        "lifecycle": {
-          "type": "string",
-          "enum": [
-            "prepared_independent",
-            "publishing_initial",
-            "awaiting_bot_review",
-            "evaluating_bot_feedback",
-            "waiting_for_user_attention",
-            "fixing_external_feedback",
-            "publishing_external_fix",
-            "max_external_cycles_reached",
-            "completed",
-            "failed",
-            "aborted",
-            "interrupted"
-          ]
-        },
-        "cycle_number": { "type": "integer", "minimum": 1 },
-        "max_external_cycles": { "type": "integer", "minimum": 1 },
-        "pr_number": {
-          "anyOf": [
-            { "type": "integer", "minimum": 1 },
-            { "type": "null" }
-          ]
-        },
-        "pr_url": { "type": ["string", "null"] },
-        "repository_name_with_owner": { "type": ["string", "null"] },
-        "head_branch": { "type": "string", "minLength": 1 },
-        "base_branch": { "type": "string", "minLength": 1 },
-        "bound_head_sha": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{40}$"
-        },
-        "request_comment_id": { "type": ["string", "null"] },
-        "request_marker": { "type": ["string", "null"] },
-        "request_created_at": { "type": ["string", "null"] },
-        "eligible_thread_ids": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "uniqueItems": true
-        },
-        "processed_thread_ids": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "uniqueItems": true
-        },
-        "replied_thread_ids": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "uniqueItems": true
-        },
-        "resolved_thread_ids": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "uniqueItems": true
-        },
-        "publication_commit_sha": {
-          "anyOf": [
-            { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-            { "type": "null" }
-          ]
-        },
-        "staged_patch_sha256": {
-          "anyOf": [
-            { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-            { "type": "null" }
-          ]
-        },
-        "last_external_result_path": { "type": ["string", "null"] },
-        "last_snapshot_path": { "type": ["string", "null"] },
-        "continue_comment_id": { "type": ["string", "null"] },
-        "worker_outcome": { "type": ["string", "null"] },
-        "expected_eligible_thread_ids": {
-          "anyOf": [
-            {
-              "type": "array",
-              "minItems": 1,
-              "items": { "type": "string", "minLength": 1 },
-              "uniqueItems": true
-            },
-            { "type": "null" }
-          ]
-        },
-        "external_fix_prompt_path": { "type": ["string", "null"] },
-        "external_cursor_iteration": {
-          "anyOf": [
-            { "type": "integer", "minimum": 1 },
-            { "type": "null" }
-          ]
-        },
-        "publication_phase": {
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": ["pre_commit", "committed", "pushed", "pr_bound"]
-            },
-            { "type": "null" }
-          ]
-        },
-        "local_commit_sha": {
-          "anyOf": [
-            { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-            { "type": "null" }
-          ]
-        },
-        "expected_remote_sha_before_push": {
-          "anyOf": [
-            { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-            { "type": "null" }
-          ]
-        },
-        "publication_remote": { "type": ["string", "null"] },
-        "publication_remote_branch": { "type": ["string", "null"] },
-        "publication_text_path": { "type": ["string", "null"] },
-        "bot_acknowledgement": {
-          "anyOf": [
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["trigger_comment_id", "reaction"],
-              "properties": {
-                "trigger_comment_id": { "type": "string", "minLength": 1 },
-                "reaction": { "type": "string", "minLength": 1 },
-                "first_observed_at": { "type": ["string", "null"] },
-                "acknowledgement_cleared_at": { "type": ["string", "null"] },
-                "timeout_diagnostic_at": { "type": ["string", "null"] }
-              }
-            },
-            { "type": "null" }
-          ]
-        },
-        "no_findings_completion": {
-          "anyOf": [
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "comment_id",
-                "created_at",
-                "rule_id",
-                "body_sha256",
-                "reviewed_commit_prefix"
-              ],
-              "properties": {
-                "comment_id": { "type": "string", "minLength": 1 },
-                "created_at": { "type": "string", "minLength": 1 },
-                "rule_id": { "type": "string", "minLength": 1 },
-                "body_sha256": {
-                  "type": "string",
-                  "pattern": "^[a-f0-9]{64}$"
-                },
-                "reviewed_commit_prefix": {
-                  "type": "string",
-                  "minLength": 7,
-                  "maxLength": 40,
-                  "pattern": "^[0-9a-f]+$"
-                }
-              }
-            },
-            { "type": "null" }
-          ]
-        },
-        "external_adjudication": {
-          "anyOf": [
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "cycle_number",
-                "bound_head_sha",
-                "eligible_thread_ids",
-                "result_path",
-                "result_sha256",
-                "snapshot_path",
-                "snapshot_sha256",
-                "application_status"
-              ],
-              "properties": {
-                "cycle_number": { "type": "integer", "minimum": 1 },
-                "bound_head_sha": {
-                  "type": "string",
-                  "pattern": "^[0-9a-f]{40}$"
-                },
-                "eligible_thread_ids": {
-                  "type": "array",
-                  "minItems": 1,
-                  "items": { "type": "string", "minLength": 1 }
-                },
-                "result_path": { "type": "string", "minLength": 1 },
-                "result_sha256": {
-                  "type": "string",
-                  "pattern": "^[a-f0-9]{64}$"
-                },
-                "snapshot_path": { "type": "string", "minLength": 1 },
-                "snapshot_sha256": {
-                  "type": "string",
-                  "pattern": "^[a-f0-9]{64}$"
-                },
-                "report_path": { "type": ["string", "null"] },
-                "report_sha256": {
-                  "anyOf": [
-                    { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-                    { "type": "null" }
-                  ]
-                },
-                "fix_prompt_path": { "type": ["string", "null"] },
-                "fix_prompt_sha256": {
-                  "anyOf": [
-                    { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-                    { "type": "null" }
-                  ]
-                },
-                "application_status": {
-                  "type": "string",
-                  "enum": [
-                    "cursor_pending",
-                    "cursor_scheduled",
-                    "replies_pending",
-                    "consumed"
-                  ]
-                },
-                "reply_intents": {
-                  "type": "array",
-                  "default": [],
-                  "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": [
-                      "thread_id",
-                      "decision",
-                      "inline_reply_sha256",
-                      "status"
-                    ],
-                    "properties": {
-                      "thread_id": { "type": "string", "minLength": 1 },
-                      "decision": {
-                        "type": "string",
-                        "enum": ["not_applicable", "uncertain"]
-                      },
-                      "inline_reply_sha256": {
-                        "type": "string",
-                        "pattern": "^[a-f0-9]{64}$"
-                      },
-                      "status": {
-                        "type": "string",
-                        "enum": ["pending", "writing", "written", "ambiguous"]
-                      }
-                    }
-                  }
-                }
-              }
-            },
-            { "type": "null" }
-          ]
-        }
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": { "origin": { "const": "independent_pr" } },
-            "required": ["origin"]
-          },
-          "then": {
-            "required": ["pr_number", "repository_name_with_owner"],
-            "properties": {
-              "source_run_id": { "type": "null" }
-            }
-          }
-        },
-        {
-          "if": {
-            "anyOf": [
-              { "properties": { "origin": { "const": "source_run" } } },
-              { "not": { "required": ["origin"] } }
-            ]
-          },
-          "then": {
-            "required": ["source_run_id"],
-            "properties": {
-              "source_run_id": { "type": "string", "minLength": 1 }
-            }
-          }
-        }
-      ]
     },
     "recovery": {
       "type": "object",
@@ -542,29 +407,44 @@
         "reason_code"
       ],
       "properties": {
-        "source_run_id": { "type": "string", "minLength": 1 },
-        "source_status": { "type": "string", "const": "failed" },
-        "source_iteration": { "type": "integer", "minimum": 1 },
+        "source_run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_status": {
+          "type": "string",
+          "const": "failed"
+        },
+        "source_iteration": {
+          "type": "integer",
+          "minimum": 1
+        },
         "recovered_checkpoint": {
           "type": "string",
           "enum": [
             "staging",
             "reviewing",
             "process_review",
-            "cursor",
-            "external_adjudication",
-            "external_feedback_cursor",
-            "publication_pre_commit"
+            "cursor"
           ]
         },
         "source_staged_patch_sha256": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "pattern": "^[a-f0-9]{64}$"
         },
-        "created_at": { "type": "string", "format": "date-time" },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
         "runtime_migration": {
           "type": "string",
-          "enum": ["none", "phase9_session_capture"]
+          "enum": [
+            "none",
+            "phase9_session_capture"
+          ]
         },
         "reason_code": {
           "type": "string",
@@ -575,69 +455,107 @@
             "codex_review_processing_failed",
             "correction_staging_failed",
             "initial_staging_failed",
-            "cursor_usage_limit",
-            "github_adjudication_schema_incompatible",
-            "external_feedback_cursor_not_started",
-            "publication_pre_commit_interrupted"
+            "cursor_usage_limit"
           ]
         },
         "cursor_output_fingerprint_sha256": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "pattern": "^[a-f0-9]{64}$"
         },
         "previous_staged_patch_sha256": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "pattern": "^[a-f0-9]{64}$"
         },
         "legacy_cursor_output_adopted": {
-          "type": ["boolean", "null"]
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "legacy_cursor_usage_limit_adopted": {
-          "type": ["boolean", "null"]
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
-        "source_cursor_model": { "type": ["string", "null"], "minLength": 1 },
-        "cursor_model_fallback": { "type": ["string", "null"], "minLength": 1 },
-        "source_prompt_path": { "type": ["string", "null"], "minLength": 1 },
+        "source_cursor_model": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "cursor_model_fallback": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "source_prompt_path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
         "source_prompt_sha256": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "pattern": "^[a-f0-9]{64}$"
         },
         "usage_limit_fingerprint_sha256": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "pattern": "^[a-f0-9]{64}$"
         },
         "usage_limit_fingerprint_path": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "minLength": 1
         },
         "continuation_envelope_path": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "minLength": 1
         },
         "continuation_envelope_sha256": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "pattern": "^[a-f0-9]{64}$"
-        },
-        "expected_eligible_thread_ids": {
-          "anyOf": [
-            {
-              "type": "array",
-              "minItems": 1,
-              "items": { "type": "string", "minLength": 1 },
-              "uniqueItems": true
-            },
-            { "type": "null" }
-          ]
         }
       },
       "allOf": [
         {
           "if": {
             "properties": {
-              "recovered_checkpoint": { "const": "staging" },
-              "reason_code": { "const": "correction_staging_failed" }
+              "recovered_checkpoint": {
+                "const": "staging"
+              },
+              "reason_code": {
+                "const": "correction_staging_failed"
+              }
             },
-            "required": ["recovered_checkpoint", "reason_code"]
+            "required": [
+              "recovered_checkpoint",
+              "reason_code"
+            ]
           },
           "then": {
             "required": [
@@ -645,8 +563,13 @@
               "previous_staged_patch_sha256"
             ],
             "properties": {
-              "reason_code": { "const": "correction_staging_failed" },
-              "source_iteration": { "type": "integer", "minimum": 2 },
+              "reason_code": {
+                "const": "correction_staging_failed"
+              },
+              "source_iteration": {
+                "type": "integer",
+                "minimum": 2
+              },
               "source_staged_patch_sha256": {
                 "type": "string",
                 "pattern": "^[a-f0-9]{64}$"
@@ -665,19 +588,41 @@
         {
           "if": {
             "properties": {
-              "recovered_checkpoint": { "const": "staging" },
-              "reason_code": { "const": "initial_staging_failed" }
+              "recovered_checkpoint": {
+                "const": "staging"
+              },
+              "reason_code": {
+                "const": "initial_staging_failed"
+              }
             },
-            "required": ["recovered_checkpoint", "reason_code"]
+            "required": [
+              "recovered_checkpoint",
+              "reason_code"
+            ]
           },
           "then": {
-            "required": ["cursor_output_fingerprint_sha256"],
+            "required": [
+              "cursor_output_fingerprint_sha256"
+            ],
             "properties": {
-              "reason_code": { "const": "initial_staging_failed" },
-              "source_iteration": { "const": 1 },
-              "source_staged_patch_sha256": { "type": "null" },
-              "previous_staged_patch_sha256": { "type": "null" },
-              "legacy_cursor_output_adopted": { "enum": [null, false] },
+              "reason_code": {
+                "const": "initial_staging_failed"
+              },
+              "source_iteration": {
+                "const": 1
+              },
+              "source_staged_patch_sha256": {
+                "type": "null"
+              },
+              "previous_staged_patch_sha256": {
+                "type": "null"
+              },
+              "legacy_cursor_output_adopted": {
+                "enum": [
+                  null,
+                  false
+                ]
+              },
               "cursor_output_fingerprint_sha256": {
                 "type": "string",
                 "pattern": "^[a-f0-9]{64}$"
@@ -689,10 +634,15 @@
           "if": {
             "properties": {
               "recovered_checkpoint": {
-                "enum": ["reviewing", "process_review"]
+                "enum": [
+                  "reviewing",
+                  "process_review"
+                ]
               }
             },
-            "required": ["recovered_checkpoint"]
+            "required": [
+              "recovered_checkpoint"
+            ]
           },
           "then": {
             "properties": {
@@ -705,8 +655,14 @@
         },
         {
           "if": {
-            "properties": { "recovered_checkpoint": { "const": "cursor" } },
-            "required": ["recovered_checkpoint"]
+            "properties": {
+              "recovered_checkpoint": {
+                "const": "cursor"
+              }
+            },
+            "required": [
+              "recovered_checkpoint"
+            ]
           },
           "then": {
             "required": [
@@ -720,11 +676,24 @@
               "continuation_envelope_sha256"
             ],
             "properties": {
-              "reason_code": { "const": "cursor_usage_limit" },
-              "source_staged_patch_sha256": { "type": "null" },
-              "source_cursor_model": { "type": "string", "minLength": 1 },
-              "cursor_model_fallback": { "type": "string", "minLength": 1 },
-              "source_prompt_path": { "type": "string", "minLength": 1 },
+              "reason_code": {
+                "const": "cursor_usage_limit"
+              },
+              "source_staged_patch_sha256": {
+                "type": "null"
+              },
+              "source_cursor_model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "cursor_model_fallback": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_prompt_path": {
+                "type": "string",
+                "minLength": 1
+              },
               "source_prompt_sha256": {
                 "type": "string",
                 "pattern": "^[a-f0-9]{64}$"
@@ -744,126 +713,7 @@
               "continuation_envelope_sha256": {
                 "type": "string",
                 "pattern": "^[a-f0-9]{64}$"
-              },
-              "expected_eligible_thread_ids": { "type": "null" }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "recovered_checkpoint": { "const": "external_adjudication" }
-            },
-            "required": ["recovered_checkpoint"]
-          },
-          "then": {
-            "required": ["expected_eligible_thread_ids"],
-            "properties": {
-              "reason_code": {
-                "const": "github_adjudication_schema_incompatible"
-              },
-              "source_staged_patch_sha256": { "type": "null" },
-              "expected_eligible_thread_ids": {
-                "type": "array",
-                "minItems": 1,
-                "items": { "type": "string", "minLength": 1 },
-                "uniqueItems": true
-              },
-              "cursor_output_fingerprint_sha256": { "type": "null" },
-              "previous_staged_patch_sha256": { "type": "null" },
-              "legacy_cursor_output_adopted": { "enum": [null, false] },
-              "legacy_cursor_usage_limit_adopted": { "enum": [null, false] },
-              "source_cursor_model": { "type": "null" },
-              "cursor_model_fallback": { "type": "null" },
-              "source_prompt_path": { "type": "null" },
-              "source_prompt_sha256": { "type": "null" },
-              "usage_limit_fingerprint_sha256": { "type": "null" },
-              "usage_limit_fingerprint_path": { "type": "null" },
-              "continuation_envelope_path": { "type": "null" },
-              "continuation_envelope_sha256": { "type": "null" }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "recovered_checkpoint": { "const": "external_feedback_cursor" }
-            },
-            "required": ["recovered_checkpoint"]
-          },
-          "then": {
-            "required": [
-              "expected_eligible_thread_ids",
-              "source_prompt_path",
-              "source_prompt_sha256"
-            ],
-            "properties": {
-              "reason_code": {
-                "const": "external_feedback_cursor_not_started"
-              },
-              "source_staged_patch_sha256": { "type": "null" },
-              "expected_eligible_thread_ids": {
-                "type": "array",
-                "minItems": 1,
-                "items": { "type": "string", "minLength": 1 },
-                "uniqueItems": true
-              },
-              "source_prompt_path": { "type": "string", "minLength": 1 },
-              "source_prompt_sha256": {
-                "type": "string",
-                "pattern": "^[a-f0-9]{64}$"
-              },
-              "cursor_output_fingerprint_sha256": { "type": "null" },
-              "previous_staged_patch_sha256": { "type": "null" },
-              "legacy_cursor_output_adopted": { "enum": [null, false] },
-              "legacy_cursor_usage_limit_adopted": { "enum": [null, false] },
-              "source_cursor_model": { "type": "null" },
-              "cursor_model_fallback": { "type": "null" },
-              "usage_limit_fingerprint_sha256": { "type": "null" },
-              "usage_limit_fingerprint_path": { "type": "null" },
-              "continuation_envelope_path": { "type": "null" },
-              "continuation_envelope_sha256": { "type": "null" }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "recovered_checkpoint": { "const": "publication_pre_commit" }
-            },
-            "required": ["recovered_checkpoint"]
-          },
-          "then": {
-            "required": [
-              "expected_eligible_thread_ids",
-              "source_staged_patch_sha256"
-            ],
-            "properties": {
-              "reason_code": {
-                "const": "publication_pre_commit_interrupted"
-              },
-              "source_staged_patch_sha256": {
-                "type": "string",
-                "pattern": "^[a-f0-9]{64}$"
-              },
-              "expected_eligible_thread_ids": {
-                "type": "array",
-                "minItems": 1,
-                "items": { "type": "string", "minLength": 1 },
-                "uniqueItems": true
-              },
-              "cursor_output_fingerprint_sha256": { "type": "null" },
-              "previous_staged_patch_sha256": { "type": "null" },
-              "legacy_cursor_output_adopted": { "enum": [null, false] },
-              "legacy_cursor_usage_limit_adopted": { "enum": [null, false] },
-              "source_cursor_model": { "type": "null" },
-              "cursor_model_fallback": { "type": "null" },
-              "source_prompt_path": { "type": "null" },
-              "source_prompt_sha256": { "type": "null" },
-              "usage_limit_fingerprint_sha256": { "type": "null" },
-              "usage_limit_fingerprint_path": { "type": "null" },
-              "continuation_envelope_path": { "type": "null" },
-              "continuation_envelope_sha256": { "type": "null" }
+              }
             }
           }
         }

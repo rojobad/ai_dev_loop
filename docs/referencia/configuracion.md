@@ -245,21 +245,11 @@ Con `github.enabled: true` hay dos flujos CLI:
   `source_run`);
 - `pr-review prepare` + `pr-review start` para adoptar un PR ya abierto (origen
   `independent_pr`);
-- `pr-review recover <failed-run-id>` para checkpoints artefacto-dirigidos
-  (`external_adjudication`, `reviewing`, `external_feedback_cursor`,
-  `publication_pre_commit`): sucesor inmutable; no republica `@codex review`.
-  En `publication_pre_commit` el `resume` publica solamente tras cargar la
-  identidad SSH manualmente; un hash GPR obsoleto solo se adopta en el
-  sucesor si el patch live coincide con el artefacto via `normalize_patch_text`.
+## `pr_review_v2` (opcional; config interna del CLI `pr-review`)
 
-Prepare no escribe en GitHub; start publica el marcador de review.
-`set-cursor-model` solo aplica al ciclo independiente antes de crear el chat
-Cursor.
-
-## `pr_review_v2` (opcional, temporal / pre-cutover)
-
-Seccion aislada para el namespace CLI `pr-review-v2` (Phase 16.7). Ausente o
-`enabled: false` no afecta `pr-review` / `github`. Schema version permanece `1`.
+Seccion requerida para habilitar `ai_dev_loop pr-review` (motor SQLite v2). Ausente o
+`enabled: false` deshabilita el ciclo PR-review. La clave de configuracion permanece
+`pr_review_v2` aunque el namespace CLI publico sea `pr-review`. Schema version `1`.
 Campos de credenciales estan prohibidos (igual que `github`).
 
 ```yaml

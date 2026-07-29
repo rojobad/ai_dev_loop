@@ -87,12 +87,23 @@ Parse the prepare JSON. For a valid A/B prepare:
 Return the prepared `run_id`, repository path, and `launch_command` to
 controller session A through the authorized app message path only.
 
-When GitHub is enabled and the user wants to adopt an **already-open PR** (not
-created from a completed `ai_dev_loop` source run), B may instead run
-`ai_dev_loop pr-review prepare` with explicit `--pr`, `--branch`, plan/prompt
-paths, `--codex-session-id` (B), and `--controller-session-id` (A). That prepare
-is non-mutating. Return the prepared run id to A; A alone runs
-`ai_dev_loop pr-review start` (and optional `set-cursor-model` before start).
+When `pr_review_v2.enabled` is true and the user wants to adopt an
+**already-open PR** (not created from a completed `ai_dev_loop` source run), B
+may instead run the read-only v2 prepare command:
+
+```bash
+ai_dev_loop pr-review prepare \
+  --repo OWNER/REPO \
+  --pr <number> \
+  --codex-session-id "<exact-reviewer-B>" \
+  --plan <plan-rel-al-repo> \
+  --prompt <prompt-rel-al-repo> \
+  [--repo-path /path/to/repo]
+```
+
+Return the prepared run id to A. A alone opens the external-effects gate with
+`ai_dev_loop pr-review start <run-id>`; do not use retired v1 flags,
+`set-cursor-model`, `continue`, or `recover`.
 
 ### 3. Leave B inactive
 

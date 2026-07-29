@@ -16,11 +16,11 @@ from ai_dev_loop.response_schema import (
 )
 
 
-def test_github_pr_review_schema_has_no_unique_items() -> None:
-    path = schema_path("github-pr-review-result-v1.json")
+def test_v2_external_adjudication_schema_has_no_unique_items() -> None:
+    path = schema_path("pr-review-v2-external-adjudication-v1.json")
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert find_incompatible_response_format_keywords(payload) == []
-    validate_codex_response_schema(path, schema_name="github-pr-review-result-v1.json")
+    validate_codex_response_schema(path, schema_name="pr-review-v2-external-adjudication-v1.json")
 
 
 def test_validator_rejects_unique_items_fixture(tmp_path: Path) -> None:

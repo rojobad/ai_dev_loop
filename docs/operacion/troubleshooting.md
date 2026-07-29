@@ -396,266 +396,42 @@ TMPDIR=/tmp TMP=/tmp TEMP=/tmp uv run python -m pytest -q
 
 Para simulaciones DrvFS puntuales, usa `-s` si la captura de pytest falla antes de coleccion.
 
-## El worker de PR review no sale de `awaiting_bot_review` aunque el bot “aprobó”
+## PR-review v2 (motor SQLite)
 
-Síntoma:
+Los runs v1 (`RunState.github_pr_review`) y subcomandos retirados (`continue`,
+`recover`, `set-cursor-model`) **no tienen soporte** tras Phase 16.9. No hay
+adaptador de migracion ni lectura de estado legacy.
 
-- el bot publicó un comentario general positivo;
-- o aparece/desaparece la reacción `eyes` en el trigger;
-- `status` sigue en `awaiting_bot_review` hasta timeout.
+Estado durable y artefactos protegidos viven bajo XDG (directorio interno
+`pr-review-v2/`), no en `state.json` del run A/B local:
 
-Causa: la ausencia de hilos, la presencia de `eyes` o la retirada de esa
-reacción **no** completan el ciclo. Sólo cuenta un comentario general del login
-en `github.reviewer_logins`, posterior a `request_created_at`, con un prefijo
-exacto de `github.no_findings_completion.accepted_comment_prefixes` y una línea
-estructural `Reviewed commit:` cuyo SHA coincide con el prefijo configurado del
-`bound_head_sha`. `acknowledgement` es telemetría: timeout o reacción borrada
-quedan como diagnóstico y el polling continúa sin republicar `@codex review`.
-
-Acción:
-
-1. Confirma `github.no_findings_completion.enabled: true` y el prefijo exacto
-   del bot (un cambio de texto del bot se corrige en YAML, no relajando el
-   matcher).
-2. Verifica en `pr-review status` el acuse (`observed` / timeout diagnóstico) y
-   que no haya hilos elegibles compitiendo con el comentario positivo.
-3. Mantén **Automatic reviews** de Codex apagado mientras ai_dev_loop publica el
-   trigger explícito.
-4. Si el ciclo quedó `interrupted` por timeout de polling, aborta si hace falta
-   y relanza/reanuda con los comandos existentes; **no** edites `state.json`.
-
-```bash
-ai_dev_loop pr-review status <run-id>
-ai_dev_loop pr-review abort <run-id>
-ai_dev_loop pr-review resume <run-id> [--controller-session-id <sesion-A>]
+```text
+$XDG_STATE_HOME/ai_dev_loop/pr-review-v2/
+├── engine.sqlite3              # autoridad: runs, eventos, claims, leases, timers
+└── artifacts/
+    └── runs/<sha256(run_id)>/   # prompts, patches, resultados Codex, evidencia writes
+        └── writes/<kind>/<sha256>.json
 ```
 
-## Worker PR-review ausente/stale en `awaiting_bot_review`
-
-Síntoma:
-
-- `pr-review status` muestra `awaiting_bot_review` y `Worker: stale` o `absent`;
-- el bot ya dejó hilos nuevos sobre el SHA ligado, pero no hay adjudicación;
-- el lock `locks/pr-review-worker.json` apunta a un PID que ya no vive.
-
-Causa típica (corregida en Phase 15.9): tras publicar el trigger de un ciclo
-externo, el worker detonado terminaba sin continuar el polling y el intento de
-auto-spawn veía su propio PID como vivo. Además, un
-`expected_eligible_thread_ids` congelado del ciclo anterior podía marcar los
-hilos nuevos como drift.
-
-Acción (mismo run; no uses `recover` ni edites `state.json`):
+Comandos utiles:
 
 ```bash
 ai_dev_loop pr-review status <run-id> --output json
-# Desde el controlador A exacto:
-ai_dev_loop pr-review resume <run-id> --controller-session-id <sesion-A>
+ai_dev_loop pr-review history <run-id> --limit 50 --output json
+ai_dev_loop pr-review resume <run-id> [--confirm-user-continuation]
+ai_dev_loop pr-review abort <run-id>
 ```
 
-Eso solo reengancha el poller. Puede validar PR/head en solo lectura, pero **no**
-escribe en GitHub ni publica otro `@codex review`, y no crea Cursor ni invoca
-Codex. Si el worker ya está `live` con identidad coincidente, el comando es
-idempotente. Si hay drift de PR/head, launcher ambiguo (incluido reuso de PID),
-o controlador incorrecto, falla sin writes.
+- `create` / `prepare` son read-only respecto a GitHub y agentes.
+- `start` es la unica puerta a efectos externos (supervisor detached, publicacion).
+- `resume` en `waiting_for_user` exige `--confirm-user-continuation`.
+- No edites SQLite, claims ni artefactos a mano.
 
-## Freeze heredado entre ciclos externos (`eligible_thread_set_drift`)
+Para resiliencia diferida (supervisor muerto, reconciliacion de writes, no-findings
+con evidencia contradictoria), ver las secciones Phase 16.8 mas abajo y
+`PHASE_16_8_DEFERRED_ISSUES.md`. Gate A (automatizado) no sustituye aceptacion live.
 
-Síntoma (histórico; Phase 15.9 ya evita el patrón en runs nuevos):
-
-- `cycle_number` ya avanzó tras un `@codex review` válido;
-- `waiting_for_user_attention` + `worker_outcome == eligible_thread_set_drift`;
-- `expected_eligible_thread_ids` aún apunta a hilos del ciclo recuperado (ya
-  procesados/resueltos), mientras el ciclo actual tiene hilos elegibles nuevos;
-- lineage verificable: recovery directa `external_adjudication`, **o** recovery
-  actual `reviewing` / `codex_review_result_artifact_missing` cuyo único source
-  terminal tiene recovery `external_adjudication` con el mismo snapshot.
-
-Causa: el freeze operativo se persistió antes del reset por ciclo de Phase 15.9.
-No es fallo del bot, polling, SSH ni A/B.
-
-Acción (mismo run; no uses `recover` ni edites `state.json`):
-
-1. Publica en el PR un comentario **nuevo** y exacto (obligatorio también tras
-   un continue previo que ya consumió el último comentario):
-
-   ```text
-   @rojobad /ai-dev-loop continue
-   ```
-
-2. Desde el controlador A:
-
-   ```bash
-   ai_dev_loop pr-review continue <run-id>
-   ```
-
-Eso limpia solo el freeze obsoleto del run actual, vuelve a
-`awaiting_bot_review` y programa a lo sumo un worker. El source terminal queda
-intacto. **No** republica `@codex review`, no crea sucesor, no invoca
-Cursor/Codex en el comando y no relaja drift legítimo del ciclo actual. El
-evento `pr_review_legacy_cycle_freeze_cleared` expone solo `source_cycle`,
-`current_cycle` y `expected_thread_count`.
-
-Dos caminos distintos cuando la limpieza histórica no aplica:
-
-1. **Continue normal** (el run no es un candidato nested legacy-freeze): por
-   ejemplo drift del mismo ciclo, sets distintos/vacíos, IDs no procesados u
-   outcome distinto. El comentario se consume, el freeze válido del ciclo
-   actual se conserva y el worker puede reanudarse; la resolución sigue siendo
-   la habitual del usuario.
-2. **Candidato nested inválido** (recovery actual
-   `reviewing` / `codex_review_result_artifact_missing` con gates locales de
-   drift, pero el source one-hop está ausente, no terminal, con identidad o
-   ciclo inconsistente, o sin recovery `external_adjudication` verificada):
-   fail-closed. La autorización de continue **no** se consume, no se muta
-   estado ni eventos y no se programa worker. Corrige o resuelve esa lineage
-   inválida antes de reintentar con un comentario exacto (el mismo sigue
-   válido si no se consumió).
-
-## Adjudicación GitHub falló con `invalid_json_schema` / `uniqueItems`
-
-Causa histórica: el schema de respuesta enviado a Codex incluía `uniqueItems` en
-`eligible_thread_ids`. El backend rechazó el schema; no hubo adjudicación, replies
-ni Cursor. Los runs nuevos clasifican esto como
-`adjudication_schema_incompatible` (`interrupted`). Los runs `failed` históricos
-con evidencia estructurada en `github/cycles/NN/codex.events.jsonl` se recuperan
-con un sucesor.
-
-Acción (ejemplo PR #45 / run anonimizado del incidente):
-
-```bash
-ai_dev_loop pr-review recover crypto-sentinel-20260718T010234Z-317683 --dry-run
-ai_dev_loop pr-review recover crypto-sentinel-20260718T010234Z-317683 --output json
-ai_dev_loop pr-review resume <successor-run-id> --controller-session-id <sesion-A>
-```
-
-No uses `pr-review prepare` ni publiques otro `@codex review`. Si hay drift de SHA,
-PR cerrado, hilos añadidos/eliminados/resueltos, o side effects previos
-(processed/replied/resolved/Cursor), `recover`/`resume` se detienen sin writes.
-
-## Revisión local Codex sin `codex/reviews/NN.json` tras Cursor
-
-Causa observada (PR #45 / sucesor de adjudicación): Cursor y staging completaron
-la corrección, pero `codex exec --output-last-message` no pudo escribir el
-resultado estructurado porque el directorio padre no existía. El JSONL del
-intento fallido no es fuente de decisión; hay que reintentar solo la revisión
-local con la misma sesión B.
-
-```bash
-ai_dev_loop pr-review recover <failed-run-id> --dry-run
-ai_dev_loop pr-review recover <failed-run-id> --output json
-# Desde A, con el resume que devuelve recover:
-ai_dev_loop pr-review resume <successor-run-id> --controller-session-id <sesion-A>
-```
-
-El checkpoint debe ser `reviewing` /
-`codex_review_result_artifact_missing`. No reejecuta Cursor, no hace polling ni
-adjudicación, y no publica otro `@codex review`. Si el patch staged o el
-worktree driftaron, o ya hay replies/resolves/publicación, `recover` se detiene.
-
-## Feedback externo accionable con staging vacío o baseline limpio antes de Cursor
-
-Causa observada (PR #45 / run anonimizado `…176634`): tras adjudicación del
-ciclo externo con hallazgos accionables, el orquestador reutilizó la iteración
-local `01` completa y saltó a staging (`no staged changes after git add -A`)
-sin enviar `prompts/fixes/github-02.txt` a Cursor.
-
-Causa observada (PR #45 / run anonimizado `…a0f030`): tras publicar el fix y
-recibir hallazgos del ciclo 3, el worktree estaba limpio en el HEAD enlazado,
-pero el preflight de corrección comparó ese índice vacío con
-`git/diffs/02.patch`. Un directorio `cursor/iterations/03` vacío creado antes
-del preflight no es intento parcial ni debe clasificar el source como
-`reviewing`.
-
-Los runs nuevos programan una iteración fresca monotona
-(`github_pr_review.external_cursor_iteration`), entregan el prompt externo
-exacto y, para ese primer turno externo, exigen baseline limpio (identidad
-Git, branch/HEAD = `initial_head`/`bound_head_sha`, indice/worktree limpios)
-sin comparar un patch publicado anterior. Solo una corrección local posterior
-a un finding Codex de la misma ronda exige el patch staged anterior.
-
-Para el origen `failed` histórico con lifecycle `fixing_external_feedback`,
-resultado/prompt externos validos, baseline limpio y sin evidencia durable de
-la nueva iteración (entrada `iterations[NN]` o cualquier archivo bajo
-`cursor/iterations/NN` / status / fingerprint / diff / review):
-
-```bash
-ai_dev_loop pr-review recover <failed-run-id> --dry-run
-ai_dev_loop pr-review recover <failed-run-id> --output json
-ai_dev_loop pr-review resume <successor-run-id> --controller-session-id <sesion-A>
-```
-
-El checkpoint debe ser `external_feedback_cursor` /
-`external_feedback_cursor_not_started` (no `reviewing`). Reutiliza la
-adjudicación persistida; no republica `@codex review` ni re-adjudica los
-mismos hilos. Si PR/SHA/rama/hilos cambian, el baseline está sucio, el
-prompt/resultado son invalidos, hay worker vivo, publicación parcial o un
-intento Cursor parcial real, `recover` se detiene.
-
-## Adjudicación externa con artefactos en disco pero estado atrasado
-
-Causa observada (PR #45 / run anonimizado `…66d03c`): Codex B ya escribió
-`github/cycles/05/result.json`, snapshot, report y `prompts/fixes/github-05.txt`,
-pero un timeout GraphQL ocurrió antes de `save_run_state`. Los punteros
-`last_external_*` / `external_fix_prompt_path` seguían en el ciclo 4 y
-`recovery` conservaba el hash de `github-03` de una recovery anterior.
-
-No edites `state.json` ni uses `pr-review recover` para este caso in-place.
-Desde el controlador A:
-
-```bash
-ai_dev_loop pr-review resume <run-id> --controller-session-id <sesion-A>
-```
-
-`resume` hidrata `github_pr_review.external_adjudication` desde los artefactos
-deterministas del `cycle_number` actual, agenda una sola corrección Cursor con
-`github-05`, y no re-adjudica ni republica `@codex review`. El hash de recovery
-histórico no bloquea ciclos posteriores. Si PR/SHA/hilos/prompt/baseline
-realmente derivan, para sin side effects.
-
-## Publicación detenida en `pre_commit` (ssh-agent sin identidad)
-
-Causa observada (PR #45 / run anonimizado `…9488fe`): Cursor y la revisión local
-Codex ya aceptaron el patch staged (sin hallazgos accionables). El worker llegó
-a `publication_phase: pre_commit` con texto de publicación durable, pero el
-preflight no encontró identidad utilizable en el agente SSH efectivo
-(`IdentityAgent` vía `ssh -G`, o `SSH_AUTH_SOCK` heredado si aplica). Runs
-históricos marcaron esto como `failed` vía `ValidationError` genérico; runs
-nuevos lo clasifican como interrupción tipada `ssh_agent_no_identity` y
-conservan el checkpoint reanudable.
-
-Para el origen `failed` histórico con evidencia durable
-(`lifecycle: failed` + `publication_phase: pre_commit`, HEAD/SHA sin commit
-posterior, resultado local válido sin hallazgos, texto de publicación válido,
-freeze de hilos intacto, PR abierto en el SHA enlazado, y patch staged live que
-pasa baseline y coincide con `git/diffs/NN.patch` de la última iteración vía
-`normalize_patch_text` — sólo CRLF y newline terminal):
-
-```bash
-# Cargar la clave en el socket persistente antes del resume (no durante recover).
-SSH_AUTH_SOCK="$HOME/.ssh/ai-dev-loop-ssh-agent.sock" ssh-add ~/.ssh/id_ed25519
-
-ai_dev_loop pr-review recover <failed-run-id> --dry-run
-ai_dev_loop pr-review recover <failed-run-id> --output json
-ai_dev_loop pr-review resume <successor-run-id> --controller-session-id <sesion-A>
-```
-
-El checkpoint debe ser `publication_pre_commit` /
-`publication_pre_commit_interrupted`. El `resume` publica solamente: no abre
-Cursor/Codex, no re-adjudica, no responde/resuelve hilos ni republica
-`@codex review` antes del flujo normal tras una publicación exitosa. La
-elegibilidad no usa `last_error` ni logs. Si el PR/SHA/rama/patch/hilos
-cambiaron, hay worker vivo, fase `committed`/`pushed`/`pr_bound`, review local
-accionable o texto corrupto, `recover` se detiene sin writes.
-
-Un `github_pr_review.staged_patch_sha256` obsoleto (heredado del ciclo anterior
-a la corrección externa) no es drift por sí solo. Si el artefacto de la última
-iteración coincide normalizado con el index live, el sucesor adopta el hash raw
-live de `git diff --cached --binary` (el mismo que verificará la publicación).
-Eso no autoriza cambios de contenido distintos del artefacto ni edición del
-`state.json` del origen. El hash de bytes del archivo artefacto
-(`sha256_file`) no sustituye al fingerprint de publicación.
-
-## `pr-review-v2`: supervisor muerto tras claim mutante (Phase 16.8 Gate B)
+## `pr-review`: supervisor muerto tras claim mutante (Phase 16.8 Gate B)
 
 Sintoma: `start` dejo el run en `waiting_for_bot` con `request_bot_review`
 claimed, el supervisor detached salio, y GitHub no muestra el trigger.
@@ -665,7 +441,7 @@ Accion segura (no edites SQLite, claims ni comentarios a mano):
 1. Espera a que `status` reporte `resumable: true` y `next_action: resume`
    (supervisor no vivo y lease expirado). Si `lease_active` sigue true, no
    lances un `resume` competidor.
-2. Desde el controller A: `ai_dev_loop pr-review-v2 resume <run-id>`.
+2. Desde el controller A: `ai_dev_loop pr-review resume <run-id>`.
 3. El resume repara el supervisor; un claim mutante expirado entra primero a
    reconciliacion. Solo si la evidencia prueba `PROVEN_NOT_APPLIED` se permite
    exactamente un trigger posterior. `APPLIED` no duplica; `UNRESOLVED` falla
@@ -673,7 +449,7 @@ Accion segura (no edites SQLite, claims ni comentarios a mano):
 4. No prepares un run nuevo ni publiques el trigger manualmente: eso puede
    crear duplicados y pierde la evidencia de recovery.
 
-## `pr-review-v2`: el bot reacciono pero el run no completa (Phase 16.8)
+## `pr-review`: el bot reacciono pero el run no completa (Phase 16.8)
 
 Sintoma: hay una reaccion en GitHub pero `status` sigue en polling o pausa con
 evidencia contradictoria/malformada.

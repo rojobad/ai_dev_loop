@@ -394,7 +394,7 @@ def test_prepare_cli_calls_handle_once(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_prepare(**kwargs):
         del kwargs
         calls.append("prepare")
-        return "pr-review-v2 created prepared run x\norigin: existing_pr\npr: 1\nnext: start\n"
+        return "pr-review created prepared run x\norigin: existing_pr\npr: 1\nnext: start\n"
 
     monkeypatch.setattr(
         "ai_dev_loop.commands.pr_review_v2.prepare_existing_pr",
@@ -404,7 +404,7 @@ def test_prepare_cli_calls_handle_once(monkeypatch: pytest.MonkeyPatch) -> None:
     result = runner.invoke(
         app,
         [
-            "pr-review-v2",
+            "pr-review",
             "prepare",
             "--repo",
             "acme/demo",
@@ -420,4 +420,4 @@ def test_prepare_cli_calls_handle_once(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert result.exit_code == 0, result.output
     assert calls == ["prepare"]
-    assert result.output.count("pr-review-v2 created") == 1
+    assert result.output.count("pr-review created") == 1

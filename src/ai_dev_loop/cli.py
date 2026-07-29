@@ -56,12 +56,10 @@ app = typer.Typer(
 config_app = typer.Typer(help="Configuration commands.")
 controller_app = typer.Typer(help="Controller-session status and control helpers.")
 github_app = typer.Typer(help="Optional GitHub CLI integration checks.")
-pr_review_app = typer.Typer(help="Optional autonomous GitHub PR review cycle commands.")
-pr_review_v2_app = typer.Typer(
+pr_review_app = typer.Typer(
     help=(
-        "Temporary pre-cutover PR review v2 namespace (Phase 16.7). "
-        "create/prepare only freeze PreparedState; start is the sole external-effects gate. "
-        "Legacy pr-review remains unchanged."
+        "Autonomous GitHub PR review cycle (SQLite-backed v2 engine). "
+        "create/prepare only freeze PreparedState; start is the sole external-effects gate."
     ),
 )
 integrations_app = typer.Typer(help="Global Codex integration commands.")
@@ -71,7 +69,6 @@ app.add_typer(config_app, name="config")
 app.add_typer(controller_app, name="controller")
 app.add_typer(github_app, name="github")
 app.add_typer(pr_review_app, name="pr-review")
-app.add_typer(pr_review_v2_app, name="pr-review-v2")
 app.add_typer(integrations_app, name="integrations")
 
 
@@ -386,327 +383,15 @@ def github_doctor_command(
     """Verify gh authentication and optional GitHub PR-review readiness."""
 
     def run() -> None:
-        from ai_dev_loop.commands.pr_review import github_doctor
+        from ai_dev_loop.commands.github_doctor import github_doctor
 
         typer.echo(github_doctor(repo_path=repo_path, output=output.value), nl=False)
 
     _handle(run)
 
 
-@pr_review_app.command("prepare")
-def pr_review_prepare_command(
-    config_path: Annotated[
-        Path | None,
-        typer.Option("--config-path", help="Path to ai_dev_loop.yaml."),
-    ] = None,
-    project_name: Annotated[
-        str | None,
-        typer.Option("--project-name", help="Override project.name."),
-    ] = None,
-    repo_path: Annotated[
-        Path | None,
-        typer.Option("--repo-path", help="Target repository root."),
-    ] = None,
-    pr: Annotated[
-        int | None,
-        typer.Option("--pr", help="Explicit open pull request number."),
-    ] = None,
-    branch: Annotated[
-        str | None,
-        typer.Option("--branch", help="Explicit local/source branch bound to the PR head."),
-    ] = None,
-    plan_path: Annotated[
-        Path | None,
-        typer.Option("--plan-path", help="Approved plan path inside the repository."),
-    ] = None,
-    prompt_source_path: Annotated[
-        Path | None,
-        typer.Option("--prompt-source-path", help="Prompt source path inside the repository."),
-    ] = None,
-    codex_session_id: Annotated[
-        str | None,
-        typer.Option("--codex-session-id", help="Exact reviewer Codex session ID."),
-    ] = None,
-    controller_session_id: Annotated[
-        str | None,
-        typer.Option(
-            "--controller-session-id",
-            help=(
-                "Exact controller Codex session ID for A/B start "
-                "(must differ from --codex-session-id)."
-            ),
-        ),
-    ] = None,
-    cursor_command: Annotated[
-        str | None,
-        typer.Option("--cursor-command", help="Override cursor.command."),
-    ] = None,
-    cursor_model: Annotated[
-        str | None,
-        typer.Option("--cursor-model", help="Override cursor.model."),
-    ] = None,
-    cursor_output_format: Annotated[
-        str | None,
-        typer.Option("--cursor-output-format", help="Override cursor.output_format."),
-    ] = None,
-    codex_command: Annotated[
-        str | None,
-        typer.Option("--codex-command", help="Override codex.command."),
-    ] = None,
-    codex_review_model: Annotated[
-        str | None,
-        typer.Option("--codex-review-model", help="Override codex.review_model."),
-    ] = None,
-    codex_review_reasoning_effort: Annotated[
-        str | None,
-        typer.Option(
-            "--codex-review-reasoning-effort",
-            help="Override codex.review_reasoning_effort.",
-        ),
-    ] = None,
-    review_skill: Annotated[
-        str | None,
-        typer.Option("--review-skill", help="Override codex.review_skill."),
-    ] = None,
-    max_review_iterations: Annotated[
-        int | None,
-        typer.Option("--max-review-iterations", help="Override local review iteration limit."),
-    ] = None,
-    cursor_timeout_minutes: Annotated[
-        int | None,
-        typer.Option("--cursor-timeout-minutes", help="Override workflow.cursor_timeout_minutes."),
-    ] = None,
-    codex_timeout_minutes: Annotated[
-        int | None,
-        typer.Option("--codex-timeout-minutes", help="Override workflow.codex_timeout_minutes."),
-    ] = None,
-    output: OutputOption = DEFAULT_OUTPUT,
-) -> None:
-    """Prepare an independent PR-review cycle against an already-open PR (no GitHub write)."""
-
-    def run() -> None:
-        from ai_dev_loop.commands.pr_review_independent import (
-            IndependentPrReviewPrepareOptions,
-            prepare_independent_pr_review,
-            render_independent_prepare_result,
-        )
-
-        result = prepare_independent_pr_review(
-            IndependentPrReviewPrepareOptions(
-                config_path=config_path,
-                project_name=project_name,
-                repo_path=repo_path,
-                pr_number=pr,
-                branch=branch,
-                plan_path=plan_path,
-                prompt_source_path=prompt_source_path,
-                codex_session_id=codex_session_id,
-                controller_session_id=controller_session_id,
-                cursor_command=cursor_command,
-                cursor_model=cursor_model,
-                cursor_output_format=cursor_output_format,
-                codex_command=codex_command,
-                codex_review_model=codex_review_model,
-                codex_review_reasoning_effort=codex_review_reasoning_effort,
-                review_skill=review_skill,
-                max_review_iterations=max_review_iterations,
-                cursor_timeout_minutes=cursor_timeout_minutes,
-                codex_timeout_minutes=codex_timeout_minutes,
-                output=output.value,
-            )
-        )
-        typer.echo(render_independent_prepare_result(result, output=output.value), nl=False)
-
-    _handle(run)
-
-
-@pr_review_app.command("start")
-def pr_review_start_command(
-    run_id: Annotated[str, typer.Argument(help="Independent PR-review cycle run identifier.")],
-    controller_session_id: Annotated[
-        str | None,
-        typer.Option(
-            "--controller-session-id",
-            help="Exact controller Codex session ID (required for A/B independent cycles).",
-        ),
-    ] = None,
-    output: OutputOption = DEFAULT_OUTPUT,
-) -> None:
-    """Post the idempotent review trigger and start the detached worker (independent origin only)."""
-
-    def run() -> None:
-        from ai_dev_loop.commands.pr_review_independent import (
-            render_independent_start_result,
-            start_independent_pr_review,
-        )
-
-        result = start_independent_pr_review(run_id, controller_session_id=controller_session_id)
-        typer.echo(render_independent_start_result(result, output=output.value), nl=False)
-
-    _handle(run)
-
-
-@pr_review_app.command("set-cursor-model")
-def pr_review_set_cursor_model_command(
-    run_id: Annotated[str, typer.Argument(help="Independent PR-review cycle run identifier.")],
-    cursor_model: Annotated[
-        str,
-        typer.Option("--cursor-model", help="Cursor model to use before the first chat exists."),
-    ],
-    output: OutputOption = DEFAULT_OUTPUT,
-) -> None:
-    """Change the Cursor model for an independent cycle before a chat is created."""
-
-    def run() -> None:
-        from ai_dev_loop.commands.pr_review_independent import (
-            render_set_cursor_model_result,
-            set_independent_cursor_model,
-        )
-
-        result = set_independent_cursor_model(run_id, cursor_model=cursor_model)
-        typer.echo(render_set_cursor_model_result(result, output=output.value), nl=False)
-
-    _handle(run)
-
-
 @pr_review_app.command("create")
 def pr_review_create_command(
-    source_run_id: Annotated[str, typer.Argument(help="Completed source run identifier.")],
-    output: OutputOption = DEFAULT_OUTPUT,
-) -> None:
-    """Commit/push accepted staged changes, create/update a PR, and start bot-review polling."""
-
-    def run() -> None:
-        from ai_dev_loop.commands.pr_review import create_pr_review_cycle, render_create_result
-
-        result = create_pr_review_cycle(source_run_id)
-        typer.echo(render_create_result(result, output=output.value), nl=False)
-
-    _handle(run)
-
-
-@pr_review_app.command("status")
-def pr_review_status_command(
-    run_id: Annotated[str, typer.Argument(help="PR-review cycle run identifier.")],
-    output: OutputOption = DEFAULT_OUTPUT,
-) -> None:
-    """Show safe PR-review cycle status (no comment bodies or tokens)."""
-
-    def run() -> None:
-        from ai_dev_loop.commands.pr_review import render_pr_review_status
-
-        typer.echo(render_pr_review_status(run_id, output=output.value), nl=False)
-
-    _handle(run)
-
-
-@pr_review_app.command("continue")
-def pr_review_continue_command(
-    run_id: Annotated[str, typer.Argument(help="PR-review cycle waiting for user attention.")],
-) -> None:
-    """Resume after the configured user's exact continue-command GitHub comment."""
-
-    def run() -> None:
-        from ai_dev_loop.commands.pr_review import continue_pr_review_cycle
-
-        typer.echo(continue_pr_review_cycle(run_id))
-
-    _handle(run)
-
-
-@pr_review_app.command("resume")
-def pr_review_resume_command(
-    run_id: Annotated[
-        str,
-        typer.Argument(
-            help=(
-                "PR-review cycle run identifier (interrupted checkpoints, or "
-                "awaiting_bot_review with an absent/stale worker)."
-            ),
-        ),
-    ],
-    controller_session_id: Annotated[
-        str | None,
-        typer.Option(
-            "--controller-session-id",
-            help="Exact controller A session id required for A/B PR-review cycles.",
-        ),
-    ] = None,
-) -> None:
-    """Resume interrupted PR-review checkpoints or reattach an absent/stale poller.
-
-    For awaiting_bot_review, reattaches polling only: may perform read-only PR/head
-    validation, but does not re-post @codex review, create Cursor, invoke Codex,
-    or perform GitHub writes during the command.
-    """
-
-    def run() -> None:
-        from ai_dev_loop.commands.pr_review import resume_pr_review_cycle
-
-        typer.echo(resume_pr_review_cycle(run_id, controller_session_id=controller_session_id))
-
-    _handle(run)
-
-
-@pr_review_app.command("recover")
-def pr_review_recover_command(
-    run_id: Annotated[
-        str,
-        typer.Argument(help="Failed PR-review cycle run identifier to recover."),
-    ],
-    dry_run: Annotated[
-        bool,
-        typer.Option(
-            "--dry-run",
-            help="Analyze recoverability without creating a successor or writing to GitHub.",
-        ),
-    ] = False,
-    output: OutputOption = DEFAULT_OUTPUT,
-) -> None:
-    """Create an immutable PR-review recovery successor without re-posting @codex review.
-
-    Supports artifact-driven checkpoints: external_adjudication, reviewing,
-    external_feedback_cursor, and publication_pre_commit.
-    """
-
-    def run() -> None:
-        from ai_dev_loop.commands.pr_review_recover import (
-            recover_pr_review_cycle,
-            render_pr_review_recovery_analysis,
-            render_pr_review_recovery_result,
-        )
-
-        result = recover_pr_review_cycle(run_id, dry_run=dry_run)
-        if dry_run:
-            typer.echo(
-                render_pr_review_recovery_analysis(result, output=output.value),
-                nl=False,
-            )
-            return
-        typer.echo(
-            render_pr_review_recovery_result(result, output=output.value),
-            nl=False,
-        )
-
-    _handle(run)
-
-
-@pr_review_app.command("abort")
-def pr_review_abort_command(
-    run_id: Annotated[str, typer.Argument(help="PR-review cycle run identifier.")],
-) -> None:
-    """Request abort for a PR-review cycle without rewriting Git state."""
-
-    def run() -> None:
-        from ai_dev_loop.commands.pr_review import abort_pr_review_cycle
-
-        typer.echo(abort_pr_review_cycle(run_id))
-
-    _handle(run)
-
-
-@pr_review_v2_app.command("create")
-def pr_review_v2_create_command(
     source_run_id: Annotated[str, typer.Argument(help="Completed A/B source run ID.")],
     config_path: Annotated[
         Path | None,
@@ -723,8 +408,8 @@ def pr_review_v2_create_command(
     _handle(run)
 
 
-@pr_review_v2_app.command("prepare")
-def pr_review_v2_prepare_command(
+@pr_review_app.command("prepare")
+def pr_review_prepare_command(
     repo: Annotated[str, typer.Option("--repo", help="OWNER/REPO")],
     pr: Annotated[int, typer.Option("--pr", help="Pull request number.")],
     codex_session_id: Annotated[
@@ -773,23 +458,23 @@ def pr_review_v2_prepare_command(
     _handle(run)
 
 
-@pr_review_v2_app.command("start")
-def pr_review_v2_start_command(
-    run_id: Annotated[str, typer.Argument(help="Prepared pr-review-v2 run ID.")],
+@pr_review_app.command("start")
+def pr_review_start_command(
+    run_id: Annotated[str, typer.Argument(help="Prepared PR-review run ID.")],
 ) -> None:
-    """Apply start transition and launch/repair the v2 supervisor (sole effects gate)."""
+    """Apply start transition and launch/repair the supervisor (sole effects gate)."""
 
     def run() -> None:
-        from ai_dev_loop.commands.pr_review_v2 import start_run
+        from ai_dev_loop.commands.pr_review_v2 import start_run as start_pr_review_run
 
-        typer.echo(start_run(run_id), nl=False)
+        typer.echo(start_pr_review_run(run_id), nl=False)
 
     _handle(run)
 
 
-@pr_review_v2_app.command("status")
-def pr_review_v2_status_command(
-    run_id: Annotated[str, typer.Argument(help="pr-review-v2 run ID.")],
+@pr_review_app.command("status")
+def pr_review_status_command(
+    run_id: Annotated[str, typer.Argument(help="PR-review run ID.")],
     output: OutputOption = DEFAULT_OUTPUT,
 ) -> None:
     """Privacy-safe status from durable SQLite + launcher liveness."""
@@ -802,9 +487,9 @@ def pr_review_v2_status_command(
     _handle(run)
 
 
-@pr_review_v2_app.command("history")
-def pr_review_v2_history_command(
-    run_id: Annotated[str, typer.Argument(help="pr-review-v2 run ID.")],
+@pr_review_app.command("history")
+def pr_review_history_command(
+    run_id: Annotated[str, typer.Argument(help="PR-review run ID.")],
     limit: Annotated[int, typer.Option("--limit", help="Max journal entries.")] = 50,
     newest: Annotated[
         bool,
@@ -830,9 +515,9 @@ def pr_review_v2_history_command(
     _handle(run)
 
 
-@pr_review_v2_app.command("resume")
-def pr_review_v2_resume_command(
-    run_id: Annotated[str, typer.Argument(help="pr-review-v2 run ID.")],
+@pr_review_app.command("resume")
+def pr_review_resume_command(
+    run_id: Annotated[str, typer.Argument(help="PR-review run ID.")],
     confirm_user_continuation: Annotated[
         bool,
         typer.Option(
@@ -854,9 +539,9 @@ def pr_review_v2_resume_command(
     _handle(run)
 
 
-@pr_review_v2_app.command("abort")
-def pr_review_v2_abort_command(
-    run_id: Annotated[str, typer.Argument(help="pr-review-v2 run ID.")],
+@pr_review_app.command("abort")
+def pr_review_abort_command(
+    run_id: Annotated[str, typer.Argument(help="PR-review run ID.")],
 ) -> None:
     """Persist abort first, then signal only an exactly owned local supervisor."""
 

@@ -1,4 +1,4 @@
-"""Typed control-plane DTOs for the temporary ``pr-review-v2`` public API.
+"""Typed control-plane DTOs for the public ``pr-review`` API.
 
 These contracts are privacy-safe: they never embed prompts, patches, thread bodies,
 tokens, full opaque identifiers, raw argv, PID/PGID, or environments.

@@ -105,167 +105,35 @@ Verifica disponibilidad de `gh`, autenticacion (cuenta redactada), schemas GitHu
 
 ## `pr-review`
 
-Ciclo opt-in post-PR (requiere `github.enabled: true`):
+Ciclo opt-in post-PR con motor durable SQLite (requiere `pr_review_v2.enabled: true` en
+`ai_dev_loop.yaml`). Los runs v1 legacy (`RunState.github_pr_review`) y subcomandos
+retirados (`continue`, `recover`, `set-cursor-model`) ya no estan soportados.
 
 ```bash
-ai_dev_loop pr-review prepare \
-  --repo-path PATH --pr N --branch BRANCH \
-  --plan-path PLAN --prompt-source-path PROMPT \
-  --codex-session-id <reviewer> \
-  [--controller-session-id <controller-A>] \
-  [--cursor-model MODEL] [otros overrides seguros] \
-  [--output text|json]
-ai_dev_loop pr-review set-cursor-model <run-id> --cursor-model MODEL [--output text|json]
-ai_dev_loop pr-review start <run-id> [--controller-session-id <controller-A>] [--output text|json]
-ai_dev_loop pr-review create <source-run-id> [--output text|json]
+ai_dev_loop pr-review create <source-run-id> [--config-path PATH]
+ai_dev_loop pr-review prepare --repo OWNER/REPO --pr N \
+  --codex-session-id UUID --plan PATH --prompt PATH \
+  [--cursor-chat-id ID] [--review-model MODEL] [--repo-path PATH] [--config-path PATH]
+ai_dev_loop pr-review start <run-id>
 ai_dev_loop pr-review status <run-id> [--output text|json]
-ai_dev_loop pr-review continue <run-id>
-ai_dev_loop pr-review resume <run-id> [--controller-session-id <controller-A>]
-ai_dev_loop pr-review recover <failed-run-id> [--dry-run] [--output text|json]
+ai_dev_loop pr-review history <run-id> [--limit N] [--newest] [--output text|json]
+ai_dev_loop pr-review resume <run-id> [--confirm-user-continuation]
 ai_dev_loop pr-review abort <run-id>
 ```
 
-Hay dos origenes:
+Origenes:
 
-- **`create` (source_run):** unica puerta explicita para publicar el patch staged
-  aceptado (commit + push no-force + PR a `master`) y pedir `@codex review`.
-  Reutiliza el Cursor chat y la sesion Codex exactos del source.
-- **`prepare` + `start` (independent_pr):** adopta un PR ya abierto. `prepare` es
-  no mutante (sin comentario GitHub, sin chat Cursor, sin turnos Codex). Requiere
-  PR/branch/plan/prompt/sesion Codex exactos y `HEAD` local igual al head del PR.
-  `start` es la puerta de escritura: vuelve a verificar el binding, publica un
-  marcador idempotente `@codex review` y lanza el worker. En A/B solo A puede
-  hacer `start` con `--controller-session-id`; en sesion unica el reviewer debe
-  quedar inactivo antes de `start`.
-
-`set-cursor-model` solo aplica a ciclos `independent_pr` en
-`prepared_independent` o `awaiting_bot_review` sin chat Cursor ni iteraciones; no
-cambia el runtime Codex del reviewer ni reescribe `effective-config.yaml`.
-
-`pr-review recover` crea un sucesor inmutable para checkpoints
-artefacto-dirigidos:
-
-- `external_adjudication`: fallo de adjudicacion por incompatibilidad del schema
-  de salida Codex (`invalid_json_schema` / `uniqueItems`) antes de side effects;
-- `reviewing` (`codex_review_result_artifact_missing`): Cursor y staging ya
-  completaron la correccion local, pero falta `codex/reviews/NN.json`. El
-  sucesor reintenta solo la revision Codex B; no reejecuta Cursor ni toca GitHub;
-- `external_feedback_cursor` (`external_feedback_cursor_not_started`): la
-  adjudicacion externa ya produjo un prompt accionable, pero la iteracion
-  fresca de Cursor nunca arranco. Un directorio
-  `cursor/iterations/NN` vacio sin entrada durable ni archivos no cuenta como
-  intento parcial. El primer Cursor de esa ronda exige baseline limpio
-  (identidad Git, branch/HEAD enlazados, indice/worktree limpios) y no compara
-  el indice con un patch publicado anterior; solo las correcciones locales
-  posteriores exigen `git/diffs/(NN-1).patch`. El sucesor reutiliza la
-  adjudicacion persistida y, tras `pr-review resume`, abre Cursor con el prompt
-  externo exacto antes de staging; no re-adjudica ni republica `@codex review`;
-- `publication_pre_commit` (`publication_pre_commit_interrupted`): la revision
-  local Codex acepto el patch staged y la publicacion quedo en
-  `publication_phase: pre_commit` sin commit. El sucesor queda `interrupted`
-  para `pr-review resume`, que publica solamente (no abre Cursor/Codex, no
-  re-adjudica, no responde/resuelve hilos ni republica `@codex review` antes
-  del flujo normal post-publicacion). La elegibilidad usa evidencia durable
-  (fase, equivalencia normalizada artefacto/index, SHA/PR/hilos, resultado
-  local sin hallazgos, texto de publicacion); nunca `last_error` ni logs.
-  Un hash GPR obsoleto se adopta en el sucesor solo si el patch live coincide
-  con `git/diffs/NN.patch` tras `normalize_patch_text` (CRLF/newline terminal);
-  un cambio de contenido real bloquea. Si falta la identidad del agente SSH
-  efectivo (`IdentityAgent` resuelto con `ssh -G`, o `SSH_AUTH_SOCK`
-  heredado), carga la clave manualmente en ese agente antes del `resume`.
-
-El origen `failed` permanece terminal; el sucesor reutiliza el mismo PR, SHA,
-trigger, hilos elegibles, sesion Codex B, chat Cursor y controlador A. **No**
-republica `@codex review`. Usa `--dry-run` primero. El schema
-`github-pr-review-result-v1.json` ya no envia `uniqueItems` a Codex; la
-unicidad sigue validada en Pydantic.
-
-Tras Codex B, el worker persiste
-`github_pr_review.external_adjudication` (ciclo, SHA, IDs, rutas/hashes de
-resultado/snapshot/prompt y `application_status`) **antes** del preflight
-remoto, chat Cursor, replies o publicación. Un timeout GraphQL deja el
-checkpoint intacto; `pr-review resume` en el mismo run hidrata solo artefactos
-del `cycle_number` actual (reconstruye report/prompt únicamente desde un
-`result.json` válido; nunca sintetiza un `threads.snapshot.json` vacío o
-ausente) y no trata `recovery.source_prompt_sha256` como guardia global de
-ciclos posteriores. Un `cursor_scheduled` sin evidencia durable de Cursor
-completado revalida binding PR/local y baseline limpia antes de continuar. Tras un `resume_run` local que deja
-`publishing_external_fix`, el mismo worker publica in-process
-(`schedule_worker=False`) y sigue a polling; el `resume` del controlador A
-sigue siendo el camino legítimo para reenganchar publicación con un único
-spawn.
-
-En ciclos A/B, `pr-review resume` exige `--controller-session-id` del
-controlador A original. Además de checkpoints `interrupted` (publicación,
-polling, adjudicación durable o recovery), acepta un run no terminal en
-`awaiting_bot_review` cuyo worker esté ausente/stale: reengancha un solo
-poller. Puede validar PR/head en solo lectura, pero no escribe en GitHub, no
-republica el trigger, no crea Cursor ni invoca Codex. Con worker vivo
-(identidad verificada) es no-op idempotente.
-`pr-review status` reporta `worker_liveness` (`live`/`stale`/`absent`) y la
-siguiente acción segura sin exponer PID, token ni argv.
-
-Ante hallazgos no aplicables/inciertos responde inline con `@rojobad`, deja
-threads unresolved y espera `@rojobad /ai-dev-loop continue`. No hace merge ni
-force push. El ciclo independiente crea exactamente un Cursor chat nuevo solo
-cuando todos los hallazgos elegibles son accionables. Con
-`no_findings_completion` habilitado, un comentario general verificable del bot
-(prefijo + `Reviewed commit:` ligado al SHA) puede completar el ciclo sin
-Cursor; `status` puede mostrar acuse `eyes` o diagnostico de timeout, pero eso
-nunca finaliza ni republica el trigger.
-
-`pr-review continue` también admite una recuperación histórica **lineage-bound**
-
-(Phase 15.10 / 15.11): si el run está en `waiting_for_user_attention` con
-`eligible_thread_set_drift` y la lineage prueba que el freeze
-`expected_eligible_thread_ids` pertenece a un ciclo anterior ya
-procesado/resuelto (mientras el ciclo actual ya publicó un marker nuevo), un
-comentario exacto nuevo de continue autoriza limpiar solo ese freeze obsoleto y
-reanudar el mismo worker/run. La evidencia puede ser la recovery directa
-`external_adjudication` del run actual, o un único ancestro terminal
-verificado cuando la recovery actual es `reviewing` /
-`codex_review_result_artifact_missing` (sin recorridos recursivos). Conserva
-PR, SHA, marker, sesiones A/B y chat Cursor; **no** republica `@codex review`,
-no crea sucesor y no relaja el drift legítimo del ciclo actual. Si un continue
-previo ya consumió el comentario, hace falta uno nuevo. No edites `state.json`
-a mano.
-
-## `pr-review-v2` (temporal / pre-cutover)
-
-Namespace aislado de Phase 16.7. **No** reemplaza `pr-review` hasta Phase 16.9.
-Requiere `pr_review_v2.enabled: true`. **Gate A (Phase 16.8):** la aceptacion
-automatizada usa fakes/process boundaries y SQLite/artefactos persistentes; no
-implica aceptacion live. **Gate B:** aceptacion controlada en un PR nuevo de
-`rojobad/parish360-poc` solo despues de Gate A verde y review A/B sin hallazgos.
-Hasta Phase 16.9 este namespace no reemplaza `pr-review`.
-
-```bash
-ai_dev_loop pr-review-v2 create <source-run-id> [--config-path PATH]
-ai_dev_loop pr-review-v2 prepare --repo OWNER/REPO --pr N \
-  --codex-session-id UUID --plan PATH --prompt PATH \
-  [--cursor-chat-id ID] [--review-model MODEL] [--repo-path PATH] [--config-path PATH]
-ai_dev_loop pr-review-v2 start <run-id>
-ai_dev_loop pr-review-v2 status <run-id> [--output text|json]
-ai_dev_loop pr-review-v2 history <run-id> [--limit N] [--newest] [--output text|json]
-ai_dev_loop pr-review-v2 resume <run-id> [--confirm-user-continuation]
-ai_dev_loop pr-review-v2 abort <run-id>
-```
+- **`create` (source_run):** congela un `PreparedState` desde un run A/B
+  `completed` / `completed_with_residual_risk` con plan/prompt/patch verificados.
+- **`prepare` (existing_pr):** adopta un PR ya abierto con discovery read-only.
+  Exige checkout local alineado con head branch/SHA, plan/prompt confinados al repo,
+  y sesion Codex exacta.
 
 Contrato de seguridad:
 
 - `create` / `prepare` solo validan, congelan inputs y crean/reusan un
   `PreparedState` durable. No arrancan workers/agentes, no escriben GitHub, no
   hacen commit/push ni llamadas de modelo.
-- `create` acepta solo source runs `completed` /
-  `completed_with_residual_risk`, con snapshots plan/prompt/patch hash-verificados
-  y worktree (remote/branch/HEAD/staged patch exacto) alineado.
-- `prepare` exige `head_repo` same-repository, checkout local
-  (remote/branch/HEAD) igual al binding del PR, y plan/prompt confinados al repo.
-  Congela un preimage protegido del title/body del PR existente; el primer
-  `update_pr_text` solo se autoriza si el texto live coincide exactamente con ese
-  preimage, y despues exige el marker `adl-v2` owned. Runs preparados antes de
-  este binding permanecen fail-closed. El `cursor.chat_id` puede ser null hasta
-  el primer local fix.
 - `start <run-id>` es la unica puerta a efectos externos: aplica el evento durable
   y luego lanza/reusa el supervisor detached (`python -m
   ai_dev_loop.pr_review_v2_supervisor_worker`) con metadata de ownership. Si el
@@ -273,18 +141,16 @@ Contrato de seguridad:
 - `resume` en `waiting_for_user` exige `--confirm-user-continuation` y evidencia
   de operador protegida; no dispara timers futuros. Repara solo el supervisor
   cuando el estado ya es activo.
-- `status` marca `resumable: true` y `next_action: resume` solo cuando el run es
-  no terminal, el supervisor no esta vivo y el lease anterior ya expiro. Si el
-  lease sigue activo, `status` no recomienda un `resume` competidor
-  (`wait-until`). Un claim mutante expirado se reconcilia antes de cualquier
-  reintento de escritura.
+- `status` marca acciones de resume solo cuando el run es no terminal, el
+  supervisor no esta vivo y el lease anterior ya expiro. Un claim mutante
+  expirado se reconcilia antes de cualquier reintento de escritura.
 - `abort` persiste el abort durable antes de senalar procesos Cursor/Codex hijos
-  con ownership exacta y, despues, el supervisor owned (token, PID/PGID, start
-  time, executable, run binding). Rechaza metadata stale.
-- Status/history son acotados y redactados (sin prompts, patches, bodies, tokens,
-  session IDs completos, argv, PID/PGID ni environments). Los `safe_summary` de
-  adjudicacion en eventos/SQLite son operacionales fijos; el texto libre del
-  modelo queda solo en artefactos protegidos.
+  con ownership exacta y, despues, el supervisor owned.
+- `status` / `history` son acotados y redactados (sin prompts, patches, bodies,
+  tokens, session IDs completos, argv, PID/PGID ni environments).
+
+Resiliencia diferida (Phase 16.8): ver `PHASE_16_8_DEFERRED_ISSUES.md`. No hay
+`pr-review recover` publico ni migracion de runs v1.
 
 ## `start`
 

@@ -105,251 +105,64 @@ estado, se usa `resume` o `recover`; no se deben repetir turnos terminados ni
 cambiar la sesión Codex o el chat Cursor registrado. Un fallback de modelo Cursor
 se registra explícitamente, en vez de seleccionarse de forma silenciosa.
 
-## 4. Publicar un PR desde un run terminado
+## 4. Ciclo PR-review (motor SQLite v2)
 
-Cuando el run local esté `completed` o `completed_with_residual_risk`, crear el
-PR sigue siendo una autorización explícita del usuario:
+Requiere `pr_review_v2.enabled: true`. Los runs v1 (`RunState.github_pr_review`) y
+subcomandos retirados (`continue`, `recover`, `set-cursor-model`) no tienen soporte.
+
+### Desde un run A/B completado (`source_run`)
 
 ```bash
 ai_dev_loop pr-review create <source-run-id>
+ai_dev_loop pr-review start <run-id>
 ```
 
-El worker obtiene de Codex el mensaje de commit y el título/descripción del PR,
-hace commit sólo del patch staged aceptado, realiza push normal (sin `--force`),
-crea o actualiza el PR hacia `master`, publica `@codex review` y empieza a
-vigilarlo. Nunca hace merge, retarget, cierre de PR ni force-push.
+`create` congela un `PreparedState` read-only desde el source (plan/prompt/patch
+verificados). `start` es la unica puerta a efectos externos (publicacion, trigger,
+supervisor).
 
-## 5. Adoptar un PR existente
-
-Para un PR que no nació en el loop local —por ejemplo, un run histórico fallido o
-un cambio publicado manualmente— usa el origen `independent_pr`. Requiere un PR
-abierto, rama y número explícitos, worktree limpio y HEAD local igual al SHA del
-PR:
+### Desde un PR ya abierto (`existing_pr`)
 
 ```bash
 ai_dev_loop pr-review prepare \
-  --repo-path /ruta/al/proyecto \
+  --repo OWNER/REPO \
   --pr <numero> \
-  --branch <rama-del-head> \
-  --plan-path <plan> \
-  --prompt-source-path <prompt> \
-  --codex-session-id <sesion-B> \
-  --controller-session-id <sesion-A> \
-  < <prompt>
+  --codex-session-id <sesion-B-exacta> \
+  --plan <plan-rel-al-repo> \
+  --prompt <prompt-rel-al-repo> \
+  [--repo-path /ruta/al/proyecto]
+ai_dev_loop pr-review start <run-id>
 ```
 
-`prepare` no publica comentarios, no crea un chat Cursor y no realiza turnos de
-agentes. Antes de iniciar, se puede cambiar el modelo de Cursor si todavía no se
-ha creado ese chat:
+`prepare` valida binding PR/local read-only. `start` lanza o repara el supervisor
+detached y aplica la transicion durable.
+
+### Operacion y observabilidad
 
 ```bash
-ai_dev_loop pr-review set-cursor-model <run-id> --cursor-model <modelo>
-```
-
-Sólo A inicia el ciclo A/B:
-
-```bash
-ai_dev_loop pr-review start <run-id> --controller-session-id <sesion-A>
-```
-
-El modelo y la sesión de revisión de Codex permanecen ligados a la sesión exacta
-indicada durante `prepare`. Cambiar el modelo Cursor no cambia esa identidad.
-
-## 6. Revisión externa en GitHub
-
-El worker acepta exclusivamente hilos no resueltos que cumplan toda esta
-proveniencia:
-
-- autor incluido en `github.reviewer_logins`;
-- mismo PR y SHA de cabecera persistido;
-- posteriores al marcador idempotente de `@codex review`;
-- no procesados antes por ese ciclo.
-
-Si no hay hilos elegibles y
-`github.no_findings_completion.enabled: true`, el worker puede completar el ciclo
-cuando el reviewer permitido publica un comentario general que cumple el contrato
-configurado (prefijo exacto + línea `Reviewed commit:` ligada al
-`bound_head_sha`, posterior al trigger). Esa ruta no crea chat Cursor, no
-adjudica con Codex, no hace commit/push ni resuelve hilos. La ausencia de hilos,
-la reacción `eyes` o su retirada **no** son señales de éxito.
-
-Con `github.acknowledgement.enabled: true`, la reacción configurada (`eyes` por
-defecto) sobre el comentario trigger es telemetría best-effort: `status` puede
-mostrar acuse observado o un diagnóstico de timeout, pero el worker sigue
-esperando hilos o el comentario de finalización. El timeout de acuse no reintenta
-el trigger. Mantén **Automatic reviews** de Codex apagado en este flujo para
-evitar revisiones duplicadas.
-
-Codex B evalúa todos esos hilos y devuelve una decisión estructurada por hilo.
-
-### Todos son accionables
-
-```text
-Codex B adjudica los hilos
-→ checkpoint durable external_adjudication (antes de GraphQL/Cursor)
-→ Cursor corrige en su mismo chat
-→ revisión local Codex B
-→ commit y push no-force
-→ verifica el nuevo SHA del PR
-→ resuelve sólo los hilos corregidos
-→ solicita otra revisión con @codex review
-→ el mismo worker continúa polling in-process
-```
-
-El número máximo de rondas externas se controla mediante
-`github.max_external_cycles`. Si GraphQL falla después de los artefactos de
-Codex pero antes del preflight, el run queda `interrupted` con el checkpoint
-del ciclo actual; `pr-review resume` revalida sin re-adjudicar ni crear
-sucesor. `RecoveryState` es lineage de auditoría y no guarda prompts de
-ciclos posteriores.
-
-### Alguno es incierto o no aplica
-
-El worker no envía nada a Cursor ni resuelve esos hilos. Persiste el intent en
-`writing` antes de cada write; sólo marca `written` tras éxito confirmado. Si el
-resultado es ambiguo (`GithubWriteResult(ok=False)`, excepción, timeout o
-interrupción con `writing` sin confirmación), espera atención del usuario en
-lugar de duplicar el comentario. La explicación en línea empieza por
-`@rojobad`, y el ciclo queda en `waiting_for_user_attention`.
-
-Después de evaluarlo, el usuario autoriza una continuación únicamente con este
-comentario exacto en el PR:
-
-```text
-@rojobad /ai-dev-loop continue
-```
-
-Entonces se ejecuta:
-
-```bash
-ai_dev_loop pr-review continue <run-id>
-```
-
-El mismo comando, con un comentario exacto **nuevo**, también cubre un caso
-histórico excepcional: un freeze `expected_eligible_thread_ids` heredado de un
-ciclo `external_adjudication` anterior que choca con hilos válidos del ciclo ya
-publicado (`eligible_thread_set_drift`). La evidencia lineage puede ser directa
-en el run actual, o un único salto a un source terminal con recovery
-`external_adjudication` cuando el actual es sucesor `reviewing`. La limpieza es
-estrictamente lineage-bound: mismo run, PR, SHA, marker, sesiones A/B y chat
-Cursor; no republica `@codex review` ni acepta drift real del ciclo actual.
-Tras un continue previo hace falta un comentario nuevo. Phase 15.9 ya evita
-este patrón en runs nuevos al resetear el freeze al publicar el siguiente
-trigger.
-
-### Continuidad post-publicación y aislamiento por ciclo
-
-Cuando el worker publica un fix externo y deja el run en `awaiting_bot_review`,
-**el mismo proceso continúa el polling**. No depende de auto-spawnearse mientras
-aún posee su propio PID. Las publicaciones síncronas desde `create`/comandos sí
-programan un poller detached al quedar en awaiting.
-
-Al publicar el trigger del siguiente ciclo externo se reinicia el snapshot
-operativo `expected_eligible_thread_ids` (`None`). Los IDs
-`processed_thread_ids` / `resolved_thread_ids` siguen siendo acumulativos para
-impedir reprocesos. Los hilos nuevos del ciclo N+1 no son drift del ciclo N.
-
-### Fallos o drift externos
-
-Un PR cerrado, cambio externo de SHA/rama, error de `gh`, llave SSH no disponible,
-rate limit, red, timeout o fallo de push deja un checkpoint recuperable o fallido.
-El worker no hace reset, pull, rebase ni fuerza la publicación para resolverlo.
-Tras corregir la causa, usa:
-
-```bash
-ai_dev_loop pr-review resume <run-id> [--controller-session-id <sesion-A>]
-```
-
-Si el run ya está en `awaiting_bot_review` pero el worker registrado está ausente
-o stale (por ejemplo tras un bug histórico de auto-spawn), el mismo comando
-desde el controlador A **reengancha solo el polling**: puede hacer validación
-read-only de PR/head, pero no escribe en GitHub, no republica `@codex review`,
-no crea Cursor ni invoca Codex. Si el worker ya está vivo (identidad PID +
-`pid_starttime` verificada), la respuesta es idempotente sin mutación.
-
-Si la adjudicación falló porque Codex rechazó el schema de salida
-(`invalid_json_schema` / `uniqueItems`) **antes** de responder o resolver hilos y
-sin crear Cursor, el origen `failed` no se edita in-place. Recupera así:
-
-```bash
-ai_dev_loop pr-review recover <failed-run-id> --dry-run
-ai_dev_loop pr-review recover <failed-run-id> --output json
-# Desde el controlador A del sucesor:
-ai_dev_loop pr-review resume <successor-run-id> --controller-session-id <sesion-A>
-```
-
-Si, tras una adjudicación ya recuperada, Cursor corrigió y el staging quedó
-listo pero faltó persistir `codex/reviews/NN.json` (por ejemplo porque el
-directorio de artefactos no existía antes de `--output-last-message`), usa el
-mismo `pr-review recover` sobre ese run `failed`: el checkpoint será
-`reviewing` y el resume desde A reintentará solo la revisión local con la
-sesión B exacta, sin reejecutar Cursor ni republicar `@codex review`.
-
-Si la adjudicación externa ya dejó un prompt accionable
-(`prompts/fixes/github-NN.txt`) pero el orquestador falló antes de que Cursor
-realmente iniciara (por ejemplo, preflight que comparaba un índice limpio con
-un patch publicado, o solo un directorio `cursor/iterations/NN` vacío), el
-checkpoint es `external_feedback_cursor`. Tras aceptación de esta versión:
-
-```bash
-ai_dev_loop pr-review recover <failed-run-id> --dry-run
-ai_dev_loop pr-review recover <failed-run-id> --output json
-ai_dev_loop pr-review resume <successor-run-id> --controller-session-id <sesion-A>
-```
-
-Ese `resume` revalida PR/SHA/hilos y el baseline limpio del commit publicado
-(sin exigir el patch staged anterior) y abre Cursor con el prompt externo
-exacto en una iteración nueva monotona; no re-adjudica ni republica
-`@codex review`. Dentro de la misma ronda, un finding local de Codex sí exige
-el patch staged de la iteración anterior. El próximo trigger solo llega tras
-una publicación normal de corrección aceptada.
-
-Si la revisión local ya aceptó el patch staged y la publicación quedó en
-`publication_phase: pre_commit` sin commit (por ejemplo `ssh-agent` sin
-identidad), el checkpoint es `publication_pre_commit`. Tras una corrección
-externa aceptada, el orquestador actualiza `github_pr_review.staged_patch_sha256`
-al hash raw live del patch antes de publicar. En recovery histórico, si ese
-campo quedó obsoleto pero el index live sigue coincidiendo con
-`git/diffs/NN.patch` tras normalizar CRLF/newline terminal, el sucesor adopta
-el hash live sin mutar el origen. Tras aceptación de esta versión, carga la
-clave SSH en el socket persistente y:
-
-```bash
-ai_dev_loop pr-review recover <failed-run-id> --dry-run
-ai_dev_loop pr-review recover <failed-run-id> --output json
-ai_dev_loop pr-review resume <successor-run-id> --controller-session-id <sesion-A>
-```
-
-Ese `resume` publica solamente; no abre agentes, no re-adjudica, no responde ni
-resuelve hilos, ni republica `@codex review` antes del flujo normal posterior a
-una publicación exitosa.
-
-El sucesor reutiliza PR, SHA, trigger, hilos elegibles, sesión B, chat Cursor y
-controlador A. **No** se publica otro `@codex review`. Si el conjunto de hilos
-elegibles cambió, el worker se detiene en atención de usuario sin writes GitHub.
-
-Para detenerlo sin reescribir Git:
-
-```bash
+ai_dev_loop pr-review status <run-id> --output json
+ai_dev_loop pr-review history <run-id> --limit 50 --output json
+ai_dev_loop pr-review resume <run-id> [--confirm-user-continuation]
 ai_dev_loop pr-review abort <run-id>
 ```
 
-## 7. Cierre y merge
+- `status` / `history`: salida redactada desde SQLite (sin prompts, patches, tokens
+  ni session IDs completos).
+- `resume` en `waiting_for_user` exige `--confirm-user-continuation`.
+- Resiliencia diferida (crash recovery, `recover` publico, etc.): ver
+  `PHASE_16_8_DEFERRED_ISSUES.md` — no implementada en Phase 16.9.
 
-El ciclo automatizado termina cuando las correcciones aceptadas han pasado la
-revisión local y no quedan hilos externos accionables pendientes dentro de la
-ventana de revisión configurada. Consulta siempre el estado seguro del ciclo:
+## 5. Cierre y merge
+
+El ciclo automatizado termina cuando el estado durable indica completion segun las
+reglas del reducer y los artefactos protegidos. Consulta:
 
 ```bash
 ai_dev_loop pr-review status <run-id> --output json
 ```
 
-Una revisión sin nuevos hilos debe tener una señal de finalización verificable;
-no se interpreta el silencio del bot como una aprobación sin evidencia. Si la
-ventana de polling expira, el ciclo se interrumpe para intervención humana.
-
-La última revisión humana y el merge a `master` permanecen fuera de la
-automatización.
+La ultima revision humana y el merge a `master` permanecen fuera de la
+automatizacion.
 
 ## Límites de seguridad permanentes
 
