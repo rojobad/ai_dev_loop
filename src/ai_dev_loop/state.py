@@ -570,6 +570,11 @@ def atomic_write_yaml(path: Path, payload: dict[str, Any], *, sensitive: bool = 
 def load_run_state(path: Path) -> RunState:
     with path.open(encoding="utf-8") as handle:
         data = json.load(handle)
+    # Retired Phase 16.9 v1 PR-review state was persisted as an optional
+    # top-level field. It has no active consumer, so discard only this known
+    # historical key while retaining strict validation for every other field.
+    if isinstance(data, dict):
+        data.pop("github_pr_review", None)
     return RunState.model_validate(data)
 
 

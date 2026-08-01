@@ -176,7 +176,7 @@ class GitWritePolicy(AppModel):
     ssh_command: NonEmptyStr = "ssh"
     per_call_timeout_seconds: float = Field(default=DEFAULT_GIT_TIMEOUT_SECONDS, gt=0.0, le=600.0)
     overall_timeout_seconds: float = Field(
-        default=DEFAULT_OVERALL_WRITE_TIMEOUT_SECONDS, gt=0.0, le=1800.0
+        default=DEFAULT_OVERALL_WRITE_TIMEOUT_SECONDS, gt=0.0, le=7200.0
     )
     max_patch_bytes: PositiveInt = Field(default=DEFAULT_MAX_PATCH_BYTES, le=50_000_000)
     max_commit_message_bytes: PositiveInt = Field(
@@ -211,7 +211,7 @@ class GitHubWritePolicy(AppModel):
         default=DEFAULT_GH_WRITE_TIMEOUT_SECONDS, gt=0.0, le=600.0
     )
     overall_timeout_seconds: float = Field(
-        default=DEFAULT_OVERALL_WRITE_TIMEOUT_SECONDS, gt=0.0, le=1800.0
+        default=DEFAULT_OVERALL_WRITE_TIMEOUT_SECONDS, gt=0.0, le=7200.0
     )
     max_pages: PositiveInt = Field(default=20, le=100)
     max_items: PositiveInt = Field(default=500, le=5000)

@@ -171,6 +171,16 @@ class LocalFixAdapter:
         prompt_bytes: bytes,
     ) -> LocalFixFinishedOutcome:
         carrier_id = carrier_run_id(run_id, effect.cycle_number, effect.effect_id)
+        recovery_successor_id = getattr(self._runtime, "recovery_successor_id", None)
+        if callable(recovery_successor_id):
+            try:
+                successor_id = recovery_successor_id(carrier_id)
+            except Exception as exc:  # noqa: BLE001
+                raise LocalFixAdapterError(
+                    "carrier recovery successor verification failed"
+                ) from exc
+            if successor_id is not None:
+                carrier_id = successor_id
 
         if hashlib.sha256(plan_bytes).hexdigest() != execution_context.plan_prompt.plan_sha256:
             raise LocalFixAdapterError("protected plan bytes hash mismatch")

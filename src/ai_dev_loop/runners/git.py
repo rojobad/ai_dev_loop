@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -396,18 +397,24 @@ def paths_with_untracked(status: str) -> set[str]:
     return paths
 
 
-def normalize_patch_text(text: str) -> str:
-    return text.replace("\r\n", "\n").rstrip("\n")
-
-
 def validate_staged_patch_matches_artifact(repo_root: Path, patch_artifact: Path) -> None:
+    """Verify the live index against the exact bytes persisted after staging.
+
+    Staging persists git diff --cached --binary bytes. Review preflight must
+    compare that same canonical representation; text-mode output is lossy for
+    binary patches and may be normalized by process helpers.
+    """
+
     if not patch_artifact.is_file():
         raise ValidationError(f"recorded staged patch artifact missing: {patch_artifact}")
-    recorded = normalize_patch_text(patch_artifact.read_text(encoding="utf-8"))
-    current = normalize_patch_text(git_diff_cached_patch(repo_root))
+    recorded = patch_artifact.read_bytes()
+    current = git_diff_cached_patch_bytes(repo_root)
     if current != recorded:
+        recorded_sha256 = hashlib.sha256(recorded).hexdigest()
+        current_sha256 = hashlib.sha256(current).hexdigest()
         raise ValidationError(
-            "staged index no longer matches the previous orchestrator-recorded staged patch"
+            "staged index no longer matches the previous orchestrator-recorded staged patch "
+            f"(recorded_sha256={recorded_sha256}, current_sha256={current_sha256})"
         )
 
 

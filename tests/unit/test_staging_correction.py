@@ -226,13 +226,33 @@ def test_validate_staged_patch_matches_artifact_detects_drift(
     tiny_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     patch_artifact = tmp_path / "01.patch"
-    patch_artifact.write_text("recorded-patch\n", encoding="utf-8")
+    patch_artifact.write_bytes(b"recorded-patch\n")
     monkeypatch.setattr(
-        "ai_dev_loop.runners.git.git_diff_cached_patch",
-        lambda _repo: "current-patch\n",
+        "ai_dev_loop.runners.git.git_diff_cached_patch_bytes",
+        lambda _repo: b"current-patch\n",
     )
-    with pytest.raises(ValidationError, match="no longer matches"):
+    with pytest.raises(
+        ValidationError, match=r"no longer matches.*recorded_sha256=.*current_sha256="
+    ):
         validate_staged_patch_matches_artifact(tiny_repo, patch_artifact)
+
+
+def test_validate_staged_patch_matches_artifact_accepts_binary_patch(
+    tiny_repo: Path, tmp_path: Path
+) -> None:
+    target = tiny_repo / "asset.bin"
+    target.write_bytes(b"\x00binary-content\xff")
+    _git(tiny_repo, "add", target.name)
+    patch = subprocess.run(
+        ["git", "diff", "--cached", "--binary"],
+        cwd=tiny_repo,
+        check=True,
+        capture_output=True,
+    ).stdout
+    patch_artifact = tmp_path / "01.patch"
+    patch_artifact.write_bytes(patch)
+
+    validate_staged_patch_matches_artifact(tiny_repo, patch_artifact)
 
 
 def test_correction_staging_accepts_emptied_index_then_restages(

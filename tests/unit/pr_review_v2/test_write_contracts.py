@@ -75,6 +75,25 @@ def test_github_write_policy_default_review_command_and_bounds() -> None:
         )
 
 
+def test_write_policies_accept_overall_timeout_at_two_hour_cap() -> None:
+    assert (
+        GitWritePolicy(
+            repository_cwd="/tmp/repo", overall_timeout_seconds=7200
+        ).overall_timeout_seconds
+        == 7200
+    )
+    assert (
+        GitHubWritePolicy(
+            repository_cwd="/tmp/repo", overall_timeout_seconds=7200
+        ).overall_timeout_seconds
+        == 7200
+    )
+    with pytest.raises(ValidationError):
+        GitWritePolicy(repository_cwd="/tmp/repo", overall_timeout_seconds=7201)
+    with pytest.raises(ValidationError):
+        GitHubWritePolicy(repository_cwd="/tmp/repo", overall_timeout_seconds=7201)
+
+
 # -- branch / ref validation ------------------------------------------------
 
 

@@ -173,7 +173,7 @@
         "max_external_cycles": { "type": "integer", "minimum": 1 },
         "max_local_iterations": { "type": "integer", "minimum": 1 },
         "per_call_timeout_seconds": { "type": "integer", "minimum": 1 },
-        "overall_timeout_seconds": { "type": "integer", "minimum": 1 },
+        "overall_timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 7200 },
         "max_pages": { "type": "integer", "minimum": 1 },
         "max_items": { "type": "integer", "minimum": 1 },
         "max_server_directed_wait_seconds": {

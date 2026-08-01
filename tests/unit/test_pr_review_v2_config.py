@@ -95,6 +95,12 @@ def test_project_config_accepts_enabled_section(tmp_path: Path) -> None:
     assert config.pr_review_v2_enabled() is True
 
 
+def test_pr_review_v2_overall_timeout_accepts_cap_and_rejects_larger_value() -> None:
+    assert PrReviewV2Section(overall_timeout_seconds=7200).overall_timeout_seconds == 7200
+    with pytest.raises(ValidationError):
+        PrReviewV2Section(overall_timeout_seconds=7201)
+
+
 def test_no_findings_enabled_requires_evidence_rule() -> None:
     from ai_dev_loop.config import PrReviewV2NoFindingsSection
 
