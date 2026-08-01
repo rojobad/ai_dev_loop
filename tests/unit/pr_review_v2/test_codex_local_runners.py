@@ -341,7 +341,7 @@ def test_gate_b_actionable_with_reply_and_fix_prompt_fails_domain_closed() -> No
     parsed = ExternalAdjudicationPayload.model_validate(contradictory)
     assert parsed.decisions[0].reply_body is not None
     assert parsed.fix_prompt_text is not None
-    with pytest.raises(Exception, match="all-actionable adjudication forbids reply_body"):
+    with pytest.raises(Exception, match="actionable decisions must not carry reply_body"):
         ExternalAdjudicationResultArtifact(
             decisions=(
                 ExternalAdjudicationDecision(
@@ -405,10 +405,10 @@ def test_adjudication_runner_converts_domain_invalid_to_privacy_safe_error(
     assert fake.last_stdin is not None
     assert 'decision == "actionable", reply_body must be null' in fake.last_stdin
     assert 'decision is "not_applicable" or "uncertain"' in fake.last_stdin
-    assert "every decision is actionable, fix_prompt_text must be a non-empty string" in (
+    assert "any decision is actionable, fix_prompt_text must be a non-empty string" in (
         fake.last_stdin
     )
-    assert "any decision is non-actionable, fix_prompt_text must be null" in fake.last_stdin
+    assert "no decision is actionable, fix_prompt_text must be null" in fake.last_stdin
     assert "exactly one decision per frozen thread" in fake.last_stdin
     assert "Return schema-constrained JSON only." in fake.last_stdin
     assert fake.last_argv is not None

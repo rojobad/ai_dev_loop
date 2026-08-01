@@ -22,6 +22,7 @@ from ai_dev_loop.pr_review_v2.domain.common import (
     PullRequestBinding,
     ReconciliationResolutionKind,
     SafeAction,
+    Sha256Hex,
     ThreadId,
     TransientErrorKind,
     TriggerEvidence,
@@ -256,6 +257,14 @@ class UserContinuationRequested(DomainModel):
     evidence: UserContinuationEvidence
 
 
+class RecoverMixedAdjudicationRequested(DomainModel):
+    kind: Literal["recover_mixed_adjudication_requested"] = "recover_mixed_adjudication_requested"
+    occurred_at: UtcInstant
+    evidence_ref: ArtifactRef
+    legacy_result_ref_sha256: Sha256Hex
+    superseded_reply_effect_id: NonEmptyId
+
+
 class AbortRequested(DomainModel):
     kind: Literal["abort_requested"] = "abort_requested"
     occurred_at: UtcInstant
@@ -278,6 +287,7 @@ PrReviewEvent = Annotated[
     | RetryDue
     | ResumeRequested
     | UserContinuationRequested
+    | RecoverMixedAdjudicationRequested
     | AbortRequested
     | FatalFailureDetected,
     Field(discriminator="kind"),

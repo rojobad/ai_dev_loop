@@ -12,7 +12,10 @@ from typing import Any, TypeVar
 
 from ai_dev_loop.paths import DIR_MODE, SENSITIVE_FILE_MODE, ensure_dir, set_sensitive_file_mode
 from ai_dev_loop.pr_review_v2.application.contracts import AppModel
-from ai_dev_loop.pr_review_v2.application.control_contracts import OperatorContinuationArtifact
+from ai_dev_loop.pr_review_v2.application.control_contracts import (
+    MixedAdjudicationRecoveryArtifact,
+    OperatorContinuationArtifact,
+)
 from ai_dev_loop.pr_review_v2.application.execution_context import (
     ExecutionContextArtifact,
     ExternalAdjudicationResultArtifact,
@@ -55,6 +58,7 @@ RESULTS_DIR = "local/results"
 PATCHES_DIR = "local/patches"
 REPLIES_DIR = "local/replies"
 OPERATOR_CONTINUATION_DIR = "local/operator-continuation"
+MIXED_ADJUDICATION_RECOVERY_DIR = "local/mixed-adjudication-recovery"
 PUBLICATION_GENERATION_DIR = "local/results/publication-generation"
 ADJUDICATION_RESULT_DIR = "local/results/adjudication"
 LOCAL_FIX_RESULT_DIR = "local/results/local-fix"
@@ -640,6 +644,16 @@ class ProtectedResultStore:
         return self._persist_json(
             run_id=run_id,
             relative_prefix=OPERATOR_CONTINUATION_DIR,
+            payload=payload,
+        )
+
+    def persist_mixed_adjudication_recovery(
+        self, *, run_id: str, artifact: MixedAdjudicationRecoveryArtifact
+    ) -> ArtifactRef:
+        payload = artifact.model_dump(mode="json")
+        return self._persist_json(
+            run_id=run_id,
+            relative_prefix=MIXED_ADJUDICATION_RECOVERY_DIR,
             payload=payload,
         )
 

@@ -56,6 +56,7 @@ from ai_dev_loop.pr_review_v2.domain.events import (
     EffectSucceeded,
     FatalFailureDetected,
     PrReviewEvent,
+    RecoverMixedAdjudicationRequested,
     RetryDue,
     WriteOutcomeUncertain,
 )
@@ -427,6 +428,45 @@ class PrReviewEngine:
             return receipt
 
         assert isinstance(result, TransitionApplied)
+        if isinstance(
+            submission.event, RecoverMixedAdjudicationRequested
+        ) and not self._store.supersede_pending_dispatch(
+            conn,
+            run_id=submission.run_id,
+            effect_id=submission.event.superseded_reply_effect_id,
+            now=now,
+        ):
+            detail = safe_diagnostic("recovery requires exact pending queue-head reply dispatch")
+            self._fault.maybe_raise("journal")
+            self._store.insert_event_row(
+                conn,
+                event_id=event_id,
+                run_id=submission.run_id,
+                sequence=sequence,
+                event=submission.event,
+                disposition=EventDisposition.REJECTED.value,
+                expected_run_version=submission.expected_version,
+                observed_run_version=version,
+                resulting_run_version=None,
+                rejection_code="dispatch_supersession_failed",
+                safe_detail=detail,
+                now=now,
+            )
+            self._fault.maybe_raise("pre_commit")
+            return ApplicationReceipt(
+                disposition=EventDisposition.REJECTED,
+                submission_id=submission.submission_id,
+                event_id=event_id,
+                run_id=submission.run_id,
+                sequence=sequence,
+                expected_run_version=submission.expected_version,
+                observed_run_version=version,
+                resulting_run_version=None,
+                rejection_code="dispatch_supersession_failed",
+                safe_detail=detail,
+                state=None,
+                effects=(),
+            )
         self._fault.maybe_raise("journal")
         self._store.insert_event_row(
             conn,

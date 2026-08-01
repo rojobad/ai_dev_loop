@@ -7,9 +7,9 @@ from datetime import datetime
 from typing import Final
 
 from ai_dev_loop.pr_review_v2.domain.common import (
-    AdjudicationDecisionKind,
     AdjudicationEvidence,
     ArtifactRef,
+    DeferredReplyContext,
     DomainModel,
     ErrorSummary,
     ExistingPrOrigin,
@@ -18,6 +18,7 @@ from ai_dev_loop.pr_review_v2.domain.common import (
     NonEmptyId,
     NonEmptyStr,
     PauseReasonKind,
+    PrReviewOrigin,
     PublicationStep,
     PullRequestBinding,
     ReconciliationResolutionKind,
@@ -27,7 +28,13 @@ from ai_dev_loop.pr_review_v2.domain.common import (
     SafeAction,
     SafeActionKind,
     SourceRunOrigin,
+    TriggerEvidence,
+    UtcInstant,
+    WorkflowLimits,
+    actionable_thread_ids_from_evidence,
     build_opaque_trigger_marker,
+    deferred_reply_intents_from_evidence,
+    is_legacy_mixed_adjudication_defect,
 )
 from ai_dev_loop.pr_review_v2.domain.effects import (
     AdjudicateThreadsEffect,
@@ -67,6 +74,7 @@ from ai_dev_loop.pr_review_v2.domain.events import (
     PublicationTextPreparedOutcome,
     PushConfirmedOutcome,
     ReconciliationResolvedOutcome,
+    RecoverMixedAdjudicationRequested,
     ResumeRequested,
     RetryDue,
     ReviewTriggerConfirmedOutcome,
@@ -125,6 +133,7 @@ EVENT_KINDS: Final[tuple[str, ...]] = (
     "retry_due",
     "resume_requested",
     "user_continuation_requested",
+    "recover_mixed_adjudication_requested",
     "abort_requested",
     "fatal_failure_detected",
 )
@@ -660,6 +669,79 @@ def _handle_resume(state: PrReviewState, event: PrReviewEvent) -> TransitionResu
     return _apply(restored, reset)
 
 
+def _handle_recover_mixed_adjudication(
+    state: PrReviewState, event: PrReviewEvent
+) -> TransitionResult:
+    assert isinstance(event, RecoverMixedAdjudicationRequested)
+    if not isinstance(state, WaitingForUserState):
+        return _reject(state, event, RejectionCode.UNSUPPORTED_TRANSITION)
+    evidence = state.adjudication
+    if not is_legacy_mixed_adjudication_defect(evidence):
+        return _reject(state, event, RejectionCode.INVALID_THREAD_COVERAGE)
+    if event.legacy_result_ref_sha256 != evidence.result_ref.sha256:
+        return _reject(
+            state,
+            event,
+            RejectionCode.MISMATCHED_OUTCOME_BINDING,
+            detail="legacy result ref digest must match adjudication.result_ref",
+        )
+    if state.active_effect is None or not state.remaining_replies:
+        return _reject(state, event, RejectionCode.INVALID_THREAD_COVERAGE)
+    head = state.remaining_replies[0]
+    if (
+        state.active_effect.thread_id != head.thread_id
+        or state.active_effect.reply_ref != head.reply_ref
+    ):
+        return _reject(state, event, RejectionCode.MISMATCHED_OUTCOME_BINDING)
+    if state.active_effect.effect_id != event.superseded_reply_effect_id:
+        return _reject(
+            state,
+            event,
+            RejectionCode.MISMATCHED_OUTCOME_BINDING,
+            detail="superseded reply effect id must match active reply effect",
+        )
+    frozen = evidence.frozen
+    if (
+        frozen.head_sha != state.binding.head_sha
+        or frozen.cycle_number != state.cycle_number
+        or frozen.trigger_marker != state.trigger_evidence.marker
+    ):
+        return _reject(state, event, RejectionCode.STALE_HEAD_SHA)
+    target = f"recover-mixed:{evidence.result_ref.sha256}"
+    adj_id, adj_idem = stable_effect_ids(
+        run_id=state.run_id,
+        cycle_number=state.cycle_number,
+        operation="adjudicate_threads",
+        target=target,
+    )
+    adjudicate = AdjudicateThreadsEffect(
+        effect_id=adj_id,
+        idempotency_key=adj_idem,
+        run_id=state.run_id,
+        cycle_number=state.cycle_number,
+        attempt=1,
+        max_attempts=state.limits.github_max_attempts_per_batch,
+        repository=state.binding.repository,
+        bound_head_sha=state.binding.head_sha,
+        binding=state.binding,
+        frozen_thread_ids=frozen.thread_ids,
+        snapshot_ref=frozen.snapshot_ref,
+        execution_context_ref=_execution_context_ref(state),
+    )
+    adjudicating = AdjudicatingState(
+        run_id=state.run_id,
+        origin=state.origin,
+        limits=state.limits,
+        binding=state.binding,
+        cycle_number=state.cycle_number,
+        entered_at=event.occurred_at,
+        frozen=frozen,
+        trigger_evidence=state.trigger_evidence,
+        active_effect=adjudicate,
+    )
+    return _apply(adjudicating, adjudicate)
+
+
 def _handle_user_continuation(state: PrReviewState, event: PrReviewEvent) -> TransitionResult:
     assert isinstance(event, UserContinuationRequested)
     if not isinstance(state, WaitingForUserState):
@@ -670,9 +752,50 @@ def _handle_user_continuation(state: PrReviewState, event: PrReviewEvent) -> Tra
     if (
         evidence.repository != state.binding.repository
         or evidence.pr_number != state.binding.pr_number
-        or evidence.cycle_number != state.cycle_number
         or evidence.head_sha != state.binding.head_sha
     ):
+        return _reject(state, event, RejectionCode.INVALID_USER_CONTINUATION)
+    if state.deferred_context is not None:
+        if evidence.cycle_number != state.cycle_number:
+            return _reject(state, event, RejectionCode.INVALID_USER_CONTINUATION)
+        if state.cycle_number >= state.limits.max_external_cycles:
+            return _apply(
+                PausedState(
+                    run_id=state.run_id,
+                    origin=state.origin,
+                    limits=state.limits,
+                    cycle_number=state.cycle_number,
+                    reason=PauseReasonKind.EXTERNAL_CYCLE_LIMIT_REACHED,
+                    safe_action=SafeAction(
+                        kind=SafeActionKind.OPEN_NEW_CYCLE_OR_STOP,
+                        condition="external cycle limit reached after deferred replies",
+                    ),
+                    safe_summary="external cycle limit reached",
+                    paused_at=event.occurred_at,
+                    binding=state.binding,
+                    resumable=None,
+                )
+            )
+        next_cycle = state.cycle_number + 1
+        request = _make_request_bot_review(
+            run_id=state.run_id,
+            cycle=next_cycle,
+            binding=state.binding,
+            max_attempts=state.limits.github_max_attempts_per_batch,
+        )
+        new_state = WaitingForBotState(
+            run_id=state.run_id,
+            origin=state.origin,
+            limits=state.limits,
+            binding=state.binding,
+            cycle_number=next_cycle,
+            entered_at=event.occurred_at,
+            poll_sequence=1,
+            active_effect=request,
+            trigger_evidence=None,
+        )
+        return _apply(new_state, request)
+    if evidence.cycle_number != state.cycle_number:
         return _reject(state, event, RejectionCode.INVALID_USER_CONTINUATION)
     if state.trigger_evidence is None:
         return _reject(state, event, RejectionCode.MISSING_TRIGGER_EVIDENCE)
@@ -1005,16 +1128,61 @@ def _handle_success_waiting_for_bot(
 
 
 def _reply_intents_from_evidence(evidence: AdjudicationEvidence) -> tuple[ReplyIntent, ...]:
-    intents: list[ReplyIntent] = []
-    for decision in evidence.decisions:
-        if decision.decision in {
-            AdjudicationDecisionKind.NOT_APPLICABLE,
-            AdjudicationDecisionKind.UNCERTAIN,
-        }:
-            if decision.reply_ref is None:
-                return ()
-            intents.append(ReplyIntent(thread_id=decision.thread_id, reply_ref=decision.reply_ref))
-    return tuple(intents)
+    return deferred_reply_intents_from_evidence(evidence)
+
+
+def _waiting_for_user_with_replies(
+    *,
+    run_id: str,
+    origin: PrReviewOrigin,
+    limits: WorkflowLimits,
+    binding: PullRequestBinding,
+    cycle_number: int,
+    entered_at: UtcInstant,
+    adjudication: AdjudicationEvidence,
+    replies: tuple[ReplyIntent, ...],
+    trigger_evidence: TriggerEvidence,
+    max_attempts: int,
+    deferred_context: DeferredReplyContext | None = None,
+) -> TransitionResult:
+    head = replies[0]
+    reply_id, reply_idem = stable_effect_ids(
+        run_id=run_id,
+        cycle_number=cycle_number,
+        operation="post_thread_reply",
+        target=head.thread_id,
+    )
+    reply = PostThreadReplyEffect(
+        effect_id=reply_id,
+        idempotency_key=reply_idem,
+        run_id=run_id,
+        cycle_number=cycle_number,
+        attempt=1,
+        max_attempts=max_attempts,
+        repository=binding.repository,
+        bound_head_sha=binding.head_sha,
+        binding=binding,
+        thread_id=head.thread_id,
+        reply_ref=head.reply_ref,
+    )
+    waiting_user = WaitingForUserState(
+        run_id=run_id,
+        origin=origin,
+        limits=limits,
+        binding=binding,
+        cycle_number=cycle_number,
+        entered_at=entered_at,
+        adjudication=adjudication,
+        remaining_replies=replies,
+        active_effect=reply,
+        safe_action=SafeAction(
+            kind=SafeActionKind.CONTINUE_AFTER_USER_REPLY,
+            condition="post remaining replies then continue observation",
+        ),
+        trigger_evidence=trigger_evidence,
+        deferred_context=deferred_context,
+    )
+    return _apply(waiting_user, reply)
 
 
 def _handle_success_adjudicating(
@@ -1042,13 +1210,11 @@ def _handle_success_adjudicating(
     if set(evidence.frozen.thread_ids) != set(state.frozen.thread_ids):
         return _reject(state, event, RejectionCode.INVALID_THREAD_COVERAGE)
     max_attempts = state.limits.github_max_attempts_per_batch
-    all_actionable = all(
-        item.decision is AdjudicationDecisionKind.ACTIONABLE for item in evidence.decisions
-    )
-    if all_actionable:
+    actionable_ids = actionable_thread_ids_from_evidence(evidence)
+    if actionable_ids:
         if evidence.fix_prompt_ref is None:
             return _reject(state, event, RejectionCode.MISMATCHED_OUTCOME_BINDING)
-        thread_ids = tuple(item.thread_id for item in evidence.decisions)
+        deferred = deferred_reply_intents_from_evidence(evidence)
         fix_id, fix_idem = stable_effect_ids(
             run_id=state.run_id, cycle_number=state.cycle_number, operation="run_local_fix"
         )
@@ -1062,7 +1228,7 @@ def _handle_success_adjudicating(
             repository=state.binding.repository,
             bound_head_sha=state.binding.head_sha,
             binding=state.binding,
-            actionable_thread_ids=thread_ids,
+            actionable_thread_ids=actionable_ids,
             fix_prompt_ref=evidence.fix_prompt_ref,
             execution_context_ref=_execution_context_ref(state),
         )
@@ -1073,37 +1239,18 @@ def _handle_success_adjudicating(
             binding=state.binding,
             cycle_number=state.cycle_number,
             entered_at=event.occurred_at,
-            actionable_thread_ids=thread_ids,
+            actionable_thread_ids=actionable_ids,
             fix_prompt_ref=evidence.fix_prompt_ref,
             active_effect=local,
             trigger_evidence=state.trigger_evidence,
             adjudication=evidence,
+            deferred_replies=deferred,
         )
         return _apply(running, local)
     replies = _reply_intents_from_evidence(evidence)
     if not replies:
         return _reject(state, event, RejectionCode.INVALID_THREAD_COVERAGE)
-    head = replies[0]
-    reply_id, reply_idem = stable_effect_ids(
-        run_id=state.run_id,
-        cycle_number=state.cycle_number,
-        operation="post_thread_reply",
-        target=head.thread_id,
-    )
-    reply = PostThreadReplyEffect(
-        effect_id=reply_id,
-        idempotency_key=reply_idem,
-        run_id=state.run_id,
-        cycle_number=state.cycle_number,
-        attempt=1,
-        max_attempts=max_attempts,
-        repository=state.binding.repository,
-        bound_head_sha=state.binding.head_sha,
-        binding=state.binding,
-        thread_id=head.thread_id,
-        reply_ref=head.reply_ref,
-    )
-    waiting_user = WaitingForUserState(
+    return _waiting_for_user_with_replies(
         run_id=state.run_id,
         origin=state.origin,
         limits=state.limits,
@@ -1111,15 +1258,10 @@ def _handle_success_adjudicating(
         cycle_number=state.cycle_number,
         entered_at=event.occurred_at,
         adjudication=evidence,
-        remaining_replies=replies,
-        active_effect=reply,
-        safe_action=SafeAction(
-            kind=SafeActionKind.CONTINUE_AFTER_USER_REPLY,
-            condition="post remaining replies then continue observation",
-        ),
+        replies=replies,
         trigger_evidence=state.trigger_evidence,
+        max_attempts=max_attempts,
     )
-    return _apply(waiting_user, reply)
 
 
 def _handle_success_waiting_for_user(
@@ -1251,6 +1393,8 @@ def _handle_success_local_fix(
         step=PublicationStep.GENERATE_PUBLICATION_TEXT,
         active_effect=gen,
         trigger_evidence=state.trigger_evidence,
+        deferred_replies=state.deferred_replies,
+        adjudication=state.adjudication if state.deferred_replies else None,
     )
     return _apply(new_state, gen)
 
@@ -1258,6 +1402,29 @@ def _handle_success_local_fix(
 def _advance_after_fix_publication(
     state: PublishingFixState, event: EffectSucceeded
 ) -> TransitionResult:
+    if state.deferred_replies:
+        if state.adjudication is None or state.new_head_sha is None:
+            return _reject(state, event, RejectionCode.INVARIANT_VIOLATION)
+        binding = state.binding.model_copy(update={"head_sha": state.new_head_sha})
+        deferred_context = DeferredReplyContext(
+            adjudication=state.adjudication,
+            trigger_evidence=state.trigger_evidence,
+            source_cycle_number=state.cycle_number,
+            source_head_sha=state.old_head_sha,
+        )
+        return _waiting_for_user_with_replies(
+            run_id=state.run_id,
+            origin=state.origin,
+            limits=state.limits,
+            binding=binding,
+            cycle_number=state.cycle_number,
+            entered_at=event.occurred_at,
+            adjudication=state.adjudication,
+            replies=state.deferred_replies,
+            trigger_evidence=state.trigger_evidence,
+            max_attempts=state.limits.github_max_attempts_per_batch,
+            deferred_context=deferred_context,
+        )
     if state.cycle_number >= state.limits.max_external_cycles:
         return _apply(
             PausedState(
@@ -1696,6 +1863,9 @@ def _build_registry() -> dict[tuple[str, str], Handler]:
     registry[("waiting_retry", "retry_due")] = _handle_retry_due
     registry[("paused", "resume_requested")] = _handle_resume
     registry[("waiting_for_user", "user_continuation_requested")] = _handle_user_continuation
+    registry[("waiting_for_user", "recover_mixed_adjudication_requested")] = (
+        _handle_recover_mixed_adjudication
+    )
 
     for sk in STATE_KINDS:
         if sk not in TERMINAL_STATE_KINDS:

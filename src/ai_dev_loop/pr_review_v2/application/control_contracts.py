@@ -53,6 +53,7 @@ class SafeNextAction(StrEnum):
     START = "start"
     RESUME = "resume"
     RESUME_CONFIRM_USER_CONTINUATION = "resume --confirm-user-continuation"
+    RESUME_RECOVER_MIXED_ADJUDICATION = "resume --recover-mixed-adjudication"
     WAIT_UNTIL = "wait-until"
     INSPECT_PROTECTED_FAILURE = "inspect-protected-failure"
     NONE = "none"
@@ -156,6 +157,9 @@ class ControlStatus(AppModel):
     engine_next_action: NextActionCategory
     next_action: SafeNextAction
     recent_history: tuple[HistoryEntry, ...] = ()
+    adjudication_decision_total: PositiveInt | None = None
+    adjudication_actionable_count: int | None = None
+    adjudication_deferred_reply_count: int | None = None
 
 
 class HistoryResult(AppModel):
@@ -180,6 +184,21 @@ class OperatorContinuationArtifact(AppModel):
     confirmation_kind: Literal["explicit_flag"] = "explicit_flag"
 
 
+class MixedAdjudicationRecoveryArtifact(AppModel):
+    schema_name: Literal["ai_dev_loop.pr_review_v2.mixed_adjudication_recovery"] = (
+        "ai_dev_loop.pr_review_v2.mixed_adjudication_recovery"
+    )
+    schema_version: Literal[1] = 1
+    run_id: NonEmptyId
+    repository: NonEmptyStr
+    pr_number: PositiveInt
+    cycle_number: PositiveInt
+    head_sha: NonEmptyStr
+    legacy_result_ref_sha256: Sha256Hex
+    requested_at: UtcInstant
+    confirmation_kind: Literal["recover_mixed_adjudication"] = "recover_mixed_adjudication"
+
+
 DEFAULT_HISTORY_LIMIT = 50
 HARD_HISTORY_MAX = 200
 
@@ -193,6 +212,7 @@ __all__ = [
     "HARD_HISTORY_MAX",
     "HistoryEntry",
     "HistoryResult",
+    "MixedAdjudicationRecoveryArtifact",
     "OperatorContinuationArtifact",
     "OriginKind",
     "PrepareCreateResult",

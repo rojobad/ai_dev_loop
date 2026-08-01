@@ -126,8 +126,27 @@ def test_adjudication_coverage_and_reply_shapes() -> None:
                 ),
             ),
             result_ref=artifact("r.json"),
-            fix_prompt_ref=artifact("fix.txt"),  # forbidden on reply path
+            fix_prompt_ref=artifact("fix.txt"),  # forbidden on reply-only path
         )
+    mixed = AdjudicationEvidence(
+        frozen=frozen,
+        decisions=(
+            ThreadDecisionRecord(
+                thread_id="t1",
+                decision=AdjudicationDecisionKind.ACTIONABLE,
+                safe_summary="a",
+            ),
+            ThreadDecisionRecord(
+                thread_id="t2",
+                decision=AdjudicationDecisionKind.NOT_APPLICABLE,
+                safe_summary="b",
+                reply_ref=artifact("reply-b.txt"),
+            ),
+        ),
+        result_ref=artifact("r.json"),
+        fix_prompt_ref=artifact("fix.txt"),
+    )
+    assert mixed.fix_prompt_ref is not None
 
 
 def test_models_are_frozen_and_forbid_extras() -> None:

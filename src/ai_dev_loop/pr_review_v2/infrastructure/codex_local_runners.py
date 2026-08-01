@@ -520,8 +520,8 @@ def _adjudication_wrapper_prompt(
         'If decision == "actionable", reply_body must be null.\n'
         'If decision is "not_applicable" or "uncertain", reply_body must be a '
         "non-empty string.\n"
-        "If every decision is actionable, fix_prompt_text must be a non-empty string.\n"
-        "If any decision is non-actionable, fix_prompt_text must be null.\n"
+        "If any decision is actionable, fix_prompt_text must be a non-empty string.\n"
+        "If no decision is actionable, fix_prompt_text must be null.\n"
         "Return schema-constrained JSON only.\n"
     )
 

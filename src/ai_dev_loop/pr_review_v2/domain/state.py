@@ -9,6 +9,7 @@ from pydantic import Field, PositiveInt, TypeAdapter, model_validator
 from ai_dev_loop.pr_review_v2.domain.common import (
     AdjudicationEvidence,
     ArtifactRef,
+    DeferredReplyContext,
     DomainModel,
     ErrorSummary,
     ExistingPrOrigin,
@@ -261,15 +262,31 @@ class WaitingForUserState(DomainModel):
     active_effect: PostThreadReplyEffect | None
     safe_action: SafeAction
     trigger_evidence: TriggerEvidence
+    deferred_context: DeferredReplyContext | None = None
 
     @model_validator(mode="after")
     def validate_reply_queue(self) -> WaitingForUserState:
-        if self.adjudication.frozen.head_sha != self.binding.head_sha:
-            raise ValueError("adjudication frozen head must match binding")
-        if self.adjudication.frozen.cycle_number != self.cycle_number:
-            raise ValueError("adjudication frozen cycle must match state")
-        if self.trigger_evidence.head_sha != self.binding.head_sha:
-            raise ValueError("trigger evidence head_sha must match binding")
+        if self.deferred_context is not None:
+            ctx = self.deferred_context
+            if self.adjudication != ctx.adjudication:
+                raise ValueError("deferred waiting state adjudication must match deferred_context")
+            if self.trigger_evidence != ctx.trigger_evidence:
+                raise ValueError(
+                    "deferred waiting state trigger_evidence must match deferred_context"
+                )
+            if self.cycle_number != ctx.source_cycle_number:
+                raise ValueError("deferred waiting state cycle must match source_cycle_number")
+            if self.binding.head_sha == ctx.source_head_sha:
+                raise ValueError("deferred replies require post-publication binding head")
+            if ctx.adjudication.frozen.head_sha != ctx.source_head_sha:
+                raise ValueError("deferred adjudication must remain bound to source head")
+        else:
+            if self.adjudication.frozen.head_sha != self.binding.head_sha:
+                raise ValueError("adjudication frozen head must match binding")
+            if self.adjudication.frozen.cycle_number != self.cycle_number:
+                raise ValueError("adjudication frozen cycle must match state")
+            if self.trigger_evidence.head_sha != self.binding.head_sha:
+                raise ValueError("trigger evidence head_sha must match binding")
         if self.active_effect is None:
             if self.remaining_replies:
                 raise ValueError("remaining replies require an active reply effect")
@@ -306,6 +323,7 @@ class RunningLocalFixState(DomainModel):
     active_effect: RunLocalFixEffect
     trigger_evidence: TriggerEvidence
     adjudication: AdjudicationEvidence
+    deferred_replies: tuple[ReplyIntent, ...] = ()
 
     @model_validator(mode="after")
     def validate_local_fix(self) -> RunningLocalFixState:
@@ -324,6 +342,9 @@ class RunningLocalFixState(DomainModel):
             raise ValueError("adjudication fix_prompt_ref must match state")
         if self.trigger_evidence.head_sha != self.binding.head_sha:
             raise ValueError("trigger evidence head_sha must match binding")
+        deferred_ids = {item.thread_id for item in self.deferred_replies}
+        if deferred_ids & set(self.actionable_thread_ids):
+            raise ValueError("deferred replies must not overlap actionable thread IDs")
         return self
 
 
@@ -346,9 +367,15 @@ class PublishingFixState(DomainModel):
     commit_message_ref: ArtifactRef | None = None
     commit_sha: GitSha40 | None = None
     trigger_evidence: TriggerEvidence
+    deferred_replies: tuple[ReplyIntent, ...] = ()
+    adjudication: AdjudicationEvidence | None = None
 
     @model_validator(mode="after")
     def validate_progress(self) -> PublishingFixState:
+        if self.deferred_replies and self.adjudication is None:
+            raise ValueError("deferred replies require adjudication evidence")
+        if self.adjudication is not None and not self.deferred_replies:
+            raise ValueError("adjudication evidence requires deferred replies")
         if self.trigger_evidence.head_sha != self.old_head_sha:
             raise ValueError("trigger evidence must bind the pre-fix head SHA")
         if self.step is PublicationStep.COMPLETE:
