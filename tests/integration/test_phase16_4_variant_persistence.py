@@ -43,6 +43,7 @@ from ai_dev_loop.pr_review_v2.domain import (
     PrTextUpdatedOutcome,
     PullRequestBinding,
     PushConfirmedOutcome,
+    RecoverMixedAdjudicationRequested,
     RepositoryIdentity,
     ResumeRequested,
     RetryDue,
@@ -297,6 +298,12 @@ def test_every_event_variant_persists_and_reloads(
                 head_sha=SHA_B,
                 evidence_ref=artifact("u.json"),
             ),
+        ),
+        "recover_mixed_adjudication_requested": RecoverMixedAdjudicationRequested(
+            occurred_at=clock.now(),
+            evidence_ref=artifact("recover-mixed.json"),
+            legacy_result_ref_sha256=HASH_2,
+            superseded_reply_effect_id=pub_effect.effect_id,
         ),
         "effect_succeeded": EffectSucceeded(
             occurred_at=clock.now(),

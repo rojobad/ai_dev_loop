@@ -394,17 +394,30 @@ class AdjudicationEvidence(DomainModel):
             raise ValueError("adjudication decisions must have unique thread IDs")
         if set(decision_ids) != set(self.frozen.thread_ids):
             raise ValueError("adjudication must cover exactly the frozen thread set")
-        all_actionable = all(
+        has_actionable = any(
             item.decision is AdjudicationDecisionKind.ACTIONABLE for item in self.decisions
         )
-        if all_actionable:
+        is_legacy_mixed_defect = is_legacy_mixed_adjudication_defect(self)
+        if has_actionable and not is_legacy_mixed_defect:
             if self.fix_prompt_ref is None:
-                raise ValueError("all-actionable adjudication requires fix_prompt_ref")
-            if any(item.reply_ref is not None for item in self.decisions):
-                raise ValueError("all-actionable adjudication forbids reply_ref values")
-        else:
+                raise ValueError("actionable adjudication requires fix_prompt_ref")
+            for item in self.decisions:
+                if item.decision is AdjudicationDecisionKind.ACTIONABLE:
+                    if item.reply_ref is not None:
+                        raise ValueError("actionable decisions must not carry reply_ref")
+                elif item.reply_ref is None:
+                    raise ValueError(
+                        "not_applicable/uncertain decisions require a reply artifact ref"
+                    )
+        elif not has_actionable:
             if self.fix_prompt_ref is not None:
-                raise ValueError("non-actionable adjudication forbids fix_prompt_ref")
+                raise ValueError("reply-only adjudication forbids fix_prompt_ref")
+            for item in self.decisions:
+                if item.reply_ref is None:
+                    raise ValueError(
+                        "not_applicable/uncertain decisions require a reply artifact ref"
+                    )
+        else:
             for item in self.decisions:
                 if item.decision is AdjudicationDecisionKind.ACTIONABLE:
                     if item.reply_ref is not None:
@@ -416,9 +429,80 @@ class AdjudicationEvidence(DomainModel):
         return self
 
 
+def actionable_thread_ids_from_evidence(evidence: AdjudicationEvidence) -> tuple[ThreadId, ...]:
+    actionable = {
+        item.thread_id
+        for item in evidence.decisions
+        if item.decision is AdjudicationDecisionKind.ACTIONABLE
+    }
+    return tuple(tid for tid in evidence.frozen.thread_ids if tid in actionable)
+
+
+def deferred_reply_intents_from_evidence(evidence: AdjudicationEvidence) -> tuple[ReplyIntent, ...]:
+    by_id = {item.thread_id: item for item in evidence.decisions}
+    intents: list[ReplyIntent] = []
+    for thread_id in evidence.frozen.thread_ids:
+        decision = by_id[thread_id]
+        if decision.decision in {
+            AdjudicationDecisionKind.NOT_APPLICABLE,
+            AdjudicationDecisionKind.UNCERTAIN,
+        }:
+            if decision.reply_ref is None:
+                return ()
+            intents.append(ReplyIntent(thread_id=thread_id, reply_ref=decision.reply_ref))
+    return tuple(intents)
+
+
+def is_legacy_mixed_adjudication_defect(evidence: AdjudicationEvidence) -> bool:
+    has_actionable = any(
+        item.decision is AdjudicationDecisionKind.ACTIONABLE for item in evidence.decisions
+    )
+    has_reply = any(
+        item.decision
+        in {AdjudicationDecisionKind.NOT_APPLICABLE, AdjudicationDecisionKind.UNCERTAIN}
+        for item in evidence.decisions
+    )
+    return has_actionable and has_reply and evidence.fix_prompt_ref is None
+
+
+class AdjudicationDecisionSummary(DomainModel):
+    total: PositiveInt
+    actionable: int
+    deferred_replies: int
+
+
+def adjudication_decision_summary(evidence: AdjudicationEvidence) -> AdjudicationDecisionSummary:
+    actionable = len(actionable_thread_ids_from_evidence(evidence))
+    deferred = len(deferred_reply_intents_from_evidence(evidence))
+    return AdjudicationDecisionSummary(
+        total=len(evidence.decisions),
+        actionable=actionable,
+        deferred_replies=deferred,
+    )
+
+
 class ReplyIntent(DomainModel):
     thread_id: ThreadId
     reply_ref: ArtifactRef
+
+
+class DeferredReplyContext(DomainModel):
+    """Immutable deferred-reply provenance after fix publication."""
+
+    adjudication: AdjudicationEvidence
+    trigger_evidence: TriggerEvidence
+    source_cycle_number: PositiveInt
+    source_head_sha: GitSha40
+
+    @model_validator(mode="after")
+    def validate_provenance(self) -> DeferredReplyContext:
+        if self.adjudication.frozen.head_sha != self.source_head_sha:
+            raise ValueError("deferred adjudication frozen head must match source_head_sha")
+        if self.adjudication.frozen.cycle_number != self.source_cycle_number:
+            raise ValueError("deferred adjudication frozen cycle must match source_cycle_number")
+        if self.trigger_evidence.head_sha != self.source_head_sha:
+            raise ValueError("deferred trigger evidence must match source_head_sha")
+        return self
 
 
 class UserContinuationEvidence(DomainModel):

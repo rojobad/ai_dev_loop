@@ -376,23 +376,24 @@ class ExternalAdjudicationResultArtifact(AppModel):
             raise ValueError("decisions must cover exactly the frozen thread set")
         if len(self.frozen_thread_ids) != len(set(self.frozen_thread_ids)):
             raise ValueError("frozen_thread_ids must be unique")
-        all_actionable = all(
+        has_actionable = any(
             item.decision is AdjudicationDecisionKind.ACTIONABLE for item in self.decisions
         )
-        if all_actionable:
+        if has_actionable:
             if not self.fix_prompt_text or not self.fix_prompt_text.strip():
-                raise ValueError("all-actionable adjudication requires fix_prompt_text")
-            if any(item.reply_body is not None for item in self.decisions):
-                raise ValueError("all-actionable adjudication forbids reply_body values")
-        else:
-            if self.fix_prompt_text is not None:
-                raise ValueError("non-all-actionable adjudication forbids fix_prompt_text")
+                raise ValueError("actionable adjudication requires fix_prompt_text")
             for item in self.decisions:
                 if item.decision is AdjudicationDecisionKind.ACTIONABLE:
                     if item.reply_body is not None:
                         raise ValueError("actionable decisions must not carry reply_body")
                 elif item.reply_body is None or not item.reply_body.strip():
                     raise ValueError("non-actionable decisions require reply_body")
+        else:
+            if self.fix_prompt_text is not None:
+                raise ValueError("reply-only adjudication forbids fix_prompt_text")
+            for item in self.decisions:
+                if item.reply_body is None or not item.reply_body.strip():
+                    raise ValueError("reply-only decisions require reply_body")
         return self
 
 

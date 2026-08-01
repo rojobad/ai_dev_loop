@@ -522,7 +522,14 @@ def pr_review_resume_command(
         bool,
         typer.Option(
             "--confirm-user-continuation",
-            help="Required when state is waiting_for_user.",
+            help="Required when state is waiting_for_user after replies complete.",
+        ),
+    ] = False,
+    recover_mixed_adjudication: Annotated[
+        bool,
+        typer.Option(
+            "--recover-mixed-adjudication",
+            help="Re-adjudicate legacy mixed batches missing a fix prompt (no GitHub write).",
         ),
     ] = False,
 ) -> None:
@@ -532,7 +539,11 @@ def pr_review_resume_command(
         from ai_dev_loop.commands.pr_review_v2 import resume_run
 
         typer.echo(
-            resume_run(run_id, confirm_user_continuation=confirm_user_continuation),
+            resume_run(
+                run_id,
+                confirm_user_continuation=confirm_user_continuation,
+                recover_mixed_adjudication=recover_mixed_adjudication,
+            ),
             nl=False,
         )
 

@@ -619,6 +619,52 @@ class SqlitePrReviewStore:
             ),
         )
 
+    def supersede_pending_dispatch(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        effect_id: str,
+        now: datetime,
+    ) -> bool:
+        """Mark the sole live pending dispatch as superseded when it matches effect_id."""
+
+        row = conn.execute(
+            """
+            SELECT dispatch_id, effect_id, status
+            FROM pr_review_effects
+            WHERE run_id = ? AND status IN (?, ?)
+            LIMIT 1
+            """,
+            (
+                run_id,
+                DispatchStatus.PENDING.value,
+                DispatchStatus.CLAIMED.value,
+            ),
+        ).fetchone()
+        if row is None:
+            return False
+        if row["effect_id"] != effect_id:
+            return False
+        if row["status"] != DispatchStatus.PENDING.value:
+            return False
+        updated = conn.execute(
+            """
+            UPDATE pr_review_effects
+            SET status = ?, updated_at = ?,
+                claim_id = NULL, claim_owner_id = NULL,
+                claim_lease_generation = NULL, claimed_at = NULL
+            WHERE dispatch_id = ? AND status = ?
+            """,
+            (
+                DispatchStatus.SUPERSEDED.value,
+                encode_utc_instant(now),
+                row["dispatch_id"],
+                DispatchStatus.PENDING.value,
+            ),
+        )
+        return updated.rowcount == 1
+
     def cancel_live_work(
         self,
         conn: sqlite3.Connection,

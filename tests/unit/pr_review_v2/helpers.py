@@ -172,6 +172,64 @@ def reply_adjudication(frozen: FrozenThreadSet) -> AdjudicationEvidence:
     )
 
 
+def mixed_adjudication(frozen: FrozenThreadSet) -> AdjudicationEvidence:
+    """Modern mixed batch: actionable threads plus deferred replies and fix prompt."""
+    decisions: list[ThreadDecisionRecord] = []
+    for i, tid in enumerate(frozen.thread_ids):
+        if i == 0:
+            decisions.append(
+                ThreadDecisionRecord(
+                    thread_id=tid,
+                    decision=AdjudicationDecisionKind.NOT_APPLICABLE,
+                    safe_summary=f"reply {tid}",
+                    reply_ref=artifact(f"artifacts/reply-{tid}.txt", HASH_3),
+                )
+            )
+        else:
+            decisions.append(
+                ThreadDecisionRecord(
+                    thread_id=tid,
+                    decision=AdjudicationDecisionKind.ACTIONABLE,
+                    safe_summary=f"fix {tid}",
+                )
+            )
+    return AdjudicationEvidence(
+        frozen=frozen,
+        decisions=tuple(decisions),
+        result_ref=artifact("artifacts/adjudication-mixed.json"),
+        fix_prompt_ref=artifact("artifacts/fix-prompt-mixed.txt", HASH_2),
+    )
+
+
+def legacy_mixed_defect_adjudication(frozen: FrozenThreadSet) -> AdjudicationEvidence:
+    """Legacy defect shape: actionable + reply without fix_prompt_ref."""
+    decisions: list[ThreadDecisionRecord] = []
+    for i, tid in enumerate(frozen.thread_ids):
+        if i == 0:
+            decisions.append(
+                ThreadDecisionRecord(
+                    thread_id=tid,
+                    decision=AdjudicationDecisionKind.NOT_APPLICABLE,
+                    safe_summary=f"reply {tid}",
+                    reply_ref=artifact(f"artifacts/reply-{tid}.txt", HASH_3),
+                )
+            )
+        else:
+            decisions.append(
+                ThreadDecisionRecord(
+                    thread_id=tid,
+                    decision=AdjudicationDecisionKind.ACTIONABLE,
+                    safe_summary=f"fix {tid}",
+                )
+            )
+    return AdjudicationEvidence(
+        frozen=frozen,
+        decisions=tuple(decisions),
+        result_ref=artifact("artifacts/adjudication-legacy.json", HASH_2),
+        fix_prompt_ref=None,
+    )
+
+
 def drive_fix_publication(state, effects):
     """From publishing_fix generate_publication_text through resolve/cycle advance."""
     state, effects = succeed(state, effects[0], publication_text_outcome())

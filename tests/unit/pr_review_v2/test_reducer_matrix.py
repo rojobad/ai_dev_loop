@@ -7,6 +7,7 @@ import json
 import pytest
 from pydantic import ValidationError
 from tests.unit.pr_review_v2.helpers import (
+    HASH_2,
     SHA_A,
     SHA_B,
     T1,
@@ -39,6 +40,7 @@ from ai_dev_loop.pr_review_v2.domain import (
     LocalFixFinishedOutcome,
     LocalFixOutcomeKind,
     PauseReasonKind,
+    RecoverMixedAdjudicationRequested,
     RejectionCode,
     ResumeRequested,
     RetryDue,
@@ -201,6 +203,14 @@ def _event_for(state_kind: str, event_kind: str, state, prepared_source):
                 head_sha=binding.head_sha if binding else SHA_A,
                 evidence_ref=artifact("u.json"),
             ),
+        )
+    if event_kind == "recover_mixed_adjudication_requested":
+        effect = active_effect(state)
+        return RecoverMixedAdjudicationRequested(
+            occurred_at=T1,
+            evidence_ref=artifact("recover-mixed.json"),
+            legacy_result_ref_sha256=HASH_2,
+            superseded_reply_effect_id=effect.effect_id if effect is not None else "effect-reply",
         )
     if event_kind == "abort_requested":
         return AbortRequested(occurred_at=T1)

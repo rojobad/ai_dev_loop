@@ -117,7 +117,7 @@ ai_dev_loop pr-review prepare --repo OWNER/REPO --pr N \
 ai_dev_loop pr-review start <run-id>
 ai_dev_loop pr-review status <run-id> [--output text|json]
 ai_dev_loop pr-review history <run-id> [--limit N] [--newest] [--output text|json]
-ai_dev_loop pr-review resume <run-id> [--confirm-user-continuation]
+ai_dev_loop pr-review resume <run-id> [--confirm-user-continuation] [--recover-mixed-adjudication]
 ai_dev_loop pr-review abort <run-id>
 ```
 
@@ -139,8 +139,11 @@ Contrato de seguridad:
   ai_dev_loop.pr_review_v2_supervisor_worker`) con metadata de ownership. Si el
   spawn falla, reporta `spawn_failed` y no inventa un proceso vivo.
 - `resume` en `waiting_for_user` exige `--confirm-user-continuation` y evidencia
-  de operador protegida; no dispara timers futuros. Repara solo el supervisor
-  cuando el estado ya es activo.
+  de operador protegida cuando los replies ya terminaron; no dispara timers futuros.
+  Los lotes mixtos legacy sin fix prompt (actionable + reply, sin
+  `fix_prompt_ref`) exigen `--recover-mixed-adjudication`, que re-adjudica sobre
+  el snapshot congelado original sin escribir en GitHub ni reescribir SQLite.
+  Repara solo el supervisor cuando el estado ya es activo.
 - `status` marca acciones de resume solo cuando el run es no terminal, el
   supervisor no esta vivo y el lease anterior ya expiro. Un claim mutante
   expirado se reconcilia antes de cualquier reintento de escritura.

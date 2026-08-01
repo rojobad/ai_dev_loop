@@ -531,6 +531,12 @@ def status_run(run_id: str, *, output: str = "text") -> str:
         lines.append(f"pr: {status.pr_number}")
     if status.active_effect_kind:
         lines.append(f"active_effect: {status.active_effect_kind}")
+    if status.adjudication_decision_total is not None:
+        lines.append(f"decisions: total={status.adjudication_decision_total}")
+        lines.append(
+            f"decisions: actionable={status.adjudication_actionable_count or 0} "
+            f"deferred_replies={status.adjudication_deferred_reply_count or 0}"
+        )
     if status.last_error_summary:
         lines.append(f"last_error: {status.last_error_summary}")
     return "\n".join(lines) + "\n"
@@ -557,7 +563,12 @@ def history_run(
     return "\n".join(lines) + "\n"
 
 
-def resume_run(run_id: str, *, confirm_user_continuation: bool = False) -> str:
+def resume_run(
+    run_id: str,
+    *,
+    confirm_user_continuation: bool = False,
+    recover_mixed_adjudication: bool = False,
+) -> str:
     from ai_dev_loop.pr_review_v2.workers.spawn import spawn_detached_supervisor
 
     engine = _open_engine()
@@ -576,7 +587,11 @@ def resume_run(run_id: str, *, confirm_user_continuation: bool = False) -> str:
         spawner=_spawn,
     )
     try:
-        result = control.resume(run_id, confirm_user_continuation=confirm_user_continuation)
+        result = control.resume(
+            run_id,
+            confirm_user_continuation=confirm_user_continuation,
+            recover_mixed_adjudication=recover_mixed_adjudication,
+        )
     except ControlError as exc:
         raise ValidationError(exc.safe_message) from exc
     return (

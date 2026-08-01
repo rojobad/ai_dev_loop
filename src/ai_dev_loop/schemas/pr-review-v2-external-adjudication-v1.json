@@ -27,7 +27,7 @@
       }
     },
     "fix_prompt_text": {
-      "description": "non-empty string when every decision is actionable; null when any decision is non-actionable",
+      "description": "non-empty string when any decision is actionable; null when no decision is actionable",
       "type": ["string", "null"]
     }
   }

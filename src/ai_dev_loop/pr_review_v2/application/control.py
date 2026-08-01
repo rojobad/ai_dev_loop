@@ -6,6 +6,7 @@ import secrets
 from collections.abc import Callable
 
 from ai_dev_loop.pr_review_v2.application.contracts import (
+    DispatchStatus,
     EventDisposition,
     EventSubmission,
     NextActionCategory,
@@ -19,6 +20,7 @@ from ai_dev_loop.pr_review_v2.application.control_contracts import (
     ControlStatus,
     HistoryEntry,
     HistoryResult,
+    MixedAdjudicationRecoveryArtifact,
     OperatorContinuationArtifact,
     OriginKind,
     ResumeResult,
@@ -27,13 +29,20 @@ from ai_dev_loop.pr_review_v2.application.control_contracts import (
 )
 from ai_dev_loop.pr_review_v2.application.engine import PrReviewEngine
 from ai_dev_loop.pr_review_v2.application.execution_context import ExecutionContextArtifact
-from ai_dev_loop.pr_review_v2.domain.common import ArtifactRef, UserContinuationEvidence
+from ai_dev_loop.pr_review_v2.domain.common import (
+    AdjudicationEvidence,
+    ArtifactRef,
+    UserContinuationEvidence,
+    adjudication_decision_summary,
+    is_legacy_mixed_adjudication_defect,
+)
 from ai_dev_loop.pr_review_v2.domain.events import (
+    RecoverMixedAdjudicationRequested,
     ResumeRequested,
     StartRequested,
     UserContinuationRequested,
 )
-from ai_dev_loop.pr_review_v2.domain.state import WaitingForUserState
+from ai_dev_loop.pr_review_v2.domain.state import RunningLocalFixState, WaitingForUserState
 from ai_dev_loop.pr_review_v2.infrastructure.protected_result_store import ProtectedResultStore
 from ai_dev_loop.pr_review_v2.infrastructure.runtime import parse_utc_instant
 from ai_dev_loop.pr_review_v2.workers.supervisor import (
@@ -42,6 +51,38 @@ from ai_dev_loop.pr_review_v2.workers.supervisor import (
 )
 
 SupervisorSpawner = Callable[[str], str]  # run_id -> action: spawned|reused|repaired|spawn_failed
+
+
+def _adjudication_from_state(state: object) -> AdjudicationEvidence | None:
+    if isinstance(state, (WaitingForUserState, RunningLocalFixState)):
+        return state.adjudication
+    return None
+
+
+def _legacy_mixed_recovery_advertisable(
+    *,
+    state: object,
+    effect_status: DispatchStatus | None,
+    supervisor_live: bool,
+    lease_active: bool,
+) -> bool:
+    """True when status may safely advertise ``--recover-mixed-adjudication``."""
+
+    if supervisor_live or lease_active:
+        return False
+    if not isinstance(state, WaitingForUserState):
+        return False
+    if not is_legacy_mixed_adjudication_defect(state.adjudication):
+        return False
+    if effect_status is not DispatchStatus.PENDING:
+        return False
+    if state.active_effect is None or not state.remaining_replies:
+        return False
+    head = state.remaining_replies[0]
+    return (
+        state.active_effect.thread_id == head.thread_id
+        and state.active_effect.reply_ref == head.reply_ref
+    )
 
 
 def map_engine_next_action(category: NextActionCategory, *, state_kind: str) -> SafeNextAction:
@@ -158,6 +199,7 @@ class ControlPlaneService:
         run_id: str,
         *,
         confirm_user_continuation: bool = False,
+        recover_mixed_adjudication: bool = False,
     ) -> ResumeResult:
         status = self._engine.get_status(run_id)
         if status.state_kind == "prepared":
@@ -172,8 +214,38 @@ class ControlPlaneService:
                 "run is terminal",
                 next_action=SafeNextAction.NONE.value,
             )
+        if recover_mixed_adjudication:
+            if confirm_user_continuation:
+                raise ControlError(
+                    ControlErrorKind.VALIDATION,
+                    "recover-mixed-adjudication cannot be combined with --confirm-user-continuation",
+                    next_action=SafeNextAction.RESUME_RECOVER_MIXED_ADJUDICATION.value,
+                )
+            return self._resume_recover_mixed_adjudication(run_id, status.run_version)
         if status.state_kind == "waiting_for_user":
             if not confirm_user_continuation:
+                with self._engine.store.begin_read() as conn:
+                    state, _, _ = self._engine.store.load_validated_snapshot(conn, run_id)
+                if isinstance(state, WaitingForUserState) and is_legacy_mixed_adjudication_defect(
+                    state.adjudication
+                ):
+                    recoverable = _legacy_mixed_recovery_advertisable(
+                        state=state,
+                        effect_status=status.effect_status,
+                        supervisor_live=self._supervisor_live(run_id),
+                        lease_active=status.lease_active,
+                    )
+                    raise ControlError(
+                        ControlErrorKind.REQUIRES_USER_CONFIRMATION,
+                        "legacy mixed adjudication requires --recover-mixed-adjudication"
+                        if recoverable
+                        else "legacy mixed adjudication recovery is not yet safe",
+                        next_action=(
+                            SafeNextAction.RESUME_RECOVER_MIXED_ADJUDICATION.value
+                            if recoverable
+                            else SafeNextAction.WAIT_UNTIL.value
+                        ),
+                    )
                 raise ControlError(
                     ControlErrorKind.REQUIRES_USER_CONFIRMATION,
                     "waiting_for_user requires --confirm-user-continuation",
@@ -339,9 +411,20 @@ class ControlPlaneService:
         resumable, next_action = self._status_recovery_guidance(
             state_kind=engine_status.state_kind,
             engine_next_action=engine_status.next_action,
+            effect_status=engine_status.effect_status,
             supervisor_live=supervisor_live,
             lease_active=engine_status.lease_active,
+            state=state,
         )
+        decision_total = None
+        decision_actionable = None
+        decision_deferred = None
+        adjudication = _adjudication_from_state(state)
+        if adjudication is not None:
+            summary = adjudication_decision_summary(adjudication)
+            decision_total = summary.total
+            decision_actionable = summary.actionable
+            decision_deferred = summary.deferred_replies
         return ControlStatus(
             run_id=run_id,
             origin_kind=origin_kind,
@@ -374,6 +457,9 @@ class ControlPlaneService:
             engine_next_action=engine_status.next_action,
             next_action=next_action,
             recent_history=history.entries,
+            adjudication_decision_total=decision_total,
+            adjudication_actionable_count=decision_actionable,
+            adjudication_deferred_reply_count=decision_deferred,
         )
 
     def _status_recovery_guidance(
@@ -381,15 +467,34 @@ class ControlPlaneService:
         *,
         state_kind: str,
         engine_next_action: NextActionCategory,
+        effect_status: DispatchStatus | None,
         supervisor_live: bool,
         lease_active: bool,
+        state: object,
     ) -> tuple[bool, SafeNextAction]:
         """Map status to a safe operator action without racing a live lease."""
 
         mapped = map_engine_next_action(engine_next_action, state_kind=state_kind)
+        legacy_mixed = (
+            state_kind == "waiting_for_user"
+            and isinstance(state, WaitingForUserState)
+            and is_legacy_mixed_adjudication_defect(state.adjudication)
+        )
+        recoverable = legacy_mixed and _legacy_mixed_recovery_advertisable(
+            state=state,
+            effect_status=effect_status,
+            supervisor_live=supervisor_live,
+            lease_active=lease_active,
+        )
+        if recoverable:
+            mapped = SafeNextAction.RESUME_RECOVER_MIXED_ADJUDICATION
+        elif legacy_mixed:
+            mapped = SafeNextAction.WAIT_UNTIL
         if state_kind in {"prepared", "completed", "failed", "aborted"}:
             return False, mapped
         if state_kind == "waiting_for_user":
+            if legacy_mixed and not recoverable and (supervisor_live or lease_active):
+                return False, mapped
             return True, mapped
         if state_kind == "paused":
             return True, mapped
@@ -437,6 +542,94 @@ class ControlPlaneService:
             limit=capped,
             truncated=truncated,
             entries=tuple(entries),
+        )
+
+    def _resume_recover_mixed_adjudication(
+        self, run_id: str, expected_version: int
+    ) -> ResumeResult:
+        with self._engine.store.begin_read() as conn:
+            state, version, _ = self._engine.store.load_validated_snapshot(conn, run_id)
+        if not isinstance(state, WaitingForUserState):
+            raise ControlError(ControlErrorKind.NOT_RESUMABLE, "not waiting_for_user")
+        if version != expected_version:
+            raise ControlError(ControlErrorKind.CONFLICT, "run version changed")
+        if not is_legacy_mixed_adjudication_defect(state.adjudication):
+            raise ControlError(
+                ControlErrorKind.NOT_RESUMABLE,
+                "recover-mixed-adjudication requires legacy mixed adjudication without fix prompt",
+                next_action=SafeNextAction.NONE.value,
+            )
+        if state.active_effect is None or not state.remaining_replies:
+            raise ControlError(
+                ControlErrorKind.NOT_RESUMABLE,
+                "recover-mixed-adjudication requires an unclaimed queue-head reply",
+                next_action=SafeNextAction.NONE.value,
+            )
+        head = state.remaining_replies[0]
+        if (
+            state.active_effect.thread_id != head.thread_id
+            or state.active_effect.reply_ref != head.reply_ref
+        ):
+            raise ControlError(
+                ControlErrorKind.NOT_RESUMABLE,
+                "active reply effect must match queue head",
+                next_action=SafeNextAction.NONE.value,
+            )
+        with self._engine.store.begin_read() as conn:
+            live = self._engine.store.get_live_dispatch(conn, run_id)
+        if live is None or live["effect_id"] != state.active_effect.effect_id:
+            raise ControlError(
+                ControlErrorKind.NOT_RESUMABLE,
+                "recover-mixed-adjudication requires pending queue-head reply",
+                next_action=SafeNextAction.WAIT_UNTIL.value,
+            )
+        if live["status"] != DispatchStatus.PENDING.value:
+            raise ControlError(
+                ControlErrorKind.NOT_RESUMABLE,
+                "recover-mixed-adjudication requires pending unclaimed reply",
+                next_action=SafeNextAction.WAIT_UNTIL.value,
+            )
+        now = self._engine.clock.now()
+        legacy_digest = state.adjudication.result_ref.sha256
+        artifact = MixedAdjudicationRecoveryArtifact(
+            run_id=run_id,
+            repository=state.binding.repository.name_with_owner,
+            pr_number=state.binding.pr_number,
+            cycle_number=state.cycle_number,
+            head_sha=state.binding.head_sha,
+            legacy_result_ref_sha256=legacy_digest,
+            requested_at=now,
+        )
+        evidence_ref = self._artifacts.persist_mixed_adjudication_recovery(
+            run_id=run_id, artifact=artifact
+        )
+        receipt = self._engine.apply_event(
+            EventSubmission(
+                submission_id=f"recover-mixed:{run_id}:{version}:{legacy_digest[:16]}",
+                run_id=run_id,
+                expected_version=version,
+                event=RecoverMixedAdjudicationRequested(
+                    occurred_at=now,
+                    evidence_ref=evidence_ref,
+                    legacy_result_ref_sha256=legacy_digest,
+                    superseded_reply_effect_id=state.active_effect.effect_id,
+                ),
+            )
+        )
+        if receipt.disposition is not EventDisposition.ACCEPTED:
+            raise ControlError(
+                ControlErrorKind.NOT_RESUMABLE,
+                receipt.safe_detail or "recover-mixed-adjudication rejected",
+            )
+        action = self._spawn(run_id)
+        after = self._engine.get_status(run_id)
+        return ResumeResult(
+            run_id=run_id,
+            state_kind=after.state_kind,
+            transition_applied=True,
+            supervisor_action=action,  # type: ignore[arg-type]
+            next_action=SafeNextAction.NONE if action != "spawn_failed" else SafeNextAction.RESUME,
+            safe_detail="re-adjudication scheduled; no GitHub write during recovery",
         )
 
     def _resume_user_continuation(self, run_id: str, expected_version: int) -> ResumeResult:
