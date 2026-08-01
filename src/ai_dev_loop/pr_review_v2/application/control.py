@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import secrets
 from collections.abc import Callable
+from datetime import datetime
 
 from ai_dev_loop.pr_review_v2.application.contracts import (
     DispatchStatus,
@@ -42,7 +43,12 @@ from ai_dev_loop.pr_review_v2.domain.events import (
     StartRequested,
     UserContinuationRequested,
 )
-from ai_dev_loop.pr_review_v2.domain.state import RunningLocalFixState, WaitingForUserState
+from ai_dev_loop.pr_review_v2.domain.state import (
+    RunningLocalFixState,
+    WaitingForUserState,
+    awaiting_operator_continuation,
+    pending_deferred_reply_dispatch,
+)
 from ai_dev_loop.pr_review_v2.infrastructure.protected_result_store import ProtectedResultStore
 from ai_dev_loop.pr_review_v2.infrastructure.runtime import parse_utc_instant
 from ai_dev_loop.pr_review_v2.workers.supervisor import (
@@ -85,11 +91,26 @@ def _legacy_mixed_recovery_advertisable(
     )
 
 
+def _pending_deferred_reply_dispatchable(
+    *,
+    effect_status: DispatchStatus | None,
+    next_eligible_at: datetime | None,
+    now: datetime,
+) -> bool:
+    """True when a pending queue-head deferred reply may be claimed/dispatched now."""
+
+    if effect_status is not DispatchStatus.PENDING:
+        return False
+    return next_eligible_at is None or next_eligible_at <= now
+
+
 def map_engine_next_action(category: NextActionCategory, *, state_kind: str) -> SafeNextAction:
     if category is NextActionCategory.START or state_kind == "prepared":
         return SafeNextAction.START
     if category is NextActionCategory.WAIT_FOR_USER:
         return SafeNextAction.RESUME_CONFIRM_USER_CONTINUATION
+    if category is NextActionCategory.EXECUTE_EFFECT:
+        return SafeNextAction.RESUME
     if category is NextActionCategory.RESUME:
         return SafeNextAction.RESUME
     if category in {
@@ -246,6 +267,47 @@ class ControlPlaneService:
                             else SafeNextAction.WAIT_UNTIL.value
                         ),
                     )
+                if isinstance(state, WaitingForUserState):
+                    dispatch = pending_deferred_reply_dispatch(state)
+                    if dispatch is not None:
+                        now = self._engine.clock.now()
+                        if not _pending_deferred_reply_dispatchable(
+                            effect_status=status.effect_status,
+                            next_eligible_at=status.next_eligible_at,
+                            now=now,
+                        ):
+                            raise ControlError(
+                                ControlErrorKind.NOT_RESUMABLE,
+                                "deferred reply is not yet dispatchable",
+                                next_action=SafeNextAction.WAIT_UNTIL.value,
+                            )
+                        if self._supervisor_live(run_id):
+                            return ResumeResult(
+                                run_id=run_id,
+                                state_kind=status.state_kind,
+                                transition_applied=False,
+                                supervisor_action="reused",
+                                next_action=SafeNextAction.RESUME,
+                            )
+                        if status.lease_active:
+                            raise ControlError(
+                                ControlErrorKind.NOT_RESUMABLE,
+                                "active lease blocks deferred reply dispatch",
+                                next_action=SafeNextAction.WAIT_UNTIL.value,
+                            )
+                        action = self._spawn(run_id)
+                        return ResumeResult(
+                            run_id=run_id,
+                            state_kind=self._engine.get_status(run_id).state_kind,
+                            transition_applied=False,
+                            supervisor_action=action,  # type: ignore[arg-type]
+                            next_action=SafeNextAction.NONE
+                            if action != "spawn_failed"
+                            else SafeNextAction.RESUME,
+                            safe_detail="supervisor repaired for deferred reply dispatch"
+                            if action != "spawn_failed"
+                            else "supervisor spawn failed",
+                        )
                 raise ControlError(
                     ControlErrorKind.REQUIRES_USER_CONFIRMATION,
                     "waiting_for_user requires --confirm-user-continuation",
@@ -412,6 +474,8 @@ class ControlPlaneService:
             state_kind=engine_status.state_kind,
             engine_next_action=engine_status.next_action,
             effect_status=engine_status.effect_status,
+            next_eligible_at=engine_status.next_eligible_at,
+            now=self._engine.clock.now(),
             supervisor_live=supervisor_live,
             lease_active=engine_status.lease_active,
             state=state,
@@ -468,6 +532,8 @@ class ControlPlaneService:
         state_kind: str,
         engine_next_action: NextActionCategory,
         effect_status: DispatchStatus | None,
+        next_eligible_at: datetime | None,
+        now: datetime,
         supervisor_live: bool,
         lease_active: bool,
         state: object,
@@ -490,6 +556,20 @@ class ControlPlaneService:
             mapped = SafeNextAction.RESUME_RECOVER_MIXED_ADJUDICATION
         elif legacy_mixed:
             mapped = SafeNextAction.WAIT_UNTIL
+        elif isinstance(state, WaitingForUserState):
+            dispatch = pending_deferred_reply_dispatch(state)
+            if dispatch is not None:
+                if supervisor_live or lease_active:
+                    return False, SafeNextAction.WAIT_UNTIL
+                if not _pending_deferred_reply_dispatchable(
+                    effect_status=effect_status,
+                    next_eligible_at=next_eligible_at,
+                    now=now,
+                ):
+                    return False, SafeNextAction.WAIT_UNTIL
+                return True, SafeNextAction.RESUME
+            if awaiting_operator_continuation(state):
+                return True, SafeNextAction.RESUME_CONFIRM_USER_CONTINUATION
         if state_kind in {"prepared", "completed", "failed", "aborted"}:
             return False, mapped
         if state_kind == "waiting_for_user":

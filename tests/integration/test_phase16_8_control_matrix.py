@@ -549,12 +549,10 @@ def test_control_resume_from_waiting_retry_without_early_timer(tmp_path: Path) -
 
 
 def test_control_resume_waiting_for_user_requires_confirmation(tmp_path: Path) -> None:
+    from datetime import timedelta
+
     from tests.unit.pr_review_v2.helpers import artifact, reply_adjudication
 
-    from ai_dev_loop.pr_review_v2.application.control_contracts import (
-        ControlError,
-        ControlErrorKind,
-    )
     from ai_dev_loop.pr_review_v2.domain import (
         AdjudicationRecordedOutcome,
         EffectSucceeded,
@@ -617,9 +615,12 @@ def test_control_resume_waiting_for_user_requires_confirmation(tmp_path: Path) -
         )
     )
     assert engine.get_status(run_id).state_kind == "waiting_for_user"
-    with pytest.raises(ControlError) as exc:
-        control.resume(run_id)
-    assert exc.value.kind is ControlErrorKind.REQUIRES_USER_CONFIRMATION
+    clock.advance(timedelta(seconds=31))
+    status_pending = control.status(run_id)
+    assert status_pending.next_action is SafeNextAction.RESUME
+    resumed_pending = control.resume(run_id)
+    assert resumed_pending.transition_applied is False
+    assert resumed_pending.supervisor_action == "spawned"
     lease, reply_claim = claim_next(engine, run_id)
     assert reply_claim.effect.kind == "post_thread_reply"
     engine.complete_claim(

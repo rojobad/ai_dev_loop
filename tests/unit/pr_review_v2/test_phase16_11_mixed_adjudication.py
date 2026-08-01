@@ -44,8 +44,10 @@ from ai_dev_loop.pr_review_v2.domain import (
     UserContinuationRequested,
     WaitingForUserState,
     actionable_thread_ids_from_evidence,
+    awaiting_operator_continuation,
     deferred_reply_intents_from_evidence,
     is_legacy_mixed_adjudication_defect,
+    pending_deferred_reply_dispatch,
     reduce_pr_review,
     stable_effect_ids,
 )
@@ -414,3 +416,92 @@ def test_simulated_legacy_run_shape_cycle_3(prepared_source) -> None:
     assert isinstance(after_adj, TransitionApplied)
     assert after_adj.state.kind == "running_local_fix"
     assert after_adj.effects[0].actionable_thread_ids == ("a1", "a2")
+
+
+def test_pending_deferred_reply_dispatch_requires_queue_head_match(prepared_source) -> None:
+    state, effects, binding = drive_initial_publication_to_waiting_for_bot(prepared_source)
+    state, effects = confirm_trigger(state, effects[0], binding)
+    state, effects = freeze_threads(state, effects[0], binding, ("reply-1", "fix-1"))
+    evidence = mixed_adjudication(state.frozen)
+    state, effects = succeed(state, effects[0], AdjudicationRecordedOutcome(evidence=evidence))
+    state, effects = succeed(
+        state,
+        effects[0],
+        LocalFixFinishedOutcome(
+            outcome=LocalFixOutcomeKind.ACCEPTED,
+            accepted_patch_ref=artifact("artifacts/fix.patch"),
+            new_head_sha="f" * 40,
+            result_ref=artifact("artifacts/local-result.json"),
+        ),
+    )
+    state, effects = drive_fix_publication(state, effects)
+    assert state.kind == "waiting_for_user"
+    dispatch = pending_deferred_reply_dispatch(state)
+    assert dispatch is not None
+    assert dispatch.queue_head.thread_id == "reply-1"
+    assert dispatch.active_effect.kind == "post_thread_reply"
+    assert awaiting_operator_continuation(state) is False
+
+
+def test_user_continuation_rejected_while_deferred_reply_pending(prepared_source) -> None:
+    state, effects, binding = drive_initial_publication_to_waiting_for_bot(prepared_source)
+    state, effects = confirm_trigger(state, effects[0], binding)
+    state, effects = freeze_threads(state, effects[0], binding, ("reply-1",))
+    state, effects = succeed(
+        state,
+        effects[0],
+        AdjudicationRecordedOutcome(evidence=reply_adjudication(state.frozen)),
+    )
+    assert pending_deferred_reply_dispatch(state) is not None
+    rejected = reduce_pr_review(
+        state,
+        UserContinuationRequested(
+            occurred_at=T3,
+            evidence=UserContinuationEvidence(
+                repository=state.binding.repository,
+                pr_number=state.binding.pr_number,
+                cycle_number=state.cycle_number,
+                head_sha=state.binding.head_sha,
+                evidence_ref=artifact("continue-early.json"),
+            ),
+        ),
+    )
+    assert isinstance(rejected, TransitionRejected)
+    assert rejected.code is RejectionCode.USER_CONTINUATION_BEFORE_REPLIES
+
+
+def test_awaiting_operator_continuation_after_final_reply(prepared_source) -> None:
+    state, effects, binding = drive_initial_publication_to_waiting_for_bot(prepared_source)
+    state, effects = confirm_trigger(state, effects[0], binding)
+    state, effects = freeze_threads(state, effects[0], binding, ("reply-1",))
+    state, effects = succeed(
+        state,
+        effects[0],
+        AdjudicationRecordedOutcome(evidence=reply_adjudication(state.frozen)),
+    )
+    state, effects = succeed(
+        state,
+        effects[0],
+        __import__(
+            "ai_dev_loop.pr_review_v2.domain", fromlist=["ThreadReplyConfirmedOutcome"]
+        ).ThreadReplyConfirmedOutcome(
+            thread_id=effects[0].thread_id, reply_ref=effects[0].reply_ref
+        ),
+    )
+    assert pending_deferred_reply_dispatch(state) is None
+    assert awaiting_operator_continuation(state) is True
+    continued = reduce_pr_review(
+        state,
+        UserContinuationRequested(
+            occurred_at=T3,
+            evidence=UserContinuationEvidence(
+                repository=state.binding.repository,
+                pr_number=state.binding.pr_number,
+                cycle_number=state.cycle_number,
+                head_sha=state.binding.head_sha,
+                evidence_ref=artifact("continue.json"),
+            ),
+        ),
+    )
+    assert isinstance(continued, TransitionApplied)
+    assert continued.state.kind == "waiting_for_bot"

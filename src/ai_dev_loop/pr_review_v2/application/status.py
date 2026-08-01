@@ -10,7 +10,14 @@ from ai_dev_loop.pr_review_v2.application.contracts import (
     PrReviewStatus,
 )
 from ai_dev_loop.pr_review_v2.domain.common import SafeActionKind
-from ai_dev_loop.pr_review_v2.domain.state import PrReviewState, active_effect, binding_of
+from ai_dev_loop.pr_review_v2.domain.state import (
+    PrReviewState,
+    WaitingForUserState,
+    active_effect,
+    awaiting_operator_continuation,
+    binding_of,
+    pending_deferred_reply_dispatch,
+)
 
 
 def shorten_sha(sha: str | None, *, length: int = 12) -> str | None:
@@ -36,6 +43,22 @@ def next_action_for(
     if kind == "aborted":
         return NextActionCategory.TERMINAL_ABORTED
     if kind == "waiting_for_user":
+        if isinstance(state, WaitingForUserState):
+            if pending_deferred_reply_dispatch(state) is not None:
+                if (
+                    effect_status is DispatchStatus.PENDING
+                    and next_eligible_at is not None
+                    and next_eligible_at > now
+                ):
+                    return NextActionCategory.WAIT_FOR_ELIGIBILITY
+                if effect_status in {DispatchStatus.PENDING, DispatchStatus.CLAIMED}:
+                    return NextActionCategory.EXECUTE_EFFECT
+                if effect_status is DispatchStatus.RETRY_WAIT:
+                    if next_eligible_at is not None and next_eligible_at > now:
+                        return NextActionCategory.WAIT_FOR_ELIGIBILITY
+                    return NextActionCategory.EXECUTE_EFFECT
+            if awaiting_operator_continuation(state):
+                return NextActionCategory.WAIT_FOR_USER
         return NextActionCategory.WAIT_FOR_USER
     if kind == "waiting_retry":
         return NextActionCategory.WAIT_FOR_RETRY
