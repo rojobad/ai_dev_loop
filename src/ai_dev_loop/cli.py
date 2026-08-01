@@ -522,7 +522,7 @@ def pr_review_resume_command(
         bool,
         typer.Option(
             "--confirm-user-continuation",
-            help="Required when state is waiting_for_user after replies complete.",
+            help="Required when waiting_for_user has no pending deferred replies.",
         ),
     ] = False,
     recover_mixed_adjudication: Annotated[
@@ -533,7 +533,7 @@ def pr_review_resume_command(
         ),
     ] = False,
 ) -> None:
-    """Resume a paused/active run or acknowledge waiting_for_user continuation."""
+    """Resume supervisor work, dispatch a pending deferred reply, or confirm continuation."""
 
     def run() -> None:
         from ai_dev_loop.commands.pr_review_v2 import resume_run

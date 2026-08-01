@@ -121,6 +121,7 @@ from ai_dev_loop.pr_review_v2.domain.state import (
     CompletedState,
     FailedState,
     PausedState,
+    PendingDeferredReplyDispatch,
     PreparedState,
     PrReviewState,
     PublishingFixState,
@@ -131,7 +132,9 @@ from ai_dev_loop.pr_review_v2.domain.state import (
     WaitingForUserState,
     WaitingRetryState,
     active_effect,
+    awaiting_operator_continuation,
     parse_pr_review_state,
+    pending_deferred_reply_dispatch,
 )
 
 __all__ = [
@@ -176,6 +179,7 @@ __all__ = [
     "PR_REVIEW_STATE_ADAPTER",
     "PauseReasonKind",
     "PausedState",
+    "PendingDeferredReplyDispatch",
     "PostThreadReplyEffect",
     "PrBoundOutcome",
     "PrReviewEffect",
@@ -236,6 +240,7 @@ __all__ = [
     "actionable_thread_ids_from_evidence",
     "active_effect",
     "adjudication_decision_summary",
+    "awaiting_operator_continuation",
     "build_effect_identity",
     "build_opaque_trigger_marker",
     "classify_effect",
@@ -250,6 +255,7 @@ __all__ = [
     "parse_pr_review_effect",
     "parse_pr_review_event",
     "parse_pr_review_state",
+    "pending_deferred_reply_dispatch",
     "reduce_pr_review",
     "stable_effect_ids",
     "validate_argv_safe_branch_name",

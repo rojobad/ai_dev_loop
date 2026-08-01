@@ -16,11 +16,15 @@ from ai_dev_loop.locking import is_process_alive
 from ai_dev_loop.paths import DIR_MODE, ensure_dir, set_sensitive_file_mode
 from ai_dev_loop.pr_review_v2.application.contracts import Clock, WorkerStepResult
 from ai_dev_loop.pr_review_v2.application.engine import PrReviewEngine
+from ai_dev_loop.pr_review_v2.domain.state import (
+    WaitingForUserState,
+    pending_deferred_reply_dispatch,
+)
 from ai_dev_loop.pr_review_v2.infrastructure.runtime import SystemClock
 from ai_dev_loop.pr_review_v2.workers.effect_worker import EffectWorker
 
 TERMINAL_KINDS = frozenset({"completed", "failed", "aborted"})
-PAUSE_EXIT_KINDS = frozenset({"paused", "waiting_for_user"})
+PAUSE_EXIT_KINDS = frozenset({"paused"})
 LAUNCHER_RELATIVE = "local/supervisor-launcher.json"
 
 
@@ -207,6 +211,15 @@ class PrReviewV2Supervisor:
         self._cancel_check = cancel_check or (lambda: False)
         self._sleep = sleep or time.sleep
 
+    def _should_exit_waiting_for_user(self, run_id: str) -> bool:
+        """Exit only when operator continuation is required, not during reply dispatch."""
+
+        with self._engine.store.begin_read() as conn:
+            state, _, _ = self._engine.store.load_validated_snapshot(conn, run_id)
+        if not isinstance(state, WaitingForUserState):
+            return True
+        return pending_deferred_reply_dispatch(state) is None
+
     def run_until_idle(self) -> str:
         """Run until terminal, paused, waiting-for-user, or no claimable work.
 
@@ -223,7 +236,11 @@ class PrReviewV2Supervisor:
                 return status.state_kind
             self._engine.fire_due_timers_for_run(self._run_id)
             status = self._engine.get_status(self._run_id)
-            if status.state_kind in TERMINAL_KINDS or status.state_kind == "waiting_for_user":
+            if status.state_kind in TERMINAL_KINDS:
+                return status.state_kind
+            if status.state_kind == "waiting_for_user" and self._should_exit_waiting_for_user(
+                self._run_id
+            ):
                 return status.state_kind
             if status.state_kind == "paused":
                 return status.state_kind
@@ -246,6 +263,10 @@ class PrReviewV2Supervisor:
                 self._sleep(self._idle_poll_seconds)
                 status = self._engine.get_status(self._run_id)
                 if status.state_kind in TERMINAL_KINDS | PAUSE_EXIT_KINDS | {"prepared"}:
+                    return status.state_kind
+                if status.state_kind == "waiting_for_user" and self._should_exit_waiting_for_user(
+                    self._run_id
+                ):
                     return status.state_kind
                 if status.state_kind == "waiting_retry":
                     continue

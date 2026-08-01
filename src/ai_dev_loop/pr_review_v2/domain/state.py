@@ -310,6 +310,37 @@ class WaitingForUserState(DomainModel):
         return self
 
 
+class PendingDeferredReplyDispatch(DomainModel):
+    """Validated queue-head deferred reply owned by ``WaitingForUserState``."""
+
+    queue_head: ReplyIntent
+    active_effect: PostThreadReplyEffect
+
+
+def pending_deferred_reply_dispatch(
+    state: WaitingForUserState,
+) -> PendingDeferredReplyDispatch | None:
+    """Return dispatch work when state owns a valid pending queue-head reply."""
+
+    if not state.remaining_replies or state.active_effect is None:
+        return None
+    head = state.remaining_replies[0]
+    effect = state.active_effect
+    if effect.thread_id != head.thread_id or effect.reply_ref != head.reply_ref:
+        return None
+    if effect.binding != state.binding or effect.bound_head_sha != state.binding.head_sha:
+        return None
+    if effect.run_id != state.run_id or effect.cycle_number != state.cycle_number:
+        return None
+    return PendingDeferredReplyDispatch(queue_head=head, active_effect=effect)
+
+
+def awaiting_operator_continuation(state: WaitingForUserState) -> bool:
+    """True only when all deferred replies completed and operator may continue."""
+
+    return state.active_effect is None and not state.remaining_replies
+
+
 class RunningLocalFixState(DomainModel):
     kind: Literal["running_local_fix"] = "running_local_fix"
     run_id: NonEmptyId

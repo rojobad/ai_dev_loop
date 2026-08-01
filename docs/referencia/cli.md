@@ -138,12 +138,21 @@ Contrato de seguridad:
   y luego lanza/reusa el supervisor detached (`python -m
   ai_dev_loop.pr_review_v2_supervisor_worker`) con metadata de ownership. Si el
   spawn falla, reporta `spawn_failed` y no inventa un proceso vivo.
-- `resume` en `waiting_for_user` exige `--confirm-user-continuation` y evidencia
-  de operador protegida cuando los replies ya terminaron; no dispara timers futuros.
-  Los lotes mixtos legacy sin fix prompt (actionable + reply, sin
-  `fix_prompt_ref`) exigen `--recover-mixed-adjudication`, que re-adjudica sobre
-  el snapshot congelado original sin escribir en GitHub ni reescribir SQLite.
-  Repara solo el supervisor cuando el estado ya es activo.
+- `resume` en `waiting_for_user` tiene tres formas distintas segun el checkpoint:
+  - **`resume` ordinario** cuando hay un `post_thread_reply` diferido ya persistido,
+    validado y pendiente (cola no vacia): repara/lanza el supervisor para despachar
+    ese efecto ya autorizado por `start`; no emite `UserContinuationRequested` ni
+    duplica filas de efecto.
+  - **`resume --confirm-user-continuation`** solo despues de que todos los replies
+    diferidos hayan completado (cola vacia, sin efecto activo); persiste evidencia
+    de operador protegida y programa la siguiente observacion; no dispara timers
+    futuros antes de tiempo.
+  - **`resume --recover-mixed-adjudication`** solo para lotes mixtos legacy sin
+    `fix_prompt_ref` (actionable + reply): re-adjudica sobre el snapshot congelado
+    original sin escribir en GitHub ni reescribir SQLite historico.
+  Si un reply esta claimed, en retry, malformado, stale, o hay supervisor/lease vivo,
+  `status` debe decir `wait-until`; no repare SQLite manualmente.
+  Repara solo el supervisor cuando el estado ya es activo fuera de esos checkpoints.
 - `status` marca acciones de resume solo cuando el run es no terminal, el
   supervisor no esta vivo y el lease anterior ya expiro. Un claim mutante
   expirado se reconcilia antes de cualquier reintento de escritura.
