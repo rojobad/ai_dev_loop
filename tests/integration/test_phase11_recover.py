@@ -154,6 +154,28 @@ def test_recover_creates_successor_and_resume_skips_cursor(
     assert final.cursor.chat_id == failed["chat_id"]
 
 
+def test_recover_copies_current_fix_prompt_artifacts(prepared_run, fake_clis, monkeypatch) -> None:
+    failed = _failed_review_run(prepared_run, fake_clis, monkeypatch)
+    source_path = Path(failed["run_path"])
+    fix_dir = source_path / "prompts" / "fixes"
+    fix_dir.mkdir(parents=True, exist_ok=True)
+    fix_prompt = fix_dir / "01.txt"
+    execution_envelope = fix_dir / "01.execution-envelope.txt"
+    fix_prompt.write_bytes(b"Fix the verified finding exactly.\n")
+    execution_envelope.write_bytes(b"Recovery evidence envelope\n")
+
+    result = recover_run(str(failed["run_id"]))
+    successor_path, _successor = load_run(result.recovery_run_id)
+
+    copied_fix_prompt = successor_path / "prompts" / "fixes" / "01.txt"
+    copied_envelope = successor_path / "prompts" / "fixes" / "01.execution-envelope.txt"
+    assert copied_fix_prompt.read_bytes() == fix_prompt.read_bytes()
+    assert copied_envelope.read_bytes() == execution_envelope.read_bytes()
+    if chmod_supported(successor_path):
+        assert stat.S_IMODE(copied_fix_prompt.stat().st_mode) == 0o600
+        assert stat.S_IMODE(copied_envelope.stat().st_mode) == 0o600
+
+
 def test_recover_findings_resume_same_chat(prepared_run, fake_clis, monkeypatch) -> None:
     failed = _failed_review_run(prepared_run, fake_clis, monkeypatch)
     result = recover_run(str(failed["run_id"]))

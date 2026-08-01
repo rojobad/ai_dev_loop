@@ -206,6 +206,9 @@ def test_carrier_binding_drift_categories(tmp_path: Path, isolated_xdg) -> None:
     cid = carrier_run_id(RUN_ID, 1, "eff-1")
     runtime.ensure_seeded_carrier(carrier_run_id=cid, seed=seed)
     path, state = load_run(cid)
+    chat_payload = json.loads((path / "cursor" / "chat.json").read_text(encoding="utf-8"))
+    assert chat_payload["chat_id"] == seed.cursor_chat_id
+    assert chat_payload["provenance"] == "inherited_carrier_seed"
 
     # Codex session drift
     state.codex.session_id = "22222222-2222-2222-2222-222222222222"

@@ -31,6 +31,7 @@ from ai_dev_loop.runners.git import (
     validate_prompt_source_unchanged,
     validate_repository_identity,
     validate_stage_mode,
+    validate_staged_patch_matches_artifact,
     validate_staged_paths_safe,
 )
 from ai_dev_loop.state import RunState, atomic_write_bytes, atomic_write_text, utc_now
@@ -231,6 +232,10 @@ def run_git_staging(
     atomic_write_text(stat_path, stat_output + ("\n" if stat_output else ""))
     atomic_write_text(name_only_path, name_only_output + ("\n" if name_only_output else ""))
     atomic_write_bytes(patch_path, patch_bytes, sensitive=True)
+
+    # Review consumes this exact binary patch representation. Verify it while
+    # still in the staging boundary so index drift is attributed correctly.
+    validate_staged_patch_matches_artifact(repo_root, patch_path)
 
     staged_paths = staged_paths_from_name_only(name_only_output)
     validate_staged_paths_safe(

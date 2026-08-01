@@ -22,7 +22,7 @@ from ai_dev_loop.pr_review_v2.infrastructure.local_fix_adapter import (
 from ai_dev_loop.pr_review_v2.infrastructure.paths import resolve_run_relative_path
 from ai_dev_loop.process import run_process
 from ai_dev_loop.review_result import CodexReviewResult, completion_status_for_review
-from ai_dev_loop.run_discovery import find_run_directory, load_run
+from ai_dev_loop.run_discovery import find_run_directory, list_run_directories, load_run
 from ai_dev_loop.runners.git import discover_repository
 from ai_dev_loop.state import (
     CodexState,
@@ -35,6 +35,7 @@ from ai_dev_loop.state import (
     RunStatus,
     WorkflowState,
     atomic_write_bytes,
+    atomic_write_json,
     atomic_write_text,
     save_run_state,
     sha256_bytes,
@@ -73,6 +74,41 @@ class FilesystemLocalCarrierRuntime:
             return True
         return state.status not in {RunStatus.PREPARED}
 
+    def recovery_successor_id(self, carrier_run_id: str) -> str | None:
+        """Return the unique verified generic-recovery successor, if one exists.
+
+        A recovery successor is allowed to continue the local review checkpoint
+        without replaying Cursor. Its lineage must bind to the failed carrier and
+        to the exact staged patch artifact retained by that carrier.
+        """
+
+        if not self.carrier_exists(carrier_run_id):
+            return None
+        source_path, source = load_run(carrier_run_id)
+        source_patch_sha256 = self._staged_patch_sha256(source_path, source)
+        matches: list[RunState] = []
+        for _path, candidate in list_run_directories(project=CARRIER_PROJECT):
+            recovery = candidate.recovery
+            if recovery is None or recovery.source_run_id != carrier_run_id:
+                continue
+            if recovery.source_staged_patch_sha256 != source_patch_sha256:
+                raise ValidationError("carrier recovery successor staged patch lineage mismatch")
+            if (
+                candidate.repository.root != source.repository.root
+                or candidate.repository.branch != source.repository.branch
+                or candidate.repository.initial_head != source.repository.initial_head
+            ):
+                raise ValidationError("carrier recovery successor repository binding mismatch")
+            if candidate.status in {RunStatus.FAILED, RunStatus.ABORTED}:
+                raise ValidationError("carrier recovery successor is terminal without acceptance")
+            matches.append(candidate)
+
+        if not matches:
+            return None
+        if len(matches) != 1:
+            raise ValidationError("multiple carrier recovery successors found")
+        return matches[0].run_id
+
     def ensure_seeded_carrier(self, *, carrier_run_id: str, seed: CarrierSeed) -> None:
         if self.carrier_exists(carrier_run_id):
             path, state = load_run(carrier_run_id)
@@ -85,6 +121,8 @@ class FilesystemLocalCarrierRuntime:
                 state.cursor.chat_id = seed.cursor_chat_id
                 state.updated_at = utc_now()
                 save_run_state(path, state)
+            if state.cursor.chat_id:
+                self._write_chat_artifact(path, state.cursor.chat_id, state.cursor.command)
             return
 
         repo_info = discover_repository(Path(seed.repository_root))
@@ -172,6 +210,21 @@ class FilesystemLocalCarrierRuntime:
             ),
         )
         save_run_state(destination, state)
+        if state.cursor.chat_id:
+            self._write_chat_artifact(destination, state.cursor.chat_id, state.cursor.command)
+
+    @staticmethod
+    def _write_chat_artifact(destination: Path, chat_id: str, command: str) -> None:
+        atomic_write_json(
+            destination / "cursor" / "chat.json",
+            {
+                "chat_id": chat_id,
+                "created_at": utc_now().isoformat(),
+                "command": command,
+                "provenance": "inherited_carrier_seed",
+            },
+            sensitive=True,
+        )
 
     def verify_carrier_bindings(self, *, carrier_run_id: str, seed: CarrierSeed) -> None:
         """Fail closed when a reopened carrier drifts from the frozen CarrierSeed."""
@@ -353,6 +406,29 @@ class FilesystemLocalCarrierRuntime:
             patch_bytes=patch_bytes,
             residual_risk=residual_risk,
         )
+
+    def _staged_patch_sha256(self, carrier_root: Path, state: RunState) -> str:
+        if not state.iterations:
+            raise ValidationError("carrier recovery source missing iteration evidence")
+        latest = max(state.iterations, key=lambda entry: int(entry.get("number", 0)))
+        git_section = latest.get("git")
+        if not isinstance(git_section, dict):
+            raise ValidationError("carrier recovery source missing git iteration evidence")
+        staged_rel = git_section.get("staged_diff_path")
+        if not isinstance(staged_rel, str) or not staged_rel:
+            raise ValidationError("carrier recovery source missing staged patch path")
+        patch_path = self._resolve_carrier_relative(
+            carrier_root, staged_rel, label="recovery source staged patch"
+        )
+        patch_bytes = self._read_bounded_owner_protected_file(
+            patch_path,
+            max_bytes=MAX_STAGED_PATCH_BYTES,
+            label="recovery source staged patch",
+            require_owner_protected=True,
+        )
+        if not patch_bytes:
+            raise ValidationError("carrier recovery source staged patch empty")
+        return sha256_bytes(patch_bytes)
 
     def _recorded_staged_patch_sha256(self, state: RunState, relative_path: str) -> str | None:
         if not state.iterations:

@@ -95,6 +95,7 @@ def test_historical_run_state_without_review_reasoning_effort_loads(tmp_path: Pa
             "codex_timeout_minutes": 90,
         },
         "iterations": [],
+        "github_pr_review": None,
         "result": None,
         "last_error": None,
     }

@@ -213,7 +213,7 @@ class ExecutionContextPrReviewV2(AppModel):
     poll_interval_seconds: PositiveInt
     max_external_cycles: PositiveInt
     per_call_timeout_seconds: PositiveInt
-    overall_timeout_seconds: PositiveInt
+    overall_timeout_seconds: PositiveInt = Field(le=7200)
     max_pages: PositiveInt
     max_items: PositiveInt
     max_server_directed_wait_seconds: PositiveInt

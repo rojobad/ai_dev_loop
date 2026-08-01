@@ -132,21 +132,22 @@ def _should_copy_source_relative(
     }:
         return True
     if rel.startswith("prompts/fixes/"):
-        # Keep fix prompts from earlier reviews only.
+        # Preserve every immutable fix-prompt artifact associated with a completed
+        # or current recovered iteration. Future prompts remain excluded.
         name = Path(rel).name
         if name.endswith(".execution-envelope.txt"):
             try:
                 prompt_iteration = int(name.removesuffix(".execution-envelope.txt"))
             except ValueError:
                 return False
-            return prompt_iteration < iteration
+            return prompt_iteration <= iteration
         if not name.endswith(".txt"):
             return False
         try:
             prompt_iteration = int(name.removesuffix(".txt"))
         except ValueError:
             return False
-        return prompt_iteration < iteration
+        return prompt_iteration <= iteration
     if rel.startswith("prompts/cursor-recovery/"):
         # Continuation envelopes are written fresh for the successor.
         return False

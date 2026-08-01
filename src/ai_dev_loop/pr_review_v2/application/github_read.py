@@ -81,7 +81,7 @@ class GitHubReadPolicy(AppModel):
     gh_command: NonEmptyStr = "gh"
     repository_cwd: NonEmptyStr
     per_call_timeout_seconds: float = Field(default=60.0, gt=0.0, le=600.0)
-    overall_timeout_seconds: float = Field(default=180.0, gt=0.0, le=1800.0)
+    overall_timeout_seconds: float = Field(default=180.0, gt=0.0, le=7200.0)
     max_pages: PositiveInt = Field(default=20, le=100)
     max_items: PositiveInt = Field(default=500, le=5000)
     reviewer_logins: tuple[NonEmptyLogin, ...] = (DEFAULT_REVIEWER_LOGIN,)

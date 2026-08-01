@@ -46,6 +46,12 @@ def test_policy_defaults() -> None:
     assert p.max_server_directed_wait_seconds == 3600
 
 
+def test_policy_accepts_overall_timeout_at_two_hour_cap() -> None:
+    assert policy(overall_timeout_seconds=7200).overall_timeout_seconds == 7200
+    with pytest.raises(ValidationError):
+        policy(overall_timeout_seconds=7201)
+
+
 def test_policy_no_findings_enabled_with_thumbs_up_only() -> None:
     p = policy(accept_bot_thumbs_up=True)
     assert p.no_findings_enabled is True

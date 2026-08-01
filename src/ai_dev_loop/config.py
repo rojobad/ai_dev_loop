@@ -485,7 +485,7 @@ class PrReviewV2Section(BaseModel):
     max_external_cycles: int = 8
     max_local_iterations: int = 3
     per_call_timeout_seconds: int = 60
-    overall_timeout_seconds: int = 180
+    overall_timeout_seconds: int = Field(default=180, ge=1, le=7200)
     max_pages: int = 20
     max_items: int = 500
     max_server_directed_wait_seconds: int = 3600
