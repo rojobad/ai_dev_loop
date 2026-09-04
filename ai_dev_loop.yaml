@@ -5,7 +5,7 @@ project:
 
 cursor:
   command: agent
-  model: composer-2.5-fast
+  model: composer-2.5
   output_format: stream-json
   force: true
   trust_workspace: true
