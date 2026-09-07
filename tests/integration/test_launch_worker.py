@@ -8,8 +8,6 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from tests.conftest import write_session_rollout
-
 from ai_dev_loop.commands.abort import abort_run
 from ai_dev_loop.commands.controller import controller_status
 from ai_dev_loop.commands.launch import launch_run
@@ -22,14 +20,7 @@ REVIEWER_ID = "019abc00-bbbb-0000-0000-0000000000bb"
 
 
 def _prepare_ab_run(git_repo: Path, isolated_home: Path, monkeypatch: object) -> object:
-    codex_home = isolated_home / ".codex"
-    write_session_rollout(
-        codex_home / "sessions",
-        session_id=REVIEWER_ID,
-        model="gpt-5.6-sol",
-        reasoning_effort="high",
-    )
-    monkeypatch.setenv("CODEX_HOME", str(codex_home))  # type: ignore[attr-defined]
+    monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", REVIEWER_ID)  # type: ignore[attr-defined]
     prompt = (git_repo / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
     with patch("sys.stdin", StringIO(prompt)):
         return prepare_run(
@@ -37,8 +28,9 @@ def _prepare_ab_run(git_repo: Path, isolated_home: Path, monkeypatch: object) ->
                 repo_path=git_repo,
                 plan_path=Path("docs/plans/sample-plan.md"),
                 prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
-                codex_session_id=REVIEWER_ID,
                 controller_session_id=CONTROLLER_ID,
+                codex_review_model="gpt-5.6-sol",
+                codex_review_reasoning_effort="high",
             )
         )
 

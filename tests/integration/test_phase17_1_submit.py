@@ -11,9 +11,8 @@ from unittest.mock import patch
 import pytest
 from tests.conftest import (
     FIXTURE_REPO,
-    write_session_rollout,
 )
-from tests.unit.scheduler.helpers import CONTROLLER_SESSION, REVIEWER_SESSION
+from tests.unit.scheduler.helpers import CONTROLLER_SESSION
 
 from ai_dev_loop.paths import runs_dir
 from ai_dev_loop.runners.git import GitRepositoryInfo
@@ -46,14 +45,14 @@ def _submit_options(
     db_path: Path,
     artifact_root: Path,
     controller_session_id: str = CONTROLLER_SESSION,
-    codex_session_id: str = REVIEWER_SESSION,
 ) -> SubmitOptions:
     return SubmitOptions(
         repo_path=repo,
         plan_path=Path("docs/plans/sample-plan.md"),
         prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
-        codex_session_id=codex_session_id,
         controller_session_id=controller_session_id,
+        codex_review_model="gpt-5.6-sol",
+        codex_review_reasoning_effort="high",
         db_path=db_path,
         artifact_root=artifact_root,
     )
@@ -83,9 +82,9 @@ def scheduler_paths(isolated_xdg: Path) -> dict[str, Path]:
 
 @pytest.fixture
 def codex_env(isolated_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    codex_home = isolated_home / ".codex"
-    write_session_rollout(codex_home / "sessions", session_id=REVIEWER_SESSION)
-    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    """Scheduler submit no longer reads Codex session rollouts at submission time."""
+
+    return None
 
 
 def test_submit_is_side_effect_free(
@@ -178,14 +177,13 @@ def test_status_and_list_are_redacted(
     status_text = render_status_output(status, output="text")
     list_text = render_list_output(listings, output="text")
     # full session IDs must not appear in default text output
-    assert REVIEWER_SESSION not in status_text
     assert CONTROLLER_SESSION not in status_text
-    assert REVIEWER_SESSION not in list_text
     assert CONTROLLER_SESSION not in list_text
-    assert REVIEWER_SESSION[:8] in status_text
+    assert CONTROLLER_SESSION[:8] in status_text
     status_json = json.loads(render_status_output(status, output="json"))
-    assert REVIEWER_SESSION not in json.dumps(status_json)
+    assert CONTROLLER_SESSION not in json.dumps(status_json)
     assert status_json["summary"]["state_kind"] == "queued"
+    assert status_json["summary"]["reviewer_session_id_prefix"] is None
 
 
 def test_cli_help_lists_scheduler_submit() -> None:

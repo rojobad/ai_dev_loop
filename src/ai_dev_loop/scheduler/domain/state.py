@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field, TypeAdapter, field_validator
+from pydantic import Field, TypeAdapter, field_validator, model_validator
 
 from ai_dev_loop.scheduler.domain.common import (
     DomainModel,
@@ -15,6 +15,7 @@ from ai_dev_loop.scheduler.domain.common import (
 
 SUBMITTED_STATE_SCHEMA_VERSION = 1
 SUBMITTED_CONTEXT_SCHEMA_VERSION = 1
+SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH = 2
 
 
 class RepositoryBinding(DomainModel):
@@ -40,6 +41,18 @@ class EffectiveConfigBinding(DomainModel):
     effective_config_sha256: Sha256Hex
     source_config_artifact_path: NonEmptyStr
     source_config_sha256: Sha256Hex
+
+
+class FreshCodexReviewerBinding(DomainModel):
+    review_model: NonEmptyStr
+    review_reasoning_effort: NonEmptyStr
+    review_model_source: Literal["explicit"]
+    review_reasoning_source: Literal["explicit"]
+    command: NonEmptyStr
+    review_skill: NonEmptyStr
+    sandbox: NonEmptyStr
+    binding_artifact_path: NonEmptyStr
+    binding_sha256: Sha256Hex
 
 
 class CodexRuntimeBinding(DomainModel):
@@ -92,12 +105,12 @@ class ControllerBinding(DomainModel):
 class SubmittedRunContext(DomainModel):
     """Frozen immutable input context for a submitted A/B scheduler run."""
 
-    schema_version: int = Field(default=SUBMITTED_CONTEXT_SCHEMA_VERSION)
+    schema_version: int = Field(default=SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH)
     project_name: NonEmptyStr
     repository: RepositoryBinding
     plan_prompt: PlanPromptBinding
     effective_config: EffectiveConfigBinding
-    codex: CodexRuntimeBinding
+    codex: CodexRuntimeBinding | FreshCodexReviewerBinding
     cursor: CursorBinding
     workflow: WorkflowLimits
     controller: ControllerBinding
@@ -106,10 +119,19 @@ class SubmittedRunContext(DomainModel):
 
     @field_validator("schema_version")
     @classmethod
-    def schema_version_is_one(cls, value: int) -> int:
-        if value != 1:
-            raise ValueError("schema_version must be 1")
+    def schema_version_supported(cls, value: int) -> int:
+        if value not in {SUBMITTED_CONTEXT_SCHEMA_VERSION, SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH}:
+            raise ValueError("schema_version must be 1 or 2")
         return value
+
+    @model_validator(mode="after")
+    def codex_binding_matches_schema(self) -> SubmittedRunContext:
+        if self.schema_version == SUBMITTED_CONTEXT_SCHEMA_VERSION:
+            if not isinstance(self.codex, CodexRuntimeBinding):
+                raise ValueError("schema_version 1 requires CodexRuntimeBinding")
+        elif not isinstance(self.codex, FreshCodexReviewerBinding):
+            raise ValueError("schema_version 2 requires FreshCodexReviewerBinding")
+        return self
 
 
 class SubmittedState(DomainModel):

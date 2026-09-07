@@ -14,12 +14,18 @@ import yaml
 
 from ai_dev_loop.config import ConfigOverrides, ProjectConfig, resolve_effective_config
 from ai_dev_loop.errors import UsageError, ValidationError
+from ai_dev_loop.fresh_codex_reviewer import (
+    FRESH_REVIEWER_INPUT_ARTIFACT,
+    build_fresh_reviewer_input_artifact,
+    require_frozen_review_model,
+    require_frozen_review_reasoning_effort,
+)
 from ai_dev_loop.integrations.codex.session_runtime import (
     CodexSessionRuntime,
     read_codex_session_runtime,
     require_codex_session_id,
 )
-from ai_dev_loop.review_runtime import EffectiveReviewRuntime, resolve_effective_review_runtime
+from ai_dev_loop.review_runtime import EffectiveReviewRuntime
 from ai_dev_loop.runners.git import (
     GitRepositoryInfo,
     relative_repo_path,
@@ -34,10 +40,12 @@ from ai_dev_loop.scheduler.application.contracts import (
 from ai_dev_loop.scheduler.domain.common import canonical_json_sha256, worktree_key
 from ai_dev_loop.scheduler.domain.events import RunSubmittedEvent
 from ai_dev_loop.scheduler.domain.state import (
+    SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH,
     CodexRuntimeBinding,
     ControllerBinding,
     CursorBinding,
     EffectiveConfigBinding,
+    FreshCodexReviewerBinding,
     PlanPromptBinding,
     RepositoryBinding,
     SubmittedRunContext,
@@ -154,6 +162,87 @@ def _session_runtime_artifact_bytes(
         "model_family_warning": review_runtime.model_family_warning,
     }
     return (json.dumps(payload, indent=2) + "\n").encode("utf-8")
+
+
+def _fresh_input_artifact_bytes(
+    *,
+    review_model: str,
+    review_reasoning_effort: str,
+) -> bytes:
+    payload = build_fresh_reviewer_input_artifact(
+        review_model=review_model,
+        review_reasoning_effort=review_reasoning_effort,
+    )
+    return (json.dumps(payload, indent=2) + "\n").encode("utf-8")
+
+
+def _build_fresh_context(
+    *,
+    repo_info: GitRepositoryInfo,
+    plan_path: Path,
+    prompt_source_path: Path,
+    effective: ProjectConfig,
+    controller_session_id: str,
+    review_model: str,
+    review_reasoning_effort: str,
+    artifact_hashes: dict[str, str],
+) -> SubmittedRunContext:
+    repo_root = str(repo_info.root)
+    return SubmittedRunContext(
+        schema_version=SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH,
+        project_name=effective.project.name,
+        repository=RepositoryBinding(
+            root=repo_root,
+            git_common_dir=str(repo_info.git_common_dir),
+            git_dir=str(repo_info.git_dir),
+            branch=repo_info.branch,
+            initial_head=repo_info.head,
+            worktree_key=worktree_key(repo_root),
+        ),
+        plan_prompt=PlanPromptBinding(
+            plan_repository_path=relative_repo_path(repo_info.root, plan_path),
+            prompt_source_repository_path=relative_repo_path(repo_info.root, prompt_source_path),
+            plan_artifact_path=PLAN_ARTIFACT,
+            plan_sha256=artifact_hashes[PLAN_ARTIFACT],
+            prompt_artifact_path=PROMPT_ARTIFACT,
+            prompt_sha256=artifact_hashes[PROMPT_ARTIFACT],
+        ),
+        effective_config=EffectiveConfigBinding(
+            effective_config_artifact_path=EFFECTIVE_CONFIG_ARTIFACT,
+            effective_config_sha256=artifact_hashes[EFFECTIVE_CONFIG_ARTIFACT],
+            source_config_artifact_path=SOURCE_CONFIG_ARTIFACT,
+            source_config_sha256=artifact_hashes[SOURCE_CONFIG_ARTIFACT],
+        ),
+        codex=FreshCodexReviewerBinding(
+            review_model=review_model,
+            review_reasoning_effort=review_reasoning_effort,
+            review_model_source="explicit",
+            review_reasoning_source="explicit",
+            command=effective.codex.command,
+            review_skill=effective.codex.review_skill,
+            sandbox=effective.codex.sandbox,
+            binding_artifact_path=FRESH_REVIEWER_INPUT_ARTIFACT,
+            binding_sha256=artifact_hashes[FRESH_REVIEWER_INPUT_ARTIFACT],
+        ),
+        cursor=CursorBinding(
+            command=effective.cursor.command,
+            model=effective.cursor.model,
+            output_format=effective.cursor.output_format,
+            force=effective.cursor.force,
+            trust_workspace=effective.cursor.trust_workspace,
+            sandbox=effective.cursor.sandbox,
+        ),
+        workflow=WorkflowLimits(
+            max_review_iterations=effective.workflow.max_review_iterations,
+            stage_mode=effective.workflow.stage_mode,
+            cursor_timeout_minutes=effective.workflow.cursor_timeout_minutes,
+            codex_timeout_minutes=effective.workflow.codex_timeout_minutes,
+            require_clean_worktree=effective.workflow.require_clean_worktree,
+        ),
+        controller=ControllerBinding(controller_session_id=controller_session_id),
+        baseline_status_artifact_path=BASELINE_STATUS_ARTIFACT,
+        baseline_status_sha256=artifact_hashes[BASELINE_STATUS_ARTIFACT],
+    )
 
 
 def _build_context(
@@ -276,23 +365,17 @@ class SubmissionService:
             overrides=_build_overrides(options),
         )
         plan_path, prompt_source_path = _resolve_inputs(options, repo_info)
-        session_id = require_codex_session_id(options.codex_session_id)
         controller_session_id = require_codex_session_id(options.controller_session_id)
-        if controller_session_id == session_id:
+        if options.codex_session_id is not None:
             raise ValidationError(
-                "controller session id must differ from the reviewer Codex session id; "
-                "refusing equal A/B identities"
+                "scheduler submit must not pass --codex-session-id; "
+                "reviewer B is created at the first review boundary with frozen "
+                "--codex-review-model and --codex-review-reasoning-effort"
             )
-        session_runtime = self.session_runtime_reader(session_id)
-        review_runtime = resolve_effective_review_runtime(
-            session=session_runtime,
-            configured_review_model=effective.codex.review_model,
-            configured_review_reasoning_effort=effective.codex.review_reasoning_effort,
+        review_model = require_frozen_review_model(options.codex_review_model)
+        review_reasoning = require_frozen_review_reasoning_effort(
+            options.codex_review_reasoning_effort
         )
-        if review_runtime.review_model_source not in {"session", "explicit"}:
-            raise ValidationError("review model source must be session or explicit")
-        if review_runtime.review_reasoning_source not in {"session", "explicit"}:
-            raise ValidationError("review reasoning source must be session or explicit")
 
         plan_bytes = plan_path.read_bytes()
         effective_yaml = yaml.safe_dump(
@@ -306,9 +389,9 @@ class SubmissionService:
             allow_unicode=True,
         ).encode("utf-8")
         baseline_text = repo_info.status_porcelain + "\n"
-        session_runtime_bytes = _session_runtime_artifact_bytes(
-            session_id=session_id,
-            review_runtime=review_runtime,
+        fresh_binding_bytes = _fresh_input_artifact_bytes(
+            review_model=review_model,
+            review_reasoning_effort=review_reasoning,
         )
         artifact_hashes = {
             PLAN_ARTIFACT: sha256_bytes(plan_bytes),
@@ -316,16 +399,16 @@ class SubmissionService:
             EFFECTIVE_CONFIG_ARTIFACT: sha256_bytes(effective_yaml),
             SOURCE_CONFIG_ARTIFACT: sha256_bytes(source_yaml),
             BASELINE_STATUS_ARTIFACT: sha256_text(baseline_text),
-            SESSION_RUNTIME_ARTIFACT: sha256_bytes(session_runtime_bytes),
+            FRESH_REVIEWER_INPUT_ARTIFACT: sha256_bytes(fresh_binding_bytes),
         }
-        context = _build_context(
+        context = _build_fresh_context(
             repo_info=repo_info,
             plan_path=plan_path,
             prompt_source_path=prompt_source_path,
             effective=effective,
-            session_id=session_id,
             controller_session_id=controller_session_id,
-            review_runtime=review_runtime,
+            review_model=review_model,
+            review_reasoning_effort=review_reasoning,
             artifact_hashes=artifact_hashes,
         )
         idempotency_key = canonical_json_sha256({"identity": submission_identity_payload(context)})
@@ -373,8 +456,8 @@ class SubmissionService:
         )
         self.artifacts.write_bytes(
             run_id,
-            SESSION_RUNTIME_ARTIFACT,
-            session_runtime_bytes,
+            FRESH_REVIEWER_INPUT_ARTIFACT,
+            fresh_binding_bytes,
             max_bytes=MAX_SESSION_RUNTIME_BYTES,
         )
 

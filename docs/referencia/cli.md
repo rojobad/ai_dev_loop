@@ -44,23 +44,38 @@ Opciones principales:
 --output [text|json]
 ```
 
-`--codex-review-model` y `--codex-review-reasoning-effort` son overrides opcionales e independientes. Si no se pasan y YAML omite/usa `null`, `prepare` captura el campo correspondiente de la sesion exacta. No hay flag para limpiar un override del YAML; configura herencia antes de `prepare`.
+`--codex-review-model` y `--codex-review-reasoning-effort` congela el reviewer B
+del flujo controller A. Son obligatorios con `--controller-session-id` y no
+admiten `--codex-session-id`: B no existe en `prepare`; el worker lo crea en el
+primer review con `codex exec` read-only y congela la identidad capturada para
+los reviews posteriores (`codex exec resume <exact-id>`).
 
-`--controller-session-id` es opcional. En el flujo A/B (skill handoff) es el session ID exacto del controller A y debe diferir de `--codex-session-id` (reviewer B). Con controller: `requires_codex_exit` es `false`, `reviewer_must_remain_inactive` es `true` y `launch_command` queda disponible. Sin controller: comportamiento legacy con `requires_codex_exit: true` y `start`.
+En el flujo controller A actual, `--controller-session-id` es el session ID
+exacto de A. `requires_codex_exit` es `false`, `launch_command` queda
+disponible y no hay reviewer inactivo preexistente que mantener.
 
-Ejemplo A/B:
+Los runs legacy sin controller siguen requiriendo `--codex-session-id` exacto,
+capturan modelo/reasoning de esa sesion en `prepare`, y usan `start`/`resume`
+con `codex exec resume` sobre la sesion congelada.
+
+Los runs historicos session-bound A/B (reviewer B fijado en `prepare`) quedan
+solo inspectables; la accion segura es un `prepare` o `scheduler submit` fresco
+con `--codex-review-model` y `--codex-review-reasoning-effort` explicitos.
+
+Ejemplo controller A (fresh B):
 
 ```bash
 ai_dev_loop prepare \
   --repo-path /path/al/repo \
   --plan-path docs/plans/mi-plan.md \
   --prompt-source-path docs/plans/prompt_mi-plan.txt \
-  --codex-session-id "<exact-reviewer-session-id>" \
   --controller-session-id "<exact-controller-session-id>" \
+  --codex-review-model "<review-model>" \
+  --codex-review-reasoning-effort high \
   --output json < docs/plans/prompt_mi-plan.txt
 ```
 
-Ejemplo legacy:
+Ejemplo legacy directo:
 
 ```bash
 ai_dev_loop prepare \
@@ -77,13 +92,19 @@ ai_dev_loop prepare \
 ai_dev_loop scheduler submit [OPTIONS]
 ```
 
-Lee el prompt exacto desde stdin y congela un run A/B `queued` en el ledger central
+Lee el prompt exacto desde stdin y congela un run `queued` en el ledger central
 (`engine.sqlite3`) mas artefactos protegidos bajo `$XDG_STATE_HOME/ai_dev_loop/artifacts/`.
 No crea `state.json`, no lanza agentes, no ejecuta preflight ni muta el repositorio
-objetivo.
+objetivo. No crea reviewer B; congela `--controller-session-id`,
+`--codex-review-model` y `--codex-review-reasoning-effort` como inputs
+inmutables. El primer review del scheduler (Phase 17.5) creara exactamente un B
+read-only y los reviews posteriores reanudaran esa identidad.
 
-Opciones principales: las mismas rutas/sesiones/overrides que `prepare`, con
-`--controller-session-id` obligatorio y distinto de `--codex-session-id`.
+Opciones principales: mismas rutas que `prepare`, con `--controller-session-id`
+obligatorio, `--codex-review-model` y `--codex-review-reasoning-effort`
+obligatorios, y sin `--codex-session-id`. Los contextos v1 session-bound
+historicos siguen siendo read-only en el ledger; la accion segura es un submit
+fresco v2, nunca una conversion automatica.
 
 Salida redactada. La siguiente accion segura documentada es
 `ai_dev_loop scheduler start <run-id>` (implementada en Phase 17.2).

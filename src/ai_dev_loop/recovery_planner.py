@@ -14,6 +14,15 @@ from ai_dev_loop.commands.start_preflight import (
     validate_timeouts,
 )
 from ai_dev_loop.errors import ValidationError
+from ai_dev_loop.fresh_codex_reviewer import (
+    FRESH_REVIEWER_BINDING_ARTIFACT,
+    FRESH_REVIEWER_INPUT_ARTIFACT,
+    is_fresh_codex_reviewer_run,
+    is_fresh_reviewer_binding_complete,
+    is_fresh_reviewer_bootstrap_uncertain,
+    validate_fresh_reviewer_binding_artifact,
+    validate_fresh_reviewer_input_artifact,
+)
 from ai_dev_loop.integrations.codex.session_runtime import read_codex_session_runtime
 from ai_dev_loop.iterations import (
     find_iteration,
@@ -705,8 +714,14 @@ def analyze_recovery(
     except ValidationError:
         _add_blocker(blockers, "invalid_timeouts")
 
-    if not state.codex.session_id.strip():
-        _add_blocker(blockers, "missing_codex_session_id")
+    if not (state.codex.session_id or "").strip():
+        if is_fresh_codex_reviewer_run(state.codex):
+            if is_fresh_reviewer_bootstrap_uncertain(state.codex):
+                _add_blocker(blockers, "fresh_reviewer_bootstrap_uncertain")
+            else:
+                _add_blocker(blockers, "fresh_reviewer_bootstrap_unbound")
+        else:
+            _add_blocker(blockers, "missing_codex_session_id")
 
     active = read_active_process(run_directory)
     if active is not None:
@@ -954,6 +969,77 @@ def _phase9_override_or_session(
     return session_value, "session"
 
 
+def is_fresh_reviewer_bound(codex: CodexState) -> bool:
+    binding = codex.fresh_reviewer
+    if binding is None or is_fresh_reviewer_bootstrap_uncertain(codex):
+        return False
+    if not is_fresh_reviewer_binding_complete(binding):
+        return False
+    session_id = (codex.session_id or "").strip()
+    bootstrap_session_id = (binding.bootstrap_session_id or "").strip()
+    return bool(session_id and bootstrap_session_id and session_id == bootstrap_session_id)
+
+
+def _resolve_fresh_reviewer_recovery_runtime(
+    codex: CodexState,
+    run_directory: Path | None,
+) -> ResolvedRecoveryRuntime:
+    binding = codex.fresh_reviewer
+    if binding is None:
+        raise ValidationError("fresh reviewer binding is missing from source state")
+    if not is_fresh_reviewer_bound(codex):
+        raise ValidationError(
+            "fresh reviewer bootstrap is incomplete or ambiguous; recovery is blocked"
+        )
+    if run_directory is not None:
+        input_path = run_directory / FRESH_REVIEWER_INPUT_ARTIFACT
+        if not input_path.is_file():
+            raise ValidationError("fresh reviewer input artifact is missing")
+        try:
+            input_payload = json.loads(input_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeError) as exc:
+            raise ValidationError("fresh reviewer input artifact is unreadable") from exc
+        validated_input = validate_fresh_reviewer_input_artifact(input_payload)
+        if validated_input["review_model"] != binding.review_model:
+            raise ValidationError("fresh reviewer input artifact review_model mismatch")
+        if validated_input["review_reasoning_effort"] != binding.review_reasoning_effort:
+            raise ValidationError("fresh reviewer input artifact review_reasoning_effort mismatch")
+        binding_path = run_directory / FRESH_REVIEWER_BINDING_ARTIFACT
+        if not binding_path.is_file():
+            raise ValidationError("fresh reviewer binding artifact is missing")
+        try:
+            binding_payload = json.loads(binding_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeError) as exc:
+            raise ValidationError("fresh reviewer binding artifact is unreadable") from exc
+        validate_fresh_reviewer_binding_artifact(
+            binding_payload,
+            binding=binding,
+            session_id=codex.session_id,
+        )
+        if binding.bootstrap_events_sha256:
+            event_files = sorted((run_directory / "codex" / "events").glob("*.jsonl"))
+            if not any(
+                sha256_file(path) == binding.bootstrap_events_sha256 for path in event_files
+            ):
+                raise ValidationError(
+                    "fresh reviewer bootstrap events no longer match binding evidence"
+                )
+    return ResolvedRecoveryRuntime(
+        session_model=binding.review_model,
+        session_reasoning_effort=binding.review_reasoning_effort,
+        review_model=binding.review_model,
+        review_reasoning_effort=binding.review_reasoning_effort,
+        review_model_source="explicit",
+        review_reasoning_source="explicit",
+        model_family_warning=codex.model_family_warning,
+        session_origin="fresh_reviewer_bootstrap",
+        source_event_type="thread.started",
+        source_timestamp=binding.bootstrap_bound_at,
+        runtime_migration="none",
+        session_runtime_action=SessionRuntimeAction.PRESERVE_PHASE10,
+    )
+
+
 def resolve_recovery_runtime(
     state: RunState,
     run_directory: Path | None = None,
@@ -961,8 +1047,13 @@ def resolve_recovery_runtime(
     """Resolve successor review runtime from source state or exact session capture."""
 
     codex = state.codex
+    if is_fresh_codex_reviewer_run(codex):
+        return _resolve_fresh_reviewer_recovery_runtime(codex, run_directory)
     if needs_phase9_session_capture(codex):
-        session = read_codex_session_runtime(codex.session_id)
+        session_id = (codex.session_id or "").strip()
+        if not session_id:
+            raise ValidationError("codex session id is missing for Phase 9 recovery capture")
+        session = read_codex_session_runtime(session_id)
         review_model, review_model_source = _phase9_override_or_session(
             configured_value=codex.review_model,
             configured_source=codex.review_model_source,
@@ -1064,7 +1155,26 @@ def resolved_runtime_from_successor(successor: RunState) -> ResolvedRecoveryRunt
     recovery = successor.recovery
     if recovery is None:
         raise ValidationError("successor is missing recovery lineage")
+    migration = recovery.runtime_migration
     codex = successor.codex
+    if is_fresh_codex_reviewer_run(codex):
+        binding = codex.fresh_reviewer
+        if binding is None or not is_fresh_reviewer_bound(codex):
+            raise ValidationError("successor fresh reviewer binding is incomplete")
+        return ResolvedRecoveryRuntime(
+            session_model=binding.review_model,
+            session_reasoning_effort=binding.review_reasoning_effort,
+            review_model=binding.review_model,
+            review_reasoning_effort=binding.review_reasoning_effort,
+            review_model_source="explicit",
+            review_reasoning_source="explicit",
+            model_family_warning=codex.model_family_warning,
+            session_origin="fresh_reviewer_bootstrap",
+            source_event_type="thread.started",
+            source_timestamp=binding.bootstrap_bound_at,
+            runtime_migration=migration,
+            session_runtime_action=SessionRuntimeAction.PRESERVE_PHASE10,
+        )
     if (
         not codex.session_model
         or not codex.session_reasoning_effort
@@ -1074,7 +1184,6 @@ def resolved_runtime_from_successor(successor: RunState) -> ResolvedRecoveryRunt
         or not codex.review_reasoning_source
     ):
         raise ValidationError("successor review runtime is incomplete")
-    migration = recovery.runtime_migration
     action = (
         SessionRuntimeAction.MIGRATE_PHASE9
         if migration == "phase9_session_capture"
@@ -1112,4 +1221,5 @@ def apply_resolved_runtime_to_codex(
         model_family_warning=resolved.model_family_warning,
         review_skill=codex.review_skill,
         sandbox=codex.sandbox,
+        fresh_reviewer=codex.fresh_reviewer,
     )

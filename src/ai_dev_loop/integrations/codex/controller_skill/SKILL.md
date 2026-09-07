@@ -1,13 +1,14 @@
 ---
 name: ai-dev-loop-controller
-description: Control an ai_dev_loop run from the original Codex planning session after an A/B handoff. Use when the user asks how a run is going, wants to launch a prepared run, abort it, or inspect the next safe action from the controller conversation.
+description: Control an ai_dev_loop run from the original Codex planning session after controller A prepares a run with frozen review model and reasoning effort. Use when the user asks how a run is going, wants to launch a prepared run, abort it, or inspect the next safe action from the controller conversation.
 ---
 
 # ai_dev_loop Controller (session A)
 
-Use this skill only from the **controller** Codex session (A) after
-`ai-dev-loop-handoff` prepared a run with a distinct inactive reviewer session
-(B).
+Use this skill only from the **controller** Codex session (A) after A prepared a
+run with `--controller-session-id`, `--codex-review-model`, and
+`--codex-review-reasoning-effort`. Reviewer B is created by the worker at the
+first review boundary, not by A.
 
 ## Identity Rules
 
@@ -15,8 +16,10 @@ Use this skill only from the **controller** Codex session (A) after
 2. Never infer, shorten, rewrite, search for, or guess session IDs.
 3. Never use `--last`.
 4. Never resume, write to, or send prompts to reviewer session B from here.
-5. If the current session ID equals the run's reviewer session ID, **refuse**
-   controller actions and explain that B must remain inactive.
+5. Do not pass `--codex-session-id` when preparing a new controller run.
+6. For PR-review v2 or any run with a stored reviewer session ID, if the current
+   session ID equals that reviewer session ID, **refuse** controller actions and
+   explain that B must remain inactive.
 
 ## Allowed Commands
 
@@ -31,8 +34,8 @@ interpolation of secrets beyond the exact IDs already known):
 - `ai_dev_loop github doctor`
 - existing read-only commands: `status`, `logs`, `inspect`, `list`
 
-Do **not** run `prepare` from the controller for an A/B run that B already
-prepared. Do **not** invent notification delivery.
+Do **not** run `prepare` with a reviewer session ID for the current controller
+workflow. Do **not** invent notification delivery.
 
 `pr-review create` and `pr-review prepare` only freeze v2 `PreparedState`; they
 do not launch workers, agents, GitHub writes, commits, or pushes. Before
@@ -68,8 +71,6 @@ Do **not** print full prompts, fix prompts, staged patches, review Markdown,
 raw JSONL, full session IDs, auth payloads, or process environments.
 
 ### “lanza el run” / “launch the run”
-
-Confirm B must remain inactive, then:
 
 ```bash
 ai_dev_loop launch <run-id> \
@@ -152,5 +153,5 @@ ai_dev_loop pr-review resume <pr-review-run-id>
   `integrations status` / `/hooks` trust / session bridge status.
 - If zero or multiple controller matches exist, report the safe next action from
   `controller status` and do not guess.
-- If the fork/message capability was never completed and no A/B run exists, tell
-  the user to finish handoff with `ai-dev-loop-handoff` first.
+- If no controller-prepared run exists, tell the user to finish handoff with
+  `ai-dev-loop-handoff` first.

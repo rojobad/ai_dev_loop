@@ -11,11 +11,14 @@ from pydantic import ValidationError
 from ai_dev_loop.paths import schema_path
 from ai_dev_loop.scheduler.domain.state import (
     SUBMITTED_CONTEXT_ADAPTER,
+    SUBMITTED_CONTEXT_SCHEMA_VERSION,
+    SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH,
     SUBMITTED_STATE_ADAPTER,
     CodexRuntimeBinding,
     ControllerBinding,
     CursorBinding,
     EffectiveConfigBinding,
+    FreshCodexReviewerBinding,
     PlanPromptBinding,
     RepositoryBinding,
     SubmittedRunContext,
@@ -24,9 +27,71 @@ from ai_dev_loop.scheduler.domain.state import (
 )
 
 
-def _sample_context() -> SubmittedRunContext:
+def _sample_fresh_context() -> SubmittedRunContext:
     digest = "a" * 64
     return SubmittedRunContext(
+        schema_version=SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH,
+        project_name="fixture-project",
+        repository=RepositoryBinding(
+            root="/tmp/repo",
+            git_common_dir="/tmp/repo/.git",
+            git_dir="/tmp/repo/.git",
+            branch="main",
+            initial_head="abc123",
+            worktree_key=digest,
+        ),
+        plan_prompt=PlanPromptBinding(
+            plan_repository_path="docs/plans/sample-plan.md",
+            prompt_source_repository_path="docs/plans/prompt.txt",
+            plan_artifact_path="plan/plan.md",
+            plan_sha256=digest,
+            prompt_artifact_path="prompts/cursor-initial.txt",
+            prompt_sha256=digest,
+        ),
+        effective_config=EffectiveConfigBinding(
+            effective_config_artifact_path="effective-config.yaml",
+            effective_config_sha256=digest,
+            source_config_artifact_path="source-config.yaml",
+            source_config_sha256=digest,
+        ),
+        codex=FreshCodexReviewerBinding(
+            review_model="gpt-5.6-sol",
+            review_reasoning_effort="high",
+            review_model_source="explicit",
+            review_reasoning_source="explicit",
+            command="codex",
+            review_skill="review-staged-cursor-execution",
+            sandbox="workspace-write",
+            binding_artifact_path="codex/fresh-reviewer-input.json",
+            binding_sha256=digest,
+        ),
+        cursor=CursorBinding(
+            command="agent",
+            model="composer-2.5-fast",
+            output_format="stream-json",
+            force=True,
+            trust_workspace=True,
+            sandbox="disabled",
+        ),
+        workflow=WorkflowLimits(
+            max_review_iterations=3,
+            stage_mode="all",
+            cursor_timeout_minutes=30,
+            codex_timeout_minutes=30,
+            require_clean_worktree=True,
+        ),
+        controller=ControllerBinding(
+            controller_session_id="11111111-1111-1111-1111-111111111111",
+        ),
+        baseline_status_artifact_path="git/baseline-status.txt",
+        baseline_status_sha256=digest,
+    )
+
+
+def _sample_legacy_context() -> SubmittedRunContext:
+    digest = "a" * 64
+    return SubmittedRunContext(
+        schema_version=SUBMITTED_CONTEXT_SCHEMA_VERSION,
         project_name="fixture-project",
         repository=RepositoryBinding(
             root="/tmp/repo",
@@ -92,17 +157,14 @@ def _sample_context() -> SubmittedRunContext:
 
 
 def test_submitted_context_model_schema_alignment() -> None:
-    context = _sample_context()
+    context = _sample_fresh_context()
     json_payload = json.loads(SUBMITTED_CONTEXT_ADAPTER.dump_json(context))
-    schema = json.loads(
-        schema_path("scheduler-submitted-run-context-v1.json").read_text(encoding="utf-8")
-    )
-    # Pydantic round-trip is the contract; schema file documents the persisted shape.
-    assert json_payload["schema_version"] == 1
-    assert (
-        json_payload["controller"]["controller_session_id"] != json_payload["codex"]["session_id"]
-    )
-    assert schema["properties"]["schema_version"]["const"] == 1
+    assert json_payload["schema_version"] == 2
+    assert json_payload["codex"]["review_model_source"] == "explicit"
+
+    legacy = json.loads(SUBMITTED_CONTEXT_ADAPTER.dump_json(_sample_legacy_context()))
+    assert legacy["schema_version"] == 1
+    assert legacy["controller"]["controller_session_id"] != legacy["codex"]["session_id"]
 
 
 def test_submitted_state_model_schema_alignment() -> None:
@@ -113,14 +175,32 @@ def test_submitted_state_model_schema_alignment() -> None:
         submitted_at=now,
         updated_at=now,
         idempotency_key="b" * 64,
-        context=_sample_context(),
+        context=_sample_fresh_context(),
     )
     json_payload = json.loads(SUBMITTED_STATE_ADAPTER.dump_json(state))
     schema = json.loads(
         schema_path("scheduler-submitted-state-v1.json").read_text(encoding="utf-8")
     )
+    context_v2 = json.loads(
+        schema_path("scheduler-submitted-run-context-v2.json").read_text(encoding="utf-8")
+    )
     assert json_payload["kind"] == "queued"
     assert schema["properties"]["kind"]["const"] == "queued"
+    assert context_v2["properties"]["schema_version"]["const"] == 2
+    assert "fresh_codex_reviewer_binding" in context_v2["$defs"]
+
+
+def test_run_state_v2_schema_aligns_with_fresh_codex_binding() -> None:
+    from ai_dev_loop.state import FreshCodexReviewerBinding as RunFreshBinding
+
+    schema = json.loads(schema_path("run-state-v2.json").read_text(encoding="utf-8"))
+    codex_schema = schema["properties"]["codex"]
+    assert schema["properties"]["schema_version"]["const"] == 2
+    assert "fresh_reviewer" in codex_schema["required"]
+    assert set(RunFreshBinding.model_fields) == set(
+        codex_schema["properties"]["fresh_reviewer"]["properties"].keys()
+    )
+    assert codex_schema["properties"]["session_id"]["type"] == ["string", "null"]
 
 
 def test_submitted_context_rejects_empty_required_strings() -> None:
@@ -200,7 +280,7 @@ def test_submitted_state_rejects_empty_run_id() -> None:
             submitted_at=now,
             updated_at=now,
             idempotency_key="b" * 64,
-            context=_sample_context(),
+            context=_sample_fresh_context(),
         )
 
 

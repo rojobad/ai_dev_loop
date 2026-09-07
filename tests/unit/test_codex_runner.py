@@ -14,8 +14,10 @@ from ai_dev_loop.runners.codex import (
     redact_codex_args,
 )
 from ai_dev_loop.state import (
+    RUN_STATE_SCHEMA_VERSION_FRESH,
     CodexState,
     CursorState,
+    FreshCodexReviewerBinding,
     PlanState,
     ProjectRef,
     PromptState,
@@ -23,6 +25,7 @@ from ai_dev_loop.state import (
     RunState,
     RunStatus,
     WorkflowState,
+    load_run_state,
     utc_now,
 )
 
@@ -600,3 +603,283 @@ def test_classify_codex_output_artifact_failure_requires_durable_evidence(tmp_pa
         encoding="utf-8",
     )
     assert classify_codex_review_output_artifact_failure(tmp_path, "01") is True
+
+
+def _fresh_sample_state() -> RunState:
+    state = _sample_state()
+    binding = FreshCodexReviewerBinding(
+        review_model="gpt-5.6-sol",
+        review_reasoning_effort="high",
+    )
+    return state.model_copy(
+        update={
+            "schema_version": RUN_STATE_SCHEMA_VERSION_FRESH,
+            "codex": state.codex.model_copy(
+                update={
+                    "session_id": None,
+                    "session_model": None,
+                    "session_reasoning_effort": None,
+                    "review_model": "gpt-5.6-sol",
+                    "review_reasoning_effort": "high",
+                    "review_model_source": "explicit",
+                    "review_reasoning_source": "explicit",
+                    "fresh_reviewer": binding,
+                }
+            ),
+        }
+    )
+
+
+def test_fresh_bootstrap_persists_state_before_review_result_processing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+    import stat
+    from unittest.mock import patch
+
+    import pytest as pytest_mod
+
+    from ai_dev_loop.errors import AiDevLoopError
+    from ai_dev_loop.fresh_codex_reviewer import FRESH_REVIEWER_BINDING_ARTIFACT
+    from ai_dev_loop.paths import schema_path
+    from ai_dev_loop.runners.codex import run_codex_review
+    from ai_dev_loop.state import save_run_state
+
+    bootstrap_id = "019def00-0000-0000-0000-0000000000bb"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_codex = bin_dir / "codex"
+    fake_codex.write_text(
+        f"""#!/usr/bin/env python3
+import json
+import sys
+print(json.dumps({{"type": "thread.started", "thread_id": "{bootstrap_id}"}}))
+sys.stderr.write("review failed\\n")
+sys.exit(2)
+""",
+        encoding="utf-8",
+    )
+    fake_codex.chmod(fake_codex.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    run_directory = tmp_path / "run"
+    (run_directory / "plan").mkdir(parents=True)
+    (run_directory / "prompts").mkdir(parents=True)
+    (run_directory / "cursor/iterations/01").mkdir(parents=True)
+    (run_directory / "git/diffs").mkdir(parents=True)
+    state = _fresh_sample_state()
+    state = state.model_copy(
+        update={
+            "codex": state.codex.model_copy(update={"command": "codex"}),
+            "repository": state.repository.model_copy(update={"root": str(tmp_path / "repo")}),
+            "iterations": [
+                {
+                    "number": 1,
+                    "kind": "initial_implementation",
+                    "started_at": state.created_at.isoformat(),
+                    "cursor": {"chat_id": "chat-1"},
+                    "git": {"staged_diff_path": "git/diffs/01.patch"},
+                }
+            ],
+        }
+    )
+    (tmp_path / "repo").mkdir()
+    (run_directory / state.plan.snapshot_path).write_text("# plan\n", encoding="utf-8")
+    (run_directory / state.prompt.snapshot_path).write_text("prompt\n", encoding="utf-8")
+    for rel in ("01.stat", "01.name-only.txt", "01.patch"):
+        (run_directory / "git/diffs" / rel).write_text("artifact\n", encoding="utf-8")
+    save_run_state(run_directory, state)
+
+    with (
+        patch(
+            "ai_dev_loop.runners.codex.schema_path",
+            return_value=schema_path("codex-review-result-v1.json"),
+        ),
+        patch("ai_dev_loop.runners.codex.validate_codex_response_schema"),
+        pytest_mod.raises(AiDevLoopError, match="exit code 2"),
+    ):
+        run_codex_review(state, run_directory, iteration="01")
+
+    persisted = load_run_state(run_directory / "state.json")
+    assert persisted.codex.session_id == bootstrap_id
+    assert persisted.codex.fresh_reviewer is not None
+    assert persisted.codex.fresh_reviewer.bootstrap_session_id == bootstrap_id
+    assert (run_directory / FRESH_REVIEWER_BINDING_ARTIFACT).is_file()
+
+
+def _run_bootstrap_with_durable_and_process_stdout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    events_text: str,
+    process_stdout: str,
+) -> Path:
+    from unittest.mock import patch
+
+    import pytest as pytest_mod
+
+    from ai_dev_loop.errors import AiDevLoopError
+    from ai_dev_loop.paths import schema_path
+    from ai_dev_loop.process import StreamingProcessResult
+    from ai_dev_loop.runners.codex import run_codex_review
+    from ai_dev_loop.state import save_run_state
+
+    run_directory = tmp_path / "run"
+    (run_directory / "plan").mkdir(parents=True)
+    (run_directory / "prompts").mkdir(parents=True)
+    (run_directory / "cursor/iterations/01").mkdir(parents=True)
+    (run_directory / "git/diffs").mkdir(parents=True)
+    state = _fresh_sample_state()
+    state = state.model_copy(
+        update={
+            "codex": state.codex.model_copy(update={"command": "codex"}),
+            "repository": state.repository.model_copy(update={"root": str(tmp_path / "repo")}),
+            "status": "reviewing",
+            "iterations": [
+                {
+                    "number": 1,
+                    "kind": "initial_implementation",
+                    "started_at": state.created_at.isoformat(),
+                    "cursor": {"chat_id": "chat-1"},
+                    "git": {"staged_diff_path": "git/diffs/01.patch"},
+                }
+            ],
+        }
+    )
+    (tmp_path / "repo").mkdir()
+    (run_directory / state.plan.snapshot_path).write_text("# plan\n", encoding="utf-8")
+    (run_directory / state.prompt.snapshot_path).write_text("prompt\n", encoding="utf-8")
+    for rel in ("01.stat", "01.name-only.txt", "01.patch"):
+        (run_directory / "git/diffs" / rel).write_text("artifact\n", encoding="utf-8")
+    save_run_state(run_directory, state)
+
+    def streaming_with_split_stdout(args, **kwargs):  # type: ignore[no-untyped-def]
+        stdout_path = kwargs.get("stdout_path")
+        if isinstance(stdout_path, Path):
+            stdout_path.parent.mkdir(parents=True, exist_ok=True)
+            stdout_path.write_text(events_text, encoding="utf-8")
+        return StreamingProcessResult(
+            args=list(args),
+            returncode=2,
+            stdout=process_stdout,
+            stderr="review failed\n",
+            timed_out=False,
+            elapsed_seconds=1.0,
+        )
+
+    monkeypatch.setattr(
+        "ai_dev_loop.runners.codex.run_process_streaming",
+        streaming_with_split_stdout,
+    )
+
+    with (
+        patch(
+            "ai_dev_loop.runners.codex.schema_path",
+            return_value=schema_path("codex-review-result-v1.json"),
+        ),
+        patch("ai_dev_loop.runners.codex.validate_codex_response_schema"),
+        pytest_mod.raises(AiDevLoopError, match="identity capture failed"),
+    ):
+        run_codex_review(state, run_directory, iteration="01")
+
+    return run_directory
+
+
+@pytest.mark.parametrize(
+    ("events_text", "process_stdout", "expected_reason"),
+    [
+        (
+            "\n".join(
+                [
+                    json.dumps({"type": "thread.started", "thread_id": "not-a-uuid"}),
+                    json.dumps(
+                        {
+                            "type": "thread.started",
+                            "thread_id": "019def00-0000-0000-0000-0000000000bb",
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            json.dumps(
+                {"type": "thread.started", "thread_id": "019def00-0000-0000-0000-0000000000bb"}
+            )
+            + "\n",
+            "malformed_identity",
+        ),
+        (
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "thread.started",
+                            "thread_id": "019def00-0000-0000-0000-0000000000bb",
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "thread.started",
+                            "thread_id": "019def00-0000-0000-0000-0000000000bb",
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            json.dumps(
+                {"type": "thread.started", "thread_id": "019def00-0000-0000-0000-0000000000bb"}
+            )
+            + "\n",
+            "duplicate_identity_events",
+        ),
+        (
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "type": "thread.started",
+                            "thread_id": "019def00-0000-0000-0000-0000000000bb",
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "type": "thread.started",
+                            "thread_id": "019def00-1111-1111-1111-0000000000cc",
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            json.dumps(
+                {"type": "thread.started", "thread_id": "019def00-0000-0000-0000-0000000000bb"}
+            )
+            + "\n",
+            "conflicting_identity",
+        ),
+    ],
+)
+def test_bootstrap_jsonl_uncertainty_is_not_overridden_by_stdout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    events_text: str,
+    process_stdout: str,
+    expected_reason: str,
+) -> None:
+    from ai_dev_loop.fresh_codex_reviewer import (
+        FRESH_REVIEWER_BINDING_ARTIFACT,
+        FRESH_REVIEWER_BOOTSTRAP_UNCERTAINTY_ARTIFACT,
+    )
+
+    run_directory = _run_bootstrap_with_durable_and_process_stdout(
+        tmp_path,
+        monkeypatch,
+        events_text=events_text,
+        process_stdout=process_stdout,
+    )
+    persisted = load_run_state(run_directory / "state.json")
+    assert persisted.codex.session_id is None
+    assert persisted.codex.fresh_reviewer is not None
+    assert persisted.codex.fresh_reviewer.bootstrap_uncertainty_reason == expected_reason
+    assert persisted.codex.fresh_reviewer.bootstrap_session_id is None
+    assert not (run_directory / FRESH_REVIEWER_BINDING_ARTIFACT).exists()
+    assert (run_directory / FRESH_REVIEWER_BOOTSTRAP_UNCERTAINTY_ARTIFACT).is_file()

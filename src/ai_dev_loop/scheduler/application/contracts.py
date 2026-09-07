@@ -7,7 +7,7 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict
 
 from ai_dev_loop.errors import AiDevLoopError, ValidationError
-from ai_dev_loop.scheduler.domain.state import SubmittedRunContext
+from ai_dev_loop.scheduler.domain.state import FreshCodexReviewerBinding, SubmittedRunContext
 
 
 class AppModel(BaseModel):
@@ -61,7 +61,7 @@ class SchedulerRunSummary(AppModel):
     project_name: str
     repository_root: str
     controller_session_id_prefix: str
-    reviewer_session_id_prefix: str
+    reviewer_session_id_prefix: str | None
     submitted_at: str
     updated_at: str
     safe_next_action: SafeNextAction
@@ -95,6 +95,11 @@ def summary_from_context(
     context: SubmittedRunContext,
     safe_next_action: SafeNextAction,
 ) -> SchedulerRunSummary:
+    reviewer_prefix = None
+    if isinstance(context.codex, FreshCodexReviewerBinding):
+        reviewer_prefix = None
+    else:
+        reviewer_prefix = redacted_session_prefix(context.codex.session_id)
     return SchedulerRunSummary(
         run_id=run_id,
         state_kind=state_kind,
@@ -103,7 +108,7 @@ def summary_from_context(
         controller_session_id_prefix=redacted_session_prefix(
             context.controller.controller_session_id
         ),
-        reviewer_session_id_prefix=redacted_session_prefix(context.codex.session_id),
+        reviewer_session_id_prefix=reviewer_prefix,
         submitted_at=submitted_at,
         updated_at=updated_at,
         safe_next_action=safe_next_action,

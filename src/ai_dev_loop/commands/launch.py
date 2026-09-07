@@ -9,6 +9,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ai_dev_loop.errors import ValidationError
+from ai_dev_loop.fresh_codex_reviewer import (
+    effective_codex_session_id,
+    reject_legacy_ab_session_bound_execution,
+)
 from ai_dev_loop.integrations.codex.session_runtime import require_codex_session_id
 from ai_dev_loop.launcher import (
     LaunchLock,
@@ -60,12 +64,14 @@ def _validate_controller_identity(
             "run was not prepared with --controller-session-id; "
             "use ai_dev_loop start for legacy runs"
         )
+    reject_legacy_ab_session_bound_execution(state)
     if state.controller.controller_session_id != controller_id:
         raise ValidationError(
             "controller session id does not match the prepared run; "
             "refusing launch with mismatched controller identity"
         )
-    if state.codex.session_id == controller_id:
+    reviewer_id = effective_codex_session_id(state.codex)
+    if reviewer_id is not None and reviewer_id == controller_id:
         raise ValidationError("controller session id must differ from the reviewer session id")
     if state.status in {
         RunStatus.COMPLETED,
@@ -120,7 +126,7 @@ def launch_run(
                     "Leave the reviewer session inactive."
                 ),
                 controller_session_id=controller_id,
-                reviewer_session_id=state.codex.session_id,
+                reviewer_session_id=effective_codex_session_id(state.codex) or "",
             )
 
         if state.status not in {RunStatus.PREPARED, RunStatus.WAITING_FOR_CURSOR_FIX}:
@@ -142,7 +148,7 @@ def launch_run(
             "controller session only."
         ),
         controller_session_id=controller_id,
-        reviewer_session_id=state.codex.session_id,
+        reviewer_session_id=effective_codex_session_id(state.codex) or "",
     )
 
 
@@ -156,7 +162,9 @@ def render_launch_output(result: LaunchResult, *, output: str = "text") -> str:
             "launcher_live": result.launcher_pid is not None,
             "message": result.message,
             "controller_session_id_prefix": result.controller_session_id[:8],
-            "reviewer_session_id_prefix": result.reviewer_session_id[:8],
+            "reviewer_session_id_prefix": (
+                result.reviewer_session_id[:8] if result.reviewer_session_id else None
+            ),
         }
         return json.dumps(payload, indent=2) + "\n"
     lines = [
@@ -164,7 +172,7 @@ def render_launch_output(result: LaunchResult, *, output: str = "text") -> str:
         f"Status: {result.status}",
         f"Already running: {result.already_running}",
         f"Controller: {shorten_session_id(result.controller_session_id)}",
-        f"Reviewer: {shorten_session_id(result.reviewer_session_id)}",
+        f"Reviewer: {shorten_session_id(result.reviewer_session_id) if result.reviewer_session_id else '(unbound)'}",
         result.message,
     ]
     return "\n".join(lines) + "\n"

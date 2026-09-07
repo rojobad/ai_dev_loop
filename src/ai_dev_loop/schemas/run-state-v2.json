@@ -1,0 +1,791 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/run-state-v2.json",
+  "title": "ai_dev_loop run state v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "project",
+    "status",
+    "created_at",
+    "updated_at",
+    "repository",
+    "plan",
+    "prompt",
+    "codex",
+    "cursor",
+    "workflow",
+    "iterations",
+    "result",
+    "last_error"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 2
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "prepared",
+        "validating",
+        "running_cursor",
+        "staging",
+        "reviewing",
+        "waiting_for_cursor_fix",
+        "completed",
+        "completed_with_residual_risk",
+        "max_iterations_reached",
+        "interrupted",
+        "failed",
+        "aborted"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "git_common_dir",
+        "git_dir",
+        "branch",
+        "initial_head",
+        "baseline_status_path"
+      ],
+      "properties": {
+        "root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "git_common_dir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "git_dir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "initial_head": {
+          "type": "string",
+          "minLength": 1
+        },
+        "baseline_status_path": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository_path",
+        "snapshot_path",
+        "sha256"
+      ],
+      "properties": {
+        "repository_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "snapshot_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "prompt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_repository_path",
+        "snapshot_path",
+        "sha256"
+      ],
+      "properties": {
+        "source_repository_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "snapshot_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "codex": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "session_id",
+        "session_model",
+        "review_model",
+        "review_reasoning_effort",
+        "review_model_source",
+        "review_reasoning_source",
+        "review_skill",
+        "sandbox",
+        "fresh_reviewer"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
+        "session_model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session_reasoning_effort": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max",
+                "ultra"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "review_model": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "review_reasoning_effort": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max",
+                "ultra"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "review_model_source": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "session",
+                "explicit",
+                "legacy_inherit"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "review_reasoning_source": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "session",
+                "explicit",
+                "legacy_inherit"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_family_warning": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "review_skill": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sandbox": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fresh_reviewer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "review_model",
+            "review_reasoning_effort"
+          ],
+          "properties": {
+            "review_model": {
+              "type": "string",
+              "minLength": 1
+            },
+            "review_reasoning_effort": {
+              "type": "string",
+              "enum": [
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max",
+                "ultra"
+              ]
+            },
+            "bootstrap_session_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+            },
+            "bootstrap_events_sha256": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "bootstrap_bound_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "bootstrap_uncertainty_reason": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "enum": [
+                null,
+                "missing_identity",
+                "malformed_identity",
+                "conflicting_identity",
+                "duplicate_identity_events",
+                "timeout_without_identity"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "cursor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "model",
+        "output_format",
+        "force",
+        "trust_workspace",
+        "sandbox",
+        "chat_id"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "output_format": {
+          "type": "string",
+          "minLength": 1
+        },
+        "force": {
+          "type": "boolean"
+        },
+        "trust_workspace": {
+          "type": "boolean"
+        },
+        "sandbox": {
+          "type": "string",
+          "minLength": 1
+        },
+        "chat_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_review_iterations",
+        "current_review_iteration",
+        "stage_mode",
+        "cursor_timeout_minutes",
+        "codex_timeout_minutes"
+      ],
+      "properties": {
+        "max_review_iterations": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "current_review_iteration": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "local_review_count": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stage_mode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cursor_timeout_minutes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "codex_timeout_minutes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "iterations": {
+      "type": "array"
+    },
+    "result": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "last_error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "controller": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "controller_session_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 1
+        },
+        "controller_session_id": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        }
+      }
+    },
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_run_id",
+        "source_status",
+        "source_iteration",
+        "recovered_checkpoint",
+        "source_staged_patch_sha256",
+        "created_at",
+        "runtime_migration",
+        "reason_code"
+      ],
+      "properties": {
+        "source_run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_status": {
+          "type": "string",
+          "const": "failed"
+        },
+        "source_iteration": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "recovered_checkpoint": {
+          "type": "string",
+          "enum": [
+            "staging",
+            "reviewing",
+            "process_review",
+            "cursor"
+          ]
+        },
+        "source_staged_patch_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "runtime_migration": {
+          "type": "string",
+          "enum": [
+            "none",
+            "phase9_session_capture"
+          ]
+        },
+        "reason_code": {
+          "type": "string",
+          "enum": [
+            "codex_review_failed",
+            "codex_review_result_invalid",
+            "codex_review_result_artifact_missing",
+            "codex_review_processing_failed",
+            "correction_staging_failed",
+            "initial_staging_failed",
+            "cursor_usage_limit"
+          ]
+        },
+        "cursor_output_fingerprint_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "previous_staged_patch_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "legacy_cursor_output_adopted": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "legacy_cursor_usage_limit_adopted": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "source_cursor_model": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "cursor_model_fallback": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "source_prompt_path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "source_prompt_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "usage_limit_fingerprint_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "usage_limit_fingerprint_path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "continuation_envelope_path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "continuation_envelope_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "recovered_checkpoint": {
+                "const": "staging"
+              },
+              "reason_code": {
+                "const": "correction_staging_failed"
+              }
+            },
+            "required": [
+              "recovered_checkpoint",
+              "reason_code"
+            ]
+          },
+          "then": {
+            "required": [
+              "cursor_output_fingerprint_sha256",
+              "previous_staged_patch_sha256"
+            ],
+            "properties": {
+              "reason_code": {
+                "const": "correction_staging_failed"
+              },
+              "source_iteration": {
+                "type": "integer",
+                "minimum": 2
+              },
+              "source_staged_patch_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "cursor_output_fingerprint_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "previous_staged_patch_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "recovered_checkpoint": {
+                "const": "staging"
+              },
+              "reason_code": {
+                "const": "initial_staging_failed"
+              }
+            },
+            "required": [
+              "recovered_checkpoint",
+              "reason_code"
+            ]
+          },
+          "then": {
+            "required": [
+              "cursor_output_fingerprint_sha256"
+            ],
+            "properties": {
+              "reason_code": {
+                "const": "initial_staging_failed"
+              },
+              "source_iteration": {
+                "const": 1
+              },
+              "source_staged_patch_sha256": {
+                "type": "null"
+              },
+              "previous_staged_patch_sha256": {
+                "type": "null"
+              },
+              "legacy_cursor_output_adopted": {
+                "enum": [
+                  null,
+                  false
+                ]
+              },
+              "cursor_output_fingerprint_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "recovered_checkpoint": {
+                "enum": [
+                  "reviewing",
+                  "process_review"
+                ]
+              }
+            },
+            "required": [
+              "recovered_checkpoint"
+            ]
+          },
+          "then": {
+            "properties": {
+              "source_staged_patch_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "recovered_checkpoint": {
+                "const": "cursor"
+              }
+            },
+            "required": [
+              "recovered_checkpoint"
+            ]
+          },
+          "then": {
+            "required": [
+              "source_cursor_model",
+              "cursor_model_fallback",
+              "source_prompt_path",
+              "source_prompt_sha256",
+              "usage_limit_fingerprint_sha256",
+              "usage_limit_fingerprint_path",
+              "continuation_envelope_path",
+              "continuation_envelope_sha256"
+            ],
+            "properties": {
+              "reason_code": {
+                "const": "cursor_usage_limit"
+              },
+              "source_staged_patch_sha256": {
+                "type": "null"
+              },
+              "source_cursor_model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "cursor_model_fallback": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_prompt_path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_prompt_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "usage_limit_fingerprint_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "usage_limit_fingerprint_path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "continuation_envelope_path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "continuation_envelope_sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

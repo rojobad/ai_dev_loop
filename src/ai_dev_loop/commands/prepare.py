@@ -10,6 +10,12 @@ from pathlib import Path
 from ai_dev_loop.config import ConfigOverrides, resolve_effective_config
 from ai_dev_loop.errors import UsageError, ValidationError
 from ai_dev_loop.event_log import append_orchestrator_event
+from ai_dev_loop.fresh_codex_reviewer import (
+    FRESH_REVIEWER_INPUT_ARTIFACT,
+    build_fresh_reviewer_input_artifact,
+    require_frozen_review_model,
+    require_frozen_review_reasoning_effort,
+)
 from ai_dev_loop.integrations.codex.session_runtime import (
     read_codex_session_runtime,
     require_codex_session_id,
@@ -25,9 +31,12 @@ from ai_dev_loop.runners.git import (
     validate_clean_worktree,
 )
 from ai_dev_loop.state import (
+    RUN_STATE_SCHEMA_VERSION,
+    RUN_STATE_SCHEMA_VERSION_FRESH,
     CodexState,
     ControllerState,
     CursorState,
+    FreshCodexReviewerBinding,
     ManifestArtifact,
     PlanState,
     ProjectRef,
@@ -166,21 +175,36 @@ def prepare_run(options: PrepareOptions) -> PrepareResult:
         repo_root=repo_info.root,
         require_clean=effective.workflow.require_clean_worktree,
     )
-    session_id = require_codex_session_id(options.codex_session_id)
+
     controller_session_id: str | None = None
+    fresh_reviewer: FreshCodexReviewerBinding | None = None
+    session_id: str | None = None
+    review_runtime = None
+
     if options.controller_session_id is not None:
         controller_session_id = require_codex_session_id(options.controller_session_id)
-        if controller_session_id == session_id:
+        if options.codex_session_id is not None:
             raise ValidationError(
-                "controller session id must differ from the reviewer Codex session id; "
-                "refusing equal A/B identities"
+                "controller prepare must not pass --codex-session-id; "
+                "reviewer B is created at the first review boundary with frozen "
+                "--codex-review-model and --codex-review-reasoning-effort"
             )
-    session_runtime = read_codex_session_runtime(session_id)
-    review_runtime = resolve_effective_review_runtime(
-        session=session_runtime,
-        configured_review_model=effective.codex.review_model,
-        configured_review_reasoning_effort=effective.codex.review_reasoning_effort,
-    )
+        review_model = require_frozen_review_model(options.codex_review_model)
+        review_reasoning = require_frozen_review_reasoning_effort(
+            options.codex_review_reasoning_effort
+        )
+        fresh_reviewer = FreshCodexReviewerBinding(
+            review_model=review_model,
+            review_reasoning_effort=review_reasoning,
+        )
+    else:
+        session_id = require_codex_session_id(options.codex_session_id)
+        session_runtime = read_codex_session_runtime(session_id)
+        review_runtime = resolve_effective_review_runtime(
+            session=session_runtime,
+            configured_review_model=effective.codex.review_model,
+            configured_review_reasoning_effort=effective.codex.review_reasoning_effort,
+        )
 
     now = utc_now()
     run_id = generate_run_id(effective.project.name, now=now)
@@ -210,33 +234,108 @@ def prepare_run(options: PrepareOptions) -> PrepareResult:
     baseline_status_path = destination / "git" / "baseline-status.txt"
     atomic_write_text(baseline_status_path, repo_info.status_porcelain + "\n")
 
-    session_runtime_artifact = {
-        "session_id_prefix": session_id[:8],
-        "model": review_runtime.session_model,
-        "reasoning_effort": review_runtime.session_reasoning_effort,
-        "origin": review_runtime.session_origin,
-        "source_event_type": review_runtime.source_event_type,
-        "source_timestamp": review_runtime.source_timestamp,
-        "review_model": review_runtime.review_model,
-        "review_reasoning_effort": review_runtime.review_reasoning_effort,
-        "review_model_source": review_runtime.review_model_source,
-        "review_reasoning_source": review_runtime.review_reasoning_source,
-        "model_mismatch_warning": review_runtime.model_mismatch_warning,
-        "model_family_warning": review_runtime.model_family_warning,
-    }
-    session_runtime_path = destination / "codex" / "session-runtime.json"
-    atomic_write_json(session_runtime_path, session_runtime_artifact, sensitive=True)
-
     plan_hash = sha256_file(plan_snapshot)
     prompt_hash = sha256_text(prompt_text)
     source_config_hash = sha256_file(source_yaml_path)
     effective_config_hash = sha256_bytes(effective_yaml_path.read_bytes())
-    session_runtime_hash = sha256_file(session_runtime_path)
+
+    manifest_artifacts: list[ManifestArtifact] = [
+        ManifestArtifact(path="plan/plan.md", sha256=plan_hash),
+        ManifestArtifact(path="prompts/cursor-initial.txt", sha256=prompt_hash),
+        ManifestArtifact(path="source-config.yaml", sha256=source_config_hash),
+        ManifestArtifact(path="effective-config.yaml", sha256=effective_config_hash),
+        ManifestArtifact(path="git/baseline-status.txt", sha256=sha256_file(baseline_status_path)),
+    ]
+
+    if fresh_reviewer is not None:
+        fresh_input_artifact = build_fresh_reviewer_input_artifact(
+            review_model=fresh_reviewer.review_model,
+            review_reasoning_effort=fresh_reviewer.review_reasoning_effort,
+        )
+        fresh_input_path = destination / FRESH_REVIEWER_INPUT_ARTIFACT
+        atomic_write_json(fresh_input_path, fresh_input_artifact, sensitive=True)
+        manifest_artifacts.append(
+            ManifestArtifact(
+                path=FRESH_REVIEWER_INPUT_ARTIFACT,
+                sha256=sha256_file(fresh_input_path),
+            )
+        )
+        codex_state = CodexState(
+            command=effective.codex.command,
+            session_id=None,
+            session_model=None,
+            session_reasoning_effort=None,
+            review_model=fresh_reviewer.review_model,
+            review_reasoning_effort=fresh_reviewer.review_reasoning_effort,
+            review_model_source="explicit",
+            review_reasoning_source="explicit",
+            model_family_warning=None,
+            review_skill=effective.codex.review_skill,
+            sandbox=effective.codex.sandbox,
+            fresh_reviewer=fresh_reviewer,
+        )
+        session_model = "(unbound)"
+        session_reasoning_effort = "(unbound)"
+        review_model = fresh_reviewer.review_model
+        review_reasoning_effort = fresh_reviewer.review_reasoning_effort
+        review_model_source = "explicit"
+        review_reasoning_source = "explicit"
+        model_family_warning = None
+        model_mismatch_warning = None
+    else:
+        assert review_runtime is not None
+        assert session_id is not None
+        session_runtime_artifact = {
+            "session_id_prefix": session_id[:8],
+            "model": review_runtime.session_model,
+            "reasoning_effort": review_runtime.session_reasoning_effort,
+            "origin": review_runtime.session_origin,
+            "source_event_type": review_runtime.source_event_type,
+            "source_timestamp": review_runtime.source_timestamp,
+            "review_model": review_runtime.review_model,
+            "review_reasoning_effort": review_runtime.review_reasoning_effort,
+            "review_model_source": review_runtime.review_model_source,
+            "review_reasoning_source": review_runtime.review_reasoning_source,
+            "model_mismatch_warning": review_runtime.model_mismatch_warning,
+            "model_family_warning": review_runtime.model_family_warning,
+        }
+        session_runtime_path = destination / "codex" / "session-runtime.json"
+        atomic_write_json(session_runtime_path, session_runtime_artifact, sensitive=True)
+        manifest_artifacts.append(
+            ManifestArtifact(
+                path="codex/session-runtime.json",
+                sha256=sha256_file(session_runtime_path),
+            )
+        )
+        codex_state = CodexState(
+            command=effective.codex.command,
+            session_id=session_id,
+            session_model=review_runtime.session_model,
+            session_reasoning_effort=review_runtime.session_reasoning_effort,
+            review_model=review_runtime.review_model,
+            review_reasoning_effort=review_runtime.review_reasoning_effort,
+            review_model_source=review_runtime.review_model_source,
+            review_reasoning_source=review_runtime.review_reasoning_source,
+            model_family_warning=review_runtime.model_family_warning,
+            review_skill=effective.codex.review_skill,
+            sandbox=effective.codex.sandbox,
+        )
+        session_model = review_runtime.session_model
+        session_reasoning_effort = review_runtime.session_reasoning_effort
+        review_model = review_runtime.review_model
+        review_reasoning_effort = review_runtime.review_reasoning_effort
+        review_model_source = review_runtime.review_model_source
+        review_reasoning_source = review_runtime.review_reasoning_source
+        model_family_warning = review_runtime.model_family_warning
+        model_mismatch_warning = review_runtime.model_mismatch_warning
 
     plan_repo_path = relative_repo_path(repo_info.root, plan_path)
     prompt_repo_path = relative_repo_path(repo_info.root, prompt_source_path)
 
     state = RunState(
+        schema_version=RUN_STATE_SCHEMA_VERSION_FRESH
+        if fresh_reviewer is not None
+        else RUN_STATE_SCHEMA_VERSION,
         run_id=run_id,
         project=ProjectRef(name=effective.project.name),
         status=RunStatus.PREPARED,
@@ -260,19 +359,7 @@ def prepare_run(options: PrepareOptions) -> PrepareResult:
             snapshot_path="prompts/cursor-initial.txt",
             sha256=prompt_hash,
         ),
-        codex=CodexState(
-            command=effective.codex.command,
-            session_id=session_id,
-            session_model=review_runtime.session_model,
-            session_reasoning_effort=review_runtime.session_reasoning_effort,
-            review_model=review_runtime.review_model,
-            review_reasoning_effort=review_runtime.review_reasoning_effort,
-            review_model_source=review_runtime.review_model_source,
-            review_reasoning_source=review_runtime.review_reasoning_source,
-            model_family_warning=review_runtime.model_family_warning,
-            review_skill=effective.codex.review_skill,
-            sandbox=effective.codex.sandbox,
-        ),
+        codex=codex_state,
         cursor=CursorState(
             command=effective.cursor.command,
             model=effective.cursor.model,
@@ -298,16 +385,7 @@ def prepare_run(options: PrepareOptions) -> PrepareResult:
         run_id=run_id,
         project=effective.project.name,
         created_at=now,
-        artifacts=[
-            ManifestArtifact(path="plan/plan.md", sha256=plan_hash),
-            ManifestArtifact(path="prompts/cursor-initial.txt", sha256=prompt_hash),
-            ManifestArtifact(path="source-config.yaml", sha256=source_config_hash),
-            ManifestArtifact(path="effective-config.yaml", sha256=effective_config_hash),
-            ManifestArtifact(
-                path="git/baseline-status.txt", sha256=sha256_file(baseline_status_path)
-            ),
-            ManifestArtifact(path="codex/session-runtime.json", sha256=session_runtime_hash),
-        ],
+        artifacts=manifest_artifacts,
     )
 
     plan_metadata = {
@@ -326,10 +404,10 @@ def prepare_run(options: PrepareOptions) -> PrepareResult:
 
     log_path = destination / "logs" / "ai_dev_loop.log"
     log_lines = [f"{now.isoformat()} prepare completed for run {run_id}"]
-    if review_runtime.model_mismatch_warning:
-        log_lines.append(review_runtime.model_mismatch_warning)
-    if review_runtime.model_family_warning:
-        log_lines.append(review_runtime.model_family_warning)
+    if model_mismatch_warning:
+        log_lines.append(model_mismatch_warning)
+    if model_family_warning:
+        log_lines.append(model_family_warning)
     atomic_write_text(
         log_path,
         "\n".join(log_lines) + "\n",
@@ -343,11 +421,11 @@ def prepare_run(options: PrepareOptions) -> PrepareResult:
         status=RunStatus.PREPARED.value,
         detail={
             "project": effective.project.name,
-            "review_model_source": review_runtime.review_model_source,
-            "review_reasoning_source": review_runtime.review_reasoning_source,
-            "session_origin": review_runtime.session_origin,
-            "has_model_family_warning": review_runtime.model_family_warning is not None,
+            "review_model_source": review_model_source,
+            "review_reasoning_source": review_reasoning_source,
+            "has_model_family_warning": model_family_warning is not None,
             "has_controller": controller_session_id is not None,
+            "fresh_reviewer_bootstrap": fresh_reviewer is not None,
         },
     )
     set_sensitive_file_mode(destination / "state.json")
@@ -365,17 +443,17 @@ def prepare_run(options: PrepareOptions) -> PrepareResult:
         start_command=start_command,
         launch_command=launch_command,
         run_directory=destination,
-        session_model=review_runtime.session_model,
-        session_reasoning_effort=review_runtime.session_reasoning_effort,
-        review_model=review_runtime.review_model,
-        review_reasoning_effort=review_runtime.review_reasoning_effort,
-        review_model_source=review_runtime.review_model_source,
-        review_reasoning_source=review_runtime.review_reasoning_source,
+        session_model=session_model,
+        session_reasoning_effort=session_reasoning_effort,
+        review_model=review_model,
+        review_reasoning_effort=review_reasoning_effort,
+        review_model_source=review_model_source,
+        review_reasoning_source=review_reasoning_source,
         controller_session_id=controller_session_id,
         requires_codex_exit=not is_ab,
-        reviewer_must_remain_inactive=is_ab,
-        model_family_warning=review_runtime.model_family_warning,
-        model_mismatch_warning=review_runtime.model_mismatch_warning,
+        reviewer_must_remain_inactive=False,
+        model_family_warning=model_family_warning,
+        model_mismatch_warning=model_mismatch_warning,
     )
 
 
@@ -411,13 +489,13 @@ def render_prepare_output(result: PrepareResult, *, output: str) -> str:
         f"Review reasoning: {result.review_reasoning_effort} ({result.review_reasoning_source})",
         f"Start command: {result.start_command}",
     ]
-    if result.reviewer_must_remain_inactive:
+    if result.launch_command:
+        lines.append(f"Launch command: {result.launch_command}")
+    elif result.controller_session_id is not None:
         lines.append(
-            "A/B prepare: leave the reviewer Codex session inactive. "
-            "Launch only from the distinct controller session after B is untouched."
+            "Controller prepare: reviewer B is created at the first review boundary. "
+            "Launch from the controller session when ready."
         )
-        if result.launch_command:
-            lines.append(f"Launch command: {result.launch_command}")
     else:
         lines.append("Important: exit the active Codex TUI before running start.")
     if result.model_mismatch_warning:

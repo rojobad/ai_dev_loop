@@ -15,7 +15,8 @@ def test_load_skill_and_hook_assets() -> None:
     assert "name: ai-dev-loop-handoff" in skill
     assert "name: ai-dev-loop-controller" in controller
     assert "ai_dev_loop prepare" in skill
-    assert "--controller-session-id" in skill
+    assert "--codex-review-model" in skill
+    assert "--codex-review-reasoning-effort" in skill
     assert "ai_dev_loop start" in skill
     assert "ai_dev_loop launch" in controller
     assert "controller status" in controller
@@ -56,8 +57,12 @@ def test_skill_guardrail_text_regression() -> None:
     for text in (handoff, controller):
         assert "--last" in text
         assert "exact" in text.lower()
-    assert "inactive" in handoff.lower() or "untouched" in handoff.lower()
-    assert "**Do not** run `ai_dev_loop start`" in handoff
+    assert "first review" in handoff.lower()
+    assert "not" in handoff.lower() and "--codex-session-id" in handoff
     assert "controller status" in controller
-    assert "existing read-only" in controller
     assert "staged patches" in controller or "review Markdown" in controller
+    assert "non-force push the prepared" in controller
+    assert "force-pushes, retargets" in controller
+    assert "pr-review prepare" in controller
+    assert "pr-review start" in handoff
+    assert "pr-review prepare" in handoff

@@ -85,7 +85,9 @@ class FilesystemLocalCarrierRuntime:
         if not self.carrier_exists(carrier_run_id):
             return None
         source_path, source = load_run(carrier_run_id)
-        source_patch_sha256 = self._staged_patch_sha256(source_path, source)
+        source_patch_sha256 = self._recovery_source_staged_patch_sha256(source_path, source)
+        if source_patch_sha256 is None:
+            return None
         matches: list[RunState] = []
         for _path, candidate in list_run_directories(project=CARRIER_PROJECT):
             recovery = candidate.recovery
@@ -408,15 +410,27 @@ class FilesystemLocalCarrierRuntime:
         )
 
     def _staged_patch_sha256(self, carrier_root: Path, state: RunState) -> str:
+        patch_sha256 = self._recovery_source_staged_patch_sha256(carrier_root, state)
+        if patch_sha256 is None:
+            if not state.iterations:
+                raise ValidationError("carrier recovery source missing iteration evidence")
+            raise ValidationError("carrier recovery source missing git iteration evidence")
+        return patch_sha256
+
+    def _recovery_source_staged_patch_sha256(
+        self, carrier_root: Path, state: RunState
+    ) -> str | None:
+        """Return staged-patch hash for recovery lineage lookup, or None when not yet durable."""
+
         if not state.iterations:
-            raise ValidationError("carrier recovery source missing iteration evidence")
+            return None
         latest = max(state.iterations, key=lambda entry: int(entry.get("number", 0)))
         git_section = latest.get("git")
         if not isinstance(git_section, dict):
-            raise ValidationError("carrier recovery source missing git iteration evidence")
+            return None
         staged_rel = git_section.get("staged_diff_path")
         if not isinstance(staged_rel, str) or not staged_rel:
-            raise ValidationError("carrier recovery source missing staged patch path")
+            return None
         patch_path = self._resolve_carrier_relative(
             carrier_root, staged_rel, label="recovery source staged patch"
         )
@@ -428,7 +442,11 @@ class FilesystemLocalCarrierRuntime:
         )
         if not patch_bytes:
             raise ValidationError("carrier recovery source staged patch empty")
-        return sha256_bytes(patch_bytes)
+        actual = sha256_bytes(patch_bytes)
+        recorded = git_section.get("staged_diff_sha256")
+        if isinstance(recorded, str) and recorded and actual != recorded:
+            raise ValidationError("carrier recovery source staged patch hash mismatch")
+        return actual
 
     def _recorded_staged_patch_sha256(self, state: RunState, relative_path: str) -> str | None:
         if not state.iterations:

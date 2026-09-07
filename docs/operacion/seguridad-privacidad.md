@@ -94,10 +94,16 @@ Sin el ciclo GitHub, el usuario decide manualmente si commitea despues de revisa
 - plan aprobado;
 - prompt exacto;
 - configuracion fuente y efectiva;
-- Codex session ID (reviewer);
+- Codex session ID (reviewer) cuando el run ya lo tiene congelado;
+- en runs controller A frescos (schema v2), `codex.session_id` puede ser `null`
+  hasta el primer review; `codex/fresh-reviewer-input.json` congela modelo y
+  reasoning en prepare; `codex/fresh-reviewer-binding.json` registra la identidad
+  exacta de B solo tras un bootstrap read-only exitoso o parcial con evidencia;
 - controller session ID cuando se paso `--controller-session-id`;
-- modelo y reasoning capturados de la sesion;
-- modelo y reasoning efectivos, con procedencia `session` o `explicit`;
+- modelo y reasoning congelados con procedencia `explicit` en runs controller A
+  frescos; en legacy/direct, captura de sesion o overrides explicitos;
+- modelo y reasoning efectivos, con procedencia `session` o `explicit` en runs
+  legacy session-bound;
 - hashes SHA-256.
 
 `start` y `resume` revalidan esos datos antes de mutar. Si plan, prompt, branch, HEAD o baseline cambian inesperadamente, el run falla.
@@ -105,13 +111,21 @@ Sin el ciclo GitHub, el usuario decide manualmente si commitea despues de revisa
 ## Identidad de agentes
 
 - Un run crea o reutiliza exactamente un Cursor chat ID.
-- Todo review usa `codex exec resume <exact-reviewer-session-id>` (sesion B en flujo A/B).
-- En runs A/B, el controller session ID (A) se persiste solo para lookup/control; no se reanuda para review.
+- Todo review resume la identidad Codex exacta congelada para ese run.
+- En runs controller A frescos, A elige `--codex-review-model` y
+  `--codex-review-reasoning-effort` en `prepare`/`scheduler submit`; no hay
+  fallback desde YAML, sesion preexistente ni default de CLI en review time.
+  El worker crea exactamente un B read-only en el primer review (`codex exec`
+  sin `resume`, sin `--last`), captura su session ID y los reviews posteriores
+  usan `codex exec resume <exact-id>` con el mismo modelo y reasoning congelados.
+- En runs legacy/direct o session-bound historicos, `prepare` congela
+  `--codex-session-id`, captura modelo y reasoning de esa sesion cuando aplica,
+  y cada review usa `codex exec resume <exact-id>`.
+- En runs controller A, el controller session ID (A) se persiste solo para
+  lookup/control; no se reanuda para review.
 - Controller y reviewer IDs son sensibles: la salida por defecto (`status`, `controller status`, logs humanos) los acorta o muestra prefijos; no imprimas IDs completos en chats compartidos.
 - Nunca se usa `--last`.
 - El orquestador no adivina session IDs.
-- El orquestador no crea una sesion nueva de Codex para review ni forks de conversacion (el fork A→B es accion de la app Codex).
-- En runs nuevos, `prepare` captura modelo y reasoning de la sesion exacta. Los overrides explicitos ganan por campo; cada review envia ambos valores efectivos.
 - Nunca se infieren valores heredados desde WSL `config.toml` ni desde el default de Codex CLI.
 - No uses la UI del reviewer (B) en paralelo con el worker; en legacy, no uses la UI de la sesion unica con `start`/`resume`.
 

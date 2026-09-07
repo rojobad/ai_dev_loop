@@ -30,7 +30,7 @@ def render_submit_output(result: SubmitResult, *, output: str) -> str:
         f"Submitted scheduler run {result.run_id}{reused}",
         f"Project: {result.project_name}",
         f"State: {result.state_kind}",
-        "Reviewer B must remain inactive until controller A explicitly starts the run.",
+        "Reviewer B is created at the first review boundary (Phase 17.5); submit only freezes model and reasoning.",
         f"Next action: {result.safe_next_action.command}",
     ]
     return "\n".join(lines) + "\n"

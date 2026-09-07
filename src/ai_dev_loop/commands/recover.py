@@ -11,6 +11,11 @@ from pathlib import Path
 
 from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.event_log import EventLevel, append_orchestrator_event
+from ai_dev_loop.fresh_codex_reviewer import (
+    FRESH_REVIEWER_BINDING_ARTIFACT,
+    FRESH_REVIEWER_INPUT_ARTIFACT,
+    is_fresh_codex_reviewer_run,
+)
 from ai_dev_loop.iterations import (
     iteration_label,
     source_prompt_for_usage_limit_recovery,
@@ -129,6 +134,9 @@ def _should_copy_source_relative(
         "git/baseline-status.txt",
         "cursor/chat.json",
         "codex/session-runtime.json",
+        FRESH_REVIEWER_INPUT_ARTIFACT,
+        FRESH_REVIEWER_BINDING_ARTIFACT,
+        "codex/fresh-reviewer-bootstrap-uncertainty.json",
     }:
         return True
     if rel.startswith("prompts/fixes/"):
@@ -833,12 +841,18 @@ def _create_successor_run(
             checkpoint=analysis.checkpoint,
         )
         resolved = analysis.resolved_runtime
-        session_runtime_payload = _build_session_runtime_artifact(
-            session_id=source.codex.session_id,
-            resolved=resolved,
-        )
-        session_runtime_path = temp_dir / "codex" / "session-runtime.json"
-        atomic_write_json(session_runtime_path, session_runtime_payload, sensitive=True)
+        source_session_id = (source.codex.session_id or "").strip()
+        fresh_reviewer_successor = is_fresh_codex_reviewer_run(source.codex)
+        if not source_session_id:
+            raise ValidationError("source codex session id is missing for recovery successor")
+        session_runtime_path: Path | None = None
+        if not fresh_reviewer_successor:
+            session_runtime_payload = _build_session_runtime_artifact(
+                session_id=source_session_id,
+                resolved=resolved,
+            )
+            session_runtime_path = temp_dir / "codex" / "session-runtime.json"
+            atomic_write_json(session_runtime_path, session_runtime_payload, sensitive=True)
 
         successor_codex = apply_resolved_runtime_to_codex(source.codex, resolved)
         successor_cursor = source.cursor.model_copy(deep=True)
@@ -911,6 +925,7 @@ def _create_successor_run(
                     break
 
         successor = RunState(
+            schema_version=source.schema_version,
             run_id=recovery_run_id,
             project=source.project,
             status=RunStatus.INTERRUPTED,
@@ -1010,7 +1025,9 @@ def _create_successor_run(
             path = temp_dir / rel
             if path.is_file():
                 manifest_artifacts.append(ManifestArtifact(path=rel, sha256=sha256_file(path)))
-        if "codex/session-runtime.json" not in {item.path for item in manifest_artifacts}:
+        if session_runtime_path is not None and "codex/session-runtime.json" not in {
+            item.path for item in manifest_artifacts
+        }:
             manifest_artifacts.append(
                 ManifestArtifact(
                     path="codex/session-runtime.json",

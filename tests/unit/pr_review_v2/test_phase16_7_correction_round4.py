@@ -636,3 +636,24 @@ def test_terminal_crash_window_does_not_persist_when_review_invalid(
             prompt_bytes=PROMPT_BYTES,
         )
     assert store.read_cached_local_fix_result(effect) is None
+
+
+def test_recovery_successor_id_prepared_only_carrier_returns_none(
+    tmp_path: Path, isolated_xdg
+) -> None:
+    repo, head = _git_repo(tmp_path)
+    runtime = FilesystemLocalCarrierRuntime()
+    seed = _seed(repo, head)
+    cid = carrier_run_id(RUN_ID, 1, "eff-prepared-only")
+    runtime.ensure_seeded_carrier(carrier_run_id=cid, seed=seed)
+    assert runtime.recovery_successor_id(cid) is None
+
+
+def test_recovery_successor_id_progressed_carrier_missing_patch_raises(
+    tmp_path: Path, isolated_xdg
+) -> None:
+    cid, path, _seed_obj = _seed_terminal_carrier(tmp_path)
+    patch_path = path / "git" / "diffs" / "01.patch"
+    patch_path.unlink()
+    with pytest.raises(ValidationError, match="staged patch"):
+        FilesystemLocalCarrierRuntime().recovery_successor_id(cid)

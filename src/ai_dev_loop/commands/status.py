@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ai_dev_loop.abort_control import abort_control_summary
 from ai_dev_loop.config import format_codex_override
+from ai_dev_loop.fresh_codex_reviewer import is_fresh_codex_reviewer_run
 from ai_dev_loop.run_discovery import load_run
 from ai_dev_loop.runners.staging import staging_complete_for_iteration
 from ai_dev_loop.state import RunState, shorten_session_id
@@ -74,7 +75,7 @@ def render_status(run_id: str, *, output: str = "text") -> str:
         f"Review iteration: {state.workflow.current_review_iteration}/{state.workflow.max_review_iterations}",
         f"Recorded iterations: {len(state.iterations)}",
         f"Cursor chat: {state.cursor.chat_id or '(not created)'}",
-        f"Codex session: {shorten_session_id(state.codex.session_id)}",
+        f"Codex session: {shorten_session_id(state.codex.session_id) if state.codex.session_id else '(unbound)'}",
         f"Session model: {state.codex.session_model or '(unset)'}",
         f"Session reasoning: {state.codex.session_reasoning_effort or '(unset)'}",
         (
@@ -120,10 +121,16 @@ def _next_action(state: RunState, run_path: Path) -> str:
     status = state.status.value
     if status == "prepared":
         if state.controller is not None:
+            if is_fresh_codex_reviewer_run(state.codex):
+                return (
+                    "From the controller session run ai_dev_loop launch <run-id> "
+                    "--controller-session-id <exact-id>. Reviewer B is created at the "
+                    "first review boundary."
+                )
             return (
-                "Leave the reviewer Codex session inactive, then from the controller "
-                "session run ai_dev_loop launch <run-id> --controller-session-id <exact-id> "
-                "(or use the ai-dev-loop-controller skill)."
+                "This run uses the retired session-bound A/B contract. Inspect only, "
+                "then prepare a fresh run with explicit --codex-review-model and "
+                "--codex-review-reasoning-effort."
             )
         return "Exit Codex TUI, then run ai_dev_loop start <run-id>."
     if status == "staging":

@@ -245,15 +245,22 @@ def prepare_command(
     ] = None,
     codex_session_id: Annotated[
         str | None,
-        typer.Option("--codex-session-id", help="Exact active Codex session ID."),
+        typer.Option(
+            "--codex-session-id",
+            help=(
+                "Exact active Codex session ID for legacy/direct prepare. "
+                "Rejected when --controller-session-id is set."
+            ),
+        ),
     ] = None,
     controller_session_id: Annotated[
         str | None,
         typer.Option(
             "--controller-session-id",
             help=(
-                "Exact controller Codex session ID for A/B remote launch "
-                "(must differ from --codex-session-id)."
+                "Exact controller Codex session ID for the fresh-B controller path. "
+                "Requires --codex-review-model and --codex-review-reasoning-effort; "
+                "do not pass --codex-session-id."
             ),
         ),
     ] = None,
@@ -275,13 +282,22 @@ def prepare_command(
     ] = None,
     codex_review_model: Annotated[
         str | None,
-        typer.Option("--codex-review-model", help="Override codex.review_model."),
+        typer.Option(
+            "--codex-review-model",
+            help=(
+                "Frozen Codex review model. Required with --controller-session-id; "
+                "no YAML or session fallback."
+            ),
+        ),
     ] = None,
     codex_review_reasoning_effort: Annotated[
         str | None,
         typer.Option(
             "--codex-review-reasoning-effort",
-            help="Override codex.review_reasoning_effort.",
+            help=(
+                "Frozen Codex review reasoning effort. Required with "
+                "--controller-session-id; no YAML or session fallback."
+            ),
         ),
     ] = None,
     review_skill: Annotated[
@@ -355,13 +371,23 @@ def scheduler_submit_command(
     ] = None,
     codex_session_id: Annotated[
         str | None,
-        typer.Option("--codex-session-id", help="Exact reviewer Codex session ID."),
+        typer.Option(
+            "--codex-session-id",
+            help=(
+                "Exact reviewer Codex session ID for legacy submits only. "
+                "Rejected for controller scheduler submit."
+            ),
+        ),
     ] = None,
     controller_session_id: Annotated[
         str | None,
         typer.Option(
             "--controller-session-id",
-            help="Exact controller Codex session ID (required; must differ from reviewer).",
+            help=(
+                "Exact controller Codex session ID (required). Requires "
+                "--codex-review-model and --codex-review-reasoning-effort; "
+                "do not pass --codex-session-id."
+            ),
         ),
     ] = None,
     cursor_command: Annotated[
@@ -382,13 +408,22 @@ def scheduler_submit_command(
     ] = None,
     codex_review_model: Annotated[
         str | None,
-        typer.Option("--codex-review-model", help="Override codex.review_model."),
+        typer.Option(
+            "--codex-review-model",
+            help=(
+                "Frozen Codex review model. Required with --controller-session-id; "
+                "no YAML or session fallback."
+            ),
+        ),
     ] = None,
     codex_review_reasoning_effort: Annotated[
         str | None,
         typer.Option(
             "--codex-review-reasoning-effort",
-            help="Override codex.review_reasoning_effort.",
+            help=(
+                "Frozen Codex review reasoning effort. Required with "
+                "--controller-session-id; no YAML or session fallback."
+            ),
         ),
     ] = None,
     review_skill: Annotated[

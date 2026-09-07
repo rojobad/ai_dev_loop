@@ -12,7 +12,9 @@ from pydantic import ValidationError as PydanticValidationError
 from ai_dev_loop.recovery_planner import (
     SessionRuntimeAction,
     analyze_recovery,
+    apply_resolved_runtime_to_codex,
     derive_recovery_reason_code,
+    is_fresh_reviewer_bound,
     resolve_recovery_runtime,
 )
 from ai_dev_loop.review_runtime import is_legacy_phase9_codex_state
@@ -21,6 +23,7 @@ from ai_dev_loop.state import (
     RECOVERY_REASON_CODES,
     CodexState,
     CursorState,
+    FreshCodexReviewerBinding,
     PlanState,
     ProjectRef,
     PromptState,
@@ -30,6 +33,7 @@ from ai_dev_loop.state import (
     RunStatus,
     WorkflowState,
     load_run_state,
+    sha256_file,
     utc_now,
 )
 
@@ -50,6 +54,7 @@ def _sample_failed_state(**codex_overrides: object) -> RunState:
     }
     codex_kwargs.update(codex_overrides)
     return RunState(
+        schema_version=2 if codex_kwargs.get("fresh_reviewer") is not None else 1,
         run_id="fixture-project-20260711T010911Z-abcdef",
         project=ProjectRef(name="fixture-project"),
         status=RunStatus.FAILED,
@@ -644,3 +649,112 @@ def test_resolve_phase9_runtime_migrates(hermetic_codex_env: Path) -> None:
     assert resolved.review_model == "gpt-5.6-sol"
     assert resolved.review_model_source == "session"
     assert resolved.review_reasoning_source == "session"
+
+
+def _fresh_failed_state(*, bound: bool) -> RunState:
+    binding = FreshCodexReviewerBinding(
+        review_model="gpt-5.6-sol",
+        review_reasoning_effort="high",
+        bootstrap_session_id="019def00-0000-0000-0000-0000000000bb" if bound else None,
+        bootstrap_events_sha256="a" * 64 if bound else None,
+        bootstrap_bound_at="2026-09-07T12:00:00+00:00" if bound else None,
+    )
+    return _sample_failed_state(
+        session_id="019def00-0000-0000-0000-0000000000bb" if bound else None,
+        session_model=None,
+        session_reasoning_effort=None,
+        review_model="gpt-5.6-sol",
+        review_reasoning_effort="high",
+        review_model_source="explicit",
+        review_reasoning_source="explicit",
+        fresh_reviewer=binding,
+    ).model_copy(update={"schema_version": 2})
+
+
+def test_analyze_recovery_blocks_unbound_fresh_reviewer(tmp_path: Path) -> None:
+    state = _fresh_failed_state(bound=False)
+    analysis = analyze_recovery(state, tmp_path, resolve_runtime=False)
+    assert analysis.eligible is False
+    assert "fresh_reviewer_bootstrap_unbound" in analysis.blockers
+
+
+def test_analyze_recovery_blocks_uncertain_fresh_reviewer(tmp_path: Path) -> None:
+    binding = FreshCodexReviewerBinding(
+        review_model="gpt-5.6-sol",
+        review_reasoning_effort="high",
+        bootstrap_uncertainty_reason="missing_identity",
+    )
+    state = _fresh_failed_state(bound=False).model_copy(
+        update={
+            "codex": _fresh_failed_state(bound=False).codex.model_copy(
+                update={"fresh_reviewer": binding}
+            )
+        }
+    )
+    analysis = analyze_recovery(state, tmp_path, resolve_runtime=False)
+    assert analysis.eligible is False
+    assert "fresh_reviewer_bootstrap_uncertain" in analysis.blockers
+
+
+def test_resolve_fresh_reviewer_runtime_preserves_frozen_values(tmp_path: Path) -> None:
+    events_path = tmp_path / "codex" / "events" / "01.jsonl"
+    events_path.parent.mkdir(parents=True)
+    events_path.write_text(
+        json.dumps({"type": "thread.started", "thread_id": "019def00-0000-0000-0000-0000000000bb"})
+        + "\n",
+        encoding="utf-8",
+    )
+    binding_path = tmp_path / "codex" / "fresh-reviewer-binding.json"
+    binding_path.write_text(
+        json.dumps(
+            {
+                "review_model": "gpt-5.6-sol",
+                "review_reasoning_effort": "high",
+                "bootstrap_session_id_prefix": "019def00",
+                "bootstrap_events_sha256": sha256_file(events_path),
+                "bootstrap_bound_at": "2026-09-07T12:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    input_path = tmp_path / "codex" / "fresh-reviewer-input.json"
+    input_path.write_text(
+        json.dumps(
+            {
+                "review_model": "gpt-5.6-sol",
+                "review_reasoning_effort": "high",
+            }
+        ),
+        encoding="utf-8",
+    )
+    state = _sample_failed_state(
+        session_id="019def00-0000-0000-0000-0000000000bb",
+        session_model=None,
+        session_reasoning_effort=None,
+        review_model="gpt-5.6-sol",
+        review_reasoning_effort="high",
+        review_model_source="explicit",
+        review_reasoning_source="explicit",
+        fresh_reviewer=FreshCodexReviewerBinding(
+            review_model="gpt-5.6-sol",
+            review_reasoning_effort="high",
+            bootstrap_session_id="019def00-0000-0000-0000-0000000000bb",
+            bootstrap_events_sha256=sha256_file(events_path),
+            bootstrap_bound_at="2026-09-07T12:00:00+00:00",
+        ),
+    ).model_copy(update={"schema_version": 2})
+    resolved = resolve_recovery_runtime(state, tmp_path)
+    assert resolved.runtime_migration == "none"
+    assert resolved.review_model == "gpt-5.6-sol"
+    assert resolved.review_reasoning_effort == "high"
+    assert resolved.review_model_source == "explicit"
+    assert resolved.session_runtime_action == SessionRuntimeAction.PRESERVE_PHASE10
+    assert is_fresh_reviewer_bound(state.codex)
+
+
+def test_apply_resolved_runtime_preserves_fresh_reviewer() -> None:
+    state = _fresh_failed_state(bound=True)
+    resolved = resolve_recovery_runtime(state)
+    updated = apply_resolved_runtime_to_codex(state.codex, resolved)
+    assert updated.fresh_reviewer == state.codex.fresh_reviewer
+    assert updated.session_id == state.codex.session_id

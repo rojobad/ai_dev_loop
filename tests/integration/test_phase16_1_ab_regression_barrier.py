@@ -20,7 +20,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from tests.conftest import write_session_rollout
 
 from ai_dev_loop.abort_control import ACTIVE_PROCESS_REL_PATH
 from ai_dev_loop.commands.abort import abort_run
@@ -35,6 +34,7 @@ from ai_dev_loop.commands.resume import resume_run
 from ai_dev_loop.commands.start import start_run
 from ai_dev_loop.commands.status import render_status
 from ai_dev_loop.errors import AiDevLoopError, ValidationError
+from ai_dev_loop.fresh_codex_reviewer import FRESH_REVIEWER_BOOTSTRAP_UNCERTAINTY_ARTIFACT
 from ai_dev_loop.launcher import (
     process_identity_matches,
     read_launcher_record,
@@ -45,6 +45,8 @@ from ai_dev_loop.state import RunStatus, load_run_state
 
 CONTROLLER_A = "019abc00-aaaa-7000-8000-0000000000aa"
 REVIEWER_B = "019abc00-bbbb-7000-8000-0000000000bb"
+REVIEW_MODEL = "gpt-5.6-sol"
+REVIEW_REASONING = "high"
 CURSOR_CHAT = "019abc00-cccc-7000-8000-0000000000cc"
 WRONG_CONTROLLER = "019abc00-dddd-7000-8000-0000000000dd"
 
@@ -125,14 +127,7 @@ def _prepare_ab_run(
     max_review_iterations: int = 3,
     github_disabled_explicit: bool = False,
 ) -> object:
-    codex_home = isolated_home / ".codex"
-    write_session_rollout(
-        codex_home / "sessions",
-        session_id=REVIEWER_B,
-        model="gpt-5.6-sol",
-        reasoning_effort="high",
-    )
-    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", REVIEWER_B)
 
     if github_disabled_explicit:
         config_path = git_repo / "ai_dev_loop.yaml"
@@ -161,8 +156,9 @@ def _prepare_ab_run(
                 repo_path=git_repo,
                 plan_path=Path("docs/plans/sample-plan.md"),
                 prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
-                codex_session_id=REVIEWER_B,
                 controller_session_id=CONTROLLER_A,
+                codex_review_model=REVIEW_MODEL,
+                codex_review_reasoning_effort=REVIEW_REASONING,
                 max_review_iterations=max_review_iterations,
                 output="json",
             )
@@ -251,6 +247,19 @@ def _terminate_run_worker(run_directory: Path, *, run_id: str) -> None:
         return
 
 
+def _wait_for_codex_bootstrap_ready(marker_path: Path, *, timeout: float = 45.0) -> None:
+    """Wait until fake Codex emits bootstrap identity after ``thread.started``."""
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if marker_path.is_file() and marker_path.read_text(encoding="utf-8").strip() == "ready":
+            return
+        time.sleep(0.05)
+    raise AssertionError(
+        f"timed out waiting for codex bootstrap ready marker at {marker_path.as_posix()}"
+    )
+
+
 def _wait_for_active_component(
     run_directory: Path,
     *,
@@ -330,6 +339,17 @@ def _agent_resume_chat_ids(agent_log: Path) -> list[str]:
     return re.findall(r"'--resume', '([^']+)'", text)
 
 
+def _codex_bootstrap_invocations(codex_log: Path) -> int:
+    if not codex_log.is_file():
+        return 0
+    text = codex_log.read_text(encoding="utf-8")
+    return sum(
+        1
+        for line in text.splitlines()
+        if line.startswith("ARGS:") and "'resume'" not in line and '"resume"' not in line
+    )
+
+
 def _codex_resume_session_ids(codex_log: Path) -> list[str]:
     text = codex_log.read_text(encoding="utf-8")
     # Fake codex logs ARGS as a Python repr list; session id is the final positional.
@@ -390,12 +410,15 @@ def test_ab_prepare_github_absent_persists_identities_without_agents(
     assert state.status == RunStatus.PREPARED
     assert state.controller is not None
     assert state.controller.controller_session_id == CONTROLLER_A
-    assert state.codex.session_id == REVIEWER_B
+    assert state.codex.session_id is None
+    assert state.codex.fresh_reviewer is not None
+    assert state.codex.fresh_reviewer.review_model == REVIEW_MODEL
+    assert state.codex.fresh_reviewer.review_reasoning_effort == REVIEW_REASONING
     assert state.cursor.chat_id is None
-    assert state.codex.review_model == "gpt-5.6-sol"
-    assert state.codex.review_reasoning_effort == "high"
-    assert state.codex.review_model_source == "session"
-    assert state.codex.review_reasoning_source == "session"
+    assert state.codex.review_model == REVIEW_MODEL
+    assert state.codex.review_reasoning_effort == REVIEW_REASONING
+    assert state.codex.review_model_source == "explicit"
+    assert state.codex.review_reasoning_source == "explicit"
     assert (prepared.run_directory / "plan" / "plan.md").is_file()
     assert (prepared.run_directory / "prompts" / "cursor-initial.txt").is_file()
     assert state.plan.snapshot_path == "plan/plan.md"
@@ -405,7 +428,7 @@ def test_ab_prepare_github_absent_persists_identities_without_agents(
     assert prepared.launch_command is not None
     assert "--controller-session-id" in prepared.launch_command
     assert prepared.requires_codex_exit is False
-    assert prepared.reviewer_must_remain_inactive is True
+    assert prepared.reviewer_must_remain_inactive is False
 
     rendered = render_prepare_output(prepared, output="json")
     payload = json.loads(rendered)
@@ -505,8 +528,9 @@ def test_ab_detached_launch_multi_iteration_completed_without_github(
     assert set(resume_ids) == {CURSOR_CHAT}
 
     codex_sessions = _codex_resume_session_ids(Path(fake_clis["codex_log"]))
-    assert len(codex_sessions) >= 2
+    assert len(codex_sessions) >= 1
     assert set(codex_sessions) == {REVIEWER_B}
+    assert _codex_bootstrap_invocations(Path(fake_clis["codex_log"])) == 1
     assert "--last" not in Path(fake_clis["codex_log"]).read_text(encoding="utf-8")
     assert CONTROLLER_A not in Path(fake_clis["codex_log"]).read_text(encoding="utf-8")
 
@@ -822,7 +846,12 @@ def test_ab_abort_during_detached_cursor_preserves_repo_and_identities(
     assert (prepared.run_directory / "locks" / "abort-request.json").is_file()
     assert state.controller is not None
     assert state.controller.controller_session_id == CONTROLLER_A
-    assert state.codex.session_id == REVIEWER_B
+    assert state.codex.session_id is None
+    assert state.codex.fresh_reviewer is not None
+    assert state.codex.fresh_reviewer.bootstrap_uncertainty_reason is None
+    assert state.codex.fresh_reviewer.bootstrap_session_id is None
+    assert not (prepared.run_directory / FRESH_REVIEWER_BOOTSTRAP_UNCERTAINTY_ARTIFACT).exists()
+    assert _codex_bootstrap_invocations(Path(fake_clis["codex_log"])) == 0
 
     status_after, staged_after, head_after = _repo_fingerprint(git_repo)
     assert head_after == head_before
@@ -849,6 +878,8 @@ def test_ab_abort_during_detached_codex_preserves_staged_work(
     monkeypatch.setenv("FAKE_CODEX_SLEEP_SECONDS", "45")
 
     prepared = _prepare_ab_run(git_repo, isolated_home, monkeypatch)
+    bootstrap_ready = prepared.run_directory / "locks" / "codex-bootstrap-ready.txt"
+    monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_READY_PATH", str(bootstrap_ready))
     launch_run(prepared.run_id, controller_session_id=CONTROLLER_A)
     try:
         _wait_for_active_component(
@@ -857,6 +888,7 @@ def test_ab_abort_during_detached_codex_preserves_staged_work(
             component="codex",
             timeout=45.0,
         )
+        _wait_for_codex_bootstrap_ready(bootstrap_ready, timeout=45.0)
 
         staged_before = subprocess.check_output(
             ["git", "diff", "--cached"],
@@ -881,6 +913,10 @@ def test_ab_abort_during_detached_codex_preserves_staged_work(
     assert staged_after == staged_before
     assert state.cursor.chat_id == CURSOR_CHAT
     assert state.codex.session_id == REVIEWER_B
+    assert state.codex.fresh_reviewer is not None
+    assert state.codex.fresh_reviewer.bootstrap_session_id == REVIEWER_B
+    assert state.codex.fresh_reviewer.bootstrap_uncertainty_reason is None
+    assert _codex_bootstrap_invocations(Path(fake_clis["codex_log"])) == 1
     assert state.controller is not None
     assert state.controller.controller_session_id == CONTROLLER_A
     assert gh_log.read_text(encoding="utf-8") == ""
@@ -960,10 +996,15 @@ def test_ab_result_interrupted_on_codex_timeout(
     monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
 
     def timed_out_streaming(args, **kwargs):  # type: ignore[no-untyped-def]
+        stdout = json.dumps({"type": "thread.started", "thread_id": REVIEWER_B}) + "\n"
+        stdout_path = kwargs.get("stdout_path")
+        if isinstance(stdout_path, Path):
+            stdout_path.parent.mkdir(parents=True, exist_ok=True)
+            stdout_path.write_text(stdout, encoding="utf-8")
         return StreamingProcessResult(
             args=list(args),
             returncode=124,
-            stdout='{"type":"message"}',
+            stdout=stdout,
             stderr="",
             timed_out=True,
             elapsed_seconds=1.0,

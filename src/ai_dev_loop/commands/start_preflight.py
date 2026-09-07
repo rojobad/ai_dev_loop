@@ -5,6 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from ai_dev_loop.errors import ValidationError
+from ai_dev_loop.fresh_codex_reviewer import (
+    is_fresh_codex_reviewer_run,
+    reject_fresh_bootstrap_uncertain_execution,
+    reject_legacy_ab_session_bound_execution,
+)
 from ai_dev_loop.runners.git import discover_repository
 from ai_dev_loop.state import RunState, RunStatus, sha256_file, transition_status
 
@@ -24,7 +29,13 @@ def validate_timeouts(state: RunState) -> None:
 
 
 def validate_codex_session(state: RunState) -> None:
-    if not state.codex.session_id.strip():
+    reject_legacy_ab_session_bound_execution(state)
+    reject_fresh_bootstrap_uncertain_execution(state)
+    if is_fresh_codex_reviewer_run(state.codex):
+        if state.codex.fresh_reviewer is None:
+            raise ValidationError("fresh reviewer binding is missing from prepared state")
+        return
+    if not (state.codex.session_id or "").strip():
         raise ValidationError("codex session id is missing from prepared state")
 
 

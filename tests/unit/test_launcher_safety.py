@@ -57,8 +57,9 @@ def _prepare_ab(git_repo: Path):
                 repo_path=git_repo,
                 plan_path=Path("docs/plans/sample-plan.md"),
                 prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
-                codex_session_id=REVIEWER_ID,
                 controller_session_id=CONTROLLER_ID,
+                codex_review_model="gpt-5.6-sol",
+                codex_review_reasoning_effort="high",
             )
         )
 

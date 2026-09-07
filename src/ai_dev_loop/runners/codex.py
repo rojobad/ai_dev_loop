@@ -12,6 +12,17 @@ from pydantic import ValidationError as PydanticValidationError
 
 from ai_dev_loop.abort_control import is_abort_requested
 from ai_dev_loop.errors import AiDevLoopError, ValidationError
+from ai_dev_loop.fresh_codex_reviewer import (
+    CODEX_REVIEWER_SANDBOX,
+    FRESH_BOOTSTRAP_UNCERTAIN_MESSAGE,
+    FRESH_REVIEWER_BINDING_ARTIFACT,
+    FRESH_REVIEWER_BOOTSTRAP_UNCERTAINTY_ARTIFACT,
+    can_attempt_fresh_bootstrap,
+    classify_bootstrap_session_id_from_events,
+    is_fresh_codex_reviewer_run,
+    is_fresh_reviewer_bootstrap_uncertain,
+    require_bound_codex_session_id,
+)
 from ai_dev_loop.iterations import find_iteration, upsert_iteration
 from ai_dev_loop.paths import ensure_dir, schema_path, set_sensitive_file_mode
 from ai_dev_loop.process import (
@@ -26,6 +37,7 @@ from ai_dev_loop.state import (
     RunState,
     atomic_write_json,
     atomic_write_text,
+    save_run_state,
     sha256_file,
 )
 
@@ -155,7 +167,39 @@ def _codex_timeout_message(*, events_path: str, stderr_path: str) -> str:
     return f"Codex review timed out; inspect {events_path} and {stderr_path}"
 
 
-def build_codex_review_args(
+def build_codex_bootstrap_args(
+    codex: CodexState,
+    *,
+    repo_root: str,
+    schema_file: Path,
+    result_file: Path,
+) -> list[str]:
+    if codex.fresh_reviewer is None:
+        raise ValidationError("fresh reviewer binding is required for bootstrap review")
+    review_model = codex.fresh_reviewer.review_model
+    review_reasoning = codex.fresh_reviewer.review_reasoning_effort
+    args = [
+        codex.command,
+        "exec",
+        "--cd",
+        repo_root,
+        "--sandbox",
+        CODEX_REVIEWER_SANDBOX,
+        "--model",
+        review_model,
+        "-c",
+        f'model_reasoning_effort="{review_reasoning}"',
+        "--json",
+        "--output-schema",
+        str(schema_file),
+        "--output-last-message",
+        str(result_file),
+        "-",
+    ]
+    return args
+
+
+def build_codex_resume_args(
     codex: CodexState,
     *,
     repo_root: str,
@@ -165,31 +209,43 @@ def build_codex_review_args(
 ) -> list[str]:
     from ai_dev_loop.review_runtime import is_legacy_phase9_codex_state
 
+    sandbox = CODEX_REVIEWER_SANDBOX if is_fresh_codex_reviewer_run(codex) else codex.sandbox
     args = [
         codex.command,
         "exec",
         "--cd",
         repo_root,
         "--sandbox",
-        codex.sandbox,
+        sandbox,
         "resume",
     ]
-    legacy = is_legacy_phase9_codex_state(
-        review_model=codex.review_model,
-        review_reasoning_effort=codex.review_reasoning_effort,
-        review_model_source=codex.review_model_source,
-        review_reasoning_source=codex.review_reasoning_source,
-    )
-    if legacy:
-        # Phase 9 compatibility: omit overrides and let the CLI inherit. Callers should
-        # surface a legacy warning; do not invent session-derived values.
-        pass
+    if is_fresh_codex_reviewer_run(codex):
+        if codex.fresh_reviewer is None:
+            raise ValidationError("fresh reviewer binding is required for resume review")
+        args.extend(["--model", codex.fresh_reviewer.review_model])
+        args.extend(
+            [
+                "-c",
+                f'model_reasoning_effort="{codex.fresh_reviewer.review_reasoning_effort}"',
+            ]
+        )
     else:
-        if codex.review_model is not None:
-            args.extend(["--model", codex.review_model])
-        if codex.review_reasoning_effort is not None:
-            # Pass as one argv entry; Codex parses the value as TOML.
-            args.extend(["-c", f'model_reasoning_effort="{codex.review_reasoning_effort}"'])
+        legacy = is_legacy_phase9_codex_state(
+            review_model=codex.review_model,
+            review_reasoning_effort=codex.review_reasoning_effort,
+            review_model_source=codex.review_model_source,
+            review_reasoning_source=codex.review_reasoning_source,
+        )
+        if legacy:
+            # Phase 9 compatibility: omit overrides and let the CLI inherit. Callers should
+            # surface a legacy warning; do not invent session-derived values.
+            pass
+        else:
+            if codex.review_model is not None:
+                args.extend(["--model", codex.review_model])
+            if codex.review_reasoning_effort is not None:
+                # Pass as one argv entry; Codex parses the value as TOML.
+                args.extend(["-c", f'model_reasoning_effort="{codex.review_reasoning_effort}"'])
     args.extend(
         [
             "--json",
@@ -202,6 +258,132 @@ def build_codex_review_args(
         ]
     )
     return args
+
+
+def build_codex_review_args(
+    codex: CodexState,
+    *,
+    repo_root: str,
+    session_id: str,
+    schema_file: Path,
+    result_file: Path,
+) -> list[str]:
+    """Backward-compatible alias for resume review argv construction."""
+
+    return build_codex_resume_args(
+        codex,
+        repo_root=repo_root,
+        session_id=session_id,
+        schema_file=schema_file,
+        result_file=result_file,
+    )
+
+
+def _select_codex_review_args(
+    codex: CodexState,
+    *,
+    repo_root: str,
+    session_id: str | None,
+    schema_file: Path,
+    result_file: Path,
+) -> tuple[list[str], str]:
+    if is_fresh_codex_reviewer_run(codex) and is_fresh_reviewer_bootstrap_uncertain(codex):
+        raise ValidationError(FRESH_BOOTSTRAP_UNCERTAIN_MESSAGE)
+    if can_attempt_fresh_bootstrap(codex):
+        return build_codex_bootstrap_args(
+            codex,
+            repo_root=repo_root,
+            schema_file=schema_file,
+            result_file=result_file,
+        ), "bootstrap"
+    bound_session_id = session_id or require_bound_codex_session_id(codex)
+    return build_codex_resume_args(
+        codex,
+        repo_root=repo_root,
+        session_id=bound_session_id,
+        schema_file=schema_file,
+        result_file=result_file,
+    ), "resume"
+
+
+def _persist_fresh_reviewer_binding(
+    state: RunState,
+    run_directory: Path,
+    *,
+    session_id: str,
+    events_path: Path,
+    bound_at: str,
+) -> None:
+    if state.codex.fresh_reviewer is None:
+        raise ValidationError("fresh reviewer binding is missing from state")
+    events_sha256 = sha256_file(events_path)
+    binding = state.codex.fresh_reviewer.model_copy(
+        update={
+            "bootstrap_session_id": session_id,
+            "bootstrap_events_sha256": events_sha256,
+            "bootstrap_bound_at": bound_at,
+            "bootstrap_uncertainty_reason": None,
+        }
+    )
+    state.codex = state.codex.model_copy(
+        update={
+            "session_id": session_id,
+            "fresh_reviewer": binding,
+        }
+    )
+    artifact = {
+        "review_model": binding.review_model,
+        "review_reasoning_effort": binding.review_reasoning_effort,
+        "bootstrap_session_id_prefix": session_id[:8],
+        "bootstrap_events_sha256": events_sha256,
+        "bootstrap_bound_at": bound_at,
+    }
+    atomic_write_json(
+        run_directory / FRESH_REVIEWER_BINDING_ARTIFACT,
+        artifact,
+        sensitive=True,
+    )
+    save_run_state(run_directory, state)
+
+
+def _persist_bootstrap_uncertainty(
+    state: RunState,
+    run_directory: Path,
+    *,
+    reason: str,
+    events_rel: str,
+    events_path: Path,
+    bound_at: str,
+) -> None:
+    if state.codex.fresh_reviewer is None:
+        raise ValidationError("fresh reviewer binding is missing from state")
+    events_sha256 = sha256_file(events_path) if events_path.is_file() else None
+    binding = state.codex.fresh_reviewer.model_copy(
+        update={
+            "bootstrap_session_id": None,
+            "bootstrap_events_sha256": None,
+            "bootstrap_bound_at": None,
+            "bootstrap_uncertainty_reason": reason,
+        }
+    )
+    state.codex = state.codex.model_copy(
+        update={
+            "session_id": None,
+            "fresh_reviewer": binding,
+        }
+    )
+    artifact = {
+        "reason": reason,
+        "events_path": events_rel,
+        "events_sha256": events_sha256,
+        "recorded_at": bound_at,
+    }
+    atomic_write_json(
+        run_directory / FRESH_REVIEWER_BOOTSTRAP_UNCERTAINTY_ARTIFACT,
+        artifact,
+        sensitive=True,
+    )
+    save_run_state(run_directory, state)
 
 
 def redact_codex_args(args: list[str]) -> list[str]:
@@ -390,7 +572,7 @@ def run_codex_review(
         iteration=iteration,
         cursor_final_response=cursor_final_response,
     )
-    args = build_codex_review_args(
+    args, review_mode = _select_codex_review_args(
         state.codex,
         repo_root=repo_root,
         session_id=state.codex.session_id,
@@ -430,12 +612,55 @@ def run_codex_review(
         if stderr_indicates_codex_output_artifact_failure(stderr_text, result_path=result_path):
             failure_code = FAILURE_CODE_RESULT_ARTIFACT_MISSING
 
+    bound_session_id = state.codex.session_id
+    if review_mode == "bootstrap":
+        bound_at = datetime.now(tz=UTC).isoformat()
+        capture = classify_bootstrap_session_id_from_events(events_path)
+        if capture.session_id is not None:
+            _persist_fresh_reviewer_binding(
+                state,
+                run_directory,
+                session_id=capture.session_id,
+                events_path=events_path,
+                bound_at=bound_at,
+            )
+            bound_session_id = capture.session_id
+        else:
+            uncertainty_reason = capture.uncertainty_reason or "missing_identity"
+            if process.timed_out and uncertainty_reason == "missing_identity":
+                uncertainty_reason = "timeout_without_identity"
+            _persist_bootstrap_uncertainty(
+                state,
+                run_directory,
+                reason=uncertainty_reason,
+                events_rel=events_rel,
+                events_path=events_path,
+                bound_at=bound_at,
+            )
+            raise AiDevLoopError(
+                "Codex reviewer bootstrap identity capture failed; "
+                f"inspect {events_rel} and {FRESH_REVIEWER_BOOTSTRAP_UNCERTAINTY_ARTIFACT}"
+            )
+        if process.timed_out:
+            raise AiDevLoopError(
+                _codex_timeout_message(events_path=events_rel, stderr_path=stderr_rel)
+            )
+        if process.returncode != 0:
+            raise AiDevLoopError(
+                _codex_failure_message(
+                    exit_code=process.returncode,
+                    events_path=events_rel,
+                    stderr_path=stderr_rel,
+                )
+            )
+
     metadata_payload: dict[str, Any] = {
         "args": redact_codex_args(args),
         "exit_code": process.returncode,
         "elapsed_seconds": process.elapsed_seconds,
         "timed_out": process.timed_out,
-        "session_id": state.codex.session_id,
+        "review_mode": review_mode,
+        "session_id": bound_session_id,
         "review_skill": state.codex.review_skill,
         "session_model": state.codex.session_model,
         "session_reasoning_effort": state.codex.session_reasoning_effort,

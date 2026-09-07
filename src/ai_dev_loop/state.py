@@ -128,13 +128,68 @@ class PromptState(BaseModel):
 
 
 REVIEW_RUNTIME_SOURCES = frozenset({"session", "explicit", "legacy_inherit"})
+RUN_STATE_SCHEMA_VERSION = 1
+RUN_STATE_SCHEMA_VERSION_FRESH = 2
+
+
+class FreshCodexReviewerBinding(BaseModel):
+    """Frozen reviewer model/reasoning with optional bootstrap identity evidence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    review_model: str
+    review_reasoning_effort: str
+    bootstrap_session_id: str | None = None
+    bootstrap_events_sha256: str | None = None
+    bootstrap_bound_at: str | None = None
+    bootstrap_uncertainty_reason: str | None = None
+
+    @field_validator("review_model")
+    @classmethod
+    def validate_review_model(cls, value: str) -> str:
+        normalized = normalize_optional_review_model(value)
+        if normalized is None:
+            raise ValueError("review_model is required")
+        return normalized
+
+    @field_validator("review_reasoning_effort")
+    @classmethod
+    def validate_review_reasoning_effort(cls, value: str) -> str:
+        normalized = normalize_optional_review_reasoning_effort(value)
+        if normalized is None:
+            raise ValueError("review_reasoning_effort is required")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_bootstrap_fields(self) -> FreshCodexReviewerBinding:
+        from ai_dev_loop.fresh_codex_reviewer import BOOTSTRAP_UNCERTAINTY_REASONS
+
+        reason = (self.bootstrap_uncertainty_reason or "").strip() or None
+        session_id = (self.bootstrap_session_id or "").strip() or None
+        events_sha256 = (self.bootstrap_events_sha256 or "").strip() or None
+        bound_at = (self.bootstrap_bound_at or "").strip() or None
+        present = [value for value in (session_id, events_sha256, bound_at) if value]
+        if reason:
+            if reason not in BOOTSTRAP_UNCERTAINTY_REASONS:
+                raise ValueError("bootstrap_uncertainty_reason is invalid")
+            if present:
+                raise ValueError(
+                    "bootstrap uncertainty cannot coexist with partial or complete binding evidence"
+                )
+            return self
+        if present and len(present) != 3:
+            raise ValueError(
+                "bootstrap_session_id, bootstrap_events_sha256, and bootstrap_bound_at "
+                "must be present together"
+            )
+        return self
 
 
 class CodexState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     command: str
-    session_id: str
+    session_id: str | None = None
     session_model: str | None = None
     session_reasoning_effort: str | None = None
     # Effective values passed to Codex for Phase 10 runs. Historical Phase 9 runs may
@@ -146,6 +201,7 @@ class CodexState(BaseModel):
     model_family_warning: str | None = None
     review_skill: str
     sandbox: str
+    fresh_reviewer: FreshCodexReviewerBinding | None = None
 
     @field_validator("review_model")
     @classmethod
@@ -172,6 +228,46 @@ class CodexState(BaseModel):
                 f"review runtime source must be one of: {sorted(REVIEW_RUNTIME_SOURCES)}"
             )
         return value
+
+    @model_validator(mode="after")
+    def validate_identity_contract(self) -> CodexState:
+        if self.fresh_reviewer is None:
+            if not (self.session_id or "").strip():
+                raise ValueError("codex.session_id is required unless fresh_reviewer is set")
+            return self
+
+        binding = self.fresh_reviewer
+        reason = (binding.bootstrap_uncertainty_reason or "").strip() or None
+        session_id = (self.session_id or "").strip() or None
+        bootstrap_session_id = (binding.bootstrap_session_id or "").strip() or None
+        events_sha256 = (binding.bootstrap_events_sha256 or "").strip() or None
+        bound_at = (binding.bootstrap_bound_at or "").strip() or None
+        present = [value for value in (bootstrap_session_id, events_sha256, bound_at) if value]
+
+        if reason:
+            if session_id or present:
+                raise ValueError(
+                    "bootstrap uncertainty cannot coexist with codex.session_id or binding evidence"
+                )
+            return self
+
+        if present:
+            if len(present) != 3:
+                raise ValueError(
+                    "bootstrap_session_id, bootstrap_events_sha256, and bootstrap_bound_at "
+                    "must be present together"
+                )
+            if session_id is None:
+                raise ValueError("complete fresh reviewer binding requires codex.session_id")
+            if session_id != bootstrap_session_id:
+                raise ValueError(
+                    "codex.session_id must match fresh_reviewer.bootstrap_session_id when bound"
+                )
+            return self
+
+        if session_id is not None:
+            raise ValueError("unbound fresh reviewer must not have codex.session_id")
+        return self
 
 
 class CursorState(BaseModel):
@@ -469,7 +565,7 @@ class ControllerState(BaseModel):
 class RunState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: int = Field(default=1, alias="schema_version")
+    schema_version: int = Field(default=RUN_STATE_SCHEMA_VERSION, alias="schema_version")
     run_id: str
     project: ProjectRef
     status: RunStatus
@@ -486,6 +582,25 @@ class RunState(BaseModel):
     last_error: str | None = None
     recovery: RecoveryState | None = None
     controller: ControllerState | None = None
+
+    @field_validator("schema_version")
+    @classmethod
+    def validate_schema_version(cls, value: int) -> int:
+        if value not in {RUN_STATE_SCHEMA_VERSION, RUN_STATE_SCHEMA_VERSION_FRESH}:
+            raise ValueError(
+                f"schema_version must be {RUN_STATE_SCHEMA_VERSION} or "
+                f"{RUN_STATE_SCHEMA_VERSION_FRESH}"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def fresh_schema_requires_fresh_reviewer(self) -> RunState:
+        if self.schema_version == RUN_STATE_SCHEMA_VERSION_FRESH:
+            if self.codex.fresh_reviewer is None:
+                raise ValueError("schema_version 2 requires codex.fresh_reviewer")
+        elif self.codex.fresh_reviewer is not None:
+            raise ValueError("schema_version 1 cannot persist codex.fresh_reviewer")
+        return self
 
 
 class ManifestArtifact(BaseModel):

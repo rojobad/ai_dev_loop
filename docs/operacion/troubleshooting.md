@@ -220,11 +220,19 @@ Para Desktop, recuerda que la confianza se hace en Codex Desktop, no en WSL.
 - 0 matches no terminales: confirma el ID exacto de A, el `--repo-path` y que el prepare fue A/B; usa `--run-id` o `--include-terminal` solo si conoces el run.
 - N matches: pasa `--run-id` con uno de los candidatos listados. No adivines por timestamp.
 
-## Reviewer B activo o usado tras prepare
+## Reviewer B creado o usado fuera del worker
 
-Sintoma: A lanzo el run pero B sigue recibiendo prompts o se usa la UI de B en paralelo.
+Sintoma: el worker ya creo B en el primer review, pero otra sesion Codex recibe prompts de review o se usa su UI en paralelo.
 
-Accion: deja B intacta. Todo review reanuda solo B. Si B se uso tras prepare, el contexto puede contaminarse; aborta si hace falta, inspecciona artefactos y prepara un run nuevo si el contrato ya no es confiable.
+Accion: deja intacta la identidad B capturada por el worker. Todo review reanuda solo esa session ID. Si otra sesion participo en el review, el contexto puede contaminarse; aborta si hace falta, inspecciona artefactos y prepara un run nuevo si el contrato ya no es confiable.
+
+En runs controller A frescos, B no existe en `prepare`: el worker lo crea una sola vez en el primer review con `codex exec` read-only. No pases `--codex-session-id` en `prepare` ni `scheduler submit`.
+
+## Bootstrap de reviewer ambiguo o bloqueado
+
+Sintoma: el primer review fallo con bootstrap incierto (`fresh Codex reviewer bootstrap is uncertain`) o el run quedo bloqueado sin session ID de B.
+
+Accion: inspecciona `codex/events/NN.jsonl` y `codex/fresh-reviewer-bootstrap-uncertainty.json`. No reintentes bootstrap ni crees un segundo B. Prepara o `scheduler submit` un run fresco con `--codex-review-model` y `--codex-review-reasoning-effort` explicitos.
 
 ## Worker / launcher stale
 
@@ -239,11 +247,11 @@ Accion: conserva diagnosticos; usa `abort` (persiste el abort request) o
 worker fallo tras progreso durable, usa `recover`/`resume` solo cuando la
 elegibilidad lo permita.
 
-## Falta capacidad de fork o mensaje A↔B
+## Falta capacidad de fork o mensaje A↔B (legacy)
 
-Los skills A/B dependen de capacidades de la app Codex (fork same-directory y mensaje autorizado de B a A).
+Los runs controller A frescos ya no requieren fork ni mensaje B→A: A prepara con modelo/reasoning congelados y el worker crea B en el primer review.
 
-Si faltan: los skills se detienen con explicacion acotada. No uses `--last`, no inventes session IDs y no scrapees rollouts para inferir parentesco. Completa handoff cuando la capacidad este disponible, o usa el flujo legacy sin `--controller-session-id` desde WSL.
+Si usas el flujo legacy sin `--controller-session-id`, sigue siendo valido pasar `--codex-session-id` exacto desde WSL. No uses `--last`, no inventes session IDs y no scrapees rollouts para inferir parentesco.
 
 ## WSL distro ambiguo
 

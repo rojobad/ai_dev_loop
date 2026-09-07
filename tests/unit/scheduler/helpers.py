@@ -5,10 +5,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from ai_dev_loop.scheduler.domain.state import (
+    SUBMITTED_CONTEXT_SCHEMA_VERSION,
+    SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH,
     CodexRuntimeBinding,
     ControllerBinding,
     CursorBinding,
     EffectiveConfigBinding,
+    FreshCodexReviewerBinding,
     PlanPromptBinding,
     RepositoryBinding,
     SubmittedRunContext,
@@ -21,8 +24,67 @@ CONTROLLER_SESSION = "11111111-1111-1111-1111-111111111111"
 DIGEST = "a" * 64
 
 
-def sample_submitted_context(*, repo_root: str = "/tmp/repo") -> SubmittedRunContext:
+def sample_fresh_submitted_context(*, repo_root: str = "/tmp/repo") -> SubmittedRunContext:
     return SubmittedRunContext(
+        schema_version=SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH,
+        project_name="fixture-project",
+        repository=RepositoryBinding(
+            root=repo_root,
+            git_common_dir=f"{repo_root}/.git",
+            git_dir=f"{repo_root}/.git",
+            branch="main",
+            initial_head="abc123",
+            worktree_key=DIGEST,
+        ),
+        plan_prompt=PlanPromptBinding(
+            plan_repository_path="docs/plans/sample-plan.md",
+            prompt_source_repository_path="docs/plans/prompt.txt",
+            plan_artifact_path="plan/plan.md",
+            plan_sha256=DIGEST,
+            prompt_artifact_path="prompts/cursor-initial.txt",
+            prompt_sha256=DIGEST,
+        ),
+        effective_config=EffectiveConfigBinding(
+            effective_config_artifact_path="effective-config.yaml",
+            effective_config_sha256=DIGEST,
+            source_config_artifact_path="source-config.yaml",
+            source_config_sha256=DIGEST,
+        ),
+        codex=FreshCodexReviewerBinding(
+            review_model="gpt-5.6-sol",
+            review_reasoning_effort="high",
+            review_model_source="explicit",
+            review_reasoning_source="explicit",
+            command="codex",
+            review_skill="review-staged-cursor-execution",
+            sandbox="workspace-write",
+            binding_artifact_path="codex/fresh-reviewer-input.json",
+            binding_sha256=DIGEST,
+        ),
+        cursor=CursorBinding(
+            command="agent",
+            model="composer-2.5-fast",
+            output_format="stream-json",
+            force=True,
+            trust_workspace=True,
+            sandbox="disabled",
+        ),
+        workflow=WorkflowLimits(
+            max_review_iterations=3,
+            stage_mode="all",
+            cursor_timeout_minutes=30,
+            codex_timeout_minutes=30,
+            require_clean_worktree=True,
+        ),
+        controller=ControllerBinding(controller_session_id=CONTROLLER_SESSION),
+        baseline_status_artifact_path="git/baseline-status.txt",
+        baseline_status_sha256=DIGEST,
+    )
+
+
+def sample_legacy_submitted_context(*, repo_root: str = "/tmp/repo") -> SubmittedRunContext:
+    return SubmittedRunContext(
+        schema_version=SUBMITTED_CONTEXT_SCHEMA_VERSION,
         project_name="fixture-project",
         repository=RepositoryBinding(
             root=repo_root,
@@ -83,6 +145,10 @@ def sample_submitted_context(*, repo_root: str = "/tmp/repo") -> SubmittedRunCon
         baseline_status_artifact_path="git/baseline-status.txt",
         baseline_status_sha256=DIGEST,
     )
+
+
+def sample_submitted_context(*, repo_root: str = "/tmp/repo") -> SubmittedRunContext:
+    return sample_fresh_submitted_context(repo_root=repo_root)
 
 
 def sample_submitted_state(

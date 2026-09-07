@@ -100,12 +100,20 @@ $XDG_STATE_HOME/ai_dev_loop/
         prompts/cursor-initial.txt
         effective-config.yaml
         source-config.yaml
-        codex/session-runtime.json
+        codex/fresh-reviewer-input.json     # v2: modelo/reasoning congelados en prepare/submit
+        codex/fresh-reviewer-binding.json   # evidencia de bootstrap read-only (post-review)
+        codex/fresh-reviewer-bootstrap-uncertainty.json  # bloqueo durable si la identidad es ambigua
+        codex/session-runtime.json          # v1 legacy session-bound solamente
         git/baseline-status.txt
 ```
 
 - `ai_dev_loop scheduler submit` congela un run `queued` sin lanzar agentes, probes,
-  Git ni systemd. Requiere `--controller-session-id` distinto de `--codex-session-id`.
+  Git ni systemd. Requiere `--controller-session-id`, `--codex-review-model` y
+  `--codex-review-reasoning-effort`; no acepta `--codex-session-id`. El contexto
+  v2 persiste `codex/fresh-reviewer-input.json` en el manifiesto; la evidencia de
+  bootstrap (`codex/fresh-reviewer-binding.json`) se escribe solo en el primer review.
+- Los submits v1 session-bound historicos permanecen read-only en el ledger; la
+  accion segura es un submit v2 fresco, no una conversion automatica.
 - `scheduler status` y `scheduler list` son proyecciones read-only con IDs redactados.
 - `scheduler start`, `scheduler tick` y la ejecucion de agentes llegan en fases
   posteriores; Phase 17.1 se detiene en el limite `queued`.

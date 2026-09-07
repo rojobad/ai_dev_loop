@@ -687,12 +687,38 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                     )
                     sys.exit(91)
             if mode == "sleep":
+                if "resume" not in args:
+                    bootstrap_id = os.environ.get(
+                        "FAKE_CODEX_BOOTSTRAP_SESSION_ID",
+                        "019def00-0000-0000-0000-0000000000bb",
+                    )
+                    print(json.dumps({{"type": "thread.started", "thread_id": bootstrap_id}}), flush=True)
+                    ready_path = os.environ.get("FAKE_CODEX_BOOTSTRAP_READY_PATH", "").strip()
+                    if ready_path:
+                        parent = os.path.dirname(ready_path)
+                        if parent:
+                            os.makedirs(parent, exist_ok=True)
+                        with open(ready_path, "w", encoding="utf-8") as handle:
+                            handle.write("ready\\n")
+                        print("FAKE_CODEX_BOOTSTRAP_READY", flush=True)
                 time.sleep(float(os.environ.get("FAKE_CODEX_SLEEP_SECONDS", "5")))
                 sys.exit(0)
             if mode == "fail":
+                if "resume" not in args:
+                    bootstrap_id = os.environ.get(
+                        "FAKE_CODEX_BOOTSTRAP_SESSION_ID",
+                        "019def00-0000-0000-0000-0000000000bb",
+                    )
+                    print(json.dumps({{"type": "thread.started", "thread_id": bootstrap_id}}), flush=True)
                 print("codex review failed", file=sys.stderr)
                 sys.exit(2)
             if mode == "output_artifact_fail":
+                if "resume" not in args:
+                    bootstrap_id = os.environ.get(
+                        "FAKE_CODEX_BOOTSTRAP_SESSION_ID",
+                        "019def00-0000-0000-0000-0000000000bb",
+                    )
+                    print(json.dumps({{"type": "thread.started", "thread_id": bootstrap_id}}), flush=True)
                 target = output_last_message or "codex/reviews/01.json"
                 print(
                     f"failed to write output-last-message {{target}}: "
@@ -739,6 +765,12 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
             if output_last_message:
                 with open(output_last_message, "w", encoding="utf-8") as handle:
                     json.dump(result, handle)
+            if "resume" not in args:
+                bootstrap_id = os.environ.get(
+                    "FAKE_CODEX_BOOTSTRAP_SESSION_ID",
+                    "019def00-0000-0000-0000-0000000000bb",
+                )
+                print(json.dumps({{"type": "thread.started", "thread_id": bootstrap_id}}), flush=True)
             print(json.dumps({{"type": "message", "content": "review complete"}}))
             sys.exit(0)
 

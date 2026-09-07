@@ -45,7 +45,29 @@ def ab_codex_home(isolated_home: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return codex_home
 
 
-def _prepare_ab(git_repo: Path, *, controller: str = CONTROLLER_ID, reviewer: str = REVIEWER_ID):
+REVIEW_MODEL = "gpt-5.6-sol"
+REVIEW_REASONING = "high"
+
+
+def _prepare_ab(git_repo: Path, *, controller: str = CONTROLLER_ID):
+    prompt = "Implement the approved plan.\n"
+    with patch("sys.stdin", StringIO(prompt)):
+        return prepare_run(
+            PrepareOptions(
+                repo_path=git_repo,
+                plan_path=Path("docs/plans/sample-plan.md"),
+                prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
+                controller_session_id=controller,
+                codex_review_model=REVIEW_MODEL,
+                codex_review_reasoning_effort=REVIEW_REASONING,
+                output="json",
+            )
+        )
+
+
+def _prepare_legacy_session_bound_ab(
+    git_repo: Path, *, controller: str = CONTROLLER_ID, reviewer: str = REVIEWER_ID
+):
     prompt = "Implement the approved plan.\n"
     with patch("sys.stdin", StringIO(prompt)):
         return prepare_run(
@@ -91,30 +113,63 @@ def test_historical_run_without_controller_loads(
 
 
 def test_prepare_ab_persists_controller_and_launch_eligibility(
-    git_repo: Path, isolated_xdg, ab_codex_home
+    git_repo: Path, isolated_xdg
 ) -> None:
     result = _prepare_ab(git_repo)
     state = load_run_state(result.run_directory / "state.json")
+    assert state.schema_version == 2
     assert state.controller is not None
     assert state.controller.controller_session_id == CONTROLLER_ID
-    assert state.codex.session_id == REVIEWER_ID
+    assert state.codex.session_id is None
+    assert state.codex.fresh_reviewer is not None
+    assert state.codex.fresh_reviewer.review_model == REVIEW_MODEL
+    assert state.codex.fresh_reviewer.review_reasoning_effort == REVIEW_REASONING
     assert result.requires_codex_exit is False
-    assert result.reviewer_must_remain_inactive is True
+    assert result.reviewer_must_remain_inactive is False
     assert result.launch_command is not None
     assert "--controller-session-id" in result.launch_command
 
     rendered = json.loads(render_prepare_output(result, output="json"))
     assert rendered["requires_codex_exit"] is False
-    assert rendered["reviewer_must_remain_inactive"] is True
+    assert rendered["reviewer_must_remain_inactive"] is False
     assert rendered["controller_session_id_present"] is True
     assert "controller_session_id" not in rendered
 
 
-def test_prepare_rejects_equal_controller_and_reviewer(
-    git_repo: Path, isolated_xdg, ab_codex_home
-) -> None:
-    with pytest.raises(ValidationError, match="differ"):
-        _prepare_ab(git_repo, controller=REVIEWER_ID, reviewer=REVIEWER_ID)
+def test_prepare_rejects_codex_session_id_with_controller(git_repo: Path, isolated_xdg) -> None:
+    prompt = "Implement the approved plan.\n"
+    with (
+        patch("sys.stdin", StringIO(prompt)),
+        pytest.raises(ValidationError, match="must not pass --codex-session-id"),
+    ):
+        prepare_run(
+            PrepareOptions(
+                repo_path=git_repo,
+                plan_path=Path("docs/plans/sample-plan.md"),
+                prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
+                codex_session_id=REVIEWER_ID,
+                controller_session_id=CONTROLLER_ID,
+                codex_review_model=REVIEW_MODEL,
+                codex_review_reasoning_effort=REVIEW_REASONING,
+            )
+        )
+
+
+def test_prepare_requires_frozen_review_model_for_controller(git_repo: Path, isolated_xdg) -> None:
+    prompt = "Implement the approved plan.\n"
+    with (
+        patch("sys.stdin", StringIO(prompt)),
+        pytest.raises(ValidationError, match="--codex-review-model"),
+    ):
+        prepare_run(
+            PrepareOptions(
+                repo_path=git_repo,
+                plan_path=Path("docs/plans/sample-plan.md"),
+                prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
+                controller_session_id=CONTROLLER_ID,
+                codex_review_reasoning_effort=REVIEW_REASONING,
+            )
+        )
 
 
 def test_prepare_rejects_malformed_controller_id(
@@ -124,18 +179,15 @@ def test_prepare_rejects_malformed_controller_id(
         _prepare_ab(git_repo, controller="not-a-uuid")
 
 
-def test_status_next_action_for_ab_prepared(git_repo: Path, isolated_xdg, ab_codex_home) -> None:
+def test_status_next_action_for_ab_prepared(git_repo: Path, isolated_xdg) -> None:
     result = _prepare_ab(git_repo)
     text = render_status(result.run_id, output="text")
-    assert "Leave the reviewer" in text
     assert "launch" in text.lower()
     assert CONTROLLER_ID not in text
     assert REVIEWER_ID not in text
 
 
-def test_controller_status_exact_match_and_ambiguity(
-    git_repo: Path, isolated_xdg, ab_codex_home
-) -> None:
+def test_controller_status_exact_match_and_ambiguity(git_repo: Path, isolated_xdg) -> None:
     first = _prepare_ab(git_repo)
     second = _prepare_ab(git_repo)
 
@@ -161,10 +213,10 @@ def test_controller_status_exact_match_and_ambiguity(
     )
     assert single.match_count == 1
     assert single.run_id == first.run_id
-    assert single.reviewer_session_id == REVIEWER_ID
+    assert single.reviewer_session_id is None
 
 
-def test_controller_status_cli_shortens_ids(git_repo: Path, isolated_xdg, ab_codex_home) -> None:
+def test_controller_status_cli_shortens_ids(git_repo: Path, isolated_xdg) -> None:
     prepared = _prepare_ab(git_repo)
     result = runner.invoke(
         app,
@@ -186,7 +238,7 @@ def test_controller_status_cli_shortens_ids(git_repo: Path, isolated_xdg, ab_cod
 
 
 def test_launch_requires_controller_and_is_idempotent(
-    git_repo: Path, isolated_xdg, ab_codex_home, monkeypatch
+    git_repo: Path, isolated_xdg, monkeypatch
 ) -> None:
     prepared = _prepare_ab(git_repo)
 
@@ -249,9 +301,29 @@ def test_launch_rejects_legacy_run(git_repo: Path, isolated_xdg, fixture_codex_s
         launch_run(result.run_id, controller_session_id=CONTROLLER_ID)
 
 
-def test_stale_launcher_record_is_not_treated_as_live(
-    git_repo: Path, isolated_xdg, ab_codex_home
+def test_launch_rejects_legacy_session_bound_ab(
+    git_repo: Path, isolated_xdg, fixture_codex_session
 ) -> None:
+    prompt = "Implement the approved plan.\n"
+    with patch("sys.stdin", StringIO(prompt)):
+        result = prepare_run(
+            PrepareOptions(
+                repo_path=git_repo,
+                plan_path=Path("docs/plans/sample-plan.md"),
+                prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
+                codex_session_id="019abc00-0000-0000-0000-000000000000",
+            )
+        )
+    state = load_run_state(result.run_directory / "state.json")
+    state.controller = ControllerState(controller_session_id=CONTROLLER_ID)
+    from ai_dev_loop.state import save_run_state
+
+    save_run_state(result.run_directory, state)
+    with pytest.raises(ValidationError, match="retired session-bound"):
+        launch_run(result.run_id, controller_session_id=CONTROLLER_ID)
+
+
+def test_stale_launcher_record_is_not_treated_as_live(git_repo: Path, isolated_xdg) -> None:
     prepared = _prepare_ab(git_repo)
     write_launcher_record(
         prepared.run_directory,

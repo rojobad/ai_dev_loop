@@ -161,10 +161,16 @@ def _build_result(
         state.status in {RunStatus.PREPARED, RunStatus.WAITING_FOR_CURSOR_FIX}
         and state.controller is not None
     ):
-        next_action = (
-            "Leave the reviewer session inactive, then launch with "
-            f"ai_dev_loop launch {state.run_id} --controller-session-id <exact-controller-id>."
-        )
+        if state.codex.fresh_reviewer is not None:
+            next_action = (
+                "Launch from the controller session with "
+                f"ai_dev_loop launch {state.run_id} --controller-session-id <exact-controller-id>."
+            )
+        else:
+            next_action = (
+                "This run uses the retired session-bound A/B contract. Inspect only, "
+                "then prepare a fresh run."
+            )
     launcher = launcher_summary(run_directory, run_id=state.run_id)
     control = abort_control_summary(run_directory)
     if launcher.get("launcher_live"):

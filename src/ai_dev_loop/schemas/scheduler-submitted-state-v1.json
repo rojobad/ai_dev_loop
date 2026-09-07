@@ -26,7 +26,14 @@
       "pattern": "^[0-9a-f]{64}$"
     },
     "context": {
-      "$ref": "scheduler-submitted-run-context-v1.json"
+      "oneOf": [
+        {
+          "$ref": "scheduler-submitted-run-context-v1.json"
+        },
+        {
+          "$ref": "scheduler-submitted-run-context-v2.json"
+        }
+      ]
     }
   }
 }
