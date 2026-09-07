@@ -1,91 +1,116 @@
-# Phase 17.1.5 — Ephemeral Cursor reviewer contract
+# Phase 17.1.5 — Fresh Codex reviewer bootstrap and scheduler alignment
 
 ## Goal
 
-Amend Phase 17 before Phase 17.2 so scheduler runs no longer require a
-pre-existing or resumable Codex reviewer session (B). A scheduler run must bind
-controller A exactly, freeze a review-only Cursor CLI profile plus immutable
-review inputs, and later create one fresh reviewer attempt for each review pass.
+Replace the local A/B handoff's dependency on a pre-existing, forked Codex
+session B with one **fresh Codex CLI reviewer B per durable run**. Controller A
+prepares the run and passes the review model and reasoning effort as required
+command parameters. Those values become immutable run inputs. At the first
+review boundary, the worker creates B with a new `codex exec` invocation,
+captures its exact newly-created session identity, and persists it. All later
+review passes in that same run resume only that identity.
 
-The reviewer is not a dispatcher and never implements or corrects code. It
-reads the approved plan and the complete staged implementation, performs only
-the authorized review/validation work, and returns a schema-validated decision
-that the scheduler can use to drive the existing Cursor implementation chat.
+B is review-only: it reads the approved plan and staged changes, returns the
+existing schema-validated review decision, and never dispatches Cursor,
+implements a fix, or changes Git state. This removes the active-writer conflict
+caused by trying to resume a Codex Desktop-forked B from a detached worker.
 
-This phase changes the *contract* and prepares later Phase 17 plans. It does
-not make any tick launch a real reviewer. Phase 17.1 must first be manually
-validated and committed; this phase is then committed on top of it. Phase 17.2
-starts only after both commits are integrated in the same baseline.
+The phase changes the **current A-controlled local workflow** so it can be used
+to implement and review Phase 17.2 and later. It also makes the Phase 17 central
+scheduler adopt the identical one-B-per-run contract when its review effect is
+implemented in Phase 17.5. Phase 17.1 must first be manually validated and
+committed; this phase is committed on top of that accepted baseline.
 
 ## Non-Goals
 
-- Do not re-run, recover, alter, or delete the historical Phase 17.1 A/B runs.
-- Do not launch Cursor, Codex, systemd, a tick, preflight, Git staging, or a
-  review attempt.
-- Do not implement the Phase 17.3 process backend, Phase 17.4 implementation
-  turns, or the Phase 17.5 review/fix loop.
-- Do not make a reviewer dispatch a Cursor implementation/correction process,
-  commit, push, reset, clean, stash, unstage, or mutate the target repository.
-- Do not preserve the legacy local `prepare`/`launch` A/B workflow by silently
-  changing its reviewer identity. It retains its documented exact-session
-  behavior until the Phase 17.7 cutover.
-- Do not read, copy, bridge, or write Codex Desktop/WSL session rollouts or
-  SQLite state for scheduler submission.
+- Do not re-run, recover, alter, or delete the historical failed A/B runs.
+- Do not launch a real Cursor or Codex review as implementation validation.
+- Do not implement the scheduler tick, systemd backend, Cursor effects, or the
+  Phase 17.5 scheduler review loop in this phase.
+- Do not create a B during `prepare`, `scheduler submit`, or `scheduler start`.
+  A run has no B identity until its first review boundary.
+- Do not create a replacement B after a persisted B exists, after an ambiguous
+  fresh creation, or merely because a review invocation fails.
+- Do not let B dispatch work, stage, commit, push, reset, clean, stash,
+  unstage, or otherwise mutate the target repository.
+- Do not change PR-review v2's session contract or its public behavior.
 
 ## Scope
 
-- Replace the Phase 17 scheduler-only B Codex-session/runtime binding with a
-  typed, immutable fresh Cursor-reviewer binding. `scheduler submit` requires
-  only A's exact controller session ID; it must not accept, read, or infer a B
-  session ID.
-- Freeze the review provider/profile, plan/prompt/config hashes, repository
-  identity, baseline, limits, and immutable reviewer-input contract in the
-  central ledger and protected artifact tree. The idempotency identity changes
-  with every frozen reviewer-relevant value.
-- Add the explicit central-schema/version migration or incompatibility path
-  selected in `OpenQuestions`; never hand-edit JSON snapshots or SQLite rows.
-- Revise the Phase 17 master and future Phase 17.2–17.7 plans, all applicable
-  Cursor rules, package-owned handoff/controller instructions, and factual
-  submission/configuration docs so they distinguish legacy exact-session A/B
-  from the new scheduler fresh-reviewer contract.
-- Define the precise deferred handoff into Phase 17.5: one fresh, review-only
-  Cursor attempt per review pass; no `--resume`, no reviewer chat continuity,
-  no `--last`, no agent-created workflow dispatch, and structured results only.
+- Change the legacy controller-A `prepare` path so it requires A's exact
+  controller identity plus `--codex-review-model` and
+  `--codex-review-reasoning-effort`, but no B session ID. Validate these command
+  parameters and freeze the selected values into the durable run state and
+  immutable artifacts. They must not come from YAML, a pre-existing B runtime,
+  a session capture, or a later CLI default.
+- Replace the previous handoff flow: A no longer forks or messages B. A prepares
+  and launches the durable run directly; the worker lazily bootstraps B at the
+  first review. Update package-owned Codex handoff/controller instructions and
+  their tests accordingly, without installing any user-global skill.
+- Refactor the Codex review adapter into two explicit modes: initial fresh
+  bootstrap and subsequent exact resume. The initial argv uses new `codex exec`
+  with the frozen `--model`, `-c model_reasoning_effort=...`,
+  `--sandbox read-only`, working directory, structured-output schema, and
+  bounded artifact paths. Subsequent reviews use the exact captured session ID
+  and the same frozen model/reasoning settings. Neither mode may use `--last`,
+  a fork, or an ephemeral session.
+- Persist only a validated identity emitted by the fresh Codex CLI structured
+  event contract, atomically with the first review attempt's durable evidence.
+  The adapter must reject missing, malformed, conflicting, or ambiguous session
+  identity. It must never infer an ID from logs, a Desktop/WSL rollout, SQLite,
+  or an unrelated active session.
+- Make recovery exact: if B is durably bound, resume it; if first creation or
+  identity capture is ambiguous, block with a redacted safe action and preserve
+  evidence. A recovery path must never start a second B for that run.
+- Replace Phase 17 scheduler submission's pre-existing B-session binding with
+  the same frozen review model/reasoning binding. `scheduler submit` receives
+  A plus both explicit reviewer parameters, starts no agents, and preserves no
+  B session until Phase 17.5's first review effect. Update the master and child
+  plans to make this shared contract explicit.
+- Update factual CLI, state/artifact, security, troubleshooting, and workflow
+  documentation, the relevant repository rules, schemas, configuration models,
+  test fixtures, and integration assets. Any control-plane update requires a
+  manual acceptance review in addition to fake-backed automated tests.
 
 ## Out of Scope
 
-- `scheduler start`, tick leadership, reservations, effects, attempts, systemd
-  units, abort, retry, Cursor chat creation, staging, review result ingestion,
-  correction execution, and terminalization.
-- Any change to PR-review v2's existing Codex session contract.
-- User-global installation, hook trust, desktop bridges, or actual updates to
-  the user's installed skills. Package assets may change, but their installation
-  remains a separately authorized manual acceptance action.
-- A legacy scheduler-state importer, automatic conversion of a submitted
-  session-bound scheduler run into a fresh-reviewer run, or automatic deletion
-  of obsolete state.
+- The direct, non-controller legacy `prepare` interface remains unchanged until
+  the Phase 17.7 cutover. It must not silently adopt a different reviewer
+  identity contract.
+- A scheduler-state importer or automatic conversion of an existing
+  session-bound submitted run into a fresh-B run.
+- User-global skill installation, hook-trust changes, Codex Desktop/WSL bridge
+  edits, systemd enablement, or target-repository mutation.
+- Any automatic model selection, reasoning-effort fallback, tool update, or
+  creation of a reviewer from mutable `ai_dev_loop.yaml` at review time.
 
 ## Required Context
 
 Read before editing:
 
-- `archive/implementation-history/plans/phase-17-tick-based-central-run-scheduler.md`,
-  Phase 17.1, and Phases 17.2–17.7, especially 17.4 and 17.5.
-- All eight `.cursor/rules/*.mdc`, which must be revised only where the
-  scheduler fresh-reviewer decision supersedes an exact-session statement.
-- `src/ai_dev_loop/scheduler/{domain,application,infrastructure}/`,
-  `commands/scheduler.py`, `cli.py`, `config.py`, scheduler schemas/migration,
-  and `tests/unit/scheduler/` plus `tests/integration/test_phase17_1_submit.py`.
-- `runners/cursor.py`, `runners/codex.py`, `review_result.py`,
-  `response_schema.py`, `workflow_engine.py`, `review_runtime.py`, and the
-  legacy launch/recovery code. Characterize them; do not change legacy behavior
-  unless this plan explicitly says so.
+- `AGENTS.md`, the Phase 17 master, Phase 17.1, Phase 17.1.75, and Phases
+  17.2–17.7. Phase 17.1 is historical once manually accepted; do not rewrite
+  its staged contract retroactively.
+- All eight `.cursor/rules/*.mdc`, especially the codex-review, loop/resume,
+  orchestrator, state/schema, governance, and global-integration contracts.
+- `commands/{prepare,launch,controller,scheduler}.py`, `cli.py`, `state.py`,
+  `launcher.py`, `launch_worker.py`, `workflow_engine.py`, `review_runtime.py`,
+  `runners/codex.py`, `review_result.py`, `response_schema.py`, and the
+  prepare/launch/recover/controller integration tests.
+- `scheduler/{domain,application,infrastructure}/`, scheduler schemas and
+  migrations, `tests/unit/scheduler/`, and
+  `tests/integration/test_phase17_1_submit.py`.
 - `src/ai_dev_loop/integrations/codex/{assets.py,skill/SKILL.md,controller_skill/SKILL.md}`
   and `tests/unit/test_codex_integration_assets.py`.
 - `ai_dev_loop.yaml`, `docs/referencia/{cli,configuracion}.md`,
   `docs/operacion/{estado-artefactos,seguridad-privacidad,troubleshooting}.md`,
-  and the supplied reference
-  `/home/rojobad/Projects/celatex360-platform/.codex/agents/cursor-supervisor.toml`.
+  and `/home/rojobad/Projects/celatex360-platform/.codex/agents/cursor-supervisor.toml`
+  as a structural reference only. The reviewer provider is Codex CLI, not
+  Cursor CLI.
+- The installed `codex exec --help` and a fake executable characterization
+  fixture. Verify the machine-readable new-session event used for identity
+  capture before wiring a real command; do not rely on undocumented transcript
+  text.
 
 ## Cursor Rules And Skills
 
@@ -100,162 +125,166 @@ Follow all eight repository rules:
 - `.cursor/rules/ai-dev-loop-global-integrations-contracts.mdc`
 - `.cursor/rules/ai-dev-loop-docs-acceptance-contracts.mdc`
 
-The current exact-Codex-session language is intentionally superseded only for
-the Phase 17 central scheduler by the approved fresh-reviewer decision. Keep
-the legacy local A/B and PR-review v2 contracts explicit and unchanged. Use
+Also follow `AGENTS.md` and
 `.agents/skills/ai-dev-loop-docs-acceptance-governance/SKILL.md` for factual
-documentation and manual-acceptance material. Do not invoke either staged-review
-skill while implementing this phase.
+documentation and manual-acceptance material. The staged-review skills govern
+the independent review after implementation and must not be invoked by the
+implementation agent.
+
+The fresh-B rule supersedes the pre-existing/forked B language only for the
+controller-A local workflow and the Phase 17 scheduler. Preserve PR-review v2
+and the explicitly excluded direct legacy mode until an approved cutover says
+otherwise.
 
 ## Architecture Guardrails
 
-- **Authority:** SQLite snapshots/events/effects and hash-verified protected
-  artifacts remain the sole scheduler truth. No `state.json`, session rollout,
-  mutable config reread, chat transcript, or log becomes a second authority.
-- **Identity:** controller A's exact session ID remains the authorization key.
-  Scheduler B has no pre-existing session ID, no fork, no `codex exec resume`,
-  and no `--last`. A fresh reviewer attempt is identified by its durable
-  attempt/effect identity in later phases, not by a reusable conversation.
-- **Provider separation:** implementation Cursor continuity remains exactly one
-  persisted Cursor chat per run. The review-only Cursor process is separate and
-  must never create, resume, or alter that implementation chat.
-- **Read-only review:** a reviewer must not run in a target worktree unless the
-  selected invocation provides a verified non-mutating boundary. A prompt alone
-  is insufficient. Resolve the isolation design before adding executable review
-  code; fail closed on unsupported capability or unexpected repository mutation.
-- **Structured decisions:** a review result must be versioned and schema plus
-  cross-field validated. Markdown, stream transcripts, and reviewer prose are
-  audit artifacts only; none may decide pass/fail, findings, severity, test
-  status, or the Cursor fix prompt.
-- **Prompt ownership:** B's reviewed inputs are the frozen plan, exact original
-  Cursor prompt, frozen staged-patch artifact, and bounded execution metadata.
-  B may author a fix prompt only in a validated structured result. The scheduler
-  may persist and forward it byte-for-byte but never rewrite it.
-- **Process safety:** later systemd units use argv arrays, explicit CWD, bounded
-  stdin/output, process-group/cgroup timeout/abort ownership, redacted metadata,
-  and protected artifacts. A tick never waits. This phase only defines those
-  future contracts and must not approximate them with a detached local child.
-- **Compatibility:** do not reinterpret submitted v1 session-bound contexts as
-  fresh-reviewer contexts. Preserve them read-only or fail the explicit upgrade
-  path chosen below; no automatic migration or cleanup.
-- **Control plane:** any YAML/schema, package skill, master-plan, or integration
-  asset change requires human acceptance in addition to fake-backed tests. Do
-  not install skills or edit hook trust during automated validation.
+- **One reviewer identity:** each durable run creates at most one B. Before the
+  first review, B is absent. Fresh bootstrap captures one exact ID; every later
+  review and recovery resumes that ID. No `--last`, fork, session rollout read,
+  Desktop writer, or second new reviewer is a valid substitute.
+- **Immutable reviewer configuration:** the model and reasoning effort are
+  required command inputs when A prepares/submits the run. Their normalized
+  values are hashed into the immutable context/idempotency identity and passed
+  unchanged to every B invocation. The worker never rereads, defaults, or
+  upgrades them from YAML or a runtime session.
+- **Safe CLI boundary:** use argv arrays, explicit CWD, bounded stdin/stdout/
+  stderr artifacts, `--sandbox read-only`, `--json`, and the review result
+  schema. Do not use `shell=True`, a writable reviewer sandbox, a raw prompt in
+  metadata, or an unbounded stream parser.
+- **Structured authority:** only the existing versioned, schema- and
+  cross-field-validated review result drives findings, test status, residual
+  risk, and the immutable Codex-authored correction prompt. Stream events and
+  prose are audit evidence; they do not decide workflow state.
+- **Atomic persistence and recovery:** bind B identity only after strict event
+  validation and durable artifact hashing. A crash or conflicting identity
+  before that point is an uncertainty blocker, not permission to retry fresh.
+  Persisted B identity remains protected/redacted from status output.
+- **No Git authority expansion:** preflight remains an admission check. After
+  admission, reviewer/implementer agents own the normal reviewed exchange; do
+  not add broad continuous baseline or Git-status policing. The scheduler and
+  worker retain reservation, artifact-integrity, exact identity, and explicit
+  review-decision boundaries.
+- **No agent at submission:** `prepare`, `scheduler submit`, and scheduler
+  `start` only validate/freeze durable inputs. They must not probe a model, read
+  B runtime state, spawn Codex/Cursor, stage, or mutate Git.
+- **Compatibility:** never silently reinterpret an existing session-bound local
+  or central run. It remains read-only/status-inspectable and execution-blocked
+  with an explicit fresh prepare/re-submit safe action; never patch state/SQLite
+  by hand or convert it automatically.
 
 ## Implementation Plan
 
-1. Resolve every `OpenQuestions` item and record the decisions in this plan
-   before changing code. Stop if a Cursor CLI capability cannot supply the
-   required review isolation or a schema-valid result contract.
-2. Amend the Phase 17 master and Phase 17.2–17.7 plans to replace only central
-   scheduler B-session assumptions with the fresh review-only Cursor contract.
-   Keep the phase order: 17.1.5 precedes 17.2; actual reviewer launch remains
-   in revised 17.5. State the legacy A/B and PR-review v2 exceptions explicitly.
-3. Introduce the selected typed `FreshReviewerBinding` and versioned submitted
-   context/state schema. Remove scheduler-only `CodexRuntimeBinding`, session
-   runtime artifacts, B-ID equality validation, B-ID CLI option, B-ID redacted
-   projections, and session-derived review-runtime resolution from the central
-   submit path. Retain controller A binding and frozen repository/plan/prompt/
-   configuration/baseline/limits.
-4. Add a migration-audited database/version strategy. It must be transactional,
-   checksum tested, and preserve all pre-existing artifacts. If the approved
-   strategy refuses non-empty v1 scheduler ledgers, return a precise safe action
-   without changing them; if it supports read-only v1 inspection, make execution
-   refusal explicit. Never update snapshot JSON by ad-hoc SQL.
-5. Define the protected review-input/result artifact names, size limits,
-   permissions, redaction rules, deterministic wrapper prompt template, and
-   reviewer result schema version needed by revised Phase 17.5. The template
-   must require plan reading, complete staged-change review, no implementation,
-   no dispatch, and no Git history/index mutation. Do not wire a process launch
-   in this phase.
-6. Update configuration models/schema/defaults/overrides only as required by the
-   approved Cursor reviewer profile. Freeze every execution-relevant selected
-   value at submit; no later tick may inherit a mutable CLI default. Keep
-   implementation-Cursor settings distinct from reviewer settings when their
-   safety requirements differ.
-7. Update package-owned handoff/controller assets and their tests so the new
-   scheduler flow does not create or message B. Preserve the installed legacy
-   handoff behavior until cutover, or route the two flows by explicit command
-   name with no ambiguity. Do not modify real user-global files.
-8. Update factual CLI/config/artifact/privacy/troubleshooting docs to say that
-   `scheduler submit` needs A but no reviewer session and does not run a
-   reviewer. Do not claim that a fresh reviewer is executable until revised
-   Phase 17.5 passes its tests. Add a manual control-plane acceptance checklist.
+1. Characterize the current controller-A handoff, `prepare` validation,
+   `launch_worker` review path, Codex argv/result parsing, state schema, and
+   scheduler v1 submitted context with tests before moving behavior. Add a fake
+   `codex` fixture whose JSONL stream includes the supported new-session event;
+   make the parser contract explicit and fail closed on any other shape.
+2. Add typed, versioned `FreshCodexReviewerBinding`/equivalent state to local
+   and central contexts. It contains normalized frozen model and reasoning
+   effort, no B ID until bootstrap, then the protected exact B identity and
+   bootstrap evidence. Retire B-session/runtime capture only from the affected
+   A-controlled local and scheduler paths; retain required compatibility models
+   elsewhere until cutover.
+3. Change A's local `prepare` command and the package-owned handoff/controller
+   instructions: require A identity plus the two reviewer CLI parameters;
+   remove the B fork/message/session argument from this path; keep `launch` as
+   A's explicit action. Update CLI help, validation, redacted state projection,
+   idempotency/hash construction, and all compatibility diagnostics.
+4. Change `scheduler submit` to require and freeze the same two reviewer
+   parameters with A identity, without a B session ID or runtime lookup. Add a
+   transactional schema migration/version-refusal strategy for Phase 17.1
+   ledgers. It must preserve existing rows/artifacts exactly and make
+   read-only/status inspection plus execution refusal explicit for incompatible
+   submitted runs; the safe action is fresh re-submission, never conversion.
+5. Split the Codex adapter into fresh-bootstrap and exact-resume commands. The
+   fresh command invokes new `codex exec` with frozen model/effort,
+   `--sandbox read-only`, JSON and output schema; it validates and persists the
+   fresh ID. The resume command uses only that stored ID, preserves command and
+   result-schema contracts, and rejects any inconsistent output identity.
+6. Refactor worker/recovery state transitions so the first review creates B
+   once, while correction reviews reuse it. Treat partial launch, duplicate
+   bootstrap event, missing identity, malformed output, timeout, and process
+   interruption as blocked/uncertain with preserved artifacts. Do not create a
+   fresh retry B.
+7. Update the Phase 17 master and child plans: 17.2–17.4 carry the frozen
+   binding but launch no B; 17.5 performs fresh bootstrap then exact resumes;
+   17.6 recovery preserves the one-B invariant; 17.7 removes the legacy
+   fork-based handoff at cutover. Update rules and package assets so no active
+   instruction asks A to supply, fork, or message a pre-existing B.
+8. Update active docs and operational material to distinguish: A explicitly
+   selects model/effort at prepare/submit; no reviewer starts then; the first
+   review creates one read-only Codex B; later reviews resume it; ambiguity
+   blocks. Require manual review for configuration, rule, and installed-skill
+   control-plane changes.
 
 ## Testing Criteria
 
-- **Unit/schema:** prove model/schema alignment, strict extra-field rejection,
-  canonical idempotency changes when the frozen reviewer profile changes, no
-  full identifiers in projections, and protected artifact path/hash/permission
-  validation. Cover malformed reviewer profile, missing/oversized review inputs,
-  and invalid structured-result payloads with fakes only.
-- **SQLite/migration:** fresh bootstrap, migration checksum, newer-version
-  refusal, transactional rollback, and the selected non-empty-v1 behavior.
-  Prove old v1 snapshots are never silently reinterpreted or modified.
-- **Command/integration:** disposable repository plus temporary HOME/XDG proves
-  scheduler submit reads stdin once, invokes no session-runtime reader,
-  subprocess, probe, model, Git mutation, or reviewer; exact duplicate reuses;
-  a changed reviewer profile creates a distinct identity; worktree conflicts,
-  status, and list stay deterministic and redacted.
-- **Future-contract regressions:** fake Cursor reviewer fixtures characterize
-  fresh/no-resume argv construction, no implementation-chat ID, deterministic
-  wrapper content, schema validation, protected outputs, and fail-closed
-  isolation. They must not run real Cursor or Codex and must not expose a review
-  effect before Phase 17.5.
-- **Compatibility/control-plane:** legacy `prepare`/`launch` A/B and PR-review
-  v2 tests preserve their exact-session behavior. Package asset tests assert
-  the scheduler instructions do not request a fork/B session while legacy
-  instructions remain explicit. Docs tests, if present, stay factual.
+- **Unit/schema:** validate required model/reasoning command inputs, strict
+  enum/value normalization, no YAML/runtime fallback, redaction, immutable
+  context hashing/idempotency, state transitions from no-B to bound-B, and
+  local/central migration or version-refusal behavior.
+- **Codex adapter contract:** fake Codex verifies new-bootstrap argv includes
+  `exec`, read-only sandbox, exact frozen model/effort, JSON/output schema, and
+  no `resume`, `fork`, `--last`, or ephemeral option. Its structured creation
+  event is captured exactly once. Later passes verify `exec resume <stored-id>`
+  with the same frozen values and never create a second B.
+- **Failure/recovery:** cover absent/malformed/conflicting creation event,
+  bootstrap crash before/after durable persistence, nonzero exit, timeout,
+  partial output, stale/duplicate completion, and recovery. Every uncertain
+  bootstrap case preserves evidence and blocks; none may launch a new B.
+- **Workflow/integration:** fake local A preparation/launch proves no B is
+  forked or contacted, no agent runs at prepare, first review creates B, a
+  correction review resumes it, and B never dispatches implementation. Fake
+  scheduler submission proves the same frozen binding with no subprocess,
+  runtime lookup, Git mutation, or reviewer creation.
+- **Compatibility/control plane:** PR-review v2 stays unchanged. Tests make
+  the selected direct-legacy compatibility behavior explicit. Package assets,
+  rules, CLI/config/docs references, and integration tests contain no stale
+  pre-existing-B instruction. Do not run real Codex, Cursor, systemd, model
+  APIs, user-global skill installation, or target-repository mutation.
 
 ## Validation
 
-Run focused tests, then:
+Run focused suites, then:
 
 ```bash
 TMPDIR=/tmp TMP=/tmp TEMP=/tmp uv run python -m pytest -q \
-  tests/unit/scheduler \
-  tests/integration/test_phase17_1_submit.py \
+  tests/unit/test_codex_runner.py \
+  tests/unit/test_response_schema.py \
   tests/unit/test_codex_integration_assets.py \
   tests/unit/test_controller_launch.py \
-  tests/integration/test_launch_worker.py
+  tests/unit/scheduler \
+  tests/integration/test_launch_worker.py \
+  tests/integration/test_phase17_1_submit.py \
+  tests/integration/test_phase17_1_5_*.py
 uv run python -m ruff format --check .
 uv run python -m ruff check .
 uv run python -m mypy src
 git diff --check
 ```
 
-Do not run real Cursor, Codex, systemd, GitHub, session bridge, skill
-installation, or target-repository mutation as automated validation.
+Run existing legacy and PR-review regressions affected by changed shared models.
+Automated validation uses only fake executables and temporary XDG/HOME roots.
+A separately authorized manual acceptance may test one disposable, read-only
+Codex B after the fake suite passes; it must not be treated as a substitute for
+the schema, recovery, and control-plane tests.
 
 ## Risks Or Recovery Notes
 
-The demonstrated active-writer failure is evidence that a pre-existing Codex
-thread cannot be a scheduler-owned detached reviewer. The correction must not
-replace that failure with an unconfined Cursor process that can edit the target
-repository or an unstructured Markdown parser.
+The observed active-writer failure came from resuming a Desktop-forked B in a
+detached process. A new CLI B removes that shared writer, but only if creation
+identity is captured deterministically and no retry manufactures a replacement
+reviewer. Losing that invariant would split review history and invalidate the
+review/fix dialogue.
 
-The Phase 17.1 commit and its staged-patch artifacts remain independently
-recoverable/manual-reviewable. This phase changes future scheduler submission
-only. Central v1 scheduler data, if any, must be preserved untouched according
-to the selected explicit migration/refusal policy. A user who has manually
-validated and committed 17.1 may merge this phase's commit afterward; 17.2 then
-uses the combined HEAD.
+Phase 17.1's accepted commit, staged patch evidence, and historical run data
+remain independently recoverable. This phase changes future A-controlled runs
+and new scheduler submissions only. Existing session-bound contexts must remain
+untouched until the explicit compatibility decision is implemented safely.
 
 ## OpenQuestions
 
-1. **Cursor review isolation:** What verified non-mutating boundary will the
-   fresh Cursor CLI reviewer use: a documented native read-only mode (only if
-   the installed CLI probe proves it), or a scheduler-built disposable review
-   snapshot/worktree outside the target worktree? The current implementation
-   Cursor profile permits mutable execution, so its settings cannot be reused
-   blindly for B.
-2. **Structured Cursor result:** Which supported Cursor CLI mechanism produces
-   the final schema-valid review result: a native output-schema capability, or
-   a strict JSON payload in the final structured stream event with fail-closed
-   validation? The chosen mechanism determines the frozen reviewer profile and
-   the result artifact/parser contract.
-3. **Central v1 runs:** On upgrade, should a non-empty Phase 17.1 scheduler
-   ledger be rejected with a non-destructive re-submit/export instruction, or
-   should v1 rows remain readable for status only while execution is blocked?
-   No automatic conversion is permitted.
-
+None. The controller-A path is the current workflow changed by this phase; the
+direct legacy path remains unchanged until Phase 17.7. Existing session-bound
+contexts remain read-only/status-inspectable and execution-blocked, with fresh
+preparation or submission as the non-destructive safe action.

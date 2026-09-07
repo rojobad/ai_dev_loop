@@ -35,7 +35,7 @@ the first tick after provider `retry-after` or the five-hour fallback.
 
 ## Required Context
 
-Read the master and Phases 17.1–17.3, all Cursor rules,
+Read the master and Phases 17.1, 17.1.5, 17.1.75, 17.2, and 17.3, all Cursor rules,
 `workflow_engine.py`, `runners/cursor.py`, `runners/cursor_failure.py`,
 `runners/cursor_output.py`, `runners/staging.py`, `runners/git.py`,
 `commands/start_preflight.py`, `resume_planner.py`, and current Cursor/staging/
@@ -43,9 +43,11 @@ usage-limit test suites.
 
 ## Cursor Rules And Skills
 
-Follow every `.cursor/rules/*.mdc`, especially loop/resume, agent identity,
-Git/staging, subprocess, privacy, and exact-session rules. Documentation is
-evidence-based only; staged review remains a later independent action.
+Follow every `.cursor/rules/*.mdc` and `AGENTS.md`, especially loop/resume,
+agent identity, Git/staging, subprocess, privacy, and exact Cursor-chat rules.
+The frozen fresh-B reviewer binding is carried unchanged; no B is created before
+Phase 17.5. Documentation is evidence-based only; staged review remains a later
+independent action.
 
 ## Architecture Guardrails
 
@@ -58,6 +60,8 @@ evidence-based only; staged review remains a later independent action.
 - After verified success, always run `git add -A`, capture normalization and
   staged patch artifacts, and require the current staged patch to equal the
   recorded artifact before exposing `awaiting_codex_review`.
+- `awaiting_codex_review` records no reviewer identity. It holds the frozen
+  model/reasoning binding from submission for the Phase 17.5 bootstrap.
 - On recognized usage limit only, persist the classifier evidence, binary-safe
   fingerprint, exact original prompt/fix context, and continuation envelope.
   Schedule `retry_due` using provider delay or 18,000 seconds. The retry uses

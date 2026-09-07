@@ -33,8 +33,9 @@ attempt must not be run again merely because the scheduler restarted.
 - Do not create a permanently running Python scheduler daemon.
 - Do not poll model APIs, parse human Markdown to drive workflow decisions, or
   use an agent's text as executable input.
-- Do not weaken exact Cursor chat continuity, exact Codex session continuity,
-  plan/prompt/HEAD binding, staging contracts, or review-result schemas.
+- Do not weaken exact Cursor chat continuity, one-reviewer-per-run continuity
+  after fresh Codex B bootstrap, plan/prompt/HEAD binding, staging contracts, or
+  review-result schemas.
 - Do not make tool updates, model fallback, destructive Git operations, or
   user-continuation decisions automatic.
 - Do not run real Cursor, Codex, systemd, GitHub, or network operations from
@@ -61,10 +62,12 @@ It includes:
 - exhaustive fake-process crash, restart, fencing, and privacy coverage;
 - active CLI, configuration, operations, and security documentation.
 
-The final scheduler preserves the A/B identity boundary: reviewer B submits a
-run with B's exact Codex reviewer session and controller A's exact session ID;
-controller A explicitly starts it and may query its state without owning a
-long-lived worker. B then remains inactive.
+The final scheduler preserves the A/B identity boundary: controller A submits a
+run with A's exact controller session ID plus explicit Codex reviewer model and
+reasoning effort. Submission creates no B. At the first review boundary, the
+worker creates one fresh read-only Codex B, captures its exact identity, and
+resumes only that B for later reviews in the run. A explicitly starts the run
+and may query its state without owning a long-lived worker.
 
 ## Frozen Product Decisions
 
@@ -85,7 +88,9 @@ long-lived worker. B then remains inactive.
   `ai_dev_loop scheduler start <run-id>` records the explicit authorization;
   only later ticks launch agents. Scheduler status for controller A is a
   read-only query keyed by the persisted exact controller session ID and target
-  repository.
+  repository. `submit` requires `--codex-review-model` and
+  `--codex-review-reasoning-effort`; their normalized values are frozen in the
+  run and never inherited from YAML, a runtime session, or later CLI defaults.
 - **Runtime:** WSL `systemd --user` is required. A timer invokes a one-shot tick
   every 30 seconds. Deterministic transient units own Cursor/Codex attempts and
   preserve liveness and exit status after the tick exits. WSL wake-up after a
@@ -243,8 +248,8 @@ creation time.
   scheduler runs or a legacy run from working on one worktree. A file lock held
   only by a finished tick is not a reservation.
 - Preflight reuses the existing identity, branch, HEAD, baseline, plan, prompt,
-  session-runtime, and tool-compatibility contracts. A non-interactive tick
-  never prompts or implicitly runs a tool updater.
+  frozen reviewer binding, and tool-compatibility contracts. A non-interactive
+  tick never prompts or implicitly runs a tool updater.
 - Preflight is an admission check: before a run begins, it may reject an unsafe
   or unexpectedly dirty starting worktree and verify the frozen inputs. Once
   admitted, the scheduler is not a continuous worktree-control system. The
@@ -254,8 +259,9 @@ creation time.
   non-destructive safety boundaries, but must not add broad Git-semantic
   emulation or reject incidental worktree evolution merely to police it.
 - Cursor chat creation and every Cursor turn must be distinct durable effects;
-  after a chat exists, reuse that exact ID only. Codex always resumes the exact
-  frozen session ID and never uses `--last`.
+  after a chat exists, reuse that exact ID only. Codex creates one new reviewer
+  B at the first review, durably captures that exact ID, and subsequently resumes
+  only it. It never uses `--last`, a fork, or a replacement reviewer.
 - Preserve the current iteration definitions, post-Cursor fingerprints,
   agent-approved `git add -A` normalization, staged-patch verification, review
   schema, and maximum-review behavior. The reducer/workflow state determines
@@ -285,7 +291,7 @@ phase must pass its focused and regression suites before the next begins. Do
 not combine phases in one Cursor handoff or skip a required acceptance boundary.
 
 1. [Phase 17.1 — Central ledger and A/B submission](phase-17-1-central-ledger-and-submission.md)
-2. [Phase 17.1.5 — Ephemeral Cursor reviewer contract](phase-17-1-5-ephemeral-cursor-reviewer-contract.md)
+2. [Phase 17.1.5 — Fresh Codex reviewer bootstrap and scheduler alignment](phase-17-1-5-ephemeral-cursor-reviewer-contract.md)
 3. [Phase 17.1.75 — Agent-led worktree admission](phase-17-1-75-agent-led-worktree-admission.md)
 4. [Phase 17.2 — Tick control, reservations, and controller observability](phase-17-2-tick-control-reservations-and-controller-status.md)
 5. [Phase 17.3 — Systemd attempt executor](phase-17-3-systemd-attempt-executor.md)
@@ -305,8 +311,10 @@ After the authority decision:
    the domain.
 2. Define a strict `SubmittedRunContext` that freezes: target repository
    identity inputs, plan/prompt snapshots and hashes, effective config and its
-   hash, exact Codex session/runtime, requested Cursor configuration, controller
-   identity when applicable, and configured iteration/time limits. It must be
+   hash, explicit Codex reviewer model/reasoning binding, requested Cursor
+   configuration, controller identity when applicable, and configured
+   iteration/time limits. It contains no B session before the first review; the
+   first review later adds one validated protected B identity. It must be
    complete enough for a future tick to run without rereading mutable YAML or
    prompt/plan source files.
 3. Create a versioned central schema. At minimum it needs migration audit,
@@ -329,18 +337,20 @@ After the authority decision:
    `ai_dev_loop scheduler submit`) and typed command service. It reads the exact
    prompt from stdin and writes only the central ledger plus protected snapshots.
 2. Submission may validate CLI shapes, repository/path confinement, plan/prompt
-   bytes, session-ID syntax, and duplicate/conflict keys, but it must not perform
-   start preflight, tool probes, model calls, agent launches, staging, Git
-   mutation, or a network operation.
+   bytes, controller-session syntax, explicit reviewer model/reasoning values,
+   and duplicate/conflict keys, but it must not perform start preflight, tool
+   probes, model calls, agent launches, staging, Git mutation, or a network
+   operation.
 3. Calculate an idempotency key from the frozen submission identity. An identical
    live submission reuses its run; a conflicting active reservation must report
    the precise safe conflict without choosing by timestamp.
 4. Persist `queued` only after every referenced snapshot has been written,
    fsynced/re-read, and hash verified. Orphaned content-addressed artifacts may
    be harmless; a database row must never reference a partial artifact.
-5. Preserve the current exact-session model/reasoning capture contract. If it
-   cannot be captured during a no-agent submission without weakening the current
-   guarantee, stop and report that as a design blocker.
+5. Freeze the reviewer model/reasoning values explicitly supplied at submission.
+   Do not capture, read, or infer B runtime/session data there. The first review
+   bootstrap must later persist one identity from a strict structured Codex event;
+   if that event cannot be validated, block rather than create or resume B.
 
 ### 3. Implement a bounded, deterministic scheduler tick
 
@@ -414,7 +424,7 @@ After the authority decision:
    run_cursor_turn
    ingest_cursor_result
    normalize_and_record_staging
-   run_codex_review
+   bootstrap_or_resume_codex_review
    ingest_review_result
    terminalize_or_schedule_cursor_fix
    ```
@@ -526,9 +536,11 @@ network, user-global services, or the real user's XDG state.
   through multiple independent ticks. Prove a tick exits while fake Cursor or
   Codex is still active, then the next tick observes completion and performs the
   exact next transition.
-- Cover initial Cursor and correction Cursor turns, exact chat reuse, exact
-  Codex session/resume command, absence of `--last`, structured no-finding and
-  finding decisions, review-budget exhaustion, and no extra agent turn.
+- Cover initial Cursor and correction Cursor turns, exact chat reuse, one fresh
+  Codex B bootstrap followed by exact resume of that identity, frozen
+  model/reasoning argv, absence of `--last`/fork/replacement B, structured
+  no-finding and finding decisions, review-budget exhaustion, and no extra
+  agent turn.
 - Prove existing post-Cursor identity/fingerprint/staging behavior remains
   identical: Cursor index mutation normalization, agent-approved `git add -A`,
   patch capture, staged-patch equality before review/fix, initial-preflight
@@ -589,8 +601,8 @@ fake-backend traces:
    and exits. The worker process is not a long-lived run orchestrator.
 3. Tick 2 observes that Cursor is active and exits without an extra launch.
 4. Tick 3 observes a verified Cursor result, captures the fingerprint, stages
-   safely, records the staged patch, launches the exact Codex review attempt,
-   and exits.
+   safely, records the staged patch, launches the one fresh read-only Codex B
+   review attempt using the frozen model/reasoning binding, and exits.
 5. Subsequent ticks execute a findings correction using the same Cursor chat,
    then terminate at no findings or the exact review limit.
 6. Crash/restart between every launch/result/finalization boundary preserves

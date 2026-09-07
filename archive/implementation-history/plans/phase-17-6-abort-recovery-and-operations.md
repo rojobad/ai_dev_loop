@@ -31,7 +31,7 @@ documentation.
 
 ## Required Context
 
-Read the master and Phases 17.1–17.5, all Cursor rules, `abort_control.py`,
+Read the master and Phases 17.1, 17.1.5, 17.1.75, and 17.2–17.5, all Cursor rules, `AGENTS.md`, `abort_control.py`,
 `commands/abort.py`, `locking.py`, `launcher.py`, PR-review claim/lease/control
 implementations, `docs/operacion/{observabilidad,seguridad-privacidad,troubleshooting}.md`,
 and abort/process/privacy regression suites.
@@ -52,6 +52,9 @@ review activity.
 - Reconciliation distinguishes active, proven completed, missing-before-launch,
   timeout, cancelled, and ambiguous states. It must never guess success from a
   log file or retry a possibly mutating incomplete turn.
+- For Codex review, a persisted fresh-B identity resumes exactly; an unbound B
+  with missing, partial, or conflicting bootstrap identity is an uncertainty
+  blocker. Recovery must never create a replacement B for that run.
 - Controller A queries are read-only and session/repository bound. Status/history
   never expose prompt/patch/review content, full session IDs, raw unit/PID data,
   environments, or command argv.
@@ -67,8 +70,8 @@ review activity.
    stale metadata, and repeated abort.
 3. Implement startup/tick reconciliation for expired leader/effect claims,
    reservations, capacity, pending attempts, missing units, verified completion,
-   and uncertain outcomes. Release capacity/reservation only at proved safe
-   boundaries.
+   uncertain outcomes, and the fresh-B bootstrap/resume boundary. Release
+   capacity/reservation only at proved safe boundaries.
 4. Add bounded, redacted event history and operational logs. Preserve all raw
    sensitive evidence solely in protected artifacts.
 5. Document manual `systemctl --user` inspection, timer status, status queries,
@@ -81,7 +84,9 @@ review activity.
   safe-action projection, redaction, and capacity/reservation release.
 - Fake-backend integration: abort all lifecycle positions; process identity
   mismatch refuses signaling; restart after claimed/active/finished attempt;
-  late result rejected; controller query works while Cursor/Codex is active.
+  late result rejected; fresh-B creation ambiguity blocks without a second B;
+  persisted B resumes exactly; controller query works while Cursor/Codex is
+  active.
 - Privacy regression: inject prompts, patches, session IDs, stdout/stderr, and
   fake unit IDs into artifacts and prove human/JSON output remains redacted.
 

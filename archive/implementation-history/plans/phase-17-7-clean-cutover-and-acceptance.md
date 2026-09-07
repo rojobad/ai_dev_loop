@@ -36,7 +36,7 @@ through an explicit, verified cutover operation.
 
 ## Required Context
 
-Read the master, results/findings for Phases 17.1–17.6, all Cursor rules,
+Read the master, results/findings for Phases 17.1–17.6, all Cursor rules, `AGENTS.md`,
 `cli.py`, path/config/integration docs, current cleanup/locking primitives,
 `README.md`, all relevant `docs/`, and the staged-review skill. Inspect the
 actual XDG layout read-only before defining cleanup tests or code.
@@ -61,16 +61,19 @@ skill must review the final staged diff independently.
 - Tests use temporary XDG roots. Manual acceptance must use fake agents and a
   reviewed disposable state root before any user-global deletion/enablement.
 - Documentation must state actual supported command names, state location,
-  systemd setup, controller observability, recovery boundaries, and WSL limits.
+  systemd setup, controller observability, one fresh Codex B per run with
+  exact later resumes, recovery boundaries, and WSL limits.
 
 ## Implementation Plan
 
 1. Audit Phase 17.1–17.6 acceptance evidence. If any required suite/finding is
    missing, stop; do not cut over based on code presence alone.
-2. Remove legacy local A/B and PR-review public CLI registration, configuration
-   references, docs claims, package assets, and tests that only assert retired
-   behavior. Retain shared primitives only where the scheduler demonstrably uses
-   them; remove dead compatibility code rather than leaving a second authority.
+2. Remove legacy local A/B fork/pre-existing-reviewer public CLI registration,
+   configuration references, docs claims, package assets, and tests that only
+   assert retired behavior. Retain shared primitives only where the scheduler
+   demonstrably uses them; remove dead compatibility code rather than leaving a
+   second authority. Preserve the scheduler's model/reasoning-at-submit and
+   one-fresh-B-then-exact-resume contract in the surviving docs and assets.
 3. Add a narrowly named explicit cutover cleanup command. Validate state root,
    exact child paths, symlink status, confirmation token, and no active scheduler
    attempts/leader before removing the two approved roots and sidecars. Prefer a
@@ -96,6 +99,9 @@ skill must review the final staged diff independently.
   repeated cleanup idempotency.
 - Package asset tests cover timer/service content and explicit install/disable
   behavior without calling the real user manager.
+- Fake scheduler acceptance verifies the first review creates one read-only B
+  from submit-frozen model/reasoning and later corrections resume it; it must
+  never fork, use `--last`, or create a second B.
 - Manual WSL acceptance: enable timer only after human review, observe a fake
   agent lifecycle and recovery across ticks, then disable it; do not use models.
 

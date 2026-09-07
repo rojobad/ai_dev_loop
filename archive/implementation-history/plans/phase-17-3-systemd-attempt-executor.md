@@ -26,11 +26,12 @@ commands, not Cursor or Codex workflow effects.
 ## Out of Scope
 
 - `scheduler tick` launching a real Cursor/Codex effect, agent prompt parsing,
-  Git/staging, session state changes, deletion of old paths, or Windows wake-up.
+  Git/staging, fresh-B identity creation, deletion of old paths, or Windows
+  wake-up.
 
 ## Required Context
 
-Read the master and Phases 17.1–17.2, all Cursor rules, `process.py`,
+Read the master and Phases 17.1, 17.1.5, 17.1.75, and 17.2, all Cursor rules, `process.py`,
 `launcher.py`, `abort_control.py`, `locking.py`, the PR-review supervisor/spawn
 code, systemd guidance in `README.md`, and process/launcher regression tests.
 
@@ -53,6 +54,9 @@ invoke the staged-review skill during implementation.
   stdout/stderr in status, and unregistered running children are forbidden.
 - The future agent unit must retain a worktree lock for its lifetime; this phase
   defines/tests the mechanism with a harmless fake command.
+- The backend must be capable of carrying a future fresh-Codex bootstrap argv
+  and later exact-resume argv, but it must not implement either reviewer effect
+  or create an identity in this phase.
 
 ## Implementation Plan
 

@@ -30,15 +30,16 @@ enforce one global active slot and reject a duplicate worktree reservation.
 
 ## Required Context
 
-Read the Phase 17 master and Phase 17.1 plans/results, all Cursor rules,
+Read the Phase 17 master and Phases 17.1, 17.1.5, and 17.1.75 plans/results, all Cursor rules,
 `locking.py`, `commands/controller.py`, `run_discovery.py`,
 `pr_review_v2/application/engine.py`, `workers/effect_worker.py`,
 `workers/supervisor.py`, and controller/locking test suites.
 
 ## Cursor Rules And Skills
 
-Follow all `.cursor/rules/*.mdc`; the scheduler must preserve A/B controller B
-inactivity and exact-session contracts. The docs governance skill applies to
+Follow all `.cursor/rules/*.mdc` and `AGENTS.md`; the scheduler must preserve
+controller A identity, the frozen fresh-B model/reasoning binding, and the rule
+that no B exists until the first review. The docs governance skill applies to
 doc changes; staged review is deferred.
 
 ## Architecture Guardrails
@@ -54,6 +55,8 @@ doc changes; staged review is deferred.
   that an OS lock survives agent execution.
 - CAS and claim fencing prevent stale ticks from applying an event after another
   tick, future abort, or later phase has superseded it.
+- This phase carries the immutable reviewer binding only. It must not create,
+  probe, resume, or report a B identity.
 
 ## Implementation Plan
 
