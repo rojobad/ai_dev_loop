@@ -68,6 +68,12 @@ long-lived worker. B then remains inactive.
 
 ## Frozen Product Decisions
 
+- **Agent-led orchestration:** the scheduler exists to make the Codex reviewer
+  and Cursor implementer collaborate through durable, reviewable hand-offs. It
+  carries out staging and, where an explicitly approved phase provides it,
+  commit decisions that those agents have made; it must never invent a Git
+  decision or replace their technical judgment with broad worktree policing.
+  This principle alone does not add a commit operation to a child phase.
 - **Scope:** only the local A/B Cursor -> stage -> Codex loop moves to the new
   scheduler. `pr-review`/PR-review v2 are retired at cutover; they are not
   migrated into this phase and no GitHub workflow is implemented here.
@@ -111,8 +117,8 @@ long-lived worker. B then remains inactive.
   because it cannot by itself retain a detached child's exit evidence.
 - Keeping `prepare`, `launch`, `resume`, `recover`, `pr-review`, legacy run
   schemas, or PR-review persistence as supported public behavior after cutover.
-- Commit, push, reset, clean, stash, checkout/switch, unstage, merge, rebase,
-  tag, or target-repository cleanup.
+- Autonomous or unapproved commits; push, reset, clean, stash,
+  checkout/switch, unstage, merge, rebase, tag, or target-repository cleanup.
 
 ## Required Context
 
@@ -239,13 +245,21 @@ creation time.
 - Preflight reuses the existing identity, branch, HEAD, baseline, plan, prompt,
   session-runtime, and tool-compatibility contracts. A non-interactive tick
   never prompts or implicitly runs a tool updater.
+- Preflight is an admission check: before a run begins, it may reject an unsafe
+  or unexpectedly dirty starting worktree and verify the frozen inputs. Once
+  admitted, the scheduler is not a continuous worktree-control system. The
+  Codex reviewer and Cursor implementer decide, through their durable exchange,
+  what work is accepted, staged, corrected, or committed when that operation is
+  in scope. Later ticks retain reservation, artifact-integrity, and
+  non-destructive safety boundaries, but must not add broad Git-semantic
+  emulation or reject incidental worktree evolution merely to police it.
 - Cursor chat creation and every Cursor turn must be distinct durable effects;
   after a chat exists, reuse that exact ID only. Codex always resumes the exact
   frozen session ID and never uses `--last`.
 - Preserve the current iteration definitions, post-Cursor fingerprints,
-  `git add -A` normalization, staged-patch verification, review schema, and
-  maximum-review behavior. The reducer/workflow state determines decisions;
-  Markdown is never scraped.
+  agent-approved `git add -A` normalization, staged-patch verification, review
+  schema, and maximum-review behavior. The reducer/workflow state determines
+  decisions; Markdown is never scraped.
 - If a completed output, repository fingerprint, target HEAD, staged patch, or
   process identity is ambiguous, stop in a typed blocked/uncertain state with a
   safe action. Do not blindly relaunch an agent or reinterpret partial output.
@@ -271,12 +285,14 @@ phase must pass its focused and regression suites before the next begins. Do
 not combine phases in one Cursor handoff or skip a required acceptance boundary.
 
 1. [Phase 17.1 — Central ledger and A/B submission](phase-17-1-central-ledger-and-submission.md)
-2. [Phase 17.2 — Tick control, reservations, and controller observability](phase-17-2-tick-control-reservations-and-controller-status.md)
-3. [Phase 17.3 — Systemd attempt executor](phase-17-3-systemd-attempt-executor.md)
-4. [Phase 17.4 — Cursor, staging, and usage-limit continuation](phase-17-4-cursor-staging-and-usage-limit-continuation.md)
-5. [Phase 17.5 — Codex review and bounded scheduler loop](phase-17-5-codex-review-and-bounded-scheduler-loop.md)
-6. [Phase 17.6 — Abort, recovery hardening, and operations](phase-17-6-abort-recovery-and-operations.md)
-7. [Phase 17.7 — Clean cutover and acceptance](phase-17-7-clean-cutover-and-acceptance.md)
+2. [Phase 17.1.5 — Ephemeral Cursor reviewer contract](phase-17-1-5-ephemeral-cursor-reviewer-contract.md)
+3. [Phase 17.1.75 — Agent-led worktree admission](phase-17-1-75-agent-led-worktree-admission.md)
+4. [Phase 17.2 — Tick control, reservations, and controller observability](phase-17-2-tick-control-reservations-and-controller-status.md)
+5. [Phase 17.3 — Systemd attempt executor](phase-17-3-systemd-attempt-executor.md)
+6. [Phase 17.4 — Cursor, staging, and usage-limit continuation](phase-17-4-cursor-staging-and-usage-limit-continuation.md)
+7. [Phase 17.5 — Codex review and bounded scheduler loop](phase-17-5-codex-review-and-bounded-scheduler-loop.md)
+8. [Phase 17.6 — Abort, recovery hardening, and operations](phase-17-6-abort-recovery-and-operations.md)
+9. [Phase 17.7 — Clean cutover and acceptance](phase-17-7-clean-cutover-and-acceptance.md)
 
 ### 1. Define the isolated scheduler domain and persistence boundary
 
@@ -514,9 +530,11 @@ network, user-global services, or the real user's XDG state.
   Codex session/resume command, absence of `--last`, structured no-finding and
   finding decisions, review-budget exhaustion, and no extra agent turn.
 - Prove existing post-Cursor identity/fingerprint/staging behavior remains
-  identical: Cursor index mutation normalization, `git add -A`, patch capture,
-  staged-patch equality before review/fix, dirty/worktree/HEAD/branch drift
-  refusal, and plan/prompt integrity.
+  identical: Cursor index mutation normalization, agent-approved `git add -A`,
+  patch capture, staged-patch equality before review/fix, initial-preflight
+  baseline/identity refusal, and plan/prompt integrity. Do not turn this
+  coverage into continuous worktree policing after agents have begun their
+  reviewed exchange.
 - Test a tick crash at every durable boundary, then a new tick. Verify no
   completed agent invocation is rerun, no second Cursor chat appears, and the
   expected result is either progressed or safely blocked.

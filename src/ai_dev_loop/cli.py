@@ -41,6 +41,15 @@ from ai_dev_loop.commands.recover import (
     render_recovery_result,
 )
 from ai_dev_loop.commands.resume import render_resume_output, resume_run
+from ai_dev_loop.commands.scheduler import (
+    SubmitOptions,
+    render_list_output,
+    render_status_output,
+    render_submit_output,
+    scheduler_list,
+    scheduler_status,
+    submit_run,
+)
 from ai_dev_loop.commands.start import CODEX_TUI_WARNING, render_start_output, start_run
 from ai_dev_loop.commands.status import render_status
 from ai_dev_loop.errors import AiDevLoopError, CursorUsageLimitError
@@ -62,6 +71,12 @@ pr_review_app = typer.Typer(
         "create/prepare only freeze PreparedState; start is the sole external-effects gate."
     ),
 )
+scheduler_app = typer.Typer(
+    help=(
+        "Central tick scheduler for local A/B runs. "
+        "submit freezes a queued run without launching agents; start and tick arrive in later phases."
+    ),
+)
 integrations_app = typer.Typer(help="Global Codex integration commands.")
 sessions_app = typer.Typer(help="Desktop session rollout bridge commands.")
 integrations_app.add_typer(sessions_app, name="sessions")
@@ -69,6 +84,7 @@ app.add_typer(config_app, name="config")
 app.add_typer(controller_app, name="controller")
 app.add_typer(github_app, name="github")
 app.add_typer(pr_review_app, name="pr-review")
+app.add_typer(scheduler_app, name="scheduler")
 app.add_typer(integrations_app, name="integrations")
 
 
@@ -311,6 +327,139 @@ def prepare_command(
         )
         result = prepare_run(options)
         typer.echo(render_prepare_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@scheduler_app.command("submit")
+def scheduler_submit_command(
+    config_path: Annotated[
+        Path | None,
+        typer.Option("--config-path", help="Path to ai_dev_loop.yaml."),
+    ] = None,
+    project_name: Annotated[
+        str | None,
+        typer.Option("--project-name", help="Override project.name."),
+    ] = None,
+    repo_path: Annotated[
+        Path | None,
+        typer.Option("--repo-path", help="Target repository root."),
+    ] = None,
+    plan_path: Annotated[
+        Path | None,
+        typer.Option("--plan-path", help="Approved plan path inside the repository."),
+    ] = None,
+    prompt_source_path: Annotated[
+        Path | None,
+        typer.Option("--prompt-source-path", help="Prompt source path inside the repository."),
+    ] = None,
+    codex_session_id: Annotated[
+        str | None,
+        typer.Option("--codex-session-id", help="Exact reviewer Codex session ID."),
+    ] = None,
+    controller_session_id: Annotated[
+        str | None,
+        typer.Option(
+            "--controller-session-id",
+            help="Exact controller Codex session ID (required; must differ from reviewer).",
+        ),
+    ] = None,
+    cursor_command: Annotated[
+        str | None,
+        typer.Option("--cursor-command", help="Override cursor.command."),
+    ] = None,
+    cursor_model: Annotated[
+        str | None,
+        typer.Option("--cursor-model", help="Override cursor.model."),
+    ] = None,
+    cursor_output_format: Annotated[
+        str | None,
+        typer.Option("--cursor-output-format", help="Override cursor.output_format."),
+    ] = None,
+    codex_command: Annotated[
+        str | None,
+        typer.Option("--codex-command", help="Override codex.command."),
+    ] = None,
+    codex_review_model: Annotated[
+        str | None,
+        typer.Option("--codex-review-model", help="Override codex.review_model."),
+    ] = None,
+    codex_review_reasoning_effort: Annotated[
+        str | None,
+        typer.Option(
+            "--codex-review-reasoning-effort",
+            help="Override codex.review_reasoning_effort.",
+        ),
+    ] = None,
+    review_skill: Annotated[
+        str | None,
+        typer.Option("--review-skill", help="Override codex.review_skill."),
+    ] = None,
+    max_review_iterations: Annotated[
+        int | None,
+        typer.Option("--max-review-iterations", help="Override workflow.max_review_iterations."),
+    ] = None,
+    cursor_timeout_minutes: Annotated[
+        int | None,
+        typer.Option("--cursor-timeout-minutes", help="Override workflow.cursor_timeout_minutes."),
+    ] = None,
+    codex_timeout_minutes: Annotated[
+        int | None,
+        typer.Option("--codex-timeout-minutes", help="Override workflow.codex_timeout_minutes."),
+    ] = None,
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Submit a frozen A/B scheduler run without launching agents."""
+
+    def run() -> None:
+        options = SubmitOptions(
+            config_path=config_path,
+            project_name=project_name,
+            repo_path=repo_path,
+            plan_path=plan_path,
+            prompt_source_path=prompt_source_path,
+            codex_session_id=codex_session_id,
+            controller_session_id=controller_session_id,
+            cursor_command=cursor_command,
+            cursor_model=cursor_model,
+            cursor_output_format=cursor_output_format,
+            codex_command=codex_command,
+            codex_review_model=codex_review_model,
+            codex_review_reasoning_effort=codex_review_reasoning_effort,
+            review_skill=review_skill,
+            max_review_iterations=max_review_iterations,
+            cursor_timeout_minutes=cursor_timeout_minutes,
+            codex_timeout_minutes=codex_timeout_minutes,
+        )
+        result = submit_run(options)
+        typer.echo(render_submit_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@scheduler_app.command("status")
+def scheduler_status_command(
+    run_id: Annotated[str, typer.Argument(help="Scheduler run ID.")],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Show a redacted scheduler run status projection."""
+
+    def run() -> None:
+        result = scheduler_status(run_id)
+        typer.echo(render_status_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@scheduler_app.command("list")
+def scheduler_list_command(
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """List submitted scheduler runs with redacted identity fields."""
+
+    def run() -> None:
+        summaries = scheduler_list()
+        typer.echo(render_list_output(summaries, output=output.value), nl=False)
 
     _handle(run)
 

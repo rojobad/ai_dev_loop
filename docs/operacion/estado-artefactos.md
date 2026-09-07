@@ -86,6 +86,30 @@ artifacts/
 Resiliencia publica (`pr-review recover`, migracion v1): no implementada; ver
 `PHASE_16_8_DEFERRED_ISSUES.md`.
 
+## Scheduler central (Phase 17.1+)
+
+El scheduler A/B local usa una autoridad SQLite generica separada del run legacy
+`state.json` y del motor `pr-review-v2`:
+
+```text
+$XDG_STATE_HOME/ai_dev_loop/
+├── engine.sqlite3              # autoridad: runs queued/authorized, eventos, reservas
+└── artifacts/
+    runs/<sha256(run_id)>/      # snapshots inmutables verificados por hash
+        plan/plan.md
+        prompts/cursor-initial.txt
+        effective-config.yaml
+        source-config.yaml
+        codex/session-runtime.json
+        git/baseline-status.txt
+```
+
+- `ai_dev_loop scheduler submit` congela un run `queued` sin lanzar agentes, probes,
+  Git ni systemd. Requiere `--controller-session-id` distinto de `--codex-session-id`.
+- `scheduler status` y `scheduler list` son proyecciones read-only con IDs redactados.
+- `scheduler start`, `scheduler tick` y la ejecucion de agentes llegan en fases
+  posteriores; Phase 17.1 se detiene en el limite `queued`.
+
 ## Lineage de recovery
 
 Un sucesor creado por `ai_dev_loop recover` incluye en `state.json` una seccion opcional `recovery`:

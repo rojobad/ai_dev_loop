@@ -71,6 +71,26 @@ ai_dev_loop prepare \
   --output json < docs/plans/prompt_mi-plan.txt
 ```
 
+## `scheduler submit`
+
+```bash
+ai_dev_loop scheduler submit [OPTIONS]
+```
+
+Lee el prompt exacto desde stdin y congela un run A/B `queued` en el ledger central
+(`engine.sqlite3`) mas artefactos protegidos bajo `$XDG_STATE_HOME/ai_dev_loop/artifacts/`.
+No crea `state.json`, no lanza agentes, no ejecuta preflight ni muta el repositorio
+objetivo.
+
+Opciones principales: las mismas rutas/sesiones/overrides que `prepare`, con
+`--controller-session-id` obligatorio y distinto de `--codex-session-id`.
+
+Salida redactada. La siguiente accion segura documentada es
+`ai_dev_loop scheduler start <run-id>` (implementada en Phase 17.2).
+
+Tambien existen `ai_dev_loop scheduler status <run-id>` y `ai_dev_loop scheduler list`
+como proyecciones read-only del ledger central.
+
 ## `launch`
 
 ```bash
