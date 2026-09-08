@@ -27,17 +27,13 @@ the first tick after provider `retry-after` or the five-hour fallback.
 - Use Phase 17.3 attempts for all agent CLI calls and record one exact chat ID.
 - Add `waiting_usage_limit`/equivalent durable timer behavior and continuation
   envelope for initial and later-compatible Cursor-turn context.
-- Update the package-owned `ai-dev-loop-handoff` skill to instruct controller A
-  to use `scheduler submit` and `scheduler start` with frozen reviewer settings.
-  Do not install or rewrite any user-global skill during this phase; the asset
-  change requires later independent manual acceptance.
 
 ## Out of Scope
 
 - Codex invocation, findings, max-review state, public abort command, cutover,
   real systemd/Cursor acceptance, and changes to `ai_dev_loop.yaml`.
 - Installation or modification of `~/.agents`, `~/.codex`, hooks, bridges, or
-  any user-global integration asset.
+  package-owned handoff/controller assets.
 
 ## Required Context
 
@@ -47,7 +43,7 @@ Read the master and Phases 17.1, 17.1.5, 17.1.75, 17.2, and 17.3, all Cursor rul
 `commands/start_preflight.py`, `resume_planner.py`, and current Cursor/staging/
 usage-limit test suites. Also read the scheduler v3 state, effects, events,
 attempt service, SQLite migration/store, protected-artifact helpers, and
-`src/ai_dev_loop/integrations/codex/skill/SKILL.md` with its asset tests.
+current scheduler test suites.
 
 ## Cursor Rules And Skills
 
@@ -55,10 +51,7 @@ Follow every `.cursor/rules/*.mdc` and `AGENTS.md`, especially loop/resume,
 agent identity, Git/staging, subprocess, privacy, and exact Cursor-chat rules.
 The frozen fresh-B reviewer binding is carried unchanged; no B is created before
 Phase 17.5. Documentation is evidence-based only; staged review remains a later
-independent action. Use
-`.agents/skills/ai-dev-loop-docs-acceptance-governance/SKILL.md` for the
-package-owned handoff wording and its manual-acceptance note. Do not invoke the
-staged-review skill while implementing.
+independent action. Do not invoke the staged-review skill while implementing.
 
 ## Architecture Guardrails
 
@@ -87,17 +80,12 @@ staged-review skill while implementing.
   reschedules from a deterministic envelope rebuilt from the immutable original
   prompt/fix bytes, never from a nested prior envelope. Any ambiguous,
   partial, or unclassified failure blocks.
-- The package-owned handoff asset must use the central scheduler controller-A
-  path (`scheduler submit`, then explicit `scheduler start`) with exact frozen
-  model/reasoning parameters and no `--codex-session-id`. It must say B is
-  created only at the Phase 17.5 review boundary; it must not install itself.
 
 ## Implementation Plan
 
-1. Characterize bounded preflight/probe, Cursor/staging, usage-limit, and
-   package-handoff behavior with focused tests before moving it. Extract from the old
-   workflow behind scheduler effect adapters. Characterize current behavior
-   before moving it; do not import the old `while` loop.
+1. Characterize bounded preflight/probe, Cursor/staging, and usage-limit
+   behavior with focused tests before moving it. Extract from the old workflow
+   behind scheduler effect adapters; do not import the old `while` loop.
 2. Add and test the audited v3-to-v4 migration, strict typed scheduler states,
    events, effects, timers, and protected artifact references for preflight,
    create-chat, Cursor turn, result ingestion, staging, usage-limit waiting, and
@@ -112,10 +100,7 @@ staged-review skill while implementing.
    work, accept only the defined structured retry-after value, and refuse
    continuation when its fingerprint, branch, HEAD, or prompt binding differs.
    Do not use current legacy successor/mode-switch semantics.
-5. Update only the package-owned handoff asset and its focused tests to route
-   controller A through `scheduler submit`/`scheduler start`; explicitly leave
-   installation and all user-global assets untouched.
-6. Provide redacted scheduler status for active Cursor, usage-limit wait-until,
+5. Provide redacted scheduler status for active Cursor, usage-limit wait-until,
    staging, awaiting review, and blocked outcomes.
 
 ## Testing Criteria
@@ -132,14 +117,11 @@ staged-review skill while implementing.
   same chat/model/envelope, structured valid/missing/malformed/out-of-range
   retry-after handling, repeated-limit reschedule without nested envelope, and
   fingerprint mismatch block. Test unclassified failure never retries.
-- Asset tests prove the package-owned handoff uses the scheduler controller-A
-  commands, freezes model/reasoning, forbids a pre-existing B/session ID, and
-  does not write or install user-global assets.
 
 ## Validation
 
 ```bash
-TMPDIR=/tmp TMP=/tmp TEMP=/tmp uv run python -m pytest -q tests/unit/scheduler tests/unit/test_cursor_usage_limit.py tests/unit/test_cursor_runner.py tests/unit/test_codex_integration_assets.py tests/integration/test_phase17_3_attempt_tick.py tests/integration/test_start_cursor.py tests/integration/test_phase17_4_*.py
+TMPDIR=/tmp TMP=/tmp TEMP=/tmp uv run python -m pytest -q tests/unit/scheduler tests/unit/test_cursor_usage_limit.py tests/unit/test_cursor_runner.py tests/integration/test_phase17_3_attempt_tick.py tests/integration/test_start_cursor.py tests/integration/test_phase17_4_*.py
 uv run python -m ruff format --check .
 uv run python -m ruff check .
 uv run python -m mypy src
@@ -156,5 +138,4 @@ normal durable backoff, not a reason to change models or duplicate work.
 ## OpenQuestions
 
 None. The five-hour fallback, same-model/same-chat continuation, conservative
-blocking policy, structured retry-after boundary, and no-install handoff asset
-change are frozen for this phase.
+blocking policy, and structured retry-after boundary are frozen for this phase.
