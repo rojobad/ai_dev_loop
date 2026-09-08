@@ -247,17 +247,21 @@ creation time.
   of a live mutating agent when required by the selected backend, prevents two
   scheduler runs or a legacy run from working on one worktree. A file lock held
   only by a finished tick is not a reservation.
-- Preflight reuses the existing identity, branch, HEAD, baseline, plan, prompt,
-  frozen reviewer binding, and tool-compatibility contracts. A non-interactive
-  tick never prompts or implicitly runs a tool updater.
-- Preflight is an admission check: before a run begins, it may reject an unsafe
-  or unexpectedly dirty starting worktree and verify the frozen inputs. Once
-  admitted, the scheduler is not a continuous worktree-control system. The
-  Codex reviewer and Cursor implementer decide, through their durable exchange,
-  what work is accepted, staged, corrected, or committed when that operation is
-  in scope. Later ticks retain reservation, artifact-integrity, and
-  non-destructive safety boundaries, but must not add broad Git-semantic
-  emulation or reject incidental worktree evolution merely to police it.
+- Preflight reuses the existing identity, plan, prompt, frozen reviewer binding,
+  and tool-compatibility contracts. A non-interactive tick never prompts or
+  implicitly runs a tool updater.
+- Preflight is a one-time admission check before the first Cursor launch: it may
+  reject an unexpectedly dirty starting worktree when frozen
+  `require_clean_worktree` is true, verify the submitted repository target still
+  resolves to the same root, capture branch/HEAD/status as a protected admission
+  artifact, and verify the frozen inputs. Submit binds only the repository target;
+  it does not capture Git baseline semantics. Once admitted, the scheduler is not
+  a continuous worktree-control system. The Codex reviewer and Cursor implementer
+  decide, through their durable exchange, what work is accepted, staged,
+  corrected, or committed when that operation is in scope. Later ticks retain
+  reservation, artifact-integrity, and non-destructive safety boundaries, but must
+  not add broad Git-semantic emulation or reject incidental worktree evolution
+  merely to police it.
 - Cursor chat creation and every Cursor turn must be distinct durable effects;
   after a chat exists, reuse that exact ID only. Codex creates one new reviewer
   B at the first review, durably captures that exact ID, and subsequently resumes

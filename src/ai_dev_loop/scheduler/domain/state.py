@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Literal
 
-from pydantic import Field, TypeAdapter, field_validator, model_validator
+from pydantic import Field, TypeAdapter, field_validator, model_serializer, model_validator
 
 from ai_dev_loop.scheduler.domain.common import (
     DomainModel,
@@ -16,6 +17,12 @@ from ai_dev_loop.scheduler.domain.common import (
 SUBMITTED_STATE_SCHEMA_VERSION = 1
 SUBMITTED_CONTEXT_SCHEMA_VERSION = 1
 SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH = 2
+SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED = 3
+
+
+class RepositoryTargetBinding(DomainModel):
+    root: NonEmptyStr
+    worktree_key: Sha256Hex
 
 
 class RepositoryBinding(DomainModel):
@@ -105,23 +112,27 @@ class ControllerBinding(DomainModel):
 class SubmittedRunContext(DomainModel):
     """Frozen immutable input context for a submitted A/B scheduler run."""
 
-    schema_version: int = Field(default=SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH)
+    schema_version: int = Field(default=SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED)
     project_name: NonEmptyStr
-    repository: RepositoryBinding
+    repository: RepositoryBinding | RepositoryTargetBinding
     plan_prompt: PlanPromptBinding
     effective_config: EffectiveConfigBinding
     codex: CodexRuntimeBinding | FreshCodexReviewerBinding
     cursor: CursorBinding
     workflow: WorkflowLimits
     controller: ControllerBinding
-    baseline_status_artifact_path: NonEmptyStr
-    baseline_status_sha256: Sha256Hex
+    baseline_status_artifact_path: NonEmptyStr | None = None
+    baseline_status_sha256: Sha256Hex | None = None
 
     @field_validator("schema_version")
     @classmethod
     def schema_version_supported(cls, value: int) -> int:
-        if value not in {SUBMITTED_CONTEXT_SCHEMA_VERSION, SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH}:
-            raise ValueError("schema_version must be 1 or 2")
+        if value not in {
+            SUBMITTED_CONTEXT_SCHEMA_VERSION,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
+        }:
+            raise ValueError("schema_version must be 1, 2, or 3")
         return value
 
     @model_validator(mode="after")
@@ -129,9 +140,39 @@ class SubmittedRunContext(DomainModel):
         if self.schema_version == SUBMITTED_CONTEXT_SCHEMA_VERSION:
             if not isinstance(self.codex, CodexRuntimeBinding):
                 raise ValueError("schema_version 1 requires CodexRuntimeBinding")
-        elif not isinstance(self.codex, FreshCodexReviewerBinding):
-            raise ValueError("schema_version 2 requires FreshCodexReviewerBinding")
+            if not isinstance(self.repository, RepositoryBinding):
+                raise ValueError("schema_version 1 requires RepositoryBinding")
+            if self.baseline_status_artifact_path is None or self.baseline_status_sha256 is None:
+                raise ValueError("schema_version 1 requires baseline fields")
+        elif self.schema_version == SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH:
+            if not isinstance(self.codex, FreshCodexReviewerBinding):
+                raise ValueError("schema_version 2 requires FreshCodexReviewerBinding")
+            if not isinstance(self.repository, RepositoryBinding):
+                raise ValueError("schema_version 2 requires RepositoryBinding")
+            if self.baseline_status_artifact_path is None or self.baseline_status_sha256 is None:
+                raise ValueError("schema_version 2 requires baseline fields")
+        elif self.schema_version == SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED:
+            if not isinstance(self.codex, FreshCodexReviewerBinding):
+                raise ValueError("schema_version 3 requires FreshCodexReviewerBinding")
+            if not isinstance(self.repository, RepositoryTargetBinding):
+                raise ValueError("schema_version 3 requires RepositoryTargetBinding")
+            if (
+                self.baseline_status_artifact_path is not None
+                or self.baseline_status_sha256 is not None
+            ):
+                raise ValueError("schema_version 3 must not include baseline fields")
         return self
+
+    @model_serializer(mode="wrap")
+    def _serialize_submitted_context(
+        self,
+        handler: Callable[[SubmittedRunContext], dict[str, object]],
+    ) -> dict[str, object]:
+        data = handler(self)
+        if self.schema_version == SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED:
+            data.pop("baseline_status_artifact_path", None)
+            data.pop("baseline_status_sha256", None)
+        return data
 
 
 class SubmittedState(DomainModel):

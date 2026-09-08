@@ -335,7 +335,7 @@ def test_scheduler_submit_freezes_reviewer_without_session(
         state, _, _ = SqliteSchedulerStore(scheduler_paths["db_path"]).load_validated_snapshot(
             conn, result.run_id
         )
-    assert state.context.schema_version == 2
+    assert state.context.schema_version == 3
     assert state.context.codex.review_model == REVIEW_MODEL
 
 

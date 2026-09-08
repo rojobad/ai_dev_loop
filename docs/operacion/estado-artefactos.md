@@ -100,20 +100,24 @@ $XDG_STATE_HOME/ai_dev_loop/
         prompts/cursor-initial.txt
         effective-config.yaml
         source-config.yaml
-        codex/fresh-reviewer-input.json     # v2: modelo/reasoning congelados en prepare/submit
+        codex/fresh-reviewer-input.json     # v2/v3: modelo/reasoning congelados en prepare/submit
         codex/fresh-reviewer-binding.json   # evidencia de bootstrap read-only (post-review)
         codex/fresh-reviewer-bootstrap-uncertainty.json  # bloqueo durable si la identidad es ambigua
         codex/session-runtime.json          # v1 legacy session-bound solamente
-        git/baseline-status.txt
+        git/baseline-status.txt             # v1/v2 legacy submit o prepare/start local
+        git/admission-status.txt            # Phase 17.2: admision one-shot antes del primer Cursor
 ```
 
 - `ai_dev_loop scheduler submit` congela un run `queued` sin lanzar agentes, probes,
-  Git ni systemd. Requiere `--controller-session-id`, `--codex-review-model` y
+  Git CLI ni systemd. Requiere `--controller-session-id`, `--codex-review-model` y
   `--codex-review-reasoning-effort`; no acepta `--codex-session-id`. El contexto
-  v2 persiste `codex/fresh-reviewer-input.json` en el manifiesto; la evidencia de
+  v3 persiste solo la raiz del repositorio y `codex/fresh-reviewer-input.json`
+  en el manifiesto; no escribe `git/baseline-status.txt`. La evidencia de
   bootstrap (`codex/fresh-reviewer-binding.json`) se escribe solo en el primer review.
-- Los submits v1 session-bound historicos permanecen read-only en el ledger; la
-  accion segura es un submit v2 fresco, no una conversion automatica.
+- Los submits v1/v2 historicos permanecen read-only en el ledger con sus artefactos
+  baseline intactos; la accion segura es un submit v3 fresco, no una conversion automatica.
+- `require_clean_worktree` se congela en submit pero se aplica solo en la admision
+  one-shot del primer tick (Phase 17.2), no como rechazo en submit.
 - `scheduler status` y `scheduler list` son proyecciones read-only con IDs redactados.
 - `scheduler start`, `scheduler tick` y la ejecucion de agentes llegan en fases
   posteriores; Phase 17.1 se detiene en el limite `queued`.

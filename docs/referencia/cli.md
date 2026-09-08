@@ -95,16 +95,21 @@ ai_dev_loop scheduler submit [OPTIONS]
 Lee el prompt exacto desde stdin y congela un run `queued` en el ledger central
 (`engine.sqlite3`) mas artefactos protegidos bajo `$XDG_STATE_HOME/ai_dev_loop/artifacts/`.
 No crea `state.json`, no lanza agentes, no ejecuta preflight ni muta el repositorio
-objetivo. No crea reviewer B; congela `--controller-session-id`,
-`--codex-review-model` y `--codex-review-reasoning-effort` como inputs
-inmutables. El primer review del scheduler (Phase 17.5) creara exactamente un B
-read-only y los reviews posteriores reanudaran esa identidad.
+objetivo. Resuelve solo la raiz canonica del worktree (marcador `.git`) y congela
+inputs inmutables; no ejecuta Git CLI ni escribe baseline de estado. No crea
+reviewer B; congela `--controller-session-id`, `--codex-review-model` y
+`--codex-review-reasoning-effort` como inputs inmutables. El primer review del
+scheduler (Phase 17.5) creara exactamente un B read-only y los reviews posteriores
+reanudaran esa identidad.
+
+La admision del worktree (`require_clean_worktree`, branch, HEAD y status) ocurre
+una sola vez en el primer tick/preflight (Phase 17.2), no en submit.
 
 Opciones principales: mismas rutas que `prepare`, con `--controller-session-id`
 obligatorio, `--codex-review-model` y `--codex-review-reasoning-effort`
-obligatorios, y sin `--codex-session-id`. Los contextos v1 session-bound
-historicos siguen siendo read-only en el ledger; la accion segura es un submit
-fresco v2, nunca una conversion automatica.
+obligatorios, y sin `--codex-session-id`. Los contextos v1/v2 session-bound o con
+baseline historicos siguen siendo read-only en el ledger; la accion segura es un
+submit fresco v3, nunca una conversion automatica.
 
 Salida redactada. La siguiente accion segura documentada es
 `ai_dev_loop scheduler start <run-id>` (implementada en Phase 17.2).

@@ -17,6 +17,12 @@ enforce one global active slot and reject a duplicate worktree reservation.
 
 - Add durable `start` authorization, global tick-leader claim, run/effect claim,
   due-timer primitives, repository reservation, and a no-wait `scheduler tick`.
+- Perform one real Git worktree admission preflight before the first Cursor launch:
+  verify the resolved root equals the submitted repository target; capture branch,
+  HEAD, and porcelain status as a protected admission artifact
+  (`git/admission-status.txt`); enforce frozen `require_clean_worktree` only there;
+  append a durable admission event/checkpoint. Do not add recurring baseline
+  equality checks after admission merely because agents changed the worktree.
 - Add `scheduler controller-status`/equivalent central read path keyed by exact
   controller session ID and repository; update the existing controller read path
   only if needed to route new scheduler runs unambiguously.
@@ -72,9 +78,10 @@ doc changes; staged review is deferred.
 4. Implement controller query by exact `(controller_session_id, repository_root)`
    and optional run ID. Render queue/authorized state, last event, safe next
    action, and no live worker claim.
-5. Enforce the initial one-worktree policy at submit/start reservation boundary
-   and the one-global-agent-slot policy as a durable capacity value, even though
-   Phase 17.3 is the first phase to consume it.
+5. Enforce the initial one-worktree reservation at submit/start and implement the
+   one-shot worktree admission preflight before first Cursor launch. Enforce the
+   one-global-agent-slot policy as a durable capacity value, even though Phase
+   17.3 is the first phase to consume it.
 
 ## Testing Criteria
 

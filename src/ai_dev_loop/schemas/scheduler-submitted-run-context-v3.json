@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/scheduler-submitted-run-context-v3.json",
+  "title": "SubmittedRunContext",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "project_name",
+    "repository",
+    "plan_prompt",
+    "effective_config",
+    "codex",
+    "cursor",
+    "workflow",
+    "controller"
+  ],
+  "properties": {
+    "schema_version": { "const": 3 },
+    "project_name": { "type": "string", "minLength": 1 },
+    "repository": { "$ref": "#/$defs/repository_target_binding" },
+    "plan_prompt": { "$ref": "#/$defs/plan_prompt_binding" },
+    "effective_config": { "$ref": "#/$defs/effective_config_binding" },
+    "codex": { "$ref": "#/$defs/fresh_codex_reviewer_binding" },
+    "cursor": { "$ref": "#/$defs/cursor_binding" },
+    "workflow": { "$ref": "#/$defs/workflow_limits" },
+    "controller": { "$ref": "#/$defs/controller_binding" }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "uuid_session": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "repository_target_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "worktree_key"],
+      "properties": {
+        "root": { "type": "string", "minLength": 1 },
+        "worktree_key": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "plan_prompt_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "plan_repository_path",
+        "prompt_source_repository_path",
+        "plan_artifact_path",
+        "plan_sha256",
+        "prompt_artifact_path",
+        "prompt_sha256"
+      ],
+      "properties": {
+        "plan_repository_path": { "type": "string", "minLength": 1 },
+        "prompt_source_repository_path": { "type": "string", "minLength": 1 },
+        "plan_artifact_path": { "type": "string", "minLength": 1 },
+        "plan_sha256": { "$ref": "#/$defs/sha256" },
+        "prompt_artifact_path": { "type": "string", "minLength": 1 },
+        "prompt_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "effective_config_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effective_config_artifact_path",
+        "effective_config_sha256",
+        "source_config_artifact_path",
+        "source_config_sha256"
+      ],
+      "properties": {
+        "effective_config_artifact_path": { "type": "string", "minLength": 1 },
+        "effective_config_sha256": { "$ref": "#/$defs/sha256" },
+        "source_config_artifact_path": { "type": "string", "minLength": 1 },
+        "source_config_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "fresh_codex_reviewer_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "review_model",
+        "review_reasoning_effort",
+        "review_model_source",
+        "review_reasoning_source",
+        "command",
+        "review_skill",
+        "sandbox",
+        "binding_artifact_path",
+        "binding_sha256"
+      ],
+      "properties": {
+        "review_model": { "type": "string", "minLength": 1 },
+        "review_reasoning_effort": { "type": "string", "minLength": 1 },
+        "review_model_source": { "enum": ["explicit"] },
+        "review_reasoning_source": { "enum": ["explicit"] },
+        "command": { "type": "string", "minLength": 1 },
+        "review_skill": { "type": "string", "minLength": 1 },
+        "sandbox": { "type": "string", "minLength": 1 },
+        "binding_artifact_path": { "type": "string", "minLength": 1 },
+        "binding_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "cursor_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "model",
+        "output_format",
+        "force",
+        "trust_workspace",
+        "sandbox"
+      ],
+      "properties": {
+        "command": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "output_format": { "type": "string", "minLength": 1 },
+        "force": { "type": "boolean" },
+        "trust_workspace": { "type": "boolean" },
+        "sandbox": { "type": "string", "minLength": 1 }
+      }
+    },
+    "workflow_limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_review_iterations",
+        "stage_mode",
+        "cursor_timeout_minutes",
+        "codex_timeout_minutes",
+        "require_clean_worktree"
+      ],
+      "properties": {
+        "max_review_iterations": { "type": "integer", "minimum": 1 },
+        "stage_mode": { "type": "string", "minLength": 1 },
+        "cursor_timeout_minutes": { "type": "integer", "minimum": 1 },
+        "codex_timeout_minutes": { "type": "integer", "minimum": 1 },
+        "require_clean_worktree": { "type": "boolean" }
+      }
+    },
+    "controller_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["controller_session_id"],
+      "properties": {
+        "controller_session_id": { "$ref": "#/$defs/uuid_session" }
+      }
+    }
+  }
+}

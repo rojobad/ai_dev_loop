@@ -15,7 +15,6 @@ from tests.conftest import (
 from tests.unit.scheduler.helpers import CONTROLLER_SESSION
 
 from ai_dev_loop.paths import runs_dir
-from ai_dev_loop.runners.git import GitRepositoryInfo
 from ai_dev_loop.scheduler.application.contracts import SchedulerEngineError
 from ai_dev_loop.scheduler.application.submission import (
     SubmissionService,
@@ -24,19 +23,12 @@ from ai_dev_loop.scheduler.application.submission import (
 )
 from ai_dev_loop.scheduler.infrastructure.paths import run_artifact_root
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
+from ai_dev_loop.scheduler.infrastructure.repository_target import RepositoryTarget
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
 
-def _fake_repo_info(repo: Path) -> GitRepositoryInfo:
-    return GitRepositoryInfo(
-        root=repo.resolve(),
-        git_common_dir=(repo / ".git").resolve(),
-        git_dir=(repo / ".git").resolve(),
-        branch="main",
-        head="abc1234567890123456789012345678901234567890",
-        status_porcelain="",
-        staged_paths=(),
-    )
+def _fake_repo_target(repo: Path) -> RepositoryTarget:
+    return RepositoryTarget(root=repo.resolve())
 
 
 def _submit_options(
@@ -67,7 +59,7 @@ def _submission_service(
     return SubmissionService(
         SqliteSchedulerStore(db_path),
         ProtectedArtifactStore(artifact_root),
-        repository_discoverer=lambda _path: _fake_repo_info(repo),
+        repository_discoverer=lambda _path: _fake_repo_target(repo),
     )
 
 
@@ -198,7 +190,7 @@ def test_cli_help_lists_scheduler_submit() -> None:
     assert "submit" in result.stdout
 
 
-def test_submit_freezes_dirty_baseline_when_clean_worktree_not_required(
+def test_submit_ignores_worktree_git_state_and_writes_no_baseline(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
     codex_env: None,
@@ -211,6 +203,11 @@ def test_submit_freezes_dirty_baseline_when_clean_worktree_not_required(
     )
     config_path.write_text(config_text, encoding="utf-8")
     (git_repo / "dirty-untracked.txt").write_text("dirty\n", encoding="utf-8")
+    tracked = git_repo / "docs/plans/sample-plan.md"
+    tracked.write_text(tracked.read_text(encoding="utf-8") + "\nstaged edit\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "docs/plans/sample-plan.md"], cwd=git_repo, check=True, capture_output=True
+    )
 
     prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
 
@@ -222,25 +219,19 @@ def test_submit_freezes_dirty_baseline_when_clean_worktree_not_required(
     with patch("sys.stdin", StringIO(prompt)):
         result = submit_run(_submit_options(git_repo, **scheduler_paths))
 
-    from ai_dev_loop.runners.git import discover_repository
-
-    expected_status = discover_repository(git_repo).status_porcelain + "\n"
     baseline_path = (
         run_artifact_root(scheduler_paths["artifact_root"], result.run_id)
         / "git"
         / "baseline-status.txt"
     )
-    assert baseline_path.read_text(encoding="utf-8") == expected_status
-    assert "? dirty-untracked.txt" in expected_status
+    assert not baseline_path.exists()
     assert result.state_kind == "queued"
     with SqliteSchedulerStore(scheduler_paths["db_path"]).begin_read() as conn:
         state, _, _ = SqliteSchedulerStore(scheduler_paths["db_path"]).load_validated_snapshot(
             conn,
             result.run_id,
         )
+    assert state.context.schema_version == 3
     assert state.context.workflow.require_clean_worktree is False
-    assert state.context.plan_prompt.plan_repository_path == "docs/plans/sample-plan.md"
-    assert (
-        state.context.plan_prompt.prompt_source_repository_path
-        == "docs/plans/prompt_sample-plan.txt"
-    )
+    assert state.context.baseline_status_artifact_path is None
+    assert state.context.baseline_status_sha256 is None

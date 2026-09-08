@@ -40,6 +40,8 @@ from ai_dev_loop.scheduler.application.contracts import (
 from ai_dev_loop.scheduler.domain.common import canonical_json_sha256, worktree_key
 from ai_dev_loop.scheduler.domain.events import RunSubmittedEvent
 from ai_dev_loop.scheduler.domain.state import (
+    SUBMITTED_CONTEXT_SCHEMA_VERSION,
+    SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH,
     CodexRuntimeBinding,
     ControllerBinding,
@@ -48,6 +50,7 @@ from ai_dev_loop.scheduler.domain.state import (
     FreshCodexReviewerBinding,
     PlanPromptBinding,
     RepositoryBinding,
+    RepositoryTargetBinding,
     SubmittedRunContext,
     SubmittedState,
     WorkflowLimits,
@@ -58,13 +61,15 @@ from ai_dev_loop.scheduler.infrastructure.paths import (
     default_engine_db_path,
 )
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import (
-    MAX_BASELINE_STATUS_BYTES,
     MAX_PLAN_BYTES,
     MAX_PROMPT_BYTES,
     MAX_SESSION_RUNTIME_BYTES,
     ProtectedArtifactStore,
 )
-from ai_dev_loop.scheduler.infrastructure.repository_binding import discover_repository_binding
+from ai_dev_loop.scheduler.infrastructure.repository_target import (
+    RepositoryTarget,
+    resolve_repository_target,
+)
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 from ai_dev_loop.state import generate_run_id, sha256_bytes, sha256_text, utc_now
 
@@ -75,7 +80,7 @@ SOURCE_CONFIG_ARTIFACT = "source-config.yaml"
 BASELINE_STATUS_ARTIFACT = "git/baseline-status.txt"
 SESSION_RUNTIME_ARTIFACT = "codex/session-runtime.json"
 
-RepositoryDiscoverer = Callable[[Path], GitRepositoryInfo]
+RepositoryDiscoverer = Callable[[Path], RepositoryTarget]
 SessionRuntimeReader = Callable[[str], CodexSessionRuntime]
 
 
@@ -127,8 +132,8 @@ def _build_overrides(options: SubmitOptions) -> ConfigOverrides:
     )
 
 
-def _resolve_inputs(options: SubmitOptions, repo_info: GitRepositoryInfo) -> tuple[Path, Path]:
-    repo_root = repo_info.root
+def _resolve_inputs(options: SubmitOptions, repo_target: RepositoryTarget) -> tuple[Path, Path]:
+    repo_root = repo_target.root
     if options.plan_path is None:
         raise ValidationError("plan path is required (--plan-path)")
     if options.prompt_source_path is None:
@@ -174,6 +179,69 @@ def _fresh_input_artifact_bytes(
         review_reasoning_effort=review_reasoning_effort,
     )
     return (json.dumps(payload, indent=2) + "\n").encode("utf-8")
+
+
+def _build_agent_led_context(
+    *,
+    repo_target: RepositoryTarget,
+    plan_path: Path,
+    prompt_source_path: Path,
+    effective: ProjectConfig,
+    controller_session_id: str,
+    review_model: str,
+    review_reasoning_effort: str,
+    artifact_hashes: dict[str, str],
+) -> SubmittedRunContext:
+    repo_root = str(repo_target.root)
+    return SubmittedRunContext(
+        schema_version=SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
+        project_name=effective.project.name,
+        repository=RepositoryTargetBinding(
+            root=repo_root,
+            worktree_key=worktree_key(repo_root),
+        ),
+        plan_prompt=PlanPromptBinding(
+            plan_repository_path=relative_repo_path(repo_target.root, plan_path),
+            prompt_source_repository_path=relative_repo_path(repo_target.root, prompt_source_path),
+            plan_artifact_path=PLAN_ARTIFACT,
+            plan_sha256=artifact_hashes[PLAN_ARTIFACT],
+            prompt_artifact_path=PROMPT_ARTIFACT,
+            prompt_sha256=artifact_hashes[PROMPT_ARTIFACT],
+        ),
+        effective_config=EffectiveConfigBinding(
+            effective_config_artifact_path=EFFECTIVE_CONFIG_ARTIFACT,
+            effective_config_sha256=artifact_hashes[EFFECTIVE_CONFIG_ARTIFACT],
+            source_config_artifact_path=SOURCE_CONFIG_ARTIFACT,
+            source_config_sha256=artifact_hashes[SOURCE_CONFIG_ARTIFACT],
+        ),
+        codex=FreshCodexReviewerBinding(
+            review_model=review_model,
+            review_reasoning_effort=review_reasoning_effort,
+            review_model_source="explicit",
+            review_reasoning_source="explicit",
+            command=effective.codex.command,
+            review_skill=effective.codex.review_skill,
+            sandbox=effective.codex.sandbox,
+            binding_artifact_path=FRESH_REVIEWER_INPUT_ARTIFACT,
+            binding_sha256=artifact_hashes[FRESH_REVIEWER_INPUT_ARTIFACT],
+        ),
+        cursor=CursorBinding(
+            command=effective.cursor.command,
+            model=effective.cursor.model,
+            output_format=effective.cursor.output_format,
+            force=effective.cursor.force,
+            trust_workspace=effective.cursor.trust_workspace,
+            sandbox=effective.cursor.sandbox,
+        ),
+        workflow=WorkflowLimits(
+            max_review_iterations=effective.workflow.max_review_iterations,
+            stage_mode=effective.workflow.stage_mode,
+            cursor_timeout_minutes=effective.workflow.cursor_timeout_minutes,
+            codex_timeout_minutes=effective.workflow.codex_timeout_minutes,
+            require_clean_worktree=effective.workflow.require_clean_worktree,
+        ),
+        controller=ControllerBinding(controller_session_id=controller_session_id),
+    )
 
 
 def _build_fresh_context(
@@ -258,6 +326,7 @@ def _build_context(
 ) -> SubmittedRunContext:
     repo_root = str(repo_info.root)
     return SubmittedRunContext(
+        schema_version=SUBMITTED_CONTEXT_SCHEMA_VERSION,
         project_name=effective.project.name,
         repository=RepositoryBinding(
             root=repo_root,
@@ -336,7 +405,7 @@ class SubmissionService:
         store: SqliteSchedulerStore,
         artifacts: ProtectedArtifactStore,
         *,
-        repository_discoverer: RepositoryDiscoverer = discover_repository_binding,
+        repository_discoverer: RepositoryDiscoverer = resolve_repository_target,
         session_runtime_reader: SessionRuntimeReader = read_codex_session_runtime,
         now_factory: Callable[[], datetime] | None = None,
         run_id_factory: Callable[[str, datetime], str] | None = None,
@@ -358,13 +427,13 @@ class SubmissionService:
                 "(--controller-session-id)"
             )
         repo_candidate = options.repo_path or Path.cwd()
-        repo_info = self.repository_discoverer(repo_candidate)
+        repo_target = self.repository_discoverer(repo_candidate)
         effective, source_repo_config, _repo_config_path = resolve_effective_config(
-            repo_root=repo_info.root,
+            repo_root=repo_target.root,
             config_path=options.config_path,
             overrides=_build_overrides(options),
         )
-        plan_path, prompt_source_path = _resolve_inputs(options, repo_info)
+        plan_path, prompt_source_path = _resolve_inputs(options, repo_target)
         controller_session_id = require_codex_session_id(options.controller_session_id)
         if options.codex_session_id is not None:
             raise ValidationError(
@@ -388,7 +457,6 @@ class SubmissionService:
             sort_keys=False,
             allow_unicode=True,
         ).encode("utf-8")
-        baseline_text = repo_info.status_porcelain + "\n"
         fresh_binding_bytes = _fresh_input_artifact_bytes(
             review_model=review_model,
             review_reasoning_effort=review_reasoning,
@@ -398,11 +466,10 @@ class SubmissionService:
             PROMPT_ARTIFACT: sha256_text(prompt_text),
             EFFECTIVE_CONFIG_ARTIFACT: sha256_bytes(effective_yaml),
             SOURCE_CONFIG_ARTIFACT: sha256_bytes(source_yaml),
-            BASELINE_STATUS_ARTIFACT: sha256_text(baseline_text),
             FRESH_REVIEWER_INPUT_ARTIFACT: sha256_bytes(fresh_binding_bytes),
         }
-        context = _build_fresh_context(
-            repo_info=repo_info,
+        context = _build_agent_led_context(
+            repo_target=repo_target,
             plan_path=plan_path,
             prompt_source_path=prompt_source_path,
             effective=effective,
@@ -447,12 +514,6 @@ class SubmissionService:
             SOURCE_CONFIG_ARTIFACT,
             source_yaml,
             max_bytes=MAX_PLAN_BYTES,
-        )
-        self.artifacts.write_text(
-            run_id,
-            BASELINE_STATUS_ARTIFACT,
-            baseline_text,
-            max_bytes=MAX_BASELINE_STATUS_BYTES,
         )
         self.artifacts.write_bytes(
             run_id,

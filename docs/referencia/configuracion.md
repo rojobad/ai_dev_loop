@@ -152,7 +152,7 @@ codex exec --cd <repo> --sandbox <sandbox> resume --model <model> -c model_reaso
 | Campo | Default | Descripcion |
 | --- | --- | --- |
 | `max_review_iterations` | `3` | Numero maximo de reviews Codex, incluyendo el primero. |
-| `require_clean_worktree` | `true` | Rechaza trabajo no relacionado antes de preparar. |
+| `require_clean_worktree` | `true` | Rechaza trabajo no relacionado en `prepare`/`start` local y, en el scheduler central, en la admision one-shot del primer tick (Phase 17.2). Submit solo congela este valor. |
 | `stage_mode` | `all` | Modo de staging. Solo `all` esta soportado. |
 | `cursor_timeout_minutes` | `90` | Timeout por turno Cursor. |
 | `codex_timeout_minutes` | `90` | Timeout por review Codex. |

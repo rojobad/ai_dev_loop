@@ -444,7 +444,7 @@ def scheduler_submit_command(
     ] = None,
     output: OutputOption = DEFAULT_OUTPUT,
 ) -> None:
-    """Submit a frozen A/B scheduler run without launching agents."""
+    """Submit a frozen A/B scheduler run without launching agents or Git CLI probes."""
 
     def run() -> None:
         options = SubmitOptions(

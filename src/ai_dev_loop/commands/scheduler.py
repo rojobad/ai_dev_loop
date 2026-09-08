@@ -30,6 +30,7 @@ def render_submit_output(result: SubmitResult, *, output: str) -> str:
         f"Submitted scheduler run {result.run_id}{reused}",
         f"Project: {result.project_name}",
         f"State: {result.state_kind}",
+        "Submit binds the repository target only; worktree admission runs once at the first tick (Phase 17.2).",
         "Reviewer B is created at the first review boundary (Phase 17.5); submit only freezes model and reasoning.",
         f"Next action: {result.safe_next_action.command}",
     ]
