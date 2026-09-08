@@ -14,6 +14,15 @@ from ai_dev_loop.launcher import launcher_summary
 from ai_dev_loop.resume_planner import TERMINAL_STATUSES
 from ai_dev_loop.run_discovery import find_runs_for_controller, load_run
 from ai_dev_loop.runners.git import discover_repository
+from ai_dev_loop.scheduler.application.contracts import (
+    ControllerSchedulerCandidate,
+    SchedulerEngineError,
+    SchedulerEngineErrorKind,
+)
+from ai_dev_loop.scheduler.application.controller_read import (
+    find_scheduler_candidates,
+    load_scheduler_candidate,
+)
 from ai_dev_loop.state import RunState, RunStatus, shorten_session_id
 
 
@@ -34,6 +43,11 @@ class ControllerStatusResult:
     controller_session_id: str
     reviewer_session_id: str | None
     candidate_run_ids: list[str]
+    scheduler_state_kind: str | None = None
+    capacity_holder_run_id_prefix: str | None = None
+    last_event_kind: str | None = None
+    run_source: str | None = None
+    read_failure: str | None = None
 
 
 def controller_status(
@@ -48,8 +62,43 @@ def controller_status(
     repo_root = repo_info.root.resolve()
 
     if run_id is not None:
-        run_directory, state = load_run(run_id)
-        _require_controller_match(state, controller_id=controller_id, repo_root=repo_root)
+        scheduler_candidate, scheduler_read_failure = _load_scheduler_candidate_or_failure(
+            run_id=run_id,
+            controller_id=controller_id,
+            repo_root=repo_root,
+        )
+        if scheduler_read_failure is not None:
+            return _read_failure_result(
+                controller_id=controller_id,
+                repo_root=repo_root,
+                message=scheduler_read_failure,
+            )
+        legacy_match: tuple[Path, RunState] | None = None
+        try:
+            run_directory, state = load_run(run_id)
+            _require_controller_match(state, controller_id=controller_id, repo_root=repo_root)
+            legacy_match = (run_directory, state)
+        except ValidationError:
+            legacy_match = None
+        source_count = int(scheduler_candidate is not None) + int(legacy_match is not None)
+        if source_count == 0:
+            return _empty_controller_result(controller_id=controller_id, repo_root=repo_root)
+        if source_count > 1:
+            return _ambiguous_controller_result(
+                controller_id=controller_id,
+                repo_root=repo_root,
+                candidate_run_ids=[run_id],
+                match_count=source_count,
+            )
+        if scheduler_candidate is not None:
+            return _build_scheduler_result(
+                candidate=scheduler_candidate,
+                controller_id=controller_id,
+                match_count=1,
+                candidate_run_ids=[scheduler_candidate.run_id],
+            )
+        assert legacy_match is not None
+        run_directory, state = legacy_match
         return _build_result(
             state=state,
             run_directory=run_directory,
@@ -58,74 +107,218 @@ def controller_status(
             candidate_run_ids=[state.run_id],
         )
 
-    matches = find_runs_for_controller(
+    try:
+        scheduler_matches = find_scheduler_candidates(
+            controller_session_id=controller_id,
+            repository_root=repo_root,
+            include_terminal=include_terminal,
+        )
+    except SchedulerEngineError as exc:
+        if exc.kind == SchedulerEngineErrorKind.CORRUPTION:
+            return _read_failure_result(
+                controller_id=controller_id,
+                repo_root=repo_root,
+                message="scheduler run snapshot is corrupt; inspect engine artifacts manually",
+            )
+        raise
+    legacy_matches = find_runs_for_controller(
         controller_session_id=controller_id,
         repository_root=repo_root,
         include_terminal=include_terminal,
     )
-    if not matches:
-        return ControllerStatusResult(
-            match_count=0,
-            run_id=None,
-            status=None,
-            project=None,
-            repository=str(repo_root),
-            current_review_iteration=None,
-            max_review_iterations=None,
-            next_safe_action=(
-                "No matching non-terminal run for this controller session and repository. "
-                "Confirm the exact controller session ID and repository path, or pass "
-                "--run-id to disambiguate a known run."
-            ),
-            last_error=None,
-            result=None,
-            launcher={
-                "launcher_registered": False,
-                "launcher_live": False,
-                "launcher_stale": False,
-                "launcher_outcome": None,
-            },
-            abort_control=None,
-            controller_session_id=controller_id,
-            reviewer_session_id=None,
-            candidate_run_ids=[],
-        )
-    if len(matches) > 1:
-        candidate_ids = [state.run_id for _, state in matches]
-        return ControllerStatusResult(
-            match_count=len(matches),
-            run_id=None,
-            status=None,
-            project=None,
-            repository=str(repo_root),
-            current_review_iteration=None,
-            max_review_iterations=None,
-            next_safe_action=(
-                f"Multiple matching runs ({len(matches)}). Pass --run-id with one of: "
-                + ", ".join(candidate_ids)
-                + ". Do not choose a run by timestamp."
-            ),
-            last_error=None,
-            result=None,
-            launcher={
-                "launcher_registered": False,
-                "launcher_live": False,
-                "launcher_stale": False,
-                "launcher_outcome": None,
-            },
-            abort_control=None,
-            controller_session_id=controller_id,
-            reviewer_session_id=None,
+    combined_count = len(scheduler_matches) + len(legacy_matches)
+    if combined_count == 0:
+        return _empty_controller_result(controller_id=controller_id, repo_root=repo_root)
+    if combined_count > 1 or (scheduler_matches and legacy_matches):
+        candidate_ids = [candidate.run_id for candidate in scheduler_matches] + [
+            state.run_id for _, state in legacy_matches
+        ]
+        return _ambiguous_controller_result(
+            controller_id=controller_id,
+            repo_root=repo_root,
             candidate_run_ids=candidate_ids,
+            match_count=combined_count,
         )
-
-    run_directory, state = matches[0]
+    if scheduler_matches:
+        return _build_scheduler_result(
+            candidate=scheduler_matches[0],
+            controller_id=controller_id,
+            match_count=1,
+            candidate_run_ids=[scheduler_matches[0].run_id],
+        )
+    run_directory, state = legacy_matches[0]
     return _build_result(
         state=state,
         run_directory=run_directory,
         controller_id=controller_id,
         match_count=1,
         candidate_run_ids=[state.run_id],
+    )
+
+
+def _load_scheduler_candidate_or_failure(
+    *,
+    run_id: str,
+    controller_id: str,
+    repo_root: Path,
+) -> tuple[ControllerSchedulerCandidate | None, str | None]:
+    try:
+        return (
+            load_scheduler_candidate(
+                run_id=run_id,
+                controller_session_id=controller_id,
+                repository_root=repo_root,
+            ),
+            None,
+        )
+    except SchedulerEngineError as exc:
+        if exc.kind == SchedulerEngineErrorKind.CORRUPTION:
+            return None, "scheduler run snapshot is corrupt; inspect engine artifacts manually"
+        if exc.kind in {
+            SchedulerEngineErrorKind.NOT_FOUND,
+            SchedulerEngineErrorKind.VALIDATION,
+        }:
+            return None, None
+        return None, str(exc)
+
+
+def _read_failure_result(
+    *,
+    controller_id: str,
+    repo_root: Path,
+    message: str,
+) -> ControllerStatusResult:
+    return ControllerStatusResult(
+        match_count=0,
+        run_id=None,
+        status=None,
+        project=None,
+        repository=str(repo_root),
+        current_review_iteration=None,
+        max_review_iterations=None,
+        next_safe_action=message,
+        last_error=None,
+        result=None,
+        launcher={
+            "launcher_registered": False,
+            "launcher_live": False,
+            "launcher_stale": False,
+            "launcher_outcome": None,
+        },
+        abort_control=None,
+        controller_session_id=controller_id,
+        reviewer_session_id=None,
+        candidate_run_ids=[],
+        read_failure=message,
+    )
+
+
+def _empty_controller_result(
+    *,
+    controller_id: str,
+    repo_root: Path,
+) -> ControllerStatusResult:
+    return ControllerStatusResult(
+        match_count=0,
+        run_id=None,
+        status=None,
+        project=None,
+        repository=str(repo_root),
+        current_review_iteration=None,
+        max_review_iterations=None,
+        next_safe_action=(
+            "No matching non-terminal run for this controller session and repository. "
+            "Confirm the exact controller session ID and repository path, or pass "
+            "--run-id to disambiguate a known run."
+        ),
+        last_error=None,
+        result=None,
+        launcher={
+            "launcher_registered": False,
+            "launcher_live": False,
+            "launcher_stale": False,
+            "launcher_outcome": None,
+        },
+        abort_control=None,
+        controller_session_id=controller_id,
+        reviewer_session_id=None,
+        candidate_run_ids=[],
+    )
+
+
+def _ambiguous_controller_result(
+    *,
+    controller_id: str,
+    repo_root: Path,
+    candidate_run_ids: list[str],
+    match_count: int | None = None,
+) -> ControllerStatusResult:
+    resolved_match_count = match_count if match_count is not None else len(candidate_run_ids)
+    return ControllerStatusResult(
+        match_count=resolved_match_count,
+        run_id=None,
+        status=None,
+        project=None,
+        repository=str(repo_root),
+        current_review_iteration=None,
+        max_review_iterations=None,
+        next_safe_action=(
+            f"Multiple matching runs ({resolved_match_count}). Pass --run-id with one of: "
+            + ", ".join(candidate_run_ids)
+            + ". Do not choose a run by timestamp."
+        ),
+        last_error=None,
+        result=None,
+        launcher={
+            "launcher_registered": False,
+            "launcher_live": False,
+            "launcher_stale": False,
+            "launcher_outcome": None,
+        },
+        abort_control=None,
+        controller_session_id=controller_id,
+        reviewer_session_id=None,
+        candidate_run_ids=candidate_run_ids,
+    )
+
+
+def _build_scheduler_result(
+    *,
+    candidate: ControllerSchedulerCandidate,
+    controller_id: str,
+    match_count: int,
+    candidate_run_ids: list[str],
+) -> ControllerStatusResult:
+    capacity_prefix = None
+    if candidate.capacity_holder_run_id is not None:
+        run_id = candidate.capacity_holder_run_id
+        capacity_prefix = run_id[:8] if len(run_id) > 8 else run_id
+    return ControllerStatusResult(
+        match_count=match_count,
+        run_id=candidate.run_id,
+        status=candidate.state_kind,
+        project=candidate.project_name,
+        repository=candidate.repository_root,
+        current_review_iteration=None,
+        max_review_iterations=None,
+        next_safe_action=candidate.safe_next_action.command
+        or "Inspect scheduler artifacts for the blocked run.",
+        last_error=None,
+        result=None,
+        launcher={
+            "launcher_registered": False,
+            "launcher_live": False,
+            "launcher_stale": False,
+            "launcher_outcome": None,
+        },
+        abort_control=None,
+        controller_session_id=controller_id,
+        reviewer_session_id=None,
+        candidate_run_ids=candidate_run_ids,
+        scheduler_state_kind=candidate.state_kind,
+        capacity_holder_run_id_prefix=capacity_prefix,
+        last_event_kind=candidate.last_event_kind,
+        run_source="scheduler",
     )
 
 
@@ -196,6 +389,7 @@ def _build_result(
         controller_session_id=controller_id,
         reviewer_session_id=state.codex.session_id,
         candidate_run_ids=candidate_run_ids,
+        run_source="legacy",
     )
 
 
@@ -220,6 +414,11 @@ def render_controller_status(result: ControllerStatusResult, *, output: str = "t
             if result.reviewer_session_id is None
             else result.reviewer_session_id[:8],
             "candidate_run_ids": result.candidate_run_ids,
+            "scheduler_state_kind": result.scheduler_state_kind,
+            "capacity_holder_run_id_prefix": result.capacity_holder_run_id_prefix,
+            "last_event_kind": result.last_event_kind,
+            "run_source": result.run_source,
+            "read_failure": result.read_failure,
         }
         return json.dumps(payload, indent=2) + "\n"
 
@@ -243,6 +442,12 @@ def render_controller_status(result: ControllerStatusResult, *, output: str = "t
         )
         if result.reviewer_session_id:
             lines.append(f"Reviewer: {shorten_session_id(result.reviewer_session_id)}")
+        if result.run_source == "scheduler":
+            lines.append(f"Scheduler state: {result.scheduler_state_kind}")
+            if result.last_event_kind:
+                lines.append(f"Last event: {result.last_event_kind}")
+            if result.capacity_holder_run_id_prefix:
+                lines.append(f"Capacity holder prefix: {result.capacity_holder_run_id_prefix}")
         launcher = result.launcher
         lines.append(f"Worker live: {launcher.get('launcher_live')}")
         if launcher.get("launcher_stale"):
@@ -259,6 +464,8 @@ def render_controller_status(result: ControllerStatusResult, *, output: str = "t
             lines.append(f"Last error: {result.last_error}")
         if result.result:
             lines.append(f"Result: {result.result}")
+    elif result.read_failure:
+        lines.append(f"Read failure: {result.read_failure}")
     elif result.candidate_run_ids:
         lines.append("Candidate runs: " + ", ".join(result.candidate_run_ids))
     lines.append(f"Next safe action: {result.next_safe_action}")

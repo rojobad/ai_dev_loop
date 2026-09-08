@@ -46,9 +46,17 @@ from ai_dev_loop.commands.scheduler import (
     render_list_output,
     render_status_output,
     render_submit_output,
+    render_tick_output,
+    run_scheduler_tick,
     scheduler_list,
     scheduler_status,
     submit_run,
+)
+from ai_dev_loop.commands.scheduler import (
+    render_start_output as render_scheduler_start_output,
+)
+from ai_dev_loop.commands.scheduler import (
+    start_run as start_scheduler_run,
 )
 from ai_dev_loop.commands.start import CODEX_TUI_WARNING, render_start_output, start_run
 from ai_dev_loop.commands.status import render_status
@@ -74,7 +82,7 @@ pr_review_app = typer.Typer(
 scheduler_app = typer.Typer(
     help=(
         "Central tick scheduler for local A/B runs. "
-        "submit freezes a queued run without launching agents; start and tick arrive in later phases."
+        "submit freezes a queued run; start authorizes it; tick reconciles one bounded pass."
     ),
 )
 integrations_app = typer.Typer(help="Global Codex integration commands.")
@@ -468,6 +476,40 @@ def scheduler_submit_command(
         )
         result = submit_run(options)
         typer.echo(render_submit_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@scheduler_app.command("start")
+def scheduler_start_command(
+    run_id: Annotated[str, typer.Argument(help="Submitted scheduler run ID.")],
+    controller_session_id: Annotated[
+        str,
+        typer.Option(
+            "--controller-session-id",
+            help="Exact controller Codex session ID frozen at submit.",
+        ),
+    ],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Authorize a submitted scheduler run for tick reconciliation."""
+
+    def run() -> None:
+        result = start_scheduler_run(run_id, controller_session_id)
+        typer.echo(render_scheduler_start_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@scheduler_app.command("tick")
+def scheduler_tick_command(
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Run one bounded scheduler tick without waiting for agents or sleeping."""
+
+    def run() -> None:
+        result = run_scheduler_tick()
+        typer.echo(render_tick_output(result, output=output.value), nl=False)
 
     _handle(run)
 

@@ -7,10 +7,14 @@ import json
 from ai_dev_loop.scheduler.application.contracts import (
     SchedulerRunSummary,
     SchedulerStatusResult,
+    StartResult,
     SubmitResult,
+    TickReceipt,
 )
+from ai_dev_loop.scheduler.application.start import start_run
 from ai_dev_loop.scheduler.application.status import scheduler_list, scheduler_status
 from ai_dev_loop.scheduler.application.submission import SubmitOptions, submit_run
+from ai_dev_loop.scheduler.application.tick import run_scheduler_tick
 
 
 def render_submit_output(result: SubmitResult, *, output: str) -> str:
@@ -53,6 +57,51 @@ def _render_summary(summary: SchedulerRunSummary, *, output: str) -> dict[str, o
     ]
 
 
+def render_start_output(result: StartResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "run_id": result.run_id,
+            "state_kind": result.state_kind,
+            "changed": result.changed,
+            "idempotent_replay": result.idempotent_replay,
+            "safe_next_action": result.safe_next_action.model_dump(mode="json"),
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    changed = " (no change)" if not result.changed else ""
+    replay = " (idempotent replay)" if result.idempotent_replay else ""
+    lines = [
+        f"Scheduler start for run {result.run_id}{changed}{replay}",
+        f"State: {result.state_kind}",
+        f"Next action: {result.safe_next_action.command}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def render_tick_output(result: TickReceipt, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "tick_owner_id_prefix": result.tick_owner_id[:8],
+            "lease_generation": result.lease_generation,
+            "lease_acquired": result.lease_acquired,
+            "visited_runs": result.visited_runs,
+            "run_receipts": [item.model_dump(mode="json") for item in result.run_receipts],
+            "safe_next_action": result.safe_next_action.model_dump(mode="json"),
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    lines = [
+        "Scheduler tick completed",
+        f"Lease acquired: {result.lease_acquired}",
+        f"Visited runs: {result.visited_runs}",
+    ]
+    for receipt in result.run_receipts:
+        detail = f" ({receipt.detail})" if receipt.detail else ""
+        lines.append(f"- {receipt.run_id}: {receipt.action}{detail}")
+    lines.append(f"Next action: {result.safe_next_action.command}")
+    return "\n".join(lines) + "\n"
+
+
 def render_status_output(result: SchedulerStatusResult, *, output: str) -> str:
     if output == "json":
         payload = {
@@ -60,11 +109,17 @@ def render_status_output(result: SchedulerStatusResult, *, output: str) -> str:
             "summary": result.summary.model_dump(mode="json"),
             "idempotency_key_prefix": result.idempotency_key_prefix,
             "worktree_key_prefix": result.worktree_key_prefix,
+            "capacity_holder_run_id": result.capacity_holder_run_id,
+            "last_event_kind": result.last_event_kind,
         }
         return json.dumps(payload, indent=2) + "\n"
     lines = list(_render_summary(result.summary, output="text"))
     lines.append(f"Idempotency key prefix: {result.idempotency_key_prefix}")
     lines.append(f"Worktree key prefix: {result.worktree_key_prefix}")
+    if result.last_event_kind:
+        lines.append(f"Last event: {result.last_event_kind}")
+    if result.capacity_holder_run_id:
+        lines.append(f"Capacity holder run: {result.capacity_holder_run_id}")
     return "\n".join(lines) + "\n"
 
 
@@ -86,9 +141,13 @@ def render_list_output(summaries: list[SchedulerRunSummary], *, output: str) -> 
 __all__ = [
     "SubmitOptions",
     "render_list_output",
+    "render_start_output",
     "render_status_output",
     "render_submit_output",
+    "render_tick_output",
+    "run_scheduler_tick",
     "scheduler_list",
     "scheduler_status",
+    "start_run",
     "submit_run",
 ]

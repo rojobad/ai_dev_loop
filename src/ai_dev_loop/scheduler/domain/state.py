@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import Field, TypeAdapter, field_validator, model_serializer, model_validator
+from pydantic import (
+    Discriminator,
+    Field,
+    Tag,
+    TypeAdapter,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from ai_dev_loop.scheduler.domain.common import (
     DomainModel,
@@ -15,6 +23,7 @@ from ai_dev_loop.scheduler.domain.common import (
 )
 
 SUBMITTED_STATE_SCHEMA_VERSION = 1
+SCHEDULER_STATE_SCHEMA_VERSION = 2
 SUBMITTED_CONTEXT_SCHEMA_VERSION = 1
 SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH = 2
 SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED = 3
@@ -175,24 +184,15 @@ class SubmittedRunContext(DomainModel):
         return data
 
 
-class SubmittedState(DomainModel):
-    """Queued scheduler run with a verified frozen context."""
+class SchedulerRunBase(DomainModel):
+    """Shared scheduler run fields across lifecycle states."""
 
-    kind: Literal["queued"] = "queued"
-    schema_version: int = Field(default=SUBMITTED_STATE_SCHEMA_VERSION)
     run_id: NonEmptyStr
     version: int
     submitted_at: NonEmptyStr
     updated_at: NonEmptyStr
     idempotency_key: Sha256Hex
     context: SubmittedRunContext
-
-    @field_validator("schema_version")
-    @classmethod
-    def schema_version_is_one(cls, value: int) -> int:
-        if value != 1:
-            raise ValueError("schema_version must be 1")
-        return value
 
     @field_validator("version")
     @classmethod
@@ -202,7 +202,92 @@ class SubmittedState(DomainModel):
         return value
 
 
-SchedulerState = SubmittedState
+class SubmittedState(SchedulerRunBase):
+    """Queued scheduler run with a verified frozen context."""
+
+    kind: Literal["queued"] = "queued"
+    schema_version: int = Field(default=SUBMITTED_STATE_SCHEMA_VERSION)
+
+    @field_validator("schema_version")
+    @classmethod
+    def schema_version_is_one(cls, value: int) -> int:
+        if value != 1:
+            raise ValueError("schema_version must be 1")
+        return value
+
+
+class AuthorizedState(SchedulerRunBase):
+    """Run explicitly authorized by controller A; awaiting first tick admission."""
+
+    kind: Literal["authorized"] = "authorized"
+    schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION)
+    authorized_at: NonEmptyStr
+    authorized_controller_session_id: UuidSessionId
+
+    @field_validator("schema_version")
+    @classmethod
+    def schema_version_is_two(cls, value: int) -> int:
+        if value != 2:
+            raise ValueError("schema_version must be 2")
+        return value
+
+
+class AdmittedState(SchedulerRunBase):
+    """Run that passed one-time Git worktree admission."""
+
+    kind: Literal["admitted"] = "admitted"
+    schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION)
+    authorized_at: NonEmptyStr
+    authorized_controller_session_id: UuidSessionId
+    admitted_at: NonEmptyStr
+    admission_status_artifact_path: NonEmptyStr
+    admission_status_sha256: Sha256Hex
+
+    @field_validator("schema_version")
+    @classmethod
+    def schema_version_is_two(cls, value: int) -> int:
+        if value != 2:
+            raise ValueError("schema_version must be 2")
+        return value
+
+
+class BlockedState(SchedulerRunBase):
+    """Run blocked by failed admission or stale tick fencing."""
+
+    kind: Literal["blocked"] = "blocked"
+    schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION)
+    blocked_at: NonEmptyStr
+    block_reason_kind: NonEmptyStr
+    block_reason_summary: NonEmptyStr
+    authorized_at: NonEmptyStr | None = None
+    authorized_controller_session_id: UuidSessionId | None = None
+
+    @field_validator("schema_version")
+    @classmethod
+    def schema_version_is_two(cls, value: int) -> int:
+        if value != 2:
+            raise ValueError("schema_version must be 2")
+        return value
+
+
+def _scheduler_state_discriminator(value: object) -> str:
+    if isinstance(value, dict):
+        kind = value.get("kind")
+        if isinstance(kind, str):
+            return kind
+    kind = getattr(value, "kind", None)
+    if isinstance(kind, str):
+        return kind
+    raise ValueError("scheduler state payload must include kind")
+
+
+SchedulerState = Annotated[
+    Annotated[SubmittedState, Tag("queued")]
+    | Annotated[AuthorizedState, Tag("authorized")]
+    | Annotated[AdmittedState, Tag("admitted")]
+    | Annotated[BlockedState, Tag("blocked")],
+    Discriminator(_scheduler_state_discriminator),
+]
 
 SUBMITTED_CONTEXT_ADAPTER: TypeAdapter[SubmittedRunContext] = TypeAdapter(SubmittedRunContext)
 SUBMITTED_STATE_ADAPTER: TypeAdapter[SubmittedState] = TypeAdapter(SubmittedState)
@@ -211,6 +296,14 @@ SCHEDULER_STATE_ADAPTER: TypeAdapter[SchedulerState] = TypeAdapter(SchedulerStat
 
 def parse_submitted_state(payload: object) -> SubmittedState:
     return SUBMITTED_STATE_ADAPTER.validate_python(payload)
+
+
+def parse_scheduler_state(
+    payload: object,
+) -> SubmittedState | AuthorizedState | AdmittedState | BlockedState:
+    if isinstance(payload, (SubmittedState, AuthorizedState, AdmittedState, BlockedState)):
+        return payload
+    return SCHEDULER_STATE_ADAPTER.validate_python(payload)
 
 
 def submission_identity_payload(context: SubmittedRunContext) -> dict[str, object]:

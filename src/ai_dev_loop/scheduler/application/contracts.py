@@ -39,6 +39,7 @@ class ReservationStatus(StrEnum):
 
 class SafeNextActionKind(StrEnum):
     SCHEDULER_START = "scheduler_start"
+    SCHEDULER_TICK = "scheduler_tick"
     NONE = "none"
 
 
@@ -71,13 +72,83 @@ class SchedulerStatusResult(AppModel):
     summary: SchedulerRunSummary
     idempotency_key_prefix: str
     worktree_key_prefix: str
+    capacity_holder_run_id: str | None = None
+    last_event_kind: str | None = None
+
+
+class StartResult(AppModel):
+    run_id: str
+    state_kind: str
+    changed: bool
+    idempotent_replay: bool
+    safe_next_action: SafeNextAction
+
+
+class TickRunReceipt(AppModel):
+    run_id: str
+    action: str
+    detail: str | None = None
+
+
+class TickReceipt(AppModel):
+    tick_owner_id: str
+    lease_generation: int
+    visited_runs: int
+    run_receipts: tuple[TickRunReceipt, ...]
+    lease_acquired: bool
+    safe_next_action: SafeNextAction
+
+
+class ControllerSchedulerCandidate(AppModel):
+    run_id: str
+    state_kind: str
+    project_name: str
+    repository_root: str
+    submitted_at: str
+    updated_at: str
+    safe_next_action: SafeNextAction
+    capacity_holder_run_id: str | None
+    last_event_kind: str | None
 
 
 def queued_safe_next_action(run_id: str) -> SafeNextAction:
     return SafeNextAction(
         kind=SafeNextActionKind.SCHEDULER_START,
-        command=f"ai_dev_loop scheduler start {run_id}",
+        command=(
+            f"ai_dev_loop scheduler start {run_id} --controller-session-id <exact-controller-id>"
+        ),
     )
+
+
+def authorized_safe_next_action() -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.SCHEDULER_TICK,
+        command="ai_dev_loop scheduler tick",
+    )
+
+
+def admitted_safe_next_action() -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.SCHEDULER_TICK,
+        command="ai_dev_loop scheduler tick",
+    )
+
+
+def blocked_safe_next_action() -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.NONE,
+        command=None,
+    )
+
+
+def safe_next_action_for_state_kind(state_kind: str, run_id: str) -> SafeNextAction:
+    if state_kind == "queued":
+        return queued_safe_next_action(run_id)
+    if state_kind == "authorized":
+        return authorized_safe_next_action()
+    if state_kind == "admitted":
+        return admitted_safe_next_action()
+    return blocked_safe_next_action()
 
 
 def redacted_session_prefix(session_id: str) -> str:
@@ -93,13 +164,14 @@ def summary_from_context(
     submitted_at: str,
     updated_at: str,
     context: SubmittedRunContext,
-    safe_next_action: SafeNextAction,
+    safe_next_action: SafeNextAction | None = None,
 ) -> SchedulerRunSummary:
     reviewer_prefix = None
     if isinstance(context.codex, FreshCodexReviewerBinding):
         reviewer_prefix = None
     else:
         reviewer_prefix = redacted_session_prefix(context.codex.session_id)
+    action = safe_next_action or safe_next_action_for_state_kind(state_kind, run_id)
     return SchedulerRunSummary(
         run_id=run_id,
         state_kind=state_kind,
@@ -111,5 +183,5 @@ def summary_from_context(
         reviewer_session_id_prefix=reviewer_prefix,
         submitted_at=submitted_at,
         updated_at=updated_at,
-        safe_next_action=safe_next_action,
+        safe_next_action=action,
     )

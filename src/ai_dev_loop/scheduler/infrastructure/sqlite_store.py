@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from importlib import resources
 from pathlib import Path
 from typing import cast
@@ -17,6 +18,10 @@ from ai_dev_loop.scheduler.application.contracts import (
     SchedulerEngineErrorKind,
 )
 from ai_dev_loop.scheduler.domain.common import encode_utc_instant, payload_sha256
+from ai_dev_loop.scheduler.domain.effects import (
+    SYNTHETIC_SELF_TEST_EFFECT_ID,
+    SYNTHETIC_SELF_TEST_EFFECT_KIND,
+)
 from ai_dev_loop.scheduler.domain.events import (
     SCHEDULER_EVENT_ADAPTER,
     SchedulerEvent,
@@ -26,11 +31,11 @@ from ai_dev_loop.scheduler.domain.state import (
     SCHEDULER_STATE_ADAPTER,
     SchedulerState,
     SubmittedState,
-    parse_submitted_state,
 )
 
-SCHEMA_VERSION = 1
-MIGRATION_NAME = "0001_initial"
+SCHEMA_VERSION = 2
+MIGRATION_V1_NAME = "0001_initial"
+MIGRATION_V2_NAME = "0002_tick_control"
 REQUIRED_TABLES = frozenset(
     {
         "scheduler_schema_migrations",
@@ -42,6 +47,8 @@ REQUIRED_TABLES = frozenset(
         "scheduler_claims",
         "scheduler_attempts",
         "scheduler_repository_reservations",
+        "scheduler_capacity",
+        "scheduler_run_tick_claims",
     }
 )
 REQUIRED_INDEXES = frozenset(
@@ -57,14 +64,34 @@ REQUIRED_INDEXES = frozenset(
         "idx_scheduler_claims_run",
         "idx_scheduler_attempts_run",
         "idx_scheduler_reservations_run",
+        "idx_scheduler_run_tick_claims_active_admission",
+        "idx_scheduler_run_tick_claims_run",
+        "idx_scheduler_runs_controller_repo",
     }
 )
-NON_TERMINAL_STATE_KINDS = frozenset({"queued"})
+NON_TERMINAL_STATE_KINDS = frozenset({"queued", "authorized", "admitted"})
+EFFECT_STATUS_PENDING = "pending"
+EFFECT_STATUS_CLAIMED = "claimed"
+EFFECT_STATUS_SUCCEEDED = "succeeded"
+EFFECT_STATUS_SUPERSEDED = "superseded"
+EFFECT_STATUS_BLOCKED = "blocked"
+TIMER_STATUS_PENDING = "pending"
+TIMER_STATUS_FIRED = "fired"
+TICK_LEASE_NAME = "global"
+CAPACITY_NAME = "global_active_agent"
 
 
-def _migration_sql() -> str:
+def _migration_sql(name: str) -> str:
     package = resources.files("ai_dev_loop.scheduler.infrastructure.migrations")
-    return (package / "0001_initial.sql").read_text(encoding="utf-8")
+    return (package / name).read_text(encoding="utf-8")
+
+
+def _migration_v1_sql() -> str:
+    return _migration_sql("0001_initial.sql")
+
+
+def _migration_v2_sql() -> str:
+    return _migration_sql("0002_tick_control.sql")
 
 
 def _split_sql_statements(sql: str) -> list[str]:
@@ -82,8 +109,12 @@ def _split_sql_statements(sql: str) -> list[str]:
     return statements
 
 
-def migration_checksum() -> str:
-    return hashlib.sha256(_migration_sql().encode("utf-8")).hexdigest()
+def migration_checksum(version: int) -> str:
+    if version == 1:
+        return hashlib.sha256(_migration_v1_sql().encode("utf-8")).hexdigest()
+    if version == 2:
+        return hashlib.sha256(_migration_v2_sql().encode("utf-8")).hexdigest()
+    raise ValueError(f"unsupported migration version {version}")
 
 
 class SqliteSchedulerStore:
@@ -169,6 +200,10 @@ class SqliteSchedulerStore:
                 )
             if version == 0:
                 self._bootstrap_v1(conn)
+                self._migrate_v1_to_v2(conn)
+            elif version == 1:
+                self._verify_migration_checksum(conn, 1)
+                self._migrate_v1_to_v2(conn)
             else:
                 self._verify_current_schema(conn)
             self._apply_database_permissions(self.db_path)
@@ -182,17 +217,17 @@ class SqliteSchedulerStore:
             )
         try:
             conn.execute("BEGIN IMMEDIATE")
-            for statement in _split_sql_statements(_migration_sql()):
+            for statement in _split_sql_statements(_migration_v1_sql()):
                 self._fault_maybe_raise_migration(statement)
                 conn.execute(statement)
-            checksum = migration_checksum()
+            checksum = migration_checksum(1)
             applied_at = encode_utc_instant(datetime.now(tz=UTC))
             conn.execute(
                 """
                 INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
                 VALUES (?, ?, ?, ?)
                 """,
-                (SCHEMA_VERSION, MIGRATION_NAME, checksum, applied_at),
+                (1, MIGRATION_V1_NAME, checksum, applied_at),
             )
             conn.execute(
                 """
@@ -203,7 +238,41 @@ class SqliteSchedulerStore:
                 """,
                 (applied_at,),
             )
-            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            conn.execute("PRAGMA user_version = 1")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        self._apply_database_permissions(self.db_path)
+
+    def _migrate_v1_to_v2(self, conn: sqlite3.Connection) -> None:
+        if self._user_version(conn) >= 2:
+            self._verify_current_schema(conn)
+            return
+        self._verify_migration_checksum(conn, 1)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for statement in _split_sql_statements(_migration_v2_sql()):
+                self._fault_maybe_raise_migration(statement)
+                conn.execute(statement)
+            applied_at = encode_utc_instant(datetime.now(tz=UTC))
+            conn.execute(
+                """
+                INSERT INTO scheduler_capacity(
+                    capacity_name, max_value, holder_run_id, holder_claim_id,
+                    holder_tick_generation, updated_at
+                ) VALUES (?, 1, NULL, NULL, NULL, ?)
+                """,
+                (CAPACITY_NAME, applied_at),
+            )
+            conn.execute(
+                """
+                INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (2, MIGRATION_V2_NAME, migration_checksum(2), applied_at),
+            )
+            conn.execute("PRAGMA user_version = 2")
             conn.commit()
         except Exception:
             conn.rollback()
@@ -215,6 +284,22 @@ class SqliteSchedulerStore:
         if hook is not None:
             hook(statement)
 
+    def _verify_migration_checksum(self, conn: sqlite3.Connection, version: int) -> None:
+        row = conn.execute(
+            "SELECT checksum FROM scheduler_schema_migrations WHERE version = ?",
+            (version,),
+        ).fetchone()
+        if row is None:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.SCHEMA,
+                f"migration audit row missing for version {version}",
+            )
+        if row[0] != migration_checksum(version):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.SCHEMA,
+                "migration checksum drift detected",
+            )
+
     def _verify_current_schema(self, conn: sqlite3.Connection) -> None:
         version = self._user_version(conn)
         if version != SCHEMA_VERSION:
@@ -222,6 +307,8 @@ class SqliteSchedulerStore:
                 SchedulerEngineErrorKind.SCHEMA,
                 f"unsupported schema version {version}",
             )
+        for migration_version in (1, 2):
+            self._verify_migration_checksum(conn, migration_version)
         tables = self._table_names(conn)
         missing = REQUIRED_TABLES - tables
         if missing:
@@ -235,20 +322,6 @@ class SqliteSchedulerStore:
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.SCHEMA,
                 f"corrupt schema missing indexes: {sorted(missing_idx)}",
-            )
-        row = conn.execute(
-            "SELECT checksum FROM scheduler_schema_migrations WHERE version = ?",
-            (SCHEMA_VERSION,),
-        ).fetchone()
-        if row is None:
-            raise SchedulerEngineError(
-                SchedulerEngineErrorKind.SCHEMA,
-                "migration audit row missing for current version",
-            )
-        if row[0] != migration_checksum():
-            raise SchedulerEngineError(
-                SchedulerEngineErrorKind.SCHEMA,
-                "migration checksum drift detected",
             )
 
     @contextmanager
@@ -348,7 +421,7 @@ class SqliteSchedulerStore:
 
     @staticmethod
     def load_state(payload: str) -> SchedulerState:
-        return parse_submitted_state(SCHEDULER_STATE_ADAPTER.validate_json(payload))
+        return SCHEDULER_STATE_ADAPTER.validate_json(payload)
 
     @staticmethod
     def dump_event(event: SchedulerEvent) -> tuple[str, str, str]:
@@ -475,6 +548,9 @@ class SqliteSchedulerStore:
     def load_validated_snapshot(
         self, conn: sqlite3.Connection, run_id: str
     ) -> tuple[SchedulerState, int, datetime]:
+        from ai_dev_loop.scheduler.domain.common import worktree_key
+        from ai_dev_loop.scheduler.domain.state import AuthorizedState
+
         row = self.get_run_row(conn, run_id)
         state = self.load_state(row["state_payload"])
         if state.kind != row["state_kind"]:
@@ -491,6 +567,25 @@ class SqliteSchedulerStore:
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.CORRUPTION,
                 "state.run_id disagrees with primary key",
+            )
+        payload_root = str(state.context.repository.root)
+        if worktree_key(payload_root) != str(row["worktree_key"]):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "repository identity disagrees with indexed worktree key",
+            )
+        reservation = self.get_reservation_for_run(conn, run_id)
+        if reservation is not None and str(reservation["repository_root"]) != payload_root:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "repository root disagrees with active reservation",
+            )
+        if isinstance(state, AuthorizedState) and (
+            state.authorized_controller_session_id != state.context.controller.controller_session_id
+        ):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "controller identity disagrees with frozen context",
             )
         updated_at = datetime.fromisoformat(
             encode_utc_instant(row["updated_at"]).replace("Z", "+00:00")
@@ -537,3 +632,704 @@ class SqliteSchedulerStore:
             """
         ).fetchall()
         return list(rows)
+
+    def next_event_sequence(self, conn: sqlite3.Connection, run_id: str) -> int:
+        row = conn.execute(
+            "SELECT MAX(sequence) FROM scheduler_events WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        current = int(row[0]) if row[0] is not None else 0
+        return current + 1
+
+    def append_event(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        event_id: str,
+        run_id: str,
+        sequence: int,
+        event: SchedulerEvent,
+        now: datetime,
+    ) -> None:
+        event_kind, event_payload, event_digest = self.dump_event(event)
+        now_text = encode_utc_instant(now)
+        conn.execute(
+            """
+            INSERT INTO scheduler_events(
+                event_id, run_id, sequence, event_kind,
+                event_payload, event_payload_sha256, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (event_id, run_id, sequence, event_kind, event_payload, event_digest, now_text),
+        )
+
+    def get_reservation_for_run(self, conn: sqlite3.Connection, run_id: str) -> sqlite3.Row | None:
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_repository_reservations
+            WHERE run_id = ? AND status = ?
+            """,
+            (run_id, ReservationStatus.ACTIVE.value),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def release_reservation(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        worktree_key: str,
+        now: datetime,
+    ) -> None:
+        now_text = encode_utc_instant(now)
+        conn.execute(
+            """
+            UPDATE scheduler_repository_reservations
+            SET status = ?, updated_at = ?
+            WHERE worktree_key = ? AND status = ?
+            """,
+            (
+                ReservationStatus.RELEASED.value,
+                now_text,
+                worktree_key,
+                ReservationStatus.ACTIVE.value,
+            ),
+        )
+
+    def list_tick_eligible_run_ids(self, conn: sqlite3.Connection) -> list[str]:
+        placeholders = ",".join("?" * len(NON_TERMINAL_STATE_KINDS))
+        rows = conn.execute(
+            f"""
+            SELECT run_id FROM scheduler_runs
+            WHERE state_kind IN ({placeholders})
+            ORDER BY created_at ASC, run_id ASC
+            """,
+            tuple(NON_TERMINAL_STATE_KINDS),
+        ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def find_runs_for_controller(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        controller_session_id: str,
+        repository_root: str,
+        include_terminal: bool = False,
+    ) -> list[sqlite3.Row]:
+        from ai_dev_loop.scheduler.domain.common import worktree_key
+
+        wt_key = worktree_key(repository_root)
+        if include_terminal:
+            rows = conn.execute(
+                """
+                SELECT run_id, state_kind, state_payload, version, created_at, updated_at
+                FROM scheduler_runs
+                WHERE worktree_key = ?
+                ORDER BY created_at ASC, run_id ASC
+                """,
+                (wt_key,),
+            ).fetchall()
+        else:
+            placeholders = ",".join("?" * len(NON_TERMINAL_STATE_KINDS))
+            rows = conn.execute(
+                f"""
+                SELECT run_id, state_kind, state_payload, version, created_at, updated_at
+                FROM scheduler_runs
+                WHERE worktree_key = ?
+                  AND state_kind IN ({placeholders})
+                ORDER BY created_at ASC, run_id ASC
+                """,
+                (wt_key, *NON_TERMINAL_STATE_KINDS),
+            ).fetchall()
+        matches: list[sqlite3.Row] = []
+        for row in rows:
+            db_run_id = str(row["run_id"])
+            state, _, _ = self.load_validated_snapshot(conn, db_run_id)
+            if state.context.controller.controller_session_id != controller_session_id:
+                continue
+            if str(state.context.repository.root) != repository_root:
+                continue
+            matches.append(row)
+        return matches
+
+    def get_tick_lease_row(self, conn: sqlite3.Connection) -> sqlite3.Row:
+        row = conn.execute(
+            "SELECT * FROM scheduler_tick_leases WHERE lease_name = ?",
+            (TICK_LEASE_NAME,),
+        ).fetchone()
+        if row is None:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "global tick lease row missing",
+            )
+        return cast(sqlite3.Row, row)
+
+    def acquire_global_tick_lease(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        owner_id: str,
+        now: datetime,
+        ttl_seconds: int,
+    ) -> tuple[int, datetime] | None:
+        row = self.get_tick_lease_row(conn)
+        expires_at = (
+            datetime.fromisoformat(encode_utc_instant(row["expires_at"]).replace("Z", "+00:00"))
+            if row["expires_at"] is not None
+            else None
+        )
+        if (
+            row["status"] == "active"
+            and expires_at is not None
+            and expires_at > now
+            and row["owner_id"] != owner_id
+        ):
+            return None
+        generation = int(row["generation"]) + 1
+        lease_expires = now + timedelta(seconds=ttl_seconds)
+        now_text = encode_utc_instant(now)
+        conn.execute(
+            """
+            UPDATE scheduler_tick_leases
+            SET owner_id = ?, generation = ?, status = 'active',
+                acquired_at = ?, expires_at = ?, updated_at = ?
+            WHERE lease_name = ?
+            """,
+            (
+                owner_id,
+                generation,
+                now_text,
+                encode_utc_instant(lease_expires),
+                now_text,
+                TICK_LEASE_NAME,
+            ),
+        )
+        return generation, lease_expires
+
+    def release_global_tick_lease(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        owner_id: str,
+        generation: int,
+        now: datetime,
+    ) -> bool:
+        row = self.get_tick_lease_row(conn)
+        if row["owner_id"] != owner_id or int(row["generation"]) != generation:
+            return False
+        now_text = encode_utc_instant(now)
+        conn.execute(
+            """
+            UPDATE scheduler_tick_leases
+            SET status = 'inactive', owner_id = NULL, acquired_at = NULL,
+                expires_at = NULL, updated_at = ?
+            WHERE lease_name = ? AND owner_id = ? AND generation = ?
+            """,
+            (now_text, TICK_LEASE_NAME, owner_id, generation),
+        )
+        return True
+
+    def reconcile_stale_tick_resources(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        current_generation: int,
+        now: datetime,
+    ) -> None:
+        now_text = encode_utc_instant(now)
+        conn.execute(
+            """
+            UPDATE scheduler_run_tick_claims
+            SET status = 'stale', released_at = ?, updated_at = ?
+            WHERE status = 'active' AND tick_lease_generation < ?
+            """,
+            (now_text, now_text, current_generation),
+        )
+        conn.execute(
+            """
+            UPDATE scheduler_capacity
+            SET holder_run_id = NULL, holder_claim_id = NULL,
+                holder_tick_generation = NULL, updated_at = ?
+            WHERE capacity_name = ? AND holder_tick_generation IS NOT NULL
+              AND holder_tick_generation < ?
+            """,
+            (now_text, CAPACITY_NAME, current_generation),
+        )
+        conn.execute(
+            """
+            UPDATE scheduler_effects
+            SET status = ?, updated_at = ?
+            WHERE status = ? AND claim_lease_generation IS NOT NULL
+              AND claim_lease_generation < ?
+            """,
+            (
+                EFFECT_STATUS_SUPERSEDED,
+                now_text,
+                EFFECT_STATUS_CLAIMED,
+                current_generation,
+            ),
+        )
+        conn.execute(
+            """
+            UPDATE scheduler_claims
+            SET status = 'stale', released_at = ?, updated_at = ?
+            WHERE status = 'active' AND lease_generation < ?
+            """,
+            (now_text, now_text, current_generation),
+        )
+
+    def has_stale_admission_attempt(self, conn: sqlite3.Connection, run_id: str) -> bool:
+        row = conn.execute(
+            """
+            SELECT 1 FROM scheduler_run_tick_claims
+            WHERE run_id = ? AND purpose = 'admission' AND status = 'stale'
+            LIMIT 1
+            """,
+            (run_id,),
+        ).fetchone()
+        return row is not None
+
+    def get_active_admission_claim_for_run(
+        self, conn: sqlite3.Connection, run_id: str
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_run_tick_claims
+            WHERE run_id = ? AND purpose = 'admission' AND status = 'active'
+            """,
+            (run_id,),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def acquire_admission_tick_claim(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        claim_id: str,
+        run_id: str,
+        tick_owner_id: str,
+        tick_lease_generation: int,
+        expected_run_version: int,
+        now: datetime,
+    ) -> bool:
+        self.reconcile_stale_tick_resources(
+            conn,
+            current_generation=tick_lease_generation,
+            now=now,
+        )
+        existing = self.get_active_admission_claim_for_run(conn, run_id)
+        if existing is not None:
+            if (
+                str(existing["tick_owner_id"]) == tick_owner_id
+                and int(existing["tick_lease_generation"]) == tick_lease_generation
+            ):
+                return False
+            self.release_admission_tick_claim(
+                conn,
+                claim_id=str(existing["claim_id"]),
+                now=now,
+                stale=True,
+                owner_id=str(existing["tick_owner_id"]),
+                lease_generation=int(existing["tick_lease_generation"]),
+            )
+        now_text = encode_utc_instant(now)
+        try:
+            conn.execute(
+                """
+                INSERT INTO scheduler_run_tick_claims(
+                    claim_id, run_id, tick_owner_id, tick_lease_generation,
+                    purpose, expected_run_version, status, acquired_at, updated_at
+                ) VALUES (?, ?, ?, ?, 'admission', ?, 'active', ?, ?)
+                """,
+                (
+                    claim_id,
+                    run_id,
+                    tick_owner_id,
+                    tick_lease_generation,
+                    expected_run_version,
+                    now_text,
+                    now_text,
+                ),
+            )
+        except sqlite3.IntegrityError:
+            return False
+        return True
+
+    def release_admission_tick_claim(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        claim_id: str,
+        now: datetime,
+        stale: bool = False,
+        owner_id: str | None = None,
+        lease_generation: int | None = None,
+    ) -> bool:
+        status = "stale" if stale else "released"
+        now_text = encode_utc_instant(now)
+        if owner_id is not None and lease_generation is not None:
+            cursor = conn.execute(
+                """
+                UPDATE scheduler_run_tick_claims
+                SET status = ?, released_at = ?, updated_at = ?
+                WHERE claim_id = ? AND status = 'active'
+                  AND tick_owner_id = ? AND tick_lease_generation = ?
+                """,
+                (status, now_text, now_text, claim_id, owner_id, lease_generation),
+            )
+        else:
+            cursor = conn.execute(
+                """
+                UPDATE scheduler_run_tick_claims
+                SET status = ?, released_at = ?, updated_at = ?
+                WHERE claim_id = ? AND status = 'active'
+                """,
+                (status, now_text, now_text, claim_id),
+            )
+        return cursor.rowcount == 1
+
+    def get_active_admission_claim(
+        self, conn: sqlite3.Connection, claim_id: str
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_run_tick_claims
+            WHERE claim_id = ? AND status = 'active' AND purpose = 'admission'
+            """,
+            (claim_id,),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def insert_synthetic_self_test_effect(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        dispatch_id: str,
+        source_event_id: str,
+        run_id: str,
+        available_at: datetime,
+        claimed_run_version: int,
+        now: datetime,
+    ) -> None:
+        payload = json.dumps(
+            {"effect_kind": SYNTHETIC_SELF_TEST_EFFECT_KIND},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        digest = payload_sha256(payload)
+        now_text = encode_utc_instant(now)
+        conn.execute(
+            """
+            INSERT INTO scheduler_effects(
+                dispatch_id, source_event_id, effect_ordinal, run_id, effect_id,
+                idempotency_key, effect_kind, effect_payload, effect_payload_sha256,
+                status, available_at, claimed_run_version, created_at, updated_at
+            ) VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                dispatch_id,
+                source_event_id,
+                run_id,
+                SYNTHETIC_SELF_TEST_EFFECT_ID,
+                f"{run_id}:{SYNTHETIC_SELF_TEST_EFFECT_ID}",
+                SYNTHETIC_SELF_TEST_EFFECT_KIND,
+                payload,
+                digest,
+                EFFECT_STATUS_PENDING,
+                encode_utc_instant(available_at),
+                claimed_run_version,
+                now_text,
+                now_text,
+            ),
+        )
+
+    def list_eligible_effects(
+        self, conn: sqlite3.Connection, *, run_id: str, now: datetime
+    ) -> list[sqlite3.Row]:
+        now_text = encode_utc_instant(now)
+        rows = conn.execute(
+            """
+            SELECT * FROM scheduler_effects
+            WHERE run_id = ? AND status = ? AND available_at <= ?
+            ORDER BY created_at ASC, dispatch_id ASC
+            """,
+            (run_id, EFFECT_STATUS_PENDING, now_text),
+        ).fetchall()
+        return list(rows)
+
+    def claim_effect(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        dispatch_id: str,
+        claim_id: str,
+        tick_owner_id: str,
+        tick_lease_generation: int,
+        expected_run_version: int,
+        now: datetime,
+    ) -> bool:
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            UPDATE scheduler_effects
+            SET status = ?, claim_id = ?, claim_owner_id = ?, claim_lease_generation = ?,
+                claimed_run_version = ?, claimed_at = ?, updated_at = ?
+            WHERE dispatch_id = ? AND status = ?
+            """,
+            (
+                EFFECT_STATUS_CLAIMED,
+                claim_id,
+                tick_owner_id,
+                tick_lease_generation,
+                expected_run_version,
+                now_text,
+                now_text,
+                dispatch_id,
+                EFFECT_STATUS_PENDING,
+            ),
+        )
+        if cursor.rowcount != 1:
+            return False
+        conn.execute(
+            """
+            INSERT INTO scheduler_claims(
+                claim_id, run_id, dispatch_id, owner_id, lease_generation,
+                status, acquired_at, updated_at
+            ) SELECT ?, run_id, dispatch_id, ?, ?, 'active', ?, ?
+            FROM scheduler_effects WHERE dispatch_id = ?
+            """,
+            (claim_id, tick_owner_id, tick_lease_generation, now_text, now_text, dispatch_id),
+        )
+        return True
+
+    def get_claimed_effect_row(
+        self, conn: sqlite3.Connection, dispatch_id: str
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_effects
+            WHERE dispatch_id = ? AND status = ?
+            """,
+            (dispatch_id, EFFECT_STATUS_CLAIMED),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def complete_claimed_effect(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        dispatch_id: str,
+        claim_id: str,
+        tick_owner_id: str,
+        tick_lease_generation: int,
+        expected_run_version: int,
+        now: datetime,
+    ) -> bool:
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            UPDATE scheduler_effects
+            SET status = ?, completed_at = ?, updated_at = ?
+            WHERE dispatch_id = ? AND claim_id = ? AND status = ?
+              AND claim_owner_id = ? AND claim_lease_generation = ?
+              AND claimed_run_version = ?
+              AND EXISTS (
+                  SELECT 1 FROM scheduler_runs
+                  WHERE scheduler_runs.run_id = scheduler_effects.run_id
+                    AND scheduler_runs.version = ?
+              )
+            """,
+            (
+                EFFECT_STATUS_SUCCEEDED,
+                now_text,
+                now_text,
+                dispatch_id,
+                claim_id,
+                EFFECT_STATUS_CLAIMED,
+                tick_owner_id,
+                tick_lease_generation,
+                expected_run_version,
+                expected_run_version,
+            ),
+        )
+        if cursor.rowcount != 1:
+            return False
+        conn.execute(
+            """
+            UPDATE scheduler_claims
+            SET status = 'released', released_at = ?, updated_at = ?
+            WHERE claim_id = ? AND status = 'active'
+            """,
+            (now_text, now_text, claim_id),
+        )
+        return True
+
+    def mark_effect_stale(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        dispatch_id: str,
+        claim_id: str,
+        now: datetime,
+    ) -> None:
+        now_text = encode_utc_instant(now)
+        conn.execute(
+            """
+            UPDATE scheduler_effects
+            SET status = ?, updated_at = ?
+            WHERE dispatch_id = ? AND claim_id = ?
+            """,
+            (EFFECT_STATUS_SUPERSEDED, now_text, dispatch_id, claim_id),
+        )
+        conn.execute(
+            """
+            UPDATE scheduler_claims
+            SET status = 'stale', released_at = ?, updated_at = ?
+            WHERE claim_id = ?
+            """,
+            (now_text, now_text, claim_id),
+        )
+
+    def try_acquire_capacity(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        claim_id: str,
+        tick_owner_id: str,
+        tick_lease_generation: int,
+        now: datetime,
+    ) -> bool:
+        row = conn.execute(
+            "SELECT * FROM scheduler_capacity WHERE capacity_name = ?",
+            (CAPACITY_NAME,),
+        ).fetchone()
+        if row is None:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "global capacity row missing",
+            )
+        if row["holder_run_id"] is not None:
+            holder_generation = row["holder_tick_generation"]
+            if holder_generation is not None and int(holder_generation) < tick_lease_generation:
+                self.reconcile_stale_tick_resources(
+                    conn,
+                    current_generation=tick_lease_generation,
+                    now=now,
+                )
+                row = conn.execute(
+                    "SELECT * FROM scheduler_capacity WHERE capacity_name = ?",
+                    (CAPACITY_NAME,),
+                ).fetchone()
+                assert row is not None
+            if row["holder_run_id"] is not None:
+                return False
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            UPDATE scheduler_capacity
+            SET holder_run_id = ?, holder_claim_id = ?, holder_tick_generation = ?,
+                updated_at = ?
+            WHERE capacity_name = ? AND holder_run_id IS NULL
+            """,
+            (run_id, claim_id, tick_lease_generation, now_text, CAPACITY_NAME),
+        )
+        return cursor.rowcount == 1
+
+    def release_capacity(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        claim_id: str,
+        tick_owner_id: str,
+        tick_lease_generation: int,
+        now: datetime,
+    ) -> bool:
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            UPDATE scheduler_capacity
+            SET holder_run_id = NULL, holder_claim_id = NULL,
+                holder_tick_generation = NULL, updated_at = ?
+            WHERE capacity_name = ? AND holder_run_id = ?
+              AND holder_claim_id = ? AND holder_tick_generation = ?
+            """,
+            (now_text, CAPACITY_NAME, run_id, claim_id, tick_lease_generation),
+        )
+        return cursor.rowcount == 1
+
+    def get_capacity_row(self, conn: sqlite3.Connection) -> sqlite3.Row:
+        row = conn.execute(
+            "SELECT * FROM scheduler_capacity WHERE capacity_name = ?",
+            (CAPACITY_NAME,),
+        ).fetchone()
+        if row is None:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "global capacity row missing",
+            )
+        return cast(sqlite3.Row, row)
+
+    def insert_retry_timer(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        timer_id: str,
+        source_event_id: str,
+        run_id: str,
+        due_at: datetime,
+        target_effect_id: str,
+        expected_run_version: int,
+        now: datetime,
+    ) -> None:
+        now_text = encode_utc_instant(now)
+        conn.execute(
+            """
+            INSERT INTO scheduler_timers(
+                timer_id, source_event_id, run_id, timer_kind, due_at,
+                target_effect_id, expected_run_version, status, created_at, updated_at
+            ) VALUES (?, ?, ?, 'retry_due', ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                timer_id,
+                source_event_id,
+                run_id,
+                encode_utc_instant(due_at),
+                target_effect_id,
+                expected_run_version,
+                TIMER_STATUS_PENDING,
+                now_text,
+                now_text,
+            ),
+        )
+
+    def list_due_timers(self, conn: sqlite3.Connection, *, now: datetime) -> list[sqlite3.Row]:
+        now_text = encode_utc_instant(now)
+        rows = conn.execute(
+            """
+            SELECT * FROM scheduler_timers
+            WHERE status = ? AND due_at <= ?
+            ORDER BY due_at ASC, timer_id ASC
+            """,
+            (TIMER_STATUS_PENDING, now_text),
+        ).fetchall()
+        return list(rows)
+
+    def fire_timer(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        timer_id: str,
+        fired_event_id: str,
+        now: datetime,
+    ) -> bool:
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            UPDATE scheduler_timers
+            SET status = ?, fired_event_id = ?, updated_at = ?
+            WHERE timer_id = ? AND status = ?
+            """,
+            (TIMER_STATUS_FIRED, fired_event_id, now_text, timer_id, TIMER_STATUS_PENDING),
+        )
+        return cursor.rowcount == 1

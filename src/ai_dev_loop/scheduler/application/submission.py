@@ -43,6 +43,9 @@ from ai_dev_loop.scheduler.domain.state import (
     SUBMITTED_CONTEXT_SCHEMA_VERSION,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH,
+    AdmittedState,
+    AuthorizedState,
+    BlockedState,
     CodexRuntimeBinding,
     ControllerBinding,
     CursorBinding,
@@ -389,7 +392,9 @@ def _build_context(
     )
 
 
-def _result_from_state(state: SubmittedState, *, reused_existing: bool) -> SubmitResult:
+def _result_from_state(
+    state: SubmittedState | AuthorizedState | BlockedState | AdmittedState, *, reused_existing: bool
+) -> SubmitResult:
     return SubmitResult(
         run_id=state.run_id,
         project_name=state.context.project_name,

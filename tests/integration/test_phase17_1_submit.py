@@ -102,7 +102,8 @@ def test_submit_is_side_effect_free(
     assert scheduler_paths["db_path"].exists()
     assert (scheduler_paths["artifact_root"] / "runs").exists()
     assert result.state_kind == "queued"
-    assert result.safe_next_action.command == f"ai_dev_loop scheduler start {result.run_id}"
+    assert "scheduler start" in result.safe_next_action.command
+    assert "--controller-session-id" in result.safe_next_action.command
 
 
 def test_identical_submit_reuses_run(

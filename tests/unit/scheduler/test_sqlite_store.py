@@ -14,6 +14,7 @@ from ai_dev_loop.scheduler.application.contracts import SchedulerEngineError
 from ai_dev_loop.scheduler.domain.events import RunSubmittedEvent
 from ai_dev_loop.scheduler.infrastructure.paths import DEFAULT_DB_FILENAME, scheduler_state_dir
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import (
+    CAPACITY_NAME,
     REQUIRED_INDEXES,
     REQUIRED_TABLES,
     SCHEMA_VERSION,
@@ -51,7 +52,17 @@ def test_bootstrap_empty_and_reopen(tmp_path: Path) -> None:
         row = conn.execute(
             "SELECT checksum FROM scheduler_schema_migrations WHERE version=1"
         ).fetchone()
-        assert row[0] == migration_checksum()
+        assert row[0] == migration_checksum(1)
+        row2 = conn.execute(
+            "SELECT checksum FROM scheduler_schema_migrations WHERE version=2"
+        ).fetchone()
+        assert row2[0] == migration_checksum(2)
+        capacity = conn.execute(
+            "SELECT max_value FROM scheduler_capacity WHERE capacity_name = ?",
+            (CAPACITY_NAME,),
+        ).fetchone()
+        assert capacity is not None
+        assert int(capacity[0]) == 1
     SqliteSchedulerStore(db)
 
 
