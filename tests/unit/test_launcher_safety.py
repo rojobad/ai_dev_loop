@@ -18,6 +18,7 @@ from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.launcher import (
     LauncherOutcome,
     LauncherRecord,
+    detached_worker_environment,
     mark_launcher_finished,
     process_identity_matches,
     read_launcher_policy,
@@ -62,6 +63,34 @@ def _prepare_ab(git_repo: Path):
                 codex_review_reasoning_effort="high",
             )
         )
+
+
+def test_detached_worker_environment_drops_drvfs_codex_state_only() -> None:
+    environment = detached_worker_environment(
+        {
+            "CODEX_HOME": "/mnt/c/Users/WinUser/.codex",
+            "CODEX_SQLITE_HOME": "/mnt/c/Users/WinUser/.codex/state.sqlite",
+            "PATH": "/usr/local/bin:/usr/bin",
+            "FAKE_CODEX_REVIEW_MODE": "no_findings",
+        }
+    )
+
+    assert "CODEX_HOME" not in environment
+    assert "CODEX_SQLITE_HOME" not in environment
+    assert environment["PATH"] == "/usr/local/bin:/usr/bin"
+    assert environment["FAKE_CODEX_REVIEW_MODE"] == "no_findings"
+
+
+def test_detached_worker_environment_preserves_native_wsl_overrides() -> None:
+    environment = detached_worker_environment(
+        {
+            "CODEX_HOME": "/home/reviewer/.codex",
+            "CODEX_SQLITE_HOME": "/var/lib/reviewer-codex",
+        }
+    )
+
+    assert environment["CODEX_HOME"] == "/home/reviewer/.codex"
+    assert environment["CODEX_SQLITE_HOME"] == "/var/lib/reviewer-codex"
 
 
 def test_immediate_exit_worker_does_not_leave_running_record(

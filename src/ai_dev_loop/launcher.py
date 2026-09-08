@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -31,6 +32,7 @@ LAUNCHER_STDERR_REL_PATH = Path("logs/launcher.stderr.txt")
 
 WORKER_READY_TIMEOUT_SECONDS = 30.0
 WORKER_READY_POLL_SECONDS = 0.05
+_CODEX_WSL_STATE_ENV_KEYS = ("CODEX_HOME", "CODEX_SQLITE_HOME")
 
 
 class LauncherOutcome(StrEnum):
@@ -76,6 +78,25 @@ class SerializedLaunchPolicy:
 
     update_mode: str  # "always" | "never"
     allow_incompatible: bool = False
+
+
+def detached_worker_environment(
+    base_environment: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Keep detached Codex work on native WSL state, not inherited DrvFS state.
+
+    Codex Desktop may propagate Windows ``CODEX_HOME`` values into WSL. A
+    detached fresh reviewer must use the native CLI's authentication, SQLite
+    state, configuration, and sessions instead. Native WSL overrides remain
+    supported for users who deliberately configure them.
+    """
+
+    environment = dict(os.environ if base_environment is None else base_environment)
+    for key in _CODEX_WSL_STATE_ENV_KEYS:
+        value = environment.get(key, "").strip()
+        if value.startswith("/mnt/"):
+            environment.pop(key, None)
+    return environment
 
 
 def launcher_path(run_directory: Path) -> Path:
@@ -441,6 +462,7 @@ def spawn_detached_worker(
             stdout=stdout_handle,
             stderr=stderr_handle,
             cwd=str(run_directory),
+            env=detached_worker_environment(),
             shell=False,
             start_new_session=True,
             close_fds=True,
