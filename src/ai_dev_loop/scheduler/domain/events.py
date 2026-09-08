@@ -16,6 +16,9 @@ SUBMITTED_EVENT_KIND = "run_submitted"
 AUTHORIZED_EVENT_KIND = "run_authorized"
 TIMER_FIRED_EVENT_KIND = "timer_fired"
 SYNTHETIC_EFFECT_COMPLETED_EVENT_KIND = "synthetic_effect_completed"
+ATTEMPT_LAUNCH_REQUESTED_EVENT_KIND = "attempt_launch_requested"
+ATTEMPT_COMPLETED_EVENT_KIND = "attempt_completed"
+ATTEMPT_UNCERTAIN_EVENT_KIND = "attempt_uncertain"
 TICK_STALE_REJECTED_EVENT_KIND = "tick_stale_rejected"
 
 
@@ -107,6 +110,58 @@ class SyntheticEffectCompletedEvent(DomainModel):
         return value
 
 
+class AttemptLaunchRequestedEvent(DomainModel):
+    kind: str = Field(default=ATTEMPT_LAUNCH_REQUESTED_EVENT_KIND)
+    run_id: str
+    attempt_id: str
+    dispatch_id: str
+    claim_id: str
+    unit_identity: str
+    launch_nonce: str
+    launch_intent_sha256: str
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_attempt_launch_requested(cls, value: str) -> str:
+        if value != ATTEMPT_LAUNCH_REQUESTED_EVENT_KIND:
+            raise ValueError("kind must be attempt_launch_requested")
+        return value
+
+
+class AttemptCompletedEvent(DomainModel):
+    kind: str = Field(default=ATTEMPT_COMPLETED_EVENT_KIND)
+    run_id: str
+    attempt_id: str
+    dispatch_id: str
+    claim_id: str
+    completion_fence_id: str
+    termination_class: NonEmptyStr
+    exit_code: int
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_attempt_completed(cls, value: str) -> str:
+        if value != ATTEMPT_COMPLETED_EVENT_KIND:
+            raise ValueError("kind must be attempt_completed")
+        return value
+
+
+class AttemptUncertainEvent(DomainModel):
+    kind: str = Field(default=ATTEMPT_UNCERTAIN_EVENT_KIND)
+    run_id: str
+    attempt_id: str
+    dispatch_id: str
+    claim_id: str
+    safe_summary: NonEmptyStr
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_attempt_uncertain(cls, value: str) -> str:
+        if value != ATTEMPT_UNCERTAIN_EVENT_KIND:
+            raise ValueError("kind must be attempt_uncertain")
+        return value
+
+
 class TickStaleRejectedEvent(DomainModel):
     kind: str = Field(default=TICK_STALE_REJECTED_EVENT_KIND)
     run_id: str
@@ -139,6 +194,9 @@ SchedulerEvent = Annotated[
     | Annotated[WorktreeAdmissionBlockedEvent, Tag(ADMISSION_BLOCKED_EVENT_KIND)]
     | Annotated[TimerFiredEvent, Tag(TIMER_FIRED_EVENT_KIND)]
     | Annotated[SyntheticEffectCompletedEvent, Tag(SYNTHETIC_EFFECT_COMPLETED_EVENT_KIND)]
+    | Annotated[AttemptLaunchRequestedEvent, Tag(ATTEMPT_LAUNCH_REQUESTED_EVENT_KIND)]
+    | Annotated[AttemptCompletedEvent, Tag(ATTEMPT_COMPLETED_EVENT_KIND)]
+    | Annotated[AttemptUncertainEvent, Tag(ATTEMPT_UNCERTAIN_EVENT_KIND)]
     | Annotated[TickStaleRejectedEvent, Tag(TICK_STALE_REJECTED_EVENT_KIND)],
     Discriminator(_scheduler_event_discriminator),
 ]

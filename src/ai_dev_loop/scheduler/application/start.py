@@ -107,7 +107,7 @@ class StartService:
                     "authorization lost a concurrent state update",
                 )
             dispatch_id = self._dispatch_id_factory()
-            self.store.insert_synthetic_self_test_effect(
+            self.store.insert_fake_agent_self_test_effect(
                 conn,
                 dispatch_id=dispatch_id,
                 source_event_id=event_id,

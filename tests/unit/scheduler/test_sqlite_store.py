@@ -57,6 +57,11 @@ def test_bootstrap_empty_and_reopen(tmp_path: Path) -> None:
             "SELECT checksum FROM scheduler_schema_migrations WHERE version=2"
         ).fetchone()
         assert row2[0] == migration_checksum(2)
+        row3 = conn.execute(
+            "SELECT checksum FROM scheduler_schema_migrations WHERE version=3"
+        ).fetchone()
+        assert row3 is not None
+        assert row3[0] == migration_checksum(3)
         capacity = conn.execute(
             "SELECT max_value FROM scheduler_capacity WHERE capacity_name = ?",
             (CAPACITY_NAME,),

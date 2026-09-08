@@ -9,6 +9,10 @@ from pathlib import Path
 
 from tests.unit.scheduler.helpers import CONTROLLER_SESSION, sample_submitted_state
 
+from ai_dev_loop.scheduler.application.fake_attempt_backend import (
+    FakeAgentProcessBackend,
+    FakeAttemptScenario,
+)
 from ai_dev_loop.scheduler.application.git_admission import GitAdmissionEvidence, GitAdmissionResult
 from ai_dev_loop.scheduler.application.start import StartService
 from ai_dev_loop.scheduler.application.tick import TickService
@@ -136,19 +140,35 @@ def test_tick_service_has_no_subprocess_or_sleep() -> None:
                 raise AssertionError("TickService must not invoke subprocess")
 
 
+def _tick_service(
+    store: SqliteSchedulerStore,
+    artifacts: ProtectedArtifactStore,
+    fake_git: FakeGitAdmissionPort,
+    *,
+    now: datetime | None = None,
+    owner: str = "tick-owner-a",
+    attempt_backend: FakeAgentProcessBackend | None = None,
+) -> TickService:
+    backend = attempt_backend or FakeAgentProcessBackend()
+    base = now or datetime(2026, 9, 4, 12, 2, tzinfo=UTC)
+    return TickService(
+        store,
+        artifacts,
+        fake_git,
+        now_factory=lambda: base,
+        tick_owner_factory=lambda: owner,
+        event_id_factory=_event_ids(),
+        claim_id_factory=_claim_ids(),
+        attempt_id_factory=lambda: "att-" + "a" * 32,
+        attempt_backend=backend,
+    )
+
+
 def test_authorized_tick_admits_with_fake_git(tmp_path: Path) -> None:
     repo_root = str(tmp_path / "repo")
     store, artifacts, run_id = _bootstrap_run(tmp_path, repo_root=repo_root)
     fake = FakeGitAdmissionPort(resolved_root=repo_root)
-    tick = TickService(
-        store,
-        artifacts,
-        fake,
-        now_factory=lambda: datetime(2026, 9, 4, 12, 2, tzinfo=UTC),
-        tick_owner_factory=lambda: "tick-owner-a",
-        event_id_factory=_event_ids(),
-        claim_id_factory=_claim_ids(),
-    )
+    tick = _tick_service(store, artifacts, fake)
     receipt = tick.run_once()
     assert receipt.lease_acquired is True
     assert any(item.action == "admitted" for item in receipt.run_receipts)
@@ -163,15 +183,7 @@ def test_admission_blocks_dirty_worktree(tmp_path: Path) -> None:
     repo_root = str(tmp_path / "repo")
     store, artifacts, run_id = _bootstrap_run(tmp_path, repo_root=repo_root)
     fake = FakeGitAdmissionPort(resolved_root=repo_root, status_porcelain="?? dirty.txt")
-    tick = TickService(
-        store,
-        artifacts,
-        fake,
-        now_factory=lambda: datetime(2026, 9, 4, 12, 2, tzinfo=UTC),
-        tick_owner_factory=lambda: "tick-owner-a",
-        event_id_factory=_event_ids(),
-        claim_id_factory=_claim_ids(),
-    )
+    tick = _tick_service(store, artifacts, fake)
     receipt = tick.run_once()
     assert any(item.action == "blocked" for item in receipt.run_receipts)
     with store.begin_read() as conn:
@@ -190,15 +202,7 @@ def test_admission_allows_dirty_when_not_required(tmp_path: Path) -> None:
         resolved_root=repo_root,
         status_porcelain="?? dirty.txt",
     )
-    tick = TickService(
-        store,
-        artifacts,
-        fake,
-        now_factory=lambda: datetime(2026, 9, 4, 12, 2, tzinfo=UTC),
-        tick_owner_factory=lambda: "tick-owner-a",
-        event_id_factory=_event_ids(),
-        claim_id_factory=_claim_ids(),
-    )
+    tick = _tick_service(store, artifacts, fake)
     receipt = tick.run_once()
     assert any(item.action == "admitted" for item in receipt.run_receipts)
 
@@ -228,6 +232,7 @@ def test_empty_tick_on_queued_run_only(tmp_path: Path) -> None:
         FakeGitAdmissionPort(),
         now_factory=lambda: datetime(2026, 9, 4, 12, 2, tzinfo=UTC),
         tick_owner_factory=lambda: "tick-owner-a",
+        attempt_backend=None,
     )
     receipt = tick.run_once()
     assert receipt.visited_runs == 1
@@ -254,22 +259,17 @@ def test_tick_lease_contention_while_active(tmp_path: Path) -> None:
         assert second is None
 
 
-def test_synthetic_effect_claims_and_releases_capacity(tmp_path: Path) -> None:
+def test_fake_agent_attempt_claims_and_releases_capacity(tmp_path: Path) -> None:
     repo_root = str(tmp_path / "repo")
     store, artifacts, run_id = _bootstrap_run(tmp_path, repo_root=repo_root)
-    fake = FakeGitAdmissionPort(resolved_root=repo_root)
-    tick = TickService(
-        store,
-        artifacts,
-        fake,
-        now_factory=lambda: datetime(2026, 9, 4, 12, 2, tzinfo=UTC),
-        tick_owner_factory=lambda: "tick-owner-a",
-        event_id_factory=_event_ids(),
-        claim_id_factory=_claim_ids(),
-    )
+    fake_git = FakeGitAdmissionPort(resolved_root=repo_root)
+    backend = FakeAgentProcessBackend(default_scenario=FakeAttemptScenario(active_ticks=0))
+    tick = _tick_service(store, artifacts, fake_git, attempt_backend=backend)
     receipt = tick.run_once()
     assert any(item.action == "admitted" for item in receipt.run_receipts)
-    assert any(item.action == "synthetic_effect_completed" for item in receipt.run_receipts)
+    assert any(item.action == "attempt_launched" for item in receipt.run_receipts)
+    receipt2 = tick.run_once()
+    assert any(item.action == "attempt_completed" for item in receipt2.run_receipts)
     with store.begin_read() as conn:
         capacity = store.get_capacity_row(conn)
         assert capacity["holder_run_id"] is None

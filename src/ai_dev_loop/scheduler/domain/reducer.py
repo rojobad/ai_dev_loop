@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from ai_dev_loop.scheduler.domain.events import (
+    AttemptCompletedEvent,
+    AttemptLaunchRequestedEvent,
+    AttemptUncertainEvent,
     RunAuthorizedEvent,
     RunSubmittedEvent,
     SyntheticEffectCompletedEvent,
@@ -135,4 +138,31 @@ def apply_synthetic_effect_completed(
         raise ValueError("event run_id disagrees with state")
     if state.kind != "admitted":
         raise ValueError("synthetic_effect_completed applies only to admitted runs")
+    return state
+
+
+def apply_attempt_launch_requested(
+    state: AdmittedState,
+    event: AttemptLaunchRequestedEvent,
+) -> AdmittedState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    return state
+
+
+def apply_attempt_completed(
+    state: AdmittedState,
+    event: AttemptCompletedEvent,
+) -> AdmittedState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    return state
+
+
+def apply_attempt_uncertain(
+    state: AdmittedState,
+    event: AttemptUncertainEvent,
+) -> AdmittedState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
     return state

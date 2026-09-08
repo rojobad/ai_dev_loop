@@ -8,6 +8,12 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ai_dev_loop.scheduler.application.attempt_backend import AgentProcessBackend
+from ai_dev_loop.scheduler.application.attempt_service import (
+    AttemptService,
+    default_attempt_id_factory,
+    default_launch_nonce_factory,
+)
 from ai_dev_loop.scheduler.application.contracts import (
     TickReceipt,
     TickRunReceipt,
@@ -56,6 +62,10 @@ class TickService:
         tick_owner_factory: Callable[[], str] | None = None,
         event_id_factory: Callable[[], str] | None = None,
         claim_id_factory: Callable[[], str] | None = None,
+        attempt_id_factory: Callable[[], str] | None = None,
+        fence_id_factory: Callable[[], str] | None = None,
+        launch_nonce_factory: Callable[[], str] | None = None,
+        attempt_backend: AgentProcessBackend | None = None,
         lease_ttl_seconds: int = DEFAULT_TICK_LEASE_SECONDS,
     ) -> None:
         self.store = store
@@ -65,7 +75,23 @@ class TickService:
         self._tick_owner_factory = tick_owner_factory or (lambda: f"tick-{secrets.token_hex(8)}")
         self._event_id_factory = event_id_factory or (lambda: f"evt-{secrets.token_hex(16)}")
         self._claim_id_factory = claim_id_factory or (lambda: f"clm-{secrets.token_hex(16)}")
+        self._attempt_id_factory = attempt_id_factory or default_attempt_id_factory()
+        self._fence_id_factory = fence_id_factory or (lambda: f"fnc-{secrets.token_hex(16)}")
+        self._launch_nonce_factory = launch_nonce_factory or default_launch_nonce_factory()
         self._lease_ttl_seconds = lease_ttl_seconds
+        self._attempt_service: AttemptService | None = None
+        if attempt_backend is not None:
+            self._attempt_service = AttemptService(
+                store,
+                artifacts,
+                attempt_backend,
+                now_factory=self._now_factory,
+                event_id_factory=self._event_id_factory,
+                claim_id_factory=self._claim_id_factory,
+                attempt_id_factory=self._attempt_id_factory,
+                fence_id_factory=self._fence_id_factory,
+                launch_nonce_factory=self._launch_nonce_factory,
+            )
 
     def run_once(self) -> TickReceipt:
         owner_id = self._tick_owner_factory()
@@ -133,6 +159,14 @@ class TickService:
         admission_receipt = self._maybe_admit_run(tick_owner_id, tick_lease_generation, run_id)
         if admission_receipt is not None:
             receipts.append(admission_receipt)
+        if self._attempt_service is not None:
+            attempt_receipt = self._attempt_service.process_run(
+                tick_owner_id,
+                tick_lease_generation,
+                run_id,
+            )
+            if attempt_receipt is not None:
+                receipts.append(attempt_receipt)
         effect_receipt = self._maybe_run_synthetic_effect(
             tick_owner_id,
             tick_lease_generation,
@@ -939,15 +973,21 @@ def default_tick_service(
     db_path: Path | None = None,
     artifact_root: Path | None = None,
     git_admission: GitAdmissionPort | None = None,
+    attempt_backend: AgentProcessBackend | None = None,
 ) -> TickService:
     from ai_dev_loop.scheduler.application.git_admission import BoundedGitAdmissionPort
+    from ai_dev_loop.scheduler.application.systemd_backend import SystemdUserBackend
 
     store = SqliteSchedulerStore(db_path or default_engine_db_path())
     artifacts = ProtectedArtifactStore(artifact_root or default_artifact_root())
+    backend = attempt_backend
+    if backend is None:
+        backend = SystemdUserBackend()
     return TickService(
         store,
         artifacts,
         git_admission or BoundedGitAdmissionPort(),
+        attempt_backend=backend,
     )
 
 
@@ -956,9 +996,11 @@ def run_scheduler_tick(
     db_path: Path | None = None,
     artifact_root: Path | None = None,
     git_admission: GitAdmissionPort | None = None,
+    attempt_backend: AgentProcessBackend | None = None,
 ) -> TickReceipt:
     return default_tick_service(
         db_path=db_path,
         artifact_root=artifact_root,
         git_admission=git_admission,
+        attempt_backend=attempt_backend,
     ).run_once()

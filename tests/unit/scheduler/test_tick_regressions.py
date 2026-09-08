@@ -16,6 +16,10 @@ from tests.unit.scheduler.test_tick import (
 
 from ai_dev_loop.commands.controller import controller_status
 from ai_dev_loop.process import ProcessResult
+from ai_dev_loop.scheduler.application.fake_attempt_backend import (
+    FakeAgentProcessBackend,
+    FakeAttemptScenario,
+)
 from ai_dev_loop.scheduler.application.git_admission import (
     BoundedGitAdmissionPort,
     GitAdmissionResult,
@@ -49,6 +53,10 @@ def _tick(
         tick_owner_factory=lambda: owner,
         event_id_factory=_event_ids(),
         claim_id_factory=_claim_ids(),
+        attempt_id_factory=lambda: "att-" + "a" * 32,
+        attempt_backend=FakeAgentProcessBackend(
+            default_scenario=FakeAttemptScenario(active_ticks=0)
+        ),
         lease_ttl_seconds=lease_ttl,
     )
 
@@ -154,8 +162,13 @@ def test_stale_capacity_holder_reconciled_before_effect(tmp_path: Path) -> None:
             generation=old_generation,
             now=now,
         )
-    receipt = _tick(store, artifacts, fake, now=now + timedelta(seconds=1)).run_once()
-    assert any(item.action == "synthetic_effect_completed" for item in receipt.run_receipts)
+    tick = _tick(store, artifacts, fake, now=now + timedelta(seconds=1))
+    receipt = tick.run_once()
+    assert any(
+        item.action in {"attempt_launched", "attempt_adopted"} for item in receipt.run_receipts
+    )
+    receipt2 = tick.run_once()
+    assert any(item.action == "attempt_completed" for item in receipt2.run_receipts)
     with store.begin_read() as conn:
         capacity = store.get_capacity_row(conn)
         assert capacity["holder_run_id"] is None
@@ -441,12 +454,17 @@ def test_admission_port_failure_blocks_and_allows_single_git_call(tmp_path: Path
 def test_complete_claimed_effect_requires_exact_run_version(tmp_path: Path) -> None:
     repo_root = str(tmp_path / "repo")
     store, artifacts, run_id = _bootstrap_run(tmp_path, repo_root=repo_root)
-    receipt = _tick(
+    tick = _tick(
         store,
         artifacts,
         FakeGitAdmissionPort(resolved_root=repo_root),
-    ).run_once()
-    assert any(item.action == "synthetic_effect_completed" for item in receipt.run_receipts)
+    )
+    receipt = tick.run_once()
+    assert any(
+        item.action in {"attempt_launched", "attempt_adopted"} for item in receipt.run_receipts
+    )
+    receipt2 = tick.run_once()
+    assert any(item.action == "attempt_completed" for item in receipt2.run_receipts)
     now = datetime(2026, 9, 4, 12, 3, tzinfo=UTC)
     with store.begin_immediate() as conn:
         state, version, _ = store.load_validated_snapshot(conn, run_id)
