@@ -123,6 +123,11 @@ workspace-write
 danger-full-access
 ```
 
+En el flujo controller A con reviewer B fresh, el runner no pasa `--sandbox` a
+Codex. Por tanto, este campo no determina sus permisos: B usa la politica del
+perfil o la configuracion local de Codex. El campo sigue aplicando a los flujos
+legacy/direct y PR-review v2 que lo propagan al comando.
+
 Valores soportados de `review_reasoning_effort`:
 
 ```text
@@ -139,7 +144,7 @@ Los overrides son independientes: puedes fijar solo el modelo, solo el reasoning
 
 `prepare` congela valores de sesion, valores efectivos y procedencia (`session` o `explicit`). Cambiar `ai_dev_loop.yaml` o el rollout despues no altera un run ya preparado; prepara un run nuevo.
 
-Forma de review para runs nuevos (argv separados, sin shell):
+Forma de review para flujos legacy/direct y PR-review v2 (argv separados, sin shell):
 
 ```text
 codex exec --cd <repo> --sandbox <sandbox> resume --model <model> -c model_reasoning_effort="high" --json --output-schema <schema> --output-last-message <result.json> <session-id> -

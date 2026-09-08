@@ -115,9 +115,11 @@ Sin el ciclo GitHub, el usuario decide manualmente si commitea despues de revisa
 - En runs controller A frescos, A elige `--codex-review-model` y
   `--codex-review-reasoning-effort` en `prepare`/`scheduler submit`; no hay
   fallback desde YAML, sesion preexistente ni default de CLI en review time.
-  El worker crea exactamente un B read-only en el primer review (`codex exec`
-  sin `resume`, sin `--last`), captura su session ID y los reviews posteriores
-  usan `codex exec resume <exact-id>` con el mismo modelo y reasoning congelados.
+  El worker crea exactamente un B sin pasar `--sandbox` en el primer review
+  (`codex exec` sin `resume`, sin `--last`), captura su session ID y los reviews
+  posteriores usan `codex exec resume <exact-id>` con el mismo modelo y reasoning
+  congelados. La politica efectiva de permisos de B proviene del perfil o la
+  configuracion local de Codex.
 - En runs legacy/direct o session-bound historicos, `prepare` congela
   `--codex-session-id`, captura modelo y reasoning de esa sesion cuando aplica,
   y cada review usa `codex exec resume <exact-id>`.

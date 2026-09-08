@@ -47,7 +47,7 @@ Opciones principales:
 `--codex-review-model` y `--codex-review-reasoning-effort` congela el reviewer B
 del flujo controller A. Son obligatorios con `--controller-session-id` y no
 admiten `--codex-session-id`: B no existe en `prepare`; el worker lo crea en el
-primer review con `codex exec` read-only y congela la identidad capturada para
+primer review con `codex exec` sin `--sandbox` y congela la identidad capturada para
 los reviews posteriores (`codex exec resume <exact-id>`).
 
 En el flujo controller A actual, `--controller-session-id` es el session ID
@@ -99,7 +99,7 @@ objetivo. Resuelve solo la raiz canonica del worktree (marcador `.git`) y congel
 inputs inmutables; no ejecuta Git CLI ni escribe baseline de estado. No crea
 reviewer B; congela `--controller-session-id`, `--codex-review-model` y
 `--codex-review-reasoning-effort` como inputs inmutables. El primer review del
-scheduler (Phase 17.5) creara exactamente un B read-only y los reviews posteriores
+scheduler (Phase 17.5) creara exactamente un B sin `--sandbox` y los reviews posteriores
 reanudaran esa identidad.
 
 La admision del worktree (`require_clean_worktree`, branch, HEAD y status) ocurre

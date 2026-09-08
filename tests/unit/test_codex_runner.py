@@ -9,6 +9,8 @@ import pytest
 
 from ai_dev_loop.review_result import CodexReviewResult
 from ai_dev_loop.runners.codex import (
+    build_codex_bootstrap_args,
+    build_codex_resume_args,
     build_codex_review_args,
     build_review_wrapper_prompt,
     redact_codex_args,
@@ -628,6 +630,33 @@ def _fresh_sample_state() -> RunState:
             ),
         }
     )
+
+
+def test_fresh_bootstrap_args_omit_sandbox(tmp_path: Path) -> None:
+    codex = _fresh_sample_state().codex
+    args = build_codex_bootstrap_args(
+        codex,
+        repo_root="/tmp/repo",
+        schema_file=tmp_path / "schema.json",
+        result_file=tmp_path / "result.json",
+    )
+
+    assert args[:4] == ["codex", "exec", "--cd", "/tmp/repo"]
+    assert "--sandbox" not in args
+
+
+def test_fresh_resume_args_omit_sandbox(tmp_path: Path) -> None:
+    codex = _fresh_sample_state().codex
+    args = build_codex_resume_args(
+        codex,
+        repo_root="/tmp/repo",
+        session_id="019def00-0000-0000-0000-0000000000bb",
+        schema_file=tmp_path / "schema.json",
+        result_file=tmp_path / "result.json",
+    )
+
+    assert args[:5] == ["codex", "exec", "--cd", "/tmp/repo", "resume"]
+    assert "--sandbox" not in args
 
 
 def test_fresh_bootstrap_persists_state_before_review_result_processing(

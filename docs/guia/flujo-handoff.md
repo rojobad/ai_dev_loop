@@ -2,8 +2,8 @@
 
 El handoff conecta una sesion interactiva de Codex con el loop automatizado. En el
 flujo controller A recomendado, la sesion de planificacion (A) prepara el run con
-modelo y reasoning congelados; el worker crea un unico reviewer B read-only en el
-primer review y reanuda solo esa identidad despues.
+modelo y reasoning congelados; el worker crea un unico reviewer B sin pasar un
+sandbox explicito en el primer review y reanuda solo esa identidad despues.
 
 ## Flujo controller A (fresh B)
 
@@ -14,7 +14,7 @@ primer review y reanuda solo esa identidad despues.
 5. Usa el skill global `ai-dev-loop-handoff`.
 6. Desde A, ejecuta `ai_dev_loop prepare` con `--controller-session-id`, `--codex-review-model` y `--codex-review-reasoning-effort` (sin `--codex-session-id`).
 7. Desde A, usa el skill `ai-dev-loop-controller` (o `ai_dev_loop launch`) para lanzar el worker local detachado.
-8. El worker crea B en el primer review (`codex exec` read-only), captura su session ID y lo reutiliza en reviews posteriores.
+8. El worker crea B en el primer review (`codex exec` sin `--sandbox`), captura su session ID y lo reutiliza en reviews posteriores.
 9. Desde A, consulta estado (`controller status`), aborta si hace falta e inspecciona cambios staged y artefactos.
 
 No hay notificaciones automaticas al movil ni a ChatGPT: el estado se pide desde A cuando hace falta.
@@ -31,7 +31,7 @@ ai_dev_loop launch <run-id> --controller-session-id "<exact-controller-session-i
 | Sesion | Rol | Acciones |
 | --- | --- | --- |
 | A (controller) | Planificacion y control | `prepare`, `launch`, `extend`, `controller status`, `abort`, inspeccion read-only |
-| B (reviewer) | Creado por el worker en el primer review | Solo reviews read-only; nunca controla el run |
+| B (reviewer) | Creado por el worker en el primer review | Solo revisa; nunca controla el run |
 
 Todo review automatizado reanuda exactamente la identidad B capturada en el primer
 review. A nunca se pasa a `codex exec resume`.
