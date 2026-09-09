@@ -14,11 +14,11 @@ def test_load_skill_and_hook_assets() -> None:
     hook = assets.load_hook_script_content()
     assert "name: ai-dev-loop-handoff" in skill
     assert "name: ai-dev-loop-controller" in controller
-    assert "ai_dev_loop prepare" in skill
+    assert "scheduler submit" in skill
     assert "--codex-review-model" in skill
     assert "--codex-review-reasoning-effort" in skill
-    assert "ai_dev_loop start" in skill
-    assert "ai_dev_loop launch" in controller
+    assert "scheduler start" in controller
+    assert "scheduler abort" in controller
     assert "controller status" in controller
     assert "--last" in skill
     assert "hookSpecificOutput" in hook
@@ -61,8 +61,6 @@ def test_skill_guardrail_text_regression() -> None:
     assert "not" in handoff.lower() and "--codex-session-id" in handoff
     assert "controller status" in controller
     assert "staged patches" in controller or "review Markdown" in controller
-    assert "non-force push the prepared" in controller
-    assert "force-pushes, retargets" in controller
-    assert "pr-review prepare" in controller
-    assert "pr-review start" in handoff
-    assert "pr-review prepare" in handoff
+    assert "scheduler start" in controller
+    assert "scheduler submit" in handoff
+    assert "scheduler abort" in controller

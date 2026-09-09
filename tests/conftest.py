@@ -11,13 +11,9 @@ import sys
 import tempfile
 import textwrap
 from collections.abc import Iterator
-from io import StringIO
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
-
-from ai_dev_loop.commands.prepare import PrepareOptions, prepare_run
 
 FIXTURE_REPO = Path(__file__).resolve().parent / "fixtures" / "sample_repo"
 
@@ -825,31 +821,3 @@ def fixture_codex_session(isolated_home: Path, monkeypatch: pytest.MonkeyPatch) 
     write_session_rollout(codex_home / "sessions")
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
     return codex_home
-
-
-@pytest.fixture
-def prepared_run(
-    git_repo: Path,
-    isolated_xdg,
-    isolated_home,
-    fake_clis,
-    monkeypatch: pytest.MonkeyPatch,
-) -> dict[str, object]:
-    codex_home = isolated_home / ".codex"
-    sessions = codex_home / "sessions"
-    write_session_rollout(sessions)
-    monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
-    with patch("sys.stdin", StringIO(prompt)):
-        result = prepare_run(
-            PrepareOptions(
-                repo_path=git_repo,
-                plan_path=Path("docs/plans/sample-plan.md"),
-                prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
-                codex_session_id=DEFAULT_FIXTURE_SESSION_ID,
-            )
-        )
-    from ai_dev_loop.paths import run_dir
-
-    run_path = run_dir("fixture-project", result.run_id)
-    return {"run_id": result.run_id, "run_path": run_path, "repo": git_repo}

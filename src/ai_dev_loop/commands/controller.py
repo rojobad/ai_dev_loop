@@ -6,13 +6,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from ai_dev_loop.abort_control import abort_control_summary
-from ai_dev_loop.commands.status import render_status
-from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.integrations.codex.session_runtime import require_codex_session_id
-from ai_dev_loop.launcher import launcher_summary
-from ai_dev_loop.resume_planner import TERMINAL_STATUSES
-from ai_dev_loop.run_discovery import find_runs_for_controller, load_run
 from ai_dev_loop.runners.git import discover_repository
 from ai_dev_loop.scheduler.application.contracts import (
     ControllerSchedulerCandidate,
@@ -26,7 +20,6 @@ from ai_dev_loop.scheduler.application.controller_read import (
     load_scheduler_candidate,
 )
 from ai_dev_loop.scheduler.domain.state import SCHEDULER_ABORTABLE_STATE_KINDS
-from ai_dev_loop.state import RunState, RunStatus, shorten_session_id
 
 
 @dataclass(frozen=True)
@@ -41,7 +34,6 @@ class ControllerStatusResult:
     next_safe_action: str
     last_error: str | None
     result: str | None
-    launcher: dict[str, object]
     abort_control: dict[str, object] | None
     controller_session_id: str
     reviewer_session_id: str | None
@@ -78,38 +70,13 @@ def controller_status(
                 repo_root=repo_root,
                 message=scheduler_read_failure,
             )
-        legacy_match: tuple[Path, RunState] | None = None
-        try:
-            run_directory, state = load_run(run_id)
-            _require_controller_match(state, controller_id=controller_id, repo_root=repo_root)
-            legacy_match = (run_directory, state)
-        except ValidationError:
-            legacy_match = None
-        source_count = int(scheduler_candidate is not None) + int(legacy_match is not None)
-        if source_count == 0:
+        if scheduler_candidate is None:
             return _empty_controller_result(controller_id=controller_id, repo_root=repo_root)
-        if source_count > 1:
-            return _ambiguous_controller_result(
-                controller_id=controller_id,
-                repo_root=repo_root,
-                candidate_run_ids=[run_id],
-                match_count=source_count,
-            )
-        if scheduler_candidate is not None:
-            return _build_scheduler_result(
-                candidate=scheduler_candidate,
-                controller_id=controller_id,
-                match_count=1,
-                candidate_run_ids=[scheduler_candidate.run_id],
-            )
-        assert legacy_match is not None
-        run_directory, state = legacy_match
-        return _build_result(
-            state=state,
-            run_directory=run_directory,
+        return _build_scheduler_result(
+            candidate=scheduler_candidate,
             controller_id=controller_id,
             match_count=1,
-            candidate_run_ids=[state.run_id],
+            candidate_run_ids=[scheduler_candidate.run_id],
         )
 
     try:
@@ -126,38 +93,21 @@ def controller_status(
                 message="scheduler run snapshot is corrupt; inspect engine artifacts manually",
             )
         raise
-    legacy_matches = find_runs_for_controller(
-        controller_session_id=controller_id,
-        repository_root=repo_root,
-        include_terminal=include_terminal,
-    )
-    combined_count = len(scheduler_matches) + len(legacy_matches)
-    if combined_count == 0:
+    if not scheduler_matches:
         return _empty_controller_result(controller_id=controller_id, repo_root=repo_root)
-    if combined_count > 1 or (scheduler_matches and legacy_matches):
-        candidate_ids = [candidate.run_id for candidate in scheduler_matches] + [
-            state.run_id for _, state in legacy_matches
-        ]
+    if len(scheduler_matches) > 1:
+        candidate_ids = [candidate.run_id for candidate in scheduler_matches]
         return _ambiguous_controller_result(
             controller_id=controller_id,
             repo_root=repo_root,
             candidate_run_ids=candidate_ids,
-            match_count=combined_count,
+            match_count=len(scheduler_matches),
         )
-    if scheduler_matches:
-        return _build_scheduler_result(
-            candidate=scheduler_matches[0],
-            controller_id=controller_id,
-            match_count=1,
-            candidate_run_ids=[scheduler_matches[0].run_id],
-        )
-    run_directory, state = legacy_matches[0]
-    return _build_result(
-        state=state,
-        run_directory=run_directory,
+    return _build_scheduler_result(
+        candidate=scheduler_matches[0],
         controller_id=controller_id,
         match_count=1,
-        candidate_run_ids=[state.run_id],
+        candidate_run_ids=[scheduler_matches[0].run_id],
     )
 
 
@@ -204,12 +154,6 @@ def _read_failure_result(
         next_safe_action=message,
         last_error=None,
         result=None,
-        launcher={
-            "launcher_registered": False,
-            "launcher_live": False,
-            "launcher_stale": False,
-            "launcher_outcome": None,
-        },
         abort_control=None,
         controller_session_id=controller_id,
         reviewer_session_id=None,
@@ -232,18 +176,12 @@ def _empty_controller_result(
         current_review_iteration=None,
         max_review_iterations=None,
         next_safe_action=(
-            "No matching non-terminal run for this controller session and repository. "
+            "No matching non-terminal scheduler run for this controller session and repository. "
             "Confirm the exact controller session ID and repository path, or pass "
             "--run-id to disambiguate a known run."
         ),
         last_error=None,
         result=None,
-        launcher={
-            "launcher_registered": False,
-            "launcher_live": False,
-            "launcher_stale": False,
-            "launcher_outcome": None,
-        },
         abort_control=None,
         controller_session_id=controller_id,
         reviewer_session_id=None,
@@ -268,18 +206,12 @@ def _ambiguous_controller_result(
         current_review_iteration=None,
         max_review_iterations=None,
         next_safe_action=(
-            f"Multiple matching runs ({resolved_match_count}). Pass --run-id with one of: "
+            f"Multiple matching scheduler runs ({resolved_match_count}). Pass --run-id with one of: "
             + ", ".join(candidate_run_ids)
             + ". Do not choose a run by timestamp."
         ),
         last_error=None,
         result=None,
-        launcher={
-            "launcher_registered": False,
-            "launcher_live": False,
-            "launcher_stale": False,
-            "launcher_outcome": None,
-        },
         abort_control=None,
         controller_session_id=controller_id,
         reviewer_session_id=None,
@@ -329,12 +261,6 @@ def _build_scheduler_result(
         next_safe_action=next_action,
         last_error=None,
         result=None,
-        launcher={
-            "launcher_registered": False,
-            "launcher_live": False,
-            "launcher_stale": False,
-            "launcher_outcome": None,
-        },
         abort_control=abort_control,
         controller_session_id=controller_id,
         reviewer_session_id=None,
@@ -345,77 +271,6 @@ def _build_scheduler_result(
         cursor_wait_until=candidate.cursor_wait_until,
         block_reason_kind=candidate.block_reason_kind,
         run_source="scheduler",
-    )
-
-
-def _require_controller_match(
-    state: RunState,
-    *,
-    controller_id: str,
-    repo_root: Path,
-) -> None:
-    if state.controller is None:
-        raise ValidationError(
-            "run has no controller metadata; controller status requires an A/B-prepared run"
-        )
-    if state.controller.controller_session_id != controller_id:
-        raise ValidationError("controller session id does not match the selected run")
-    if Path(state.repository.root).resolve() != repo_root:
-        raise ValidationError("repository path does not match the selected run repository root")
-
-
-def _build_result(
-    *,
-    state: RunState,
-    run_directory: Path,
-    controller_id: str,
-    match_count: int,
-    candidate_run_ids: list[str],
-) -> ControllerStatusResult:
-    # Reuse status next-action text without printing sensitive fields.
-    status_text = render_status(state.run_id, output="json")
-    status_payload = json.loads(status_text)
-    next_action = str(status_payload["next_safe_action"])
-    if (
-        state.status in {RunStatus.PREPARED, RunStatus.WAITING_FOR_CURSOR_FIX}
-        and state.controller is not None
-    ):
-        if state.codex.fresh_reviewer is not None:
-            next_action = (
-                "Launch from the controller session with "
-                f"ai_dev_loop launch {state.run_id} --controller-session-id <exact-controller-id>."
-            )
-        else:
-            next_action = (
-                "This run uses the retired session-bound A/B contract. Inspect only, "
-                "then prepare a fresh run."
-            )
-    launcher = launcher_summary(run_directory, run_id=state.run_id)
-    control = abort_control_summary(run_directory)
-    if launcher.get("launcher_live"):
-        next_action = (
-            "Detached worker is live. Wait, poll controller status again, or "
-            f"abort with ai_dev_loop abort {state.run_id}."
-        )
-    elif state.status in TERMINAL_STATUSES:
-        next_action = str(status_payload["next_safe_action"])
-    return ControllerStatusResult(
-        match_count=match_count,
-        run_id=state.run_id,
-        status=state.status.value,
-        project=state.project.name,
-        repository=state.repository.root,
-        current_review_iteration=state.workflow.current_review_iteration,
-        max_review_iterations=state.workflow.max_review_iterations,
-        next_safe_action=next_action,
-        last_error=state.last_error,
-        result=state.result,
-        launcher=launcher,
-        abort_control=control,
-        controller_session_id=controller_id,
-        reviewer_session_id=state.codex.session_id,
-        candidate_run_ids=candidate_run_ids,
-        run_source="legacy",
     )
 
 
@@ -433,7 +288,6 @@ def render_controller_status(result: ControllerStatusResult, *, output: str = "t
             "next_safe_action": result.next_safe_action,
             "last_error": result.last_error,
             "result": result.result,
-            "launcher": result.launcher,
             "abort_control": result.abort_control,
             "controller_session_id_prefix": result.controller_session_id[:8],
             "reviewer_session_id_prefix": None
@@ -452,7 +306,7 @@ def render_controller_status(result: ControllerStatusResult, *, output: str = "t
 
     lines = [
         "ai_dev_loop controller status",
-        f"Controller: {shorten_session_id(result.controller_session_id)}",
+        f"Controller: {result.controller_session_id[:8]}",
         f"Matches: {result.match_count}",
     ]
     if result.run_id is not None:
@@ -462,14 +316,8 @@ def render_controller_status(result: ControllerStatusResult, *, output: str = "t
                 f"Status: {result.status}",
                 f"Project: {result.project}",
                 f"Repository: {result.repository}",
-                (
-                    f"Review iteration: {result.current_review_iteration}/"
-                    f"{result.max_review_iterations}"
-                ),
             ]
         )
-        if result.reviewer_session_id:
-            lines.append(f"Reviewer: {shorten_session_id(result.reviewer_session_id)}")
         if result.run_source == "scheduler":
             lines.append(f"Scheduler state: {result.scheduler_state_kind}")
             if result.last_event_kind:
@@ -480,10 +328,6 @@ def render_controller_status(result: ControllerStatusResult, *, output: str = "t
                 lines.append(f"Block reason: {result.block_reason_kind}")
             if result.capacity_holder_run_id_prefix:
                 lines.append(f"Capacity holder prefix: {result.capacity_holder_run_id_prefix}")
-        launcher = result.launcher
-        lines.append(f"Worker live: {launcher.get('launcher_live')}")
-        if launcher.get("launcher_stale"):
-            lines.append(f"Worker stale: {launcher.get('stale_reason')}")
         if result.abort_control and result.abort_control.get("abort_requested"):
             lines.append("Abort request: pending")
         if result.abort_control and result.abort_control.get("active_process_registered"):

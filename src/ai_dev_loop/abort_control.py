@@ -123,6 +123,16 @@ def is_abort_requested(run_directory: Path) -> bool:
     return read_abort_request(run_directory) is not None
 
 
+def child_execution_aborted(
+    run_directory: Path,
+    *,
+    returncode: int,
+    timed_out: bool,
+) -> bool:
+    del returncode, timed_out
+    return is_abort_requested(run_directory)
+
+
 def _read_process_executable(pid: int) -> str | None:
     if pid <= 0:
         return None
@@ -199,7 +209,7 @@ def register_active_process(
     process_start_time: str | None = None,
     executable: str | None = None,
 ) -> ActiveProcess:
-    from ai_dev_loop.launcher import read_process_starttime
+    from ai_dev_loop.process import read_process_starttime
 
     component_value = (
         component
@@ -347,7 +357,7 @@ def validate_active_process_metadata(
 
     # Fail closed unless OS identity matches recorded starttime + executable.
     # A live PGID plus a stale matching parent lock alone is never enough.
-    from ai_dev_loop.launcher import read_process_pgid, read_process_starttime
+    from ai_dev_loop.process import read_process_pgid, read_process_starttime
 
     if (
         not str(getattr(active, "process_start_time", "") or "").strip()

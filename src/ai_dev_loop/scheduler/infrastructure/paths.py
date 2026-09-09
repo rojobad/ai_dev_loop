@@ -29,6 +29,10 @@ def default_engine_db_path() -> Path:
     return scheduler_state_dir() / DEFAULT_DB_FILENAME
 
 
+def engine_db_path_for_state_dir(state_root: Path) -> Path:
+    return state_root / DEFAULT_DB_FILENAME
+
+
 def default_artifact_root() -> Path:
     return scheduler_state_dir() / ARTIFACTS_DIRNAME
 

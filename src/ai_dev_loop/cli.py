@@ -2,21 +2,17 @@
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 import typer
 
 from ai_dev_loop import __version__
-from ai_dev_loop.commands.abort import render_abort_output, run_abort
 from ai_dev_loop.commands.config_cmd import run_validate_config
 from ai_dev_loop.commands.controller import controller_status, render_controller_status
 from ai_dev_loop.commands.doctor import render_doctor
-from ai_dev_loop.commands.extend import extend_review_iterations, render_extend_output
-from ai_dev_loop.commands.inspect import render_inspect
 from ai_dev_loop.commands.integrations import (
     CodexIntegrationTarget,
     collect_bridge_status,
@@ -31,24 +27,18 @@ from ai_dev_loop.commands.integrations import (
     render_uninstall_output,
     uninstall_integrations,
 )
-from ai_dev_loop.commands.launch import launch_run, render_launch_output
-from ai_dev_loop.commands.list_runs import render_list
-from ai_dev_loop.commands.logs import render_logs
-from ai_dev_loop.commands.prepare import PrepareOptions, prepare_run, render_prepare_output
-from ai_dev_loop.commands.recover import (
-    recover_run,
-    render_recovery_analysis,
-    render_recovery_result,
-)
-from ai_dev_loop.commands.resume import render_resume_output, resume_run
 from ai_dev_loop.commands.scheduler import (
     SubmitOptions,
+    render_cutover_cleanup_output,
     render_list_output,
     render_scheduler_abort_output,
     render_scheduler_history_output,
     render_status_output,
     render_submit_output,
     render_tick_output,
+    render_timer_disable_output,
+    render_timer_install_output,
+    render_timer_status_output,
     render_timer_validate_output,
     run_scheduler_tick,
     scheduler_abort_run,
@@ -63,11 +53,18 @@ from ai_dev_loop.commands.scheduler import (
 from ai_dev_loop.commands.scheduler import (
     start_run as start_scheduler_run,
 )
-from ai_dev_loop.commands.start import CODEX_TUI_WARNING, render_start_output, start_run
-from ai_dev_loop.commands.status import render_status
-from ai_dev_loop.errors import AiDevLoopError, CursorUsageLimitError
-from ai_dev_loop.recovery_planner import RecoveryAnalysis
-from ai_dev_loop.runners.cursor_failure import SAFE_USAGE_LIMIT_SUMMARY
+from ai_dev_loop.errors import AiDevLoopError
+from ai_dev_loop.paths import runs_dir
+from ai_dev_loop.scheduler.application.cutover_cleanup import (
+    CUTOVER_CONFIRMATION_TOKEN,
+    cutover_target_paths,
+    run_cutover_cleanup,
+)
+from ai_dev_loop.scheduler.application.timer_ops import (
+    disable_scheduler_timer,
+    install_scheduler_timer,
+    scheduler_timer_status,
+)
 
 app = typer.Typer(
     name="ai_dev_loop",
@@ -77,26 +74,23 @@ app = typer.Typer(
 )
 config_app = typer.Typer(help="Configuration commands.")
 controller_app = typer.Typer(help="Controller-session status and control helpers.")
-github_app = typer.Typer(help="Optional GitHub CLI integration checks.")
-pr_review_app = typer.Typer(
-    help=(
-        "Autonomous GitHub PR review cycle (SQLite-backed v2 engine). "
-        "create/prepare only freeze PreparedState; start is the sole external-effects gate."
-    ),
-)
 scheduler_app = typer.Typer(
     help=(
         "Central tick scheduler for local A/B runs. "
         "submit freezes a queued run; start authorizes it; tick reconciles one bounded pass."
     ),
 )
+cutover_app = typer.Typer(
+    help="Explicit destructive cleanup of retired legacy XDG state roots.",
+)
+timer_app = typer.Typer(help="Packaged systemd timer asset helpers (no auto-enable).")
 integrations_app = typer.Typer(help="Global Codex integration commands.")
 sessions_app = typer.Typer(help="Desktop session rollout bridge commands.")
 integrations_app.add_typer(sessions_app, name="sessions")
+scheduler_app.add_typer(cutover_app, name="cutover")
+scheduler_app.add_typer(timer_app, name="timer")
 app.add_typer(config_app, name="config")
 app.add_typer(controller_app, name="controller")
-app.add_typer(github_app, name="github")
-app.add_typer(pr_review_app, name="pr-review")
 app.add_typer(scheduler_app, name="scheduler")
 app.add_typer(integrations_app, name="integrations")
 
@@ -150,74 +144,6 @@ def _handle(fn: Callable[[], None]) -> None:
         raise typer.Exit(code=exc.exit_code) from exc
 
 
-def _tool_update_ask_callback() -> Callable[[Any], bool]:
-    from ai_dev_loop.runners.tool_updates import ToolUpdatePrompt
-
-    def ask_callback(prompt: ToolUpdatePrompt) -> bool:
-        typer.echo(
-            f"{prompt.tool} CLI may be incompatible with required model "
-            f"{prompt.required_model or '(unknown)'} "
-            f"(version={prompt.installed_version or 'unknown'}). "
-            f"{prompt.detail}"
-        )
-        return typer.confirm(
-            f"Run `{prompt.command} update` now?",
-            default=False,
-        )
-
-    return ask_callback
-
-
-def _maybe_offer_usage_limit_recovery(
-    *,
-    run_id: str,
-    tool_policy: Any,
-) -> bool:
-    """Offer interactive usage-limit recovery after locks are released.
-
-    Returns True when a successor was created and resume was attempted.
-    """
-
-    if not sys.stdin.isatty():
-        typer.echo(
-            f"{SAFE_USAGE_LIMIT_SUMMARY}\n"
-            f"Recover explicitly with:\n"
-            f"  ai_dev_loop recover {run_id} --cursor-model auto\n"
-            f"  ai_dev_loop resume <recovery-run-id>",
-            err=True,
-        )
-        return False
-
-    typer.echo(SAFE_USAGE_LIMIT_SUMMARY)
-    try:
-        approved = typer.confirm(
-            "Create a recovery successor that continues the same Cursor chat using model `auto`?",
-            default=False,
-        )
-    except (EOFError, KeyboardInterrupt):
-        approved = False
-
-    if not approved:
-        typer.echo(
-            "Recovery declined. Recover explicitly with:\n"
-            f"  ai_dev_loop recover {run_id} --cursor-model auto\n"
-            f"  ai_dev_loop resume <recovery-run-id>",
-            err=True,
-        )
-        return False
-
-    result = recover_run(run_id, cursor_model="auto")
-    if isinstance(result, RecoveryAnalysis):
-        typer.echo(render_recovery_analysis(result), nl=False)
-        raise AiDevLoopError("usage-limit recovery did not create a successor")
-
-    typer.echo(render_recovery_result(result), nl=False)
-    typer.echo(CODEX_TUI_WARNING)
-    resumed = resume_run(result.recovery_run_id, tool_policy=tool_policy)
-    typer.echo(render_resume_output(resumed), nl=False)
-    return True
-
-
 def version_callback(value: bool) -> None:
     if value:
         typer.echo(__version__)
@@ -232,132 +158,6 @@ def cli_root(
     ] = None,
 ) -> None:
     """ai_dev_loop orchestrator CLI."""
-
-
-@app.command("prepare")
-def prepare_command(
-    config_path: Annotated[
-        Path | None,
-        typer.Option("--config-path", help="Path to ai_dev_loop.yaml."),
-    ] = None,
-    project_name: Annotated[
-        str | None,
-        typer.Option("--project-name", help="Override project.name."),
-    ] = None,
-    repo_path: Annotated[
-        Path | None,
-        typer.Option("--repo-path", help="Target repository root."),
-    ] = None,
-    plan_path: Annotated[
-        Path | None,
-        typer.Option("--plan-path", help="Approved plan path inside the repository."),
-    ] = None,
-    prompt_source_path: Annotated[
-        Path | None,
-        typer.Option("--prompt-source-path", help="Prompt source path inside the repository."),
-    ] = None,
-    codex_session_id: Annotated[
-        str | None,
-        typer.Option(
-            "--codex-session-id",
-            help=(
-                "Exact active Codex session ID for legacy/direct prepare. "
-                "Rejected when --controller-session-id is set."
-            ),
-        ),
-    ] = None,
-    controller_session_id: Annotated[
-        str | None,
-        typer.Option(
-            "--controller-session-id",
-            help=(
-                "Exact controller Codex session ID for the fresh-B controller path. "
-                "Requires --codex-review-model and --codex-review-reasoning-effort; "
-                "do not pass --codex-session-id."
-            ),
-        ),
-    ] = None,
-    cursor_command: Annotated[
-        str | None,
-        typer.Option("--cursor-command", help="Override cursor.command."),
-    ] = None,
-    cursor_model: Annotated[
-        str | None,
-        typer.Option("--cursor-model", help="Override cursor.model."),
-    ] = None,
-    cursor_output_format: Annotated[
-        str | None,
-        typer.Option("--cursor-output-format", help="Override cursor.output_format."),
-    ] = None,
-    codex_command: Annotated[
-        str | None,
-        typer.Option("--codex-command", help="Override codex.command."),
-    ] = None,
-    codex_review_model: Annotated[
-        str | None,
-        typer.Option(
-            "--codex-review-model",
-            help=(
-                "Frozen Codex review model. Required with --controller-session-id; "
-                "no YAML or session fallback."
-            ),
-        ),
-    ] = None,
-    codex_review_reasoning_effort: Annotated[
-        str | None,
-        typer.Option(
-            "--codex-review-reasoning-effort",
-            help=(
-                "Frozen Codex review reasoning effort. Required with "
-                "--controller-session-id; no YAML or session fallback."
-            ),
-        ),
-    ] = None,
-    review_skill: Annotated[
-        str | None,
-        typer.Option("--review-skill", help="Override codex.review_skill."),
-    ] = None,
-    max_review_iterations: Annotated[
-        int | None,
-        typer.Option("--max-review-iterations", help="Override workflow.max_review_iterations."),
-    ] = None,
-    cursor_timeout_minutes: Annotated[
-        int | None,
-        typer.Option("--cursor-timeout-minutes", help="Override workflow.cursor_timeout_minutes."),
-    ] = None,
-    codex_timeout_minutes: Annotated[
-        int | None,
-        typer.Option("--codex-timeout-minutes", help="Override workflow.codex_timeout_minutes."),
-    ] = None,
-    output: OutputOption = DEFAULT_OUTPUT,
-) -> None:
-    """Prepare a run from stdin prompt content without starting the loop."""
-
-    def run() -> None:
-        options = PrepareOptions(
-            config_path=config_path,
-            project_name=project_name,
-            repo_path=repo_path,
-            plan_path=plan_path,
-            prompt_source_path=prompt_source_path,
-            codex_session_id=codex_session_id,
-            controller_session_id=controller_session_id,
-            cursor_command=cursor_command,
-            cursor_model=cursor_model,
-            cursor_output_format=cursor_output_format,
-            codex_command=codex_command,
-            codex_review_model=codex_review_model,
-            codex_review_reasoning_effort=codex_review_reasoning_effort,
-            review_skill=review_skill,
-            max_review_iterations=max_review_iterations,
-            cursor_timeout_minutes=cursor_timeout_minutes,
-            codex_timeout_minutes=codex_timeout_minutes,
-            output=output.value,
-        )
-        result = prepare_run(options)
-        typer.echo(render_prepare_output(result, output=output.value), nl=False)
-
-    _handle(run)
 
 
 @scheduler_app.command("submit")
@@ -382,24 +182,13 @@ def scheduler_submit_command(
         Path | None,
         typer.Option("--prompt-source-path", help="Prompt source path inside the repository."),
     ] = None,
-    codex_session_id: Annotated[
-        str | None,
-        typer.Option(
-            "--codex-session-id",
-            help=(
-                "Exact reviewer Codex session ID for legacy submits only. "
-                "Rejected for controller scheduler submit."
-            ),
-        ),
-    ] = None,
     controller_session_id: Annotated[
         str | None,
         typer.Option(
             "--controller-session-id",
             help=(
                 "Exact controller Codex session ID (required). Requires "
-                "--codex-review-model and --codex-review-reasoning-effort; "
-                "do not pass --codex-session-id."
+                "--codex-review-model and --codex-review-reasoning-effort."
             ),
         ),
     ] = None,
@@ -466,7 +255,7 @@ def scheduler_submit_command(
             repo_path=repo_path,
             plan_path=plan_path,
             prompt_source_path=prompt_source_path,
-            codex_session_id=codex_session_id,
+            codex_session_id=None,
             controller_session_id=controller_session_id,
             cursor_command=cursor_command,
             cursor_model=cursor_model,
@@ -579,8 +368,44 @@ def scheduler_history_command(
     _handle(run)
 
 
-timer_app = typer.Typer(help="Packaged systemd timer asset helpers (no auto-enable).")
-scheduler_app.add_typer(timer_app, name="timer")
+@cutover_app.command("cleanup")
+def scheduler_cutover_cleanup_command(
+    confirmation_token: Annotated[
+        str,
+        typer.Option(
+            "--confirm",
+            help=f"Required confirmation token: {CUTOVER_CONFIRMATION_TOKEN}",
+        ),
+    ],
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Validate targets and print paths without deleting."),
+    ] = False,
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Delete only the retired legacy XDG roots runs/ and pr-review-v2/."""
+
+    def run() -> None:
+        resolved_root, targets = cutover_target_paths()
+        announcement_to_stderr = output.value == OutputFormat.json
+        typer.echo(
+            "Legacy cutover cleanup will affect only these exact paths:",
+            err=announcement_to_stderr,
+        )
+        for path in targets:
+            typer.echo(f"  {path}", err=announcement_to_stderr)
+        typer.echo(
+            f"Preserved scheduler authority remains under: {resolved_root}",
+            err=announcement_to_stderr,
+        )
+        typer.echo(
+            f"Legacy runs helper path (may be absent): {runs_dir()}",
+            err=announcement_to_stderr,
+        )
+        result = run_cutover_cleanup(confirmation_token=confirmation_token, dry_run=dry_run)
+        typer.echo(render_cutover_cleanup_output(result, output=output.value), nl=False)
+
+    _handle(run)
 
 
 @timer_app.command("validate")
@@ -600,251 +425,45 @@ def scheduler_timer_validate_command(
     _handle(run)
 
 
-@app.command("launch")
-def launch_command(
-    run_id: Annotated[str, typer.Argument(help="Eligible A/B run identifier.")],
-    controller_session_id: Annotated[
-        str,
-        typer.Option(
-            "--controller-session-id",
-            help="Exact controller Codex session ID from the prepared run.",
-        ),
-    ],
-    repo_path: Annotated[
-        Path | None,
-        typer.Option("--repo-path", help="Optional repository root identity check."),
-    ] = None,
-    update_tools: Annotated[
+@timer_app.command("install")
+def scheduler_timer_install_command(
+    enable: Annotated[
         bool,
-        typer.Option(
-            "--update-tools",
-            help="Run official Cursor/Codex self-updaters for incompatible tools without prompting.",
-        ),
-    ] = False,
-    skip_tool_update: Annotated[
-        bool,
-        typer.Option(
-            "--skip-tool-update",
-            help="Never run CLI self-updaters; fail on incompatible tools unless allowed.",
-        ),
-    ] = False,
-    allow_incompatible_tools: Annotated[
-        bool,
-        typer.Option(
-            "--allow-incompatible-tools",
-            help="Continue even when required models are not listed by the installed CLIs.",
-        ),
+        typer.Option("--enable", help="Enable and start the timer after install."),
     ] = False,
     output: OutputOption = DEFAULT_OUTPUT,
 ) -> None:
-    """Launch or resume an eligible A/B run in a detached local worker."""
+    """Install packaged scheduler timer units under the user systemd directory."""
 
     def run() -> None:
-        from ai_dev_loop.runners.tool_updates import ToolUpdateFlags
-
-        result = launch_run(
-            run_id,
-            controller_session_id=controller_session_id,
-            repo_path=repo_path,
-            tool_flags=ToolUpdateFlags(
-                update_tools=update_tools,
-                skip_tool_update=skip_tool_update,
-                allow_incompatible_tools=allow_incompatible_tools,
-            ),
-        )
-        typer.echo(render_launch_output(result, output=output.value), nl=False)
+        result = install_scheduler_timer(enable=enable)
+        typer.echo(render_timer_install_output(result, output=output.value), nl=False)
 
     _handle(run)
 
 
-@github_app.command("doctor")
-def github_doctor_command(
-    repo_path: Annotated[
-        Path | None,
-        typer.Option("--repo-path", help="Optional repository path for config/SSH checks."),
-    ] = None,
+@timer_app.command("status")
+def scheduler_timer_status_command(
     output: OutputOption = DEFAULT_OUTPUT,
 ) -> None:
-    """Verify gh authentication and optional GitHub PR-review readiness."""
+    """Report installed scheduler timer units and systemd state."""
 
     def run() -> None:
-        from ai_dev_loop.commands.github_doctor import github_doctor
-
-        typer.echo(github_doctor(repo_path=repo_path, output=output.value), nl=False)
+        result = scheduler_timer_status()
+        typer.echo(render_timer_status_output(result, output=output.value), nl=False)
 
     _handle(run)
 
 
-@pr_review_app.command("create")
-def pr_review_create_command(
-    source_run_id: Annotated[str, typer.Argument(help="Completed A/B source run ID.")],
-    config_path: Annotated[
-        Path | None,
-        typer.Option("--config-path", help="Optional project config path."),
-    ] = None,
-) -> None:
-    """Freeze a PreparedState from a completed source run (no workers/agents/writes)."""
-
-    def run() -> None:
-        from ai_dev_loop.commands.pr_review_v2 import create_from_source_run
-
-        typer.echo(create_from_source_run(source_run_id, config_path=config_path), nl=False)
-
-    _handle(run)
-
-
-@pr_review_app.command("prepare")
-def pr_review_prepare_command(
-    repo: Annotated[str, typer.Option("--repo", help="OWNER/REPO")],
-    pr: Annotated[int, typer.Option("--pr", help="Pull request number.")],
-    codex_session_id: Annotated[
-        str,
-        typer.Option("--codex-session-id", help="Exact Codex reviewer session UUID."),
-    ],
-    plan: Annotated[Path, typer.Option("--plan", help="Repository-relative plan path.")],
-    prompt: Annotated[Path, typer.Option("--prompt", help="Repository-relative prompt path.")],
-    cursor_chat_id: Annotated[
-        str | None,
-        typer.Option("--cursor-chat-id", help="Optional existing Cursor chat ID."),
-    ] = None,
-    review_model: Annotated[
-        str | None,
-        typer.Option("--review-model", help="Effective Codex review model override."),
-    ] = None,
-    config_path: Annotated[
-        Path | None,
-        typer.Option("--config-path", help="Optional project config path."),
-    ] = None,
-    repo_path: Annotated[
-        Path | None,
-        typer.Option("--repo-path", help="Local repository root."),
-    ] = None,
-) -> None:
-    """Freeze a PreparedState from an existing open PR (read-only; no start)."""
-
-    def run() -> None:
-        from ai_dev_loop.commands.pr_review_v2 import prepare_existing_pr
-
-        typer.echo(
-            prepare_existing_pr(
-                repo=repo,
-                pr_number=pr,
-                codex_session_id=codex_session_id,
-                plan_path=plan,
-                prompt_path=prompt,
-                cursor_chat_id=cursor_chat_id,
-                review_model=review_model,
-                config_path=config_path,
-                repo_path=repo_path,
-            ),
-            nl=False,
-        )
-
-    _handle(run)
-
-
-@pr_review_app.command("start")
-def pr_review_start_command(
-    run_id: Annotated[str, typer.Argument(help="Prepared PR-review run ID.")],
-) -> None:
-    """Apply start transition and launch/repair the supervisor (sole effects gate)."""
-
-    def run() -> None:
-        from ai_dev_loop.commands.pr_review_v2 import start_run as start_pr_review_run
-
-        typer.echo(start_pr_review_run(run_id), nl=False)
-
-    _handle(run)
-
-
-@pr_review_app.command("status")
-def pr_review_status_command(
-    run_id: Annotated[str, typer.Argument(help="PR-review run ID.")],
+@timer_app.command("disable")
+def scheduler_timer_disable_command(
     output: OutputOption = DEFAULT_OUTPUT,
 ) -> None:
-    """Privacy-safe status from durable SQLite + launcher liveness."""
+    """Disable and stop the scheduler timer without deleting installed unit files."""
 
     def run() -> None:
-        from ai_dev_loop.commands.pr_review_v2 import status_run
-
-        typer.echo(status_run(run_id, output=output.value), nl=False)
-
-    _handle(run)
-
-
-@pr_review_app.command("history")
-def pr_review_history_command(
-    run_id: Annotated[str, typer.Argument(help="PR-review run ID.")],
-    limit: Annotated[int, typer.Option("--limit", help="Max journal entries.")] = 50,
-    newest: Annotated[
-        bool,
-        typer.Option("--newest", help="Return newest entries first."),
-    ] = False,
-    output: OutputOption = DEFAULT_OUTPUT,
-) -> None:
-    """Bounded redacted durable journal view."""
-
-    def run() -> None:
-        from ai_dev_loop.commands.pr_review_v2 import history_run
-
-        typer.echo(
-            history_run(
-                run_id,
-                limit=limit,
-                order="newest" if newest else "oldest",
-                output=output.value,
-            ),
-            nl=False,
-        )
-
-    _handle(run)
-
-
-@pr_review_app.command("resume")
-def pr_review_resume_command(
-    run_id: Annotated[str, typer.Argument(help="PR-review run ID.")],
-    confirm_user_continuation: Annotated[
-        bool,
-        typer.Option(
-            "--confirm-user-continuation",
-            help="Required when waiting_for_user has no pending deferred replies.",
-        ),
-    ] = False,
-    recover_mixed_adjudication: Annotated[
-        bool,
-        typer.Option(
-            "--recover-mixed-adjudication",
-            help="Re-adjudicate legacy mixed batches missing a fix prompt (no GitHub write).",
-        ),
-    ] = False,
-) -> None:
-    """Resume supervisor work, dispatch a pending deferred reply, or confirm continuation."""
-
-    def run() -> None:
-        from ai_dev_loop.commands.pr_review_v2 import resume_run
-
-        typer.echo(
-            resume_run(
-                run_id,
-                confirm_user_continuation=confirm_user_continuation,
-                recover_mixed_adjudication=recover_mixed_adjudication,
-            ),
-            nl=False,
-        )
-
-    _handle(run)
-
-
-@pr_review_app.command("abort")
-def pr_review_abort_command(
-    run_id: Annotated[str, typer.Argument(help="PR-review run ID.")],
-) -> None:
-    """Persist abort first, then signal only an exactly owned local supervisor."""
-
-    def run() -> None:
-        from ai_dev_loop.commands.pr_review_v2 import abort_run
-
-        typer.echo(abort_run(run_id), nl=False)
+        result = disable_scheduler_timer()
+        typer.echo(render_timer_disable_output(result, output=output.value), nl=False)
 
     _handle(run)
 
@@ -885,271 +504,6 @@ def controller_status_command(
             include_terminal=include_terminal,
         )
         typer.echo(render_controller_status(result, output=output.value), nl=False)
-
-    _handle(run)
-
-
-@app.command("start")
-def start_command(
-    run_id: Annotated[str, typer.Argument(help="Prepared run identifier.")],
-    update_tools: Annotated[
-        bool,
-        typer.Option(
-            "--update-tools",
-            help="Run official Cursor/Codex self-updaters for incompatible tools without prompting.",
-        ),
-    ] = False,
-    skip_tool_update: Annotated[
-        bool,
-        typer.Option(
-            "--skip-tool-update",
-            help="Never run CLI self-updaters; fail on incompatible tools unless allowed.",
-        ),
-    ] = False,
-    allow_incompatible_tools: Annotated[
-        bool,
-        typer.Option(
-            "--allow-incompatible-tools",
-            help="Continue even when required models are not listed by the installed CLIs.",
-        ),
-    ] = False,
-) -> None:
-    """Start the automated Cursor/Codex loop for a prepared run."""
-
-    def run() -> None:
-        from ai_dev_loop.runners.tool_updates import (
-            ToolUpdateFlags,
-            policy_from_flags,
-        )
-
-        flags = ToolUpdateFlags(
-            update_tools=update_tools,
-            skip_tool_update=skip_tool_update,
-            allow_incompatible_tools=allow_incompatible_tools,
-        )
-        policy = policy_from_flags(
-            flags,
-            stdin_is_tty=sys.stdin.isatty(),
-            ask_callback=_tool_update_ask_callback(),
-        )
-        typer.echo(CODEX_TUI_WARNING)
-        try:
-            result = start_run(run_id, tool_policy=policy)
-        except CursorUsageLimitError as exc:
-            typer.echo(str(exc), err=True)
-            if _maybe_offer_usage_limit_recovery(run_id=exc.run_id, tool_policy=policy):
-                return
-            raise typer.Exit(code=exc.exit_code) from exc
-        typer.echo(render_start_output(result), nl=False)
-
-    _handle(run)
-
-
-@app.command("resume")
-def resume_command(
-    run_id: Annotated[str, typer.Argument(help="Run identifier to resume.")],
-    update_tools: Annotated[
-        bool,
-        typer.Option(
-            "--update-tools",
-            help="Run official Cursor/Codex self-updaters for incompatible tools without prompting.",
-        ),
-    ] = False,
-    skip_tool_update: Annotated[
-        bool,
-        typer.Option(
-            "--skip-tool-update",
-            help="Never run CLI self-updaters; fail on incompatible tools unless allowed.",
-        ),
-    ] = False,
-    allow_incompatible_tools: Annotated[
-        bool,
-        typer.Option(
-            "--allow-incompatible-tools",
-            help="Continue even when required models are not listed by the installed CLIs.",
-        ),
-    ] = False,
-) -> None:
-    """Resume an interrupted or checkpointed run."""
-
-    def run() -> None:
-        from ai_dev_loop.runners.tool_updates import (
-            ToolUpdateFlags,
-            policy_from_flags,
-        )
-
-        flags = ToolUpdateFlags(
-            update_tools=update_tools,
-            skip_tool_update=skip_tool_update,
-            allow_incompatible_tools=allow_incompatible_tools,
-        )
-        policy = policy_from_flags(
-            flags,
-            stdin_is_tty=sys.stdin.isatty(),
-            ask_callback=_tool_update_ask_callback(),
-        )
-        typer.echo(CODEX_TUI_WARNING)
-        try:
-            result = resume_run(run_id, tool_policy=policy)
-        except CursorUsageLimitError as exc:
-            typer.echo(str(exc), err=True)
-            if _maybe_offer_usage_limit_recovery(run_id=exc.run_id, tool_policy=policy):
-                return
-            raise typer.Exit(code=exc.exit_code) from exc
-        typer.echo(render_resume_output(result), nl=False)
-
-    _handle(run)
-
-
-@app.command("extend")
-def extend_command(
-    run_id: Annotated[str, typer.Argument(help="Run identifier at the review-iteration limit.")],
-    additional_review_iterations: Annotated[
-        int,
-        typer.Option(
-            "--additional-review-iterations",
-            help="Positive number of review iterations to add.",
-        ),
-    ],
-    output: OutputOption = DEFAULT_OUTPUT,
-) -> None:
-    """Extend a maxed-out run and restore its stored Cursor fix checkpoint."""
-
-    def run() -> None:
-        result = extend_review_iterations(
-            run_id,
-            additional_review_iterations=additional_review_iterations,
-        )
-        typer.echo(render_extend_output(result, output=output.value), nl=False)
-
-    _handle(run)
-
-
-@app.command("recover")
-def recover_command(
-    run_id: Annotated[str, typer.Argument(help="Failed run identifier to recover.")],
-    dry_run: Annotated[
-        bool,
-        typer.Option(
-            "--dry-run",
-            help="Analyze recoverability without creating a successor run.",
-        ),
-    ] = False,
-    adopt_current_cursor_output: Annotated[
-        bool,
-        typer.Option(
-            "--adopt-current-cursor-output",
-            help=(
-                "Explicitly attest to matching current output for historical staging failures "
-                "or historical Cursor usage-limit failures that lack a contemporaneous "
-                "fingerprint. No TTY prompt substitutes."
-            ),
-        ),
-    ] = False,
-    cursor_model: Annotated[
-        str | None,
-        typer.Option(
-            "--cursor-model",
-            help=(
-                "Required for cursor usage-limit recovery. Freezes the requested fallback "
-                "Cursor model on the successor (for example auto). Invalid for staging/review "
-                "checkpoints. Not an implicit default."
-            ),
-        ),
-    ] = None,
-    output: OutputOption = DEFAULT_OUTPUT,
-) -> None:
-    """Create a successor run for an eligible terminal failed run."""
-
-    def run() -> None:
-        result = recover_run(
-            run_id,
-            dry_run=dry_run,
-            adopt_current_cursor_output=adopt_current_cursor_output,
-            cursor_model=cursor_model,
-        )
-        if isinstance(result, RecoveryAnalysis):
-            typer.echo(render_recovery_analysis(result, output=output.value), nl=False)
-            if not result.eligible:
-                raise typer.Exit(code=4)
-            return
-        typer.echo(render_recovery_result(result, output=output.value), nl=False)
-
-    _handle(run)
-
-
-@app.command("status")
-def status_command(
-    run_id: Annotated[str, typer.Argument(help="Run identifier.")],
-    output: OutputOption = DEFAULT_OUTPUT,
-) -> None:
-    """Show run status."""
-
-    def run() -> None:
-        typer.echo(render_status(run_id, output=output.value), nl=False)
-
-    _handle(run)
-
-
-@app.command("list")
-def list_command(
-    project: Annotated[
-        str | None,
-        typer.Option("--project", help="Filter by project slug."),
-    ] = None,
-    status: Annotated[str | None, typer.Option("--status", help="Filter by run status.")] = None,
-    output: OutputOption = DEFAULT_OUTPUT,
-) -> None:
-    """List prepared and historical runs."""
-
-    def run() -> None:
-        typer.echo(render_list(project=project, status=status, output=output.value), nl=False)
-
-    _handle(run)
-
-
-@app.command("logs")
-def logs_command(
-    run_id: Annotated[str, typer.Argument(help="Run identifier.")],
-    component: Annotated[
-        str | None,
-        typer.Option("--component", help="Log component: cursor, codex, or ai_dev_loop."),
-    ] = None,
-) -> None:
-    """Show run logs."""
-
-    def run() -> None:
-        typer.echo(render_logs(run_id, component=component), nl=False)
-
-    _handle(run)
-
-
-@app.command("inspect")
-def inspect_command(
-    run_id: Annotated[str, typer.Argument(help="Run identifier.")],
-    output: OutputOption = DEFAULT_OUTPUT,
-    show_prompts: Annotated[
-        bool,
-        typer.Option("--show-prompts", help="Print prompt contents."),
-    ] = False,
-) -> None:
-    """Inspect run artifacts."""
-
-    def run() -> None:
-        typer.echo(render_inspect(run_id, output=output.value, show_prompts=show_prompts), nl=False)
-
-    _handle(run)
-
-
-@app.command("abort")
-def abort_command(
-    run_id: Annotated[str, typer.Argument(help="Run identifier.")],
-) -> None:
-    """Abort an active run."""
-
-    def run() -> None:
-        result = run_abort(run_id)
-        typer.echo(render_abort_output(result), nl=False)
 
     _handle(run)
 

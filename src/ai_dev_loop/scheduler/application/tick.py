@@ -119,12 +119,25 @@ class TickService:
             )
 
     def run_once(self) -> TickReceipt:
+        from ai_dev_loop.scheduler.application.cutover_cleanup import (
+            cutover_cleanup_blocks_scheduler_tick,
+        )
+
         owner_id = self._tick_owner_factory()
         now = self._now_factory()
         generation = 0
         lease_acquired = False
         run_ids: list[str] = []
         receipts: list[TickRunReceipt] = []
+        if cutover_cleanup_blocks_scheduler_tick(self.store.db_path.parent):
+            return TickReceipt(
+                tick_owner_id=owner_id,
+                lease_generation=0,
+                visited_runs=0,
+                run_receipts=(),
+                lease_acquired=False,
+                safe_next_action=authorized_safe_next_action(),
+            )
         try:
             with self.store.begin_immediate() as conn:
                 lease = self.store.acquire_global_tick_lease(

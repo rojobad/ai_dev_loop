@@ -20,6 +20,36 @@ from ai_dev_loop.errors import AiDevLoopError
 from ai_dev_loop.paths import SENSITIVE_FILE_MODE, set_sensitive_file_mode
 
 
+def read_process_starttime(pid: int) -> int | None:
+    """Return Linux ``/proc/<pid>/stat`` starttime, or None when unavailable."""
+
+    if pid <= 0:
+        return None
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    close = raw.rfind(")")
+    if close < 0:
+        return None
+    fields = raw[close + 2 :].split()
+    if len(fields) < 20:
+        return None
+    try:
+        return int(fields[19])
+    except ValueError:
+        return None
+
+
+def read_process_pgid(pid: int) -> int | None:
+    if pid <= 0:
+        return None
+    try:
+        return os.getpgid(pid)
+    except OSError:
+        return None
+
+
 @dataclass(frozen=True)
 class ActiveProcessRegistration:
     run_directory: Path

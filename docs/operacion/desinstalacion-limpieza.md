@@ -18,11 +18,8 @@ La desinstalacion preserva por defecto:
 
 - hooks no relacionados;
 - skills no relacionados;
-- run history;
-- prompts;
-- reviews;
-- staged patches;
-- logs;
+- run history del scheduler (`engine.sqlite3` y `artifacts/`);
+- config, cache, sesiones Codex, hooks y skills instalados;
 - puente `from-desktop` del target desktop.
 
 ## Remover puente de sesiones
@@ -53,34 +50,43 @@ Si instalaste con `pipx`:
 pipx uninstall ai_dev_loop
 ```
 
-## Limpiar estado XDG manualmente
+## Cutover: eliminar estado legacy
 
-No existe un comando destructivo de cleanup en `ai_dev_loop`.
+Tras validar el scheduler central, puedes eliminar **solo** los dos roots legacy
+con confirmacion explicita:
 
-Si decides eliminar historial local, revisa y borra manualmente:
-
-```text
-~/.local/state/ai_dev_loop
-~/.config/ai_dev_loop
-~/.cache/ai_dev_loop
+```bash
+ai_dev_loop scheduler cutover cleanup --confirm delete-legacy-state
 ```
 
-O las rutas equivalentes si usas variables XDG:
+El comando muestra las rutas exactas antes de borrar y rechaza:
+
+- targets symlink o fuera del state root resuelto;
+- trabajo activo del scheduler (lease, attempt o capacity holder);
+- tokens de confirmacion incorrectos.
+
+Usa `--dry-run` para validar sin borrar.
+
+Rutas afectadas exclusivamente:
 
 ```text
-$XDG_STATE_HOME/ai_dev_loop
+$XDG_STATE_HOME/ai_dev_loop/runs/
+$XDG_STATE_HOME/ai_dev_loop/pr-review-v2/
+```
+
+Se preservan `engine.sqlite3`, `artifacts/`, config, cache, hooks, skills y
+demas paths bajo `$XDG_STATE_HOME/ai_dev_loop`.
+
+## Limpiar estado XDG manualmente
+
+Para config, cache o el ledger del scheduler, sigue siendo una decision manual.
+Revisa antes de borrar:
+
+```text
+$XDG_STATE_HOME/ai_dev_loop/engine.sqlite3
+$XDG_STATE_HOME/ai_dev_loop/artifacts/
 $XDG_CONFIG_HOME/ai_dev_loop
 $XDG_CACHE_HOME/ai_dev_loop
 ```
 
-Antes de borrar, considera que ahi viven:
-
-- prompts iniciales;
-- fix prompts;
-- patches staged;
-- reportes de review;
-- logs;
-- metadata de sesiones;
-- evidencia para recovery (incluidos runs origen `failed` y sucesores).
-
-No borres estado si necesitas auditar, recuperar con `recover`, o reanudar runs.
+No borres estado si necesitas auditar o continuar runs del scheduler activos.

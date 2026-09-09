@@ -365,73 +365,6 @@ class GithubSection(BaseModel):
         return data
 
 
-class PrReviewV2NoFindingsSection(BaseModel):
-    """Optional no-findings completion policy for ``pr_review_v2`` (disabled by default)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-    accepted_comment_prefixes: list[str] = Field(default_factory=list)
-    accept_bot_thumbs_up: bool = False
-    reviewed_commit_prefix_length: int = 12
-
-    @field_validator("accepted_comment_prefixes")
-    @classmethod
-    def validate_prefixes(cls, value: list[str]) -> list[str]:
-        cleaned: list[str] = []
-        for prefix in value:
-            if not isinstance(prefix, str) or not prefix.strip():
-                raise ValueError(
-                    "pr_review_v2.no_findings.accepted_comment_prefixes entries must be non-empty"
-                )
-            cleaned.append(prefix)
-        return cleaned
-
-    @field_validator("reviewed_commit_prefix_length")
-    @classmethod
-    def validate_prefix_length(cls, value: int) -> int:
-        if value < 7 or value > 40:
-            raise ValueError(
-                "pr_review_v2.no_findings.reviewed_commit_prefix_length must be between 7 and 40"
-            )
-        return value
-
-    @model_validator(mode="after")
-    def require_evidence_rule_when_enabled(self) -> PrReviewV2NoFindingsSection:
-        if self.enabled and not self.accepted_comment_prefixes and not self.accept_bot_thumbs_up:
-            raise ValueError(
-                "pr_review_v2.no_findings requires at least one evidence rule when enabled: "
-                "non-empty accepted_comment_prefixes or accept_bot_thumbs_up: true"
-            )
-        return self
-
-
-class PrReviewV2WorkerSection(BaseModel):
-    """Supervisor lease/heartbeat/idle timings for ``pr_review_v2``."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    lease_ttl_seconds: int = 30
-    heartbeat_interval_seconds: int = 10
-    idle_poll_seconds: int = 1
-
-    @field_validator("lease_ttl_seconds", "heartbeat_interval_seconds", "idle_poll_seconds")
-    @classmethod
-    def positive(cls, value: int) -> int:
-        if value < 1:
-            raise ValueError("must be a positive integer")
-        return value
-
-    @model_validator(mode="after")
-    def heartbeat_strictly_less_than_lease(self) -> PrReviewV2WorkerSection:
-        if self.heartbeat_interval_seconds >= self.lease_ttl_seconds:
-            raise ValueError(
-                "pr_review_v2.worker.heartbeat_interval_seconds must be strictly "
-                "less than lease_ttl_seconds"
-            )
-        return self
-
-
 _ARGV_SAFE_COMMAND_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/+-]*$")
 _ARGV_SAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@+/-]*$")
 _SHELL_META_RE = re.compile(r"[;&|<>`$(){}\[\]*!?\n\r\t]")
@@ -462,110 +395,6 @@ def _validate_argv_safe_token(value: str, *, field: str) -> str:
     return text
 
 
-class PrReviewV2Section(BaseModel):
-    """Optional isolated PR review v2 configuration (temporary pre-cutover namespace).
-
-    Absent or ``enabled: false`` leaves legacy ``pr-review`` / ``github`` behavior
-    unchanged. Secrets and inline credentials are forbidden.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-    gh_command: str = "gh"
-    git_command: str = "git"
-    ssh_command: str = "ssh"
-    remote_name: str = "origin"
-    base_branch: str = "master"
-    reviewer_logins: list[str] = Field(default_factory=lambda: ["chatgpt-codex-connector"])
-    review_trigger_body: str = "@codex review"
-    user_mention: str = "rojobad"
-    external_review_skill: str = "review-github-pr-feedback"
-    poll_interval_seconds: int = 60
-    max_external_cycles: int = 8
-    max_local_iterations: int = 3
-    per_call_timeout_seconds: int = 60
-    overall_timeout_seconds: int = Field(default=180, ge=1, le=7200)
-    max_pages: int = 20
-    max_items: int = 500
-    max_server_directed_wait_seconds: int = 3600
-    no_findings: PrReviewV2NoFindingsSection = Field(default_factory=PrReviewV2NoFindingsSection)
-    worker: PrReviewV2WorkerSection = Field(default_factory=PrReviewV2WorkerSection)
-
-    @field_validator("gh_command", "git_command", "ssh_command")
-    @classmethod
-    def validate_commands(cls, value: str) -> str:
-        return _validate_argv_safe_command(value, field="pr_review_v2 command")
-
-    @field_validator("remote_name", "base_branch", "user_mention", "external_review_skill")
-    @classmethod
-    def validate_tokens(cls, value: str) -> str:
-        return _validate_argv_safe_token(value, field="pr_review_v2 token")
-
-    @field_validator("review_trigger_body")
-    @classmethod
-    def validate_trigger_body(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("pr_review_v2.review_trigger_body must not be empty")
-        if _SHELL_META_RE.search(value):
-            raise ValueError("pr_review_v2.review_trigger_body contains unsafe characters")
-        return value
-
-    @field_validator("reviewer_logins")
-    @classmethod
-    def validate_reviewer_logins(cls, value: list[str]) -> list[str]:
-        if not value:
-            raise ValueError("pr_review_v2.reviewer_logins must contain at least one login")
-        cleaned: list[str] = []
-        for login in value:
-            cleaned.append(_validate_argv_safe_token(login, field="pr_review_v2.reviewer_logins"))
-        return cleaned
-
-    @field_validator(
-        "poll_interval_seconds",
-        "max_external_cycles",
-        "max_local_iterations",
-        "per_call_timeout_seconds",
-        "overall_timeout_seconds",
-        "max_pages",
-        "max_items",
-        "max_server_directed_wait_seconds",
-    )
-    @classmethod
-    def positive_bounded(cls, value: int) -> int:
-        if value < 1:
-            raise ValueError("must be a positive integer")
-        return value
-
-    @model_validator(mode="before")
-    @classmethod
-    def reject_secret_fields(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        for key in data:
-            if str(key).lower() in _GITHUB_FORBIDDEN_SECRET_KEYS:
-                raise ValueError(
-                    f"pr_review_v2 configuration must not contain credentials field {key!r}; "
-                    "authenticate the gh CLI separately"
-                )
-        return data
-
-    @model_validator(mode="after")
-    def validate_timeout_relationship(self) -> PrReviewV2Section:
-        if self.per_call_timeout_seconds > self.overall_timeout_seconds:
-            raise ValueError(
-                "pr_review_v2.per_call_timeout_seconds must be <= overall_timeout_seconds"
-            )
-        if (
-            self.max_server_directed_wait_seconds < 1
-            or self.max_server_directed_wait_seconds > 86400
-        ):
-            raise ValueError(
-                "pr_review_v2.max_server_directed_wait_seconds must be between 1 and 86400"
-            )
-        return self
-
-
 class ProjectConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -576,7 +405,6 @@ class ProjectConfig(BaseModel):
     workflow: WorkflowSection
     prompt: PromptSection
     github: GithubSection | None = None
-    pr_review_v2: PrReviewV2Section | None = None
 
     @field_validator("version")
     @classmethod
@@ -587,9 +415,6 @@ class ProjectConfig(BaseModel):
 
     def github_enabled(self) -> bool:
         return self.github is not None and self.github.enabled
-
-    def pr_review_v2_enabled(self) -> bool:
-        return self.pr_review_v2 is not None and self.pr_review_v2.enabled
 
 
 class ConfigOverrides(BaseModel):

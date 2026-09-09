@@ -76,6 +76,12 @@ class CursorExecutionResult:
         return self.failure.code.value
 
 
+def cursor_metadata_errors(execution: CursorExecutionResult) -> list[str]:
+    if execution.failure.is_usage_limit:
+        return []
+    return list(execution.parse.errors)
+
+
 def redact_create_chat_args(args: list[str]) -> list[str]:
     return list(args)
 

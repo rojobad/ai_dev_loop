@@ -647,11 +647,7 @@ def test_controller_lookup_read_failure_on_tampered_controller_identity(
     tmp_path: Path,
     git_repo: Path,
 ) -> None:
-    from io import StringIO
     from unittest.mock import patch
-
-    from tests.conftest import FIXTURE_REPO
-    from tests.integration.test_phase17_2_controller_lookup import _prepare_legacy
 
     db = tmp_path / "engine.sqlite3"
     store = SqliteSchedulerStore(db)
@@ -698,22 +694,6 @@ def test_controller_lookup_read_failure_on_tampered_controller_identity(
             (payload, digest, state.run_id),
         )
 
-    legacy_root = tmp_path / "legacy_xdg"
-    legacy_root.mkdir()
-    prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
-    with (
-        patch.dict(
-            "os.environ",
-            {
-                "XDG_STATE_HOME": str(legacy_root / "state"),
-                "XDG_CONFIG_HOME": str(legacy_root / "config"),
-                "XDG_CACHE_HOME": str(legacy_root / "cache"),
-            },
-        ),
-        patch("sys.stdin", StringIO(prompt)),
-    ):
-        legacy = _prepare_legacy(git_repo)
-
     with patch(
         "ai_dev_loop.scheduler.application.controller_read.default_engine_db_path",
         return_value=db,
@@ -723,5 +703,4 @@ def test_controller_lookup_read_failure_on_tampered_controller_identity(
             repo_path=git_repo,
         )
     assert status.read_failure is not None
-    assert legacy.run_id
     assert status.match_count == 0

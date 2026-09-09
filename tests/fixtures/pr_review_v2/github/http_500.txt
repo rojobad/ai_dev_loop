@@ -1,4 +1,0 @@
-HTTP/2 500
-Content-Type: application/json
-
-{"message":"server error"}

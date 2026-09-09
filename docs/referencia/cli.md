@@ -13,13 +13,16 @@ Opciones globales:
 --help
 ```
 
-## `prepare`
+## `scheduler submit`
 
 ```bash
-ai_dev_loop prepare [OPTIONS]
+ai_dev_loop scheduler submit [OPTIONS]
 ```
 
-Lee el prompt exacto desde stdin y crea un run preparado.
+Lee el prompt exacto desde stdin y congela un run `queued` en el ledger central
+(`engine.sqlite3`) mas artefactos protegidos bajo `$XDG_STATE_HOME/ai_dev_loop/artifacts/`.
+No crea `state.json` legacy, no lanza agentes, no ejecuta preflight ni muta el repositorio
+objetivo.
 
 Opciones principales:
 
@@ -28,15 +31,12 @@ Opciones principales:
 --project-name TEXT
 --repo-path PATH
 --plan-path PATH
---prompt-source-path PATH
---codex-session-id TEXT
---controller-session-id TEXT
+--prompt-source-path TEXT
+--controller-session-id TEXT   (obligatorio)
+--codex-review-model TEXT      (obligatorio)
+--codex-review-reasoning-effort TEXT (obligatorio)
 --cursor-command TEXT
 --cursor-model TEXT
---cursor-output-format TEXT
---codex-command TEXT
---codex-review-model TEXT
---codex-review-reasoning-effort TEXT
 --review-skill TEXT
 --max-review-iterations INTEGER
 --cursor-timeout-minutes INTEGER
@@ -44,28 +44,14 @@ Opciones principales:
 --output [text|json]
 ```
 
-`--codex-review-model` y `--codex-review-reasoning-effort` congela el reviewer B
-del flujo controller A. Son obligatorios con `--controller-session-id` y no
-admiten `--codex-session-id`: B no existe en `prepare`; el worker lo crea en el
-primer review con `codex exec` sin `--sandbox` y congela la identidad capturada para
-los reviews posteriores (`codex exec resume <exact-id>`).
+No admite `--codex-session-id`. El primer review del scheduler crea exactamente un
+reviewer B con `codex exec` en `--sandbox read-only`; los reviews posteriores reanudan
+esa misma sesion con `codex exec resume` (nunca `--last` ni un segundo B).
 
-En el flujo controller A actual, `--controller-session-id` es el session ID
-exacto de A. `requires_codex_exit` es `false`, `launch_command` queda
-disponible y no hay reviewer inactivo preexistente que mantener.
-
-Los runs legacy sin controller siguen requiriendo `--codex-session-id` exacto,
-capturan modelo/reasoning de esa sesion en `prepare`, y usan `start`/`resume`
-con `codex exec resume` sobre la sesion congelada.
-
-Los runs historicos session-bound A/B (reviewer B fijado en `prepare`) quedan
-solo inspectables; la accion segura es un `prepare` o `scheduler submit` fresco
-con `--codex-review-model` y `--codex-review-reasoning-effort` explicitos.
-
-Ejemplo controller A (fresh B):
+Ejemplo:
 
 ```bash
-ai_dev_loop prepare \
+ai_dev_loop scheduler submit \
   --repo-path /path/al/repo \
   --plan-path docs/plans/mi-plan.md \
   --prompt-source-path docs/plans/prompt_mi-plan.txt \
@@ -75,89 +61,45 @@ ai_dev_loop prepare \
   --output json < docs/plans/prompt_mi-plan.txt
 ```
 
-Ejemplo legacy directo:
-
-```bash
-ai_dev_loop prepare \
-  --repo-path /path/al/repo \
-  --plan-path docs/plans/mi-plan.md \
-  --prompt-source-path docs/plans/prompt_mi-plan.txt \
-  --codex-session-id "<exact-codex-session-id>" \
-  --output json < docs/plans/prompt_mi-plan.txt
-```
-
-## `scheduler submit`
-
-```bash
-ai_dev_loop scheduler submit [OPTIONS]
-```
-
-Lee el prompt exacto desde stdin y congela un run `queued` en el ledger central
-(`engine.sqlite3`) mas artefactos protegidos bajo `$XDG_STATE_HOME/ai_dev_loop/artifacts/`.
-No crea `state.json`, no lanza agentes, no ejecuta preflight ni muta el repositorio
-objetivo. Resuelve solo la raiz canonica del worktree (marcador `.git`) y congela
-inputs inmutables; no ejecuta Git CLI ni escribe baseline de estado. No crea
-reviewer B; congela `--controller-session-id`, `--codex-review-model` y
-`--codex-review-reasoning-effort` como inputs inmutables. El primer review del
-scheduler (Phase 17.5) crea exactamente un B con `codex exec` en
-`--sandbox read-only`, valida y persiste su identidad, y los reviews posteriores
-reanudan esa misma sesion con `codex exec resume` (nunca `--last` ni un segundo B).
-Tras staging, el tick puede completar sin hallazgos, terminalizar con riesgo residual,
-alcanzar `max_iterations_reached`, o programar una correccion Cursor con el fix prompt
-exacto de Codex.
-
-La admision del worktree (`require_clean_worktree`, branch, HEAD y status) ocurre
-una sola vez en el primer tick/preflight (Phase 17.2), no en submit.
-
-Opciones principales: mismas rutas que `prepare`, con `--controller-session-id`
-obligatorio, `--codex-review-model` y `--codex-review-reasoning-effort`
-obligatorios, y sin `--codex-session-id`. Los contextos v1/v2 session-bound o con
-baseline historicos siguen siendo read-only en el ledger; la accion segura es un
-submit fresco v3, nunca una conversion automatica.
-
-Salida redactada. La siguiente accion segura documentada es
-`ai_dev_loop scheduler start <run-id>` (implementada en Phase 17.2).
-
-Tambien existen `ai_dev_loop scheduler status <run-id>`, `ai_dev_loop scheduler list`
-y `ai_dev_loop scheduler history <run-id>` como proyecciones read-only del ledger central.
-
-## `scheduler start` / `tick` / `abort`
+## `scheduler start` / `tick` / `status` / `list` / `abort` / `history`
 
 ```bash
 ai_dev_loop scheduler start <run-id> --controller-session-id TEXT
 ai_dev_loop scheduler tick
-ai_dev_loop scheduler abort <run-id>
-ai_dev_loop scheduler history <run-id> [--limit N] [--order oldest|newest]
-ai_dev_loop scheduler timer validate
+ai_dev_loop scheduler status <run-id> [--output text|json]
+ai_dev_loop scheduler list [--output text|json]
+ai_dev_loop scheduler abort <run-id> [--output text|json]
+ai_dev_loop scheduler history <run-id> [--limit N] [--order oldest|newest] [--output text|json]
 ```
 
-`scheduler abort` persiste primero la cancelacion durable (`abort_requested` +
-`run_aborted`), invalida effects/timers/claims pendientes, marca attempts activos
-como `cancelled` con fence, pide al backend detener la unidad exacta del attempt,
-y libera capacity/reservation solo cuando la observacion autoritativa prueba que la
-unidad propiedad ya no esta activa. Si la terminacion queda pendiente, el comando
-puede repetirse de forma segura hasta completar el cleanup. No borra artefactos,
-prompts, patches ni cambios staged del repositorio objetivo. Un resultado tardio
-despues de abort queda como evidencia stale y no avanza el run.
+`scheduler abort` persiste primero la cancelacion durable, invalida effects/timers/claims
+pendientes y no borra artefactos ni cambios staged del repositorio objetivo.
 
-`scheduler history` devuelve eventos acotados y redactados (sin payloads sensibles,
-session IDs completos, argv, unit IDs ni contenido de prompts/patches).
+`scheduler history` devuelve eventos acotados y redactados.
 
-`scheduler timer validate` valida los templates empaquetados
-(`ai-dev-loop-scheduler-tick.service` / `.timer`) sin habilitar systemd. La
-aceptacion manual con `systemctl --user` queda fuera de CI; el timer solo avanza
-progreso eventual mientras WSL esta activo (no despierta Windows).
-
-## `launch`
+## `scheduler cutover cleanup`
 
 ```bash
-ai_dev_loop launch <run-id> --controller-session-id TEXT [--repo-path PATH] \
-  [--update-tools|--skip-tool-update] [--allow-incompatible-tools] [--output text|json]
+ai_dev_loop scheduler cutover cleanup --confirm delete-legacy-state [--dry-run] [--output text|json]
 ```
 
-Lanza un run A/B preparado en un worker local detachado. Tambien reanuda el checkpoint `waiting_for_cursor_fix` despues de un `extend`. Requiere el controller session ID exacto del prepare. Es idempotente si el worker ya esta vivo. No sustituye `start` para runs legacy sin controller.
+Elimina solo `$XDG_STATE_HOME/ai_dev_loop/runs/` y `pr-review-v2/` tras validar el state
+root, rechazar symlinks, comprobar que no hay trabajo scheduler activo y adquirir
+coordinacion contra ticks concurrentes.
 
-Los flags de compatibilidad de herramientas son los mismos que en `start`/`resume`, pero el worker es siempre non-interactive: nunca pregunta. `--update-tools` autoriza updaters; `--skip-tool-update` (o la omision) no actualiza; `--allow-incompatible-tools` permite continuar ante incompatibilidad confirmada. `--update-tools` y `--skip-tool-update` son mutuamente excluyentes.
+En modo JSON, el anuncio de rutas exactas va a stderr; stdout contiene un unico documento JSON.
+
+## `scheduler timer`
+
+```bash
+ai_dev_loop scheduler timer validate [--output text|json]
+ai_dev_loop scheduler timer install [--enable] [--output text|json]
+ai_dev_loop scheduler timer status [--output text|json]
+ai_dev_loop scheduler timer disable [--output text|json]
+```
+
+`install` escribe unidades empaquetadas bajo `~/.config/systemd/user/` y recarga
+`systemctl --user`. `--enable` es explicito; `submit` y `tick` no habilitan timers.
 
 ## `controller status`
 
@@ -170,188 +112,8 @@ ai_dev_loop controller status \
   [--output text|json]
 ```
 
-Lookup read-only por controller session ID y repositorio. Ante ambiguedad (0 o N matches) no elige por timestamp; usa `--run-id` para desambiguar. Incluye liveness del worker en la respuesta.
-
-## `github doctor`
-
-```bash
-ai_dev_loop github doctor [--repo-path PATH] [--output text|json]
-```
-
-Verifica disponibilidad de `gh`, autenticacion (cuenta redactada), schemas GitHub y, con `--repo-path`, si `github.enabled` y el remote SSH estan listos. No imprime tokens.
-
-## `pr-review`
-
-Ciclo opt-in post-PR con motor durable SQLite (requiere `pr_review_v2.enabled: true` en
-`ai_dev_loop.yaml`). Los runs v1 legacy (`RunState.github_pr_review`) y subcomandos
-retirados (`continue`, `recover`, `set-cursor-model`) ya no estan soportados.
-
-```bash
-ai_dev_loop pr-review create <source-run-id> [--config-path PATH]
-ai_dev_loop pr-review prepare --repo OWNER/REPO --pr N \
-  --codex-session-id UUID --plan PATH --prompt PATH \
-  [--cursor-chat-id ID] [--review-model MODEL] [--repo-path PATH] [--config-path PATH]
-ai_dev_loop pr-review start <run-id>
-ai_dev_loop pr-review status <run-id> [--output text|json]
-ai_dev_loop pr-review history <run-id> [--limit N] [--newest] [--output text|json]
-ai_dev_loop pr-review resume <run-id> [--confirm-user-continuation] [--recover-mixed-adjudication]
-ai_dev_loop pr-review abort <run-id>
-```
-
-Origenes:
-
-- **`create` (source_run):** congela un `PreparedState` desde un run A/B
-  `completed` / `completed_with_residual_risk` con plan/prompt/patch verificados.
-- **`prepare` (existing_pr):** adopta un PR ya abierto con discovery read-only.
-  Exige checkout local alineado con head branch/SHA, plan/prompt confinados al repo,
-  y sesion Codex exacta.
-
-Contrato de seguridad:
-
-- `create` / `prepare` solo validan, congelan inputs y crean/reusan un
-  `PreparedState` durable. No arrancan workers/agentes, no escriben GitHub, no
-  hacen commit/push ni llamadas de modelo.
-- `start <run-id>` es la unica puerta a efectos externos: aplica el evento durable
-  y luego lanza/reusa el supervisor detached (`python -m
-  ai_dev_loop.pr_review_v2_supervisor_worker`) con metadata de ownership. Si el
-  spawn falla, reporta `spawn_failed` y no inventa un proceso vivo.
-- `resume` en `waiting_for_user` tiene tres formas distintas segun el checkpoint:
-  - **`resume` ordinario** cuando hay un `post_thread_reply` diferido ya persistido,
-    validado y pendiente (cola no vacia): repara/lanza el supervisor para despachar
-    ese efecto ya autorizado por `start`; no emite `UserContinuationRequested` ni
-    duplica filas de efecto.
-  - **`resume --confirm-user-continuation`** solo despues de que todos los replies
-    diferidos hayan completado (cola vacia, sin efecto activo); persiste evidencia
-    de operador protegida y programa la siguiente observacion; no dispara timers
-    futuros antes de tiempo.
-  - **`resume --recover-mixed-adjudication`** solo para lotes mixtos legacy sin
-    `fix_prompt_ref` (actionable + reply): re-adjudica sobre el snapshot congelado
-    original sin escribir en GitHub ni reescribir SQLite historico.
-  Si un reply esta claimed, en retry, malformado, stale, o hay supervisor/lease vivo,
-  `status` debe decir `wait-until`; no repare SQLite manualmente.
-  Repara solo el supervisor cuando el estado ya es activo fuera de esos checkpoints.
-- `status` marca acciones de resume solo cuando el run es no terminal, el
-  supervisor no esta vivo y el lease anterior ya expiro. Un claim mutante
-  expirado se reconcilia antes de cualquier reintento de escritura.
-- `abort` persiste el abort durable antes de senalar procesos Cursor/Codex hijos
-  con ownership exacta y, despues, el supervisor owned.
-- `status` / `history` son acotados y redactados (sin prompts, patches, bodies,
-  tokens, session IDs completos, argv, PID/PGID ni environments).
-
-Resiliencia diferida (Phase 16.8): ver `PHASE_16_8_DEFERRED_ISSUES.md`. No hay
-`pr-review recover` publico ni migracion de runs v1.
-
-## `start`
-
-```bash
-ai_dev_loop start <run-id> [--update-tools|--skip-tool-update] [--allow-incompatible-tools]
-```
-
-Ejecuta el loop automatizado completo para un run preparado.
-
-- `--update-tools`: autoriza ejecutar el updater oficial de cada CLI WSL incompatible, sin prompt.
-- `--skip-tool-update`: nunca ejecuta updaters.
-- `--allow-incompatible-tools`: permite continuar pese a incompatibilidad confirmada.
-
-`--update-tools` y `--skip-tool-update` son mutuamente excluyentes. Sin flags, un TTY puede preguntar por cada herramienta incompatible y usa `no` por defecto. Non-TTY nunca pregunta y falla ante incompatibilidad salvo autorizacion explicita para actualizar o continuar.
-
-## `resume`
-
-```bash
-ai_dev_loop resume <run-id> [--update-tools|--skip-tool-update] [--allow-incompatible-tools]
-```
-
-Continua un run checkpointed o interrumpido si el siguiente paso seguro puede derivarse de estado y artefactos.
-
-Aplica la misma politica de compatibilidad y updates que `start`. Tras un update se vuelven a consultar version y catalogos (`agent models`, `codex debug models`). Un abort pendiente tiene prioridad.
-
-## `extend`
-
-```bash
-ai_dev_loop extend <run-id> --additional-review-iterations INTEGER [--output text|json]
-```
-
-Solo aplica a un run detenido en `max_iterations_reached`. Requiere un entero positivo, aumenta ese presupuesto sin crear un run nuevo y restaura el checkpoint `waiting_for_cursor_fix` con el fix prompt exacto de la ultima review. Conserva el chat de Cursor, la sesion revisora Codex, los cambios staged y todos los artefactos.
-
-Despues, en un run legacy usa `ai_dev_loop resume <run-id>`. En un run A/B deja B inactiva y usa `ai_dev_loop launch <run-id> --controller-session-id <exact-controller-session-id>`: el worker detecta el checkpoint y ejecuta `resume` de forma detachada.
-
-## `recover`
-
-```bash
-ai_dev_loop recover <run-id> [--dry-run] [--adopt-current-cursor-output] [--cursor-model TEXT] [--output text|json]
-```
-
-Analiza un run `failed` y, si es elegible, crea un run sucesor `interrupted` sin mutar el origen ni el repositorio.
-
-Checkpoints: `reviewing`, `process_review`, `staging` (Cursor completo / staging incompleto; `initial_staging_failed` o `correction_staging_failed`), y `cursor` (limite de uso de Cursor con turno incompleto).
-
-- `--dry-run`: solo reporta elegibilidad, checkpoint, blockers y migracion de runtime.
-- `--adopt-current-cursor-output`: atestacion explicita para fallos de staging historicos de **correccion** sin fingerprint post-Cursor, o para fallos historicos de limite de uso de Cursor sin fingerprint contemporaneo, cuando el status actual coincide con `NN-after-cursor.txt`. No aplica a `initial_staging_failed`. Para checkpoint `cursor` tambien requiere `--cursor-model`.
-- `--cursor-model`: obligatorio para checkpoint `cursor`. Congela el modelo fallback solicitado en el sucesor (por ejemplo `auto`). Invalido para checkpoints `staging`/`reviewing`/`process_review`. No es un default implicito ni se lee desde YAML.
-- Sin `--dry-run`: crea o reutiliza el sucesor y imprime `resume_command`.
-- No lanza agentes ni updaters; pasa `--update-tools` a `resume` si hace falta.
-- JSON incluye `recovery_run_id`, `checkpoint`, `runtime_migration`, `reused_existing_successor` y campos de fingerprint/adopcion cuando aplican.
-
-TTY vs non-TTY:
-
-- tras un fallo `cursor_usage_limit` en `start`/`resume`, un TTY puede ofrecer `recover --cursor-model auto` y continuar; la respuesta por defecto es no;
-- non-TTY imprime el comando explicito y no cambia de modelo ni crea sucesor automaticamente.
-
-Ejemplo de limite de uso:
-
-```bash
-ai_dev_loop recover --dry-run <failed-run-id> --cursor-model auto
-ai_dev_loop recover <failed-run-id> --cursor-model auto
-ai_dev_loop recover --dry-run <failed-run-id> --adopt-current-cursor-output --cursor-model auto
-ai_dev_loop recover <failed-run-id> --adopt-current-cursor-output --cursor-model auto
-ai_dev_loop resume <recovery-run-id>
-```
-
-## `abort`
-
-```bash
-ai_dev_loop abort <run-id>
-```
-
-Solicita cancelacion no destructiva de un run no terminal.
-
-## `status`
-
-```bash
-ai_dev_loop status <run-id> [--output text|json]
-```
-
-Muestra estado resumido y siguiente accion segura.
-
-## `list`
-
-```bash
-ai_dev_loop list [--project PROJECT] [--status STATUS] [--output text|json]
-```
-
-Lista runs encontrados bajo XDG state.
-
-## `logs`
-
-```bash
-ai_dev_loop logs <run-id> [--component COMPONENT]
-```
-
-Componentes soportados:
-
-```text
-ai_dev_loop
-cursor
-codex
-```
-
-## `inspect`
-
-```bash
-ai_dev_loop inspect <run-id> [--output text|json] [--show-prompts]
-```
-
-Lista artefactos y resumen de iteraciones. `--show-prompts` imprime contenido sensible.
+Lookup read-only por controller session ID y repositorio. Ante ambiguedad (0 o N matches)
+no elige por timestamp; usa `--run-id` para desambiguar.
 
 ## `doctor`
 
@@ -431,3 +193,15 @@ ai_dev_loop integrations sessions remove  [--output text|json] [--wsl-codex-home
 ```
 
 Gestiona el symlink seguro `sessions/from-desktop`.
+
+## Comandos retirados (Phase 17.7)
+
+Los siguientes comandos ya no existen en la CLI publica:
+
+- `prepare`, `start`, `resume`, `recover`, `extend`, `launch`
+- `abort`, `status`, `list`, `logs`, `inspect` de nivel superior
+- `pr-review` y `github doctor`
+
+La accion segura para trabajo nuevo es `scheduler submit` + `scheduler start` + `scheduler tick`
+(o timer habilitado explicitamente). Para retirar estado legacy, usa
+`scheduler cutover cleanup` solo tras aceptacion humana independiente.

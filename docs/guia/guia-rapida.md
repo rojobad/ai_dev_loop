@@ -83,7 +83,9 @@ prompt:
   filename_template: prompt_{plan_stem}.txt
 ```
 
-Por defecto, `review_model` y `review_reasoning_effort` se omiten. `prepare` captura ambos valores de la sesion Codex exacta, los congela y los pasa explicitamente en cada review. No los toma de `config.toml` ni del default local de Codex CLI. Para overrides independientes, ver [Configuracion del repositorio](configuracion-repositorio.md).
+`--codex-review-model` y `--codex-review-reasoning-effort` se pasan en `scheduler submit`
+y quedan congelados en el ledger. No se infieren de `config.toml` ni del default local
+de Codex CLI.
 
 Valida:
 
@@ -91,77 +93,53 @@ Valida:
 ai_dev_loop config validate --repo /path/al/repo
 ```
 
-## 4. Prepara desde Codex
+## 4. Submit desde Codex (controller A)
 
 Desde la sesion interactiva original de Codex, despues de aprobar el plan y el prompt:
 
 ```bash
-ai_dev_loop prepare \
+ai_dev_loop scheduler submit \
   --repo-path /path/al/repo \
   --plan-path docs/plans/mi-plan.md \
   --prompt-source-path docs/plans/prompt_mi-plan.txt \
-  --codex-session-id "<session-id-exacto>" \
+  --controller-session-id "<session-id-exacto>" \
+  --codex-review-model "<review-model>" \
+  --codex-review-reasoning-effort high \
   --output json < docs/plans/prompt_mi-plan.txt
 ```
 
-`prepare` busca el UUID exacto en las sesiones nativas WSL y, si existe, en `sessions/from-desktop`. Solo extrae metadata runtime permitida; no conserva contenido del transcript. Devuelve un `start_command`.
-
-## 5. Sal de Codex y ejecuta el loop
-
-No ejecutes `start` desde la UI interactiva que posee esa misma sesion.
+## 5. Autoriza y ejecuta el loop
 
 ```bash
-ai_dev_loop start <run-id>
+ai_dev_loop scheduler start <run-id> --controller-session-id "<session-id-exacto>"
+ai_dev_loop scheduler tick
 ```
 
-`start` y `resume` comprueban compatibilidad de modelos. En un TTY pueden ofrecer actualizar cada CLI incompatible (respuesta por defecto: no). En ejecucion no interactiva no preguntan: usa `--update-tools` para autorizar los updaters WSL o `--allow-incompatible-tools` para continuar bajo tu responsabilidad.
-
-Si el run se interrumpe:
+Durante desarrollo invoca `scheduler tick` manualmente. Para progreso eventual con WSL
+activo, instala y habilita el timer solo tras aceptacion manual independiente:
 
 ```bash
-ai_dev_loop resume <run-id>
+ai_dev_loop scheduler timer validate
+ai_dev_loop scheduler timer install
+ai_dev_loop scheduler timer install --enable   # habilitacion explicita
+ai_dev_loop scheduler timer status
 ```
-
-Si un run termina en `failed` tras Cursor + staging, o tras Cursor de correccion con staging incompleto:
-
-```bash
-ai_dev_loop recover --dry-run <failed-run-id>
-ai_dev_loop recover <failed-run-id>
-ai_dev_loop resume <recovery-run-id>
-```
-
-Para fallos de staging historicos sin fingerprint post-Cursor:
-
-```bash
-ai_dev_loop recover --dry-run <failed-run-id> --adopt-current-cursor-output
-ai_dev_loop recover <failed-run-id> --adopt-current-cursor-output
-```
-
-`recover` crea un sucesor; no edita el run `failed` original. No lanza agentes ni updaters.
-
-Si Cursor falla por limite de uso del modelo configurado:
-
-```bash
-ai_dev_loop recover --dry-run <failed-run-id> --cursor-model auto
-ai_dev_loop recover <failed-run-id> --cursor-model auto
-ai_dev_loop resume <recovery-run-id>
-```
-
-El sucesor reutiliza el mismo chat ID. En TTY, `start`/`resume` pueden ofrecer esta recovery; confirma solo si quieres continuar con modelo `auto`. No descartes trabajo parcial unstaged/untracked antes de `recover` salvo que abandones el run.
 
 Si necesitas cancelar:
 
 ```bash
-ai_dev_loop abort <run-id>
+ai_dev_loop scheduler abort <run-id>
 ```
 
 ## 6. Revisa resultados
 
 ```bash
-ai_dev_loop status <run-id>
-ai_dev_loop inspect <run-id>
-ai_dev_loop logs <run-id>
-ai_dev_loop logs <run-id> --component codex
+ai_dev_loop scheduler status <run-id>
+ai_dev_loop scheduler list
+ai_dev_loop scheduler history <run-id>
+ai_dev_loop controller status \
+  --controller-session-id "<session-id-exacto>" \
+  --repo-path /path/al/repo
 ```
 
 Los cambios finales quedan staged en el repositorio objetivo. `ai_dev_loop` no hace commit.

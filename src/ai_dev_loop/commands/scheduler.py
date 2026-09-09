@@ -14,11 +14,17 @@ from ai_dev_loop.scheduler.application.contracts import (
     SubmitResult,
     TickReceipt,
 )
+from ai_dev_loop.scheduler.application.cutover_cleanup import CutoverCleanupResult
 from ai_dev_loop.scheduler.application.history import scheduler_history
 from ai_dev_loop.scheduler.application.start import start_run
 from ai_dev_loop.scheduler.application.status import scheduler_list, scheduler_status
 from ai_dev_loop.scheduler.application.submission import SubmitOptions, submit_run
 from ai_dev_loop.scheduler.application.tick import run_scheduler_tick
+from ai_dev_loop.scheduler.application.timer_ops import (
+    TimerDisableResult,
+    TimerInstallResult,
+    TimerStatusResult,
+)
 
 
 def render_submit_output(result: SubmitResult, *, output: str) -> str:
@@ -196,6 +202,109 @@ def render_scheduler_history_output(result: HistoryResult, *, output: str) -> st
     return "\n".join(lines) + "\n"
 
 
+def render_cutover_cleanup_output(result: CutoverCleanupResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "resolved_state_root": result.resolved_state_root,
+            "deleted_paths": list(result.deleted_paths),
+            "already_absent": list(result.already_absent),
+            "dry_run": result.dry_run,
+            "irrecoverable": not result.dry_run and bool(result.deleted_paths),
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    mode = "dry-run" if result.dry_run else "deleted"
+    lines = [
+        f"Legacy state cutover cleanup ({mode})",
+        f"State root: {result.resolved_state_root}",
+    ]
+    if result.deleted_paths:
+        lines.append("Targets removed:")
+        lines.extend(f"- {path}" for path in result.deleted_paths)
+    if result.already_absent:
+        lines.append("Already absent:")
+        lines.extend(f"- {path}" for path in result.already_absent)
+    if not result.dry_run and result.deleted_paths:
+        lines.append("Deleted legacy state is not recoverable.")
+    return "\n".join(lines) + "\n"
+
+
+def render_timer_install_output(result: TimerInstallResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "service_unit_path": result.service_unit_path,
+            "timer_unit_path": result.timer_unit_path,
+            "installed": result.installed,
+            "enabled": result.enabled,
+            "reloaded": result.reloaded,
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    lines = [
+        "Scheduler timer install completed",
+        f"Service unit: {result.service_unit_path}",
+        f"Timer unit: {result.timer_unit_path}",
+        f"Installed or refreshed: {result.installed}",
+        f"Enabled now: {result.enabled}",
+        "Use `ai_dev_loop scheduler timer status` before enabling in production.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def render_timer_status_output(result: TimerStatusResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "service_unit_path": result.service_unit_path,
+            "timer_unit_path": result.timer_unit_path,
+            "service_installed": result.service_installed,
+            "timer_installed": result.timer_installed,
+            "service_content_matches": result.service_content_matches,
+            "timer_content_matches": result.timer_content_matches,
+            "timer_enabled": result.timer_enabled,
+            "timer_active": result.timer_active,
+            "service_active": result.service_active,
+            "ownership_ok": result.ownership_ok,
+            "detail": result.detail,
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    lines = [
+        "Scheduler timer status",
+        f"Service unit: {result.service_unit_path}",
+        f"Timer unit: {result.timer_unit_path}",
+        f"Installed: service={result.service_installed}, timer={result.timer_installed}",
+        f"Content matches package: service={result.service_content_matches}, timer={result.timer_content_matches}",
+        f"Ownership ok: {result.ownership_ok}",
+        f"Timer enabled: {result.timer_enabled}",
+        f"Timer active: {result.timer_active}",
+        f"Service active: {result.service_active}",
+    ]
+    if result.detail:
+        lines.append(f"Detail: {result.detail}")
+    return "\n".join(lines) + "\n"
+
+
+def render_timer_disable_output(result: TimerDisableResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "timer_unit_path": result.timer_unit_path,
+            "disabled": result.disabled,
+            "stopped": result.stopped,
+            "detail": result.detail,
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    lines = [
+        "Scheduler timer disabled",
+        f"Timer unit: {result.timer_unit_path}",
+        f"Disabled: {result.disabled}",
+        f"Stopped: {result.stopped}",
+    ]
+    if result.detail:
+        lines.append(f"Detail: {result.detail}")
+    return "\n".join(lines) + "\n"
+
+
 def render_timer_validate_output(errors: list[str], *, output: str) -> str:
     if output == "json":
         payload = {
@@ -213,6 +322,7 @@ def render_timer_validate_output(errors: list[str], *, output: str) -> str:
 
 __all__ = [
     "SubmitOptions",
+    "render_cutover_cleanup_output",
     "render_scheduler_abort_output",
     "render_scheduler_history_output",
     "render_list_output",
@@ -220,6 +330,9 @@ __all__ = [
     "render_status_output",
     "render_submit_output",
     "render_tick_output",
+    "render_timer_disable_output",
+    "render_timer_install_output",
+    "render_timer_status_output",
     "render_timer_validate_output",
     "run_scheduler_tick",
     "scheduler_abort_run",
