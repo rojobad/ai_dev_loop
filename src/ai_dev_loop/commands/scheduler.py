@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import json
 
+from ai_dev_loop.scheduler.application.abort import scheduler_abort_run
 from ai_dev_loop.scheduler.application.contracts import (
+    AbortResult,
+    HistoryResult,
     SchedulerRunSummary,
     SchedulerStatusResult,
     StartResult,
     SubmitResult,
     TickReceipt,
 )
+from ai_dev_loop.scheduler.application.history import scheduler_history
 from ai_dev_loop.scheduler.application.start import start_run
 from ai_dev_loop.scheduler.application.status import scheduler_list, scheduler_status
 from ai_dev_loop.scheduler.application.submission import SubmitOptions, submit_run
@@ -143,14 +147,83 @@ def render_list_output(summaries: list[SchedulerRunSummary], *, output: str) -> 
     return "\n\n".join(blocks) + "\n"
 
 
+def render_scheduler_abort_output(result: AbortResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "run_id": result.run_id,
+            "state_kind": result.state_kind,
+            "abort_persisted": result.abort_persisted,
+            "idempotent_replay": result.idempotent_replay,
+            "process_action": result.process_action.value,
+            "termination_pending": result.termination_pending,
+            "safe_next_action": result.safe_next_action.model_dump(mode="json"),
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    replay = " (idempotent replay)" if result.idempotent_replay else ""
+    lines = [
+        f"Scheduler abort for run {result.run_id}{replay}",
+        f"State: {result.state_kind}",
+        f"Abort persisted: {result.abort_persisted}",
+        f"Process action: {result.process_action.value}",
+        f"Termination pending: {result.termination_pending}",
+        f"Next action: {result.safe_next_action.command}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def render_scheduler_history_output(result: HistoryResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "run_id": result.run_id,
+            "order": result.order,
+            "limit": result.limit,
+            "truncated": result.truncated,
+            "entries": [entry.model_dump(mode="json") for entry in result.entries],
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    lines = [
+        f"Scheduler history for run {result.run_id}",
+        f"Order: {result.order}",
+        f"Limit: {result.limit}",
+        f"Truncated: {result.truncated}",
+    ]
+    for entry in result.entries:
+        lines.append(
+            f"- #{entry.sequence} {entry.created_at} {entry.event_kind}: {entry.safe_detail}"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def render_timer_validate_output(errors: list[str], *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "ok": not errors,
+            "errors": errors,
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    if not errors:
+        return "Scheduler timer assets validated successfully.\n"
+    lines = ["Scheduler timer asset validation failed:"]
+    lines.extend(f"- {error}" for error in errors)
+    return "\n".join(lines) + "\n"
+
+
 __all__ = [
     "SubmitOptions",
+    "render_scheduler_abort_output",
+    "render_scheduler_history_output",
     "render_list_output",
     "render_start_output",
     "render_status_output",
     "render_submit_output",
     "render_tick_output",
+    "render_timer_validate_output",
     "run_scheduler_tick",
+    "scheduler_abort_run",
+    "scheduler_history",
     "scheduler_list",
     "scheduler_status",
     "start_run",

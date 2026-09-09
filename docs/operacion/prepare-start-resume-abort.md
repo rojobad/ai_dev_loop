@@ -299,3 +299,30 @@ No hace:
 - senalizacion ciega de un worker stale o ambiguo.
 
 Si metadata de proceso es ambigua, falla de forma conservadora y deja diagnosticos.
+
+### `scheduler abort` (ledger central)
+
+```bash
+ai_dev_loop scheduler abort <run-id>
+```
+
+Para runs del scheduler central (`scheduler submit` → `scheduler start` → `scheduler tick`):
+
+- persiste `abort_requested` y `run_aborted` antes de senalar systemd;
+- cancela effects/timers/claims pendientes y marca attempts activos como `cancelled`;
+- detiene solo la unidad exacta del attempt cuando el backend valida ownership;
+- libera capacity/reservation solo despues de evidencia autoritativa de que la unidad
+  propiedad quedo inactiva o ausente con prueba;
+- preserva repositorio objetivo, index staged y artefactos protegidos;
+- un resultado tardio queda fenced como evidencia stale (`attempt_result_stale`).
+
+Si la terminacion sigue pendiente (`termination_pending`), `scheduler status` y
+`controller status` muestran una accion segura para repetir `scheduler abort`
+sin relanzar ni avanzar el run. Repetir abort es idempotente solo cuando no queda
+cleanup pendiente.
+
+Si el run ya esta `aborted` pero aun retiene capacity o reservation sin attempts
+pendientes (por ejemplo tras una interrupcion entre la cancelacion durable y el
+cleanup), `scheduler status` y `controller status` sugieren `scheduler tick`
+para finalizar la liberacion. El tick reconcilia esos runs sin relanzarlos ni
+requerir un segundo abort manual.

@@ -488,6 +488,26 @@ class CompletedWithResidualRiskState(SchedulerRunBase):
         return self
 
 
+class AbortedState(SchedulerRunBase):
+    """Run aborted by operator request; preserves frozen context and checkpoints."""
+
+    kind: Literal["aborted"] = "aborted"
+    schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
+    aborted_at: NonEmptyStr
+    abort_reason: NonEmptyStr
+    prior_state_kind: NonEmptyStr
+    checkpoint: AdmittedRunCheckpoint | None = None
+    cursor: CursorWorkflowCheckpoint | None = None
+    codex: CodexWorkflowCheckpoint | None = None
+    authorized_at: NonEmptyStr | None = None
+    authorized_controller_session_id: UuidSessionId | None = None
+
+    @field_validator("schema_version")
+    @classmethod
+    def schema_version_is_four(cls, value: int) -> int:
+        return _schema_version_is_four(value)
+
+
 class MaxIterationsReachedState(SchedulerRunBase):
     """Run reached the review iteration budget with actionable findings remaining."""
 
@@ -532,9 +552,33 @@ SchedulerState = Annotated[
     | Annotated[CompletedState, Tag("completed")]
     | Annotated[CompletedWithResidualRiskState, Tag("completed_with_residual_risk")]
     | Annotated[MaxIterationsReachedState, Tag("max_iterations_reached")]
+    | Annotated[AbortedState, Tag("aborted")]
     | Annotated[BlockedState, Tag("blocked")],
     Discriminator(_scheduler_state_discriminator),
 ]
+
+SCHEDULER_TERMINAL_STATE_KINDS = frozenset(
+    {
+        "completed",
+        "completed_with_residual_risk",
+        "max_iterations_reached",
+        "aborted",
+        "blocked",
+    }
+)
+
+SCHEDULER_ABORTABLE_STATE_KINDS = frozenset(
+    {
+        "queued",
+        "authorized",
+        "admitted",
+        "preflight_complete",
+        "cursor_ready",
+        "waiting_usage_limit",
+        "awaiting_codex_review",
+        "waiting_for_cursor_fix",
+    }
+)
 
 SUBMITTED_CONTEXT_ADAPTER: TypeAdapter[SubmittedRunContext] = TypeAdapter(SubmittedRunContext)
 SUBMITTED_STATE_ADAPTER: TypeAdapter[SubmittedState] = TypeAdapter(SubmittedState)
@@ -559,6 +603,7 @@ def parse_scheduler_state(
     | CompletedState
     | CompletedWithResidualRiskState
     | MaxIterationsReachedState
+    | AbortedState
     | BlockedState
 ):
     if isinstance(
@@ -575,6 +620,7 @@ def parse_scheduler_state(
             CompletedState,
             CompletedWithResidualRiskState,
             MaxIterationsReachedState,
+            AbortedState,
             BlockedState,
         ),
     ):

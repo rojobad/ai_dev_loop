@@ -118,8 +118,35 @@ submit fresco v3, nunca una conversion automatica.
 Salida redactada. La siguiente accion segura documentada es
 `ai_dev_loop scheduler start <run-id>` (implementada en Phase 17.2).
 
-Tambien existen `ai_dev_loop scheduler status <run-id>` y `ai_dev_loop scheduler list`
-como proyecciones read-only del ledger central.
+Tambien existen `ai_dev_loop scheduler status <run-id>`, `ai_dev_loop scheduler list`
+y `ai_dev_loop scheduler history <run-id>` como proyecciones read-only del ledger central.
+
+## `scheduler start` / `tick` / `abort`
+
+```bash
+ai_dev_loop scheduler start <run-id> --controller-session-id TEXT
+ai_dev_loop scheduler tick
+ai_dev_loop scheduler abort <run-id>
+ai_dev_loop scheduler history <run-id> [--limit N] [--order oldest|newest]
+ai_dev_loop scheduler timer validate
+```
+
+`scheduler abort` persiste primero la cancelacion durable (`abort_requested` +
+`run_aborted`), invalida effects/timers/claims pendientes, marca attempts activos
+como `cancelled` con fence, pide al backend detener la unidad exacta del attempt,
+y libera capacity/reservation solo cuando la observacion autoritativa prueba que la
+unidad propiedad ya no esta activa. Si la terminacion queda pendiente, el comando
+puede repetirse de forma segura hasta completar el cleanup. No borra artefactos,
+prompts, patches ni cambios staged del repositorio objetivo. Un resultado tardio
+despues de abort queda como evidencia stale y no avanza el run.
+
+`scheduler history` devuelve eventos acotados y redactados (sin payloads sensibles,
+session IDs completos, argv, unit IDs ni contenido de prompts/patches).
+
+`scheduler timer validate` valida los templates empaquetados
+(`ai-dev-loop-scheduler-tick.service` / `.timer`) sin habilitar systemd. La
+aceptacion manual con `systemctl --user` queda fuera de CI; el timer solo avanza
+progreso eventual mientras WSL esta activo (no despierta Windows).
 
 ## `launch`
 

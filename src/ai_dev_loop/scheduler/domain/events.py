@@ -39,6 +39,9 @@ WAITING_FOR_CURSOR_FIX_EVENT_KIND = "waiting_for_cursor_fix_entered"
 RUN_COMPLETED_EVENT_KIND = "run_completed"
 RUN_COMPLETED_WITH_RESIDUAL_RISK_EVENT_KIND = "run_completed_with_residual_risk"
 MAX_ITERATIONS_REACHED_EVENT_KIND = "max_iterations_reached"
+ABORT_REQUESTED_EVENT_KIND = "abort_requested"
+RUN_ABORTED_EVENT_KIND = "run_aborted"
+ATTEMPT_RESULT_STALE_EVENT_KIND = "attempt_result_stale"
 
 
 class RunSubmittedEvent(DomainModel):
@@ -466,6 +469,48 @@ class MaxIterationsReachedEvent(DomainModel):
         return value
 
 
+class AbortRequestedEvent(DomainModel):
+    kind: str = Field(default=ABORT_REQUESTED_EVENT_KIND)
+    run_id: str
+    reason: NonEmptyStr = "user_requested_abort"
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_abort_requested(cls, value: str) -> str:
+        if value != ABORT_REQUESTED_EVENT_KIND:
+            raise ValueError("kind must be abort_requested")
+        return value
+
+
+class RunAbortedEvent(DomainModel):
+    kind: str = Field(default=RUN_ABORTED_EVENT_KIND)
+    run_id: str
+    reason: NonEmptyStr
+    prior_state_kind: NonEmptyStr
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_run_aborted(cls, value: str) -> str:
+        if value != RUN_ABORTED_EVENT_KIND:
+            raise ValueError("kind must be run_aborted")
+        return value
+
+
+class AttemptResultStaleEvent(DomainModel):
+    kind: str = Field(default=ATTEMPT_RESULT_STALE_EVENT_KIND)
+    run_id: str
+    attempt_id: str
+    rejection_kind: NonEmptyStr
+    safe_summary: NonEmptyStr
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_attempt_result_stale(cls, value: str) -> str:
+        if value != ATTEMPT_RESULT_STALE_EVENT_KIND:
+            raise ValueError("kind must be attempt_result_stale")
+        return value
+
+
 def _scheduler_event_discriminator(value: object) -> str:
     if isinstance(value, dict):
         kind = value.get("kind")
@@ -506,7 +551,10 @@ SchedulerEvent = Annotated[
     | Annotated[WaitingForCursorFixEnteredEvent, Tag(WAITING_FOR_CURSOR_FIX_EVENT_KIND)]
     | Annotated[RunCompletedEvent, Tag(RUN_COMPLETED_EVENT_KIND)]
     | Annotated[RunCompletedWithResidualRiskEvent, Tag(RUN_COMPLETED_WITH_RESIDUAL_RISK_EVENT_KIND)]
-    | Annotated[MaxIterationsReachedEvent, Tag(MAX_ITERATIONS_REACHED_EVENT_KIND)],
+    | Annotated[MaxIterationsReachedEvent, Tag(MAX_ITERATIONS_REACHED_EVENT_KIND)]
+    | Annotated[AbortRequestedEvent, Tag(ABORT_REQUESTED_EVENT_KIND)]
+    | Annotated[RunAbortedEvent, Tag(RUN_ABORTED_EVENT_KIND)]
+    | Annotated[AttemptResultStaleEvent, Tag(ATTEMPT_RESULT_STALE_EVENT_KIND)],
     Discriminator(_scheduler_event_discriminator),
 ]
 

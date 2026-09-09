@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from ai_dev_loop.scheduler.application.contracts import (
@@ -9,10 +10,12 @@ from ai_dev_loop.scheduler.application.contracts import (
     SchedulerEngineErrorKind,
     SchedulerRunSummary,
     SchedulerStatusResult,
-    safe_next_action_for_state_kind,
+    aborted_pending_resource_cleanup_safe_next_action,
+    aborted_pending_termination_safe_next_action,
     scheduler_status_projection_from_state,
     summary_from_context,
 )
+from ai_dev_loop.scheduler.domain.state import AbortedState, SchedulerState
 from ai_dev_loop.scheduler.infrastructure.paths import default_engine_db_path
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
@@ -21,20 +24,35 @@ class SchedulerStatusService:
     def __init__(self, store: SqliteSchedulerStore) -> None:
         self.store = store
 
+    def _summary_for_state(
+        self,
+        conn: sqlite3.Connection,
+        state: SchedulerState,
+    ) -> SchedulerRunSummary:
+        projection = scheduler_status_projection_from_state(state)
+        safe_next_action = None
+        if isinstance(state, AbortedState):
+            if self.store.has_unresolved_abort_hold(conn, state.run_id):
+                safe_next_action = aborted_pending_termination_safe_next_action(state.run_id)
+            elif self.store.has_unreleased_abort_resources(conn, state.run_id):
+                safe_next_action = aborted_pending_resource_cleanup_safe_next_action(
+                    state.run_id
+                )
+        return summary_from_context(
+            run_id=state.run_id,
+            state_kind=state.kind,
+            submitted_at=state.submitted_at,
+            updated_at=state.updated_at,
+            context=state.context,
+            safe_next_action=safe_next_action,
+            cursor_wait_until=projection["cursor_wait_until"],
+            block_reason_kind=projection["block_reason_kind"],
+        )
+
     def get_status(self, run_id: str) -> SchedulerStatusResult:
         with self.store.begin_read() as conn:
             state, _, _ = self.store.load_validated_snapshot(conn, run_id)
-            projection = scheduler_status_projection_from_state(state)
-            summary = summary_from_context(
-                run_id=state.run_id,
-                state_kind=state.kind,
-                submitted_at=state.submitted_at,
-                updated_at=state.updated_at,
-                context=state.context,
-                safe_next_action=safe_next_action_for_state_kind(state.kind, state.run_id),
-                cursor_wait_until=projection["cursor_wait_until"],
-                block_reason_kind=projection["block_reason_kind"],
-            )
+            summary = self._summary_for_state(conn, state)
             capacity = self.store.get_capacity_row(conn)
             last_event = conn.execute(
                 """
@@ -61,19 +79,7 @@ class SchedulerStatusService:
         with self.store.begin_read() as conn:
             for row in self.store.list_runs(conn):
                 state, _, _ = self.store.load_validated_snapshot(conn, str(row["run_id"]))
-                projection = scheduler_status_projection_from_state(state)
-                summaries.append(
-                    summary_from_context(
-                        run_id=state.run_id,
-                        state_kind=state.kind,
-                        submitted_at=state.submitted_at,
-                        updated_at=state.updated_at,
-                        context=state.context,
-                        safe_next_action=safe_next_action_for_state_kind(state.kind, state.run_id),
-                        cursor_wait_until=projection["cursor_wait_until"],
-                        block_reason_kind=projection["block_reason_kind"],
-                    )
-                )
+                summaries.append(self._summary_for_state(conn, state))
         return summaries
 
 

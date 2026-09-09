@@ -16,13 +16,16 @@ from ai_dev_loop.run_discovery import find_runs_for_controller, load_run
 from ai_dev_loop.runners.git import discover_repository
 from ai_dev_loop.scheduler.application.contracts import (
     ControllerSchedulerCandidate,
+    SafeNextActionKind,
     SchedulerEngineError,
     SchedulerEngineErrorKind,
+    scheduler_abort_safe_next_action,
 )
 from ai_dev_loop.scheduler.application.controller_read import (
     find_scheduler_candidates,
     load_scheduler_candidate,
 )
+from ai_dev_loop.scheduler.domain.state import SCHEDULER_ABORTABLE_STATE_KINDS
 from ai_dev_loop.state import RunState, RunStatus, shorten_session_id
 
 
@@ -295,6 +298,26 @@ def _build_scheduler_result(
     if candidate.capacity_holder_run_id is not None:
         run_id = candidate.capacity_holder_run_id
         capacity_prefix = run_id[:8] if len(run_id) > 8 else run_id
+    next_action = candidate.safe_next_action.command or (
+        "Inspect scheduler artifacts for the blocked run."
+    )
+    abort_control: dict[str, object] | None = None
+    if candidate.state_kind in SCHEDULER_ABORTABLE_STATE_KINDS:
+        abort_hint = scheduler_abort_safe_next_action(candidate.run_id)
+        if candidate.safe_next_action.kind in {
+            SafeNextActionKind.SCHEDULER_TICK,
+            SafeNextActionKind.WAIT_UNTIL,
+        }:
+            next_action = f"{next_action} To stop safely: {abort_hint.command}"
+        abort_control = {
+            "abort_requested": False,
+            "scheduler_abort_command": abort_hint.command,
+            "active_process_registered": candidate.capacity_holder_run_id == candidate.run_id,
+            "active_component": "scheduler_attempt"
+            if candidate.capacity_holder_run_id == candidate.run_id
+            else None,
+            "active_iteration": None,
+        }
     return ControllerStatusResult(
         match_count=match_count,
         run_id=candidate.run_id,
@@ -303,8 +326,7 @@ def _build_scheduler_result(
         repository=candidate.repository_root,
         current_review_iteration=None,
         max_review_iterations=None,
-        next_safe_action=candidate.safe_next_action.command
-        or "Inspect scheduler artifacts for the blocked run.",
+        next_safe_action=next_action,
         last_error=None,
         result=None,
         launcher={
@@ -313,7 +335,7 @@ def _build_scheduler_result(
             "launcher_stale": False,
             "launcher_outcome": None,
         },
-        abort_control=None,
+        abort_control=abort_control,
         controller_session_id=controller_id,
         reviewer_session_id=None,
         candidate_run_ids=candidate_run_ids,

@@ -95,6 +95,22 @@ El comando no imprime por defecto:
 - auth payloads;
 - session IDs completos en salida humana.
 
+## Scheduler status, list e history
+
+```bash
+ai_dev_loop scheduler status <run-id>
+ai_dev_loop scheduler list
+ai_dev_loop scheduler history <run-id> [--limit 50] [--order oldest|newest]
+```
+
+Proyecciones read-only del ledger central (`engine.sqlite3`). Incluyen `state_kind`,
+siguiente accion segura (`scheduler tick`, `wait-until` para usage-limit verificado,
+`inspect blocked` para bloqueos), prefijos redactados de sesiones, y sin exponer
+prompts, patches, review Markdown, unit/PID data ni argv.
+
+`controller status` consulta el mismo ledger cuando el run proviene de
+`scheduler submit`, con lookup por controller session ID + repositorio exactos.
+
 ## List
 
 ```bash

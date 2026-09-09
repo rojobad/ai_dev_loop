@@ -477,3 +477,30 @@ Accion segura (no edites SQLite ni artefactos a mano):
 
 Gate A (automatizado) no implica aceptacion live; Gate B requiere el PR de
 aceptacion controlado en un checkout limpio de parish360-poc.
+
+## Scheduler central: abort, bloqueos y timer (Phase 17.6)
+
+Ledger: `$XDG_STATE_HOME/ai_dev_loop/engine.sqlite3` y artefactos bajo
+`$XDG_STATE_HOME/ai_dev_loop/artifacts/`.
+
+Comandos utiles:
+
+```bash
+ai_dev_loop scheduler status <run-id> --output json
+ai_dev_loop scheduler history <run-id> --limit 50 --order newest --output json
+ai_dev_loop scheduler abort <run-id>
+ai_dev_loop scheduler timer validate
+systemctl --user status ai-dev-loop-scheduler-tick.timer   # manual; no auto-enable en CI
+```
+
+- `abort` es durable-first: no confies en matar procesos sin el evento `run_aborted`.
+- Si un run `aborted` conserva capacity/reservation sin attempts activos, ejecuta
+  `scheduler tick` (la accion segura en `status`) para completar la liberacion.
+- Runs `blocked` muestran `block_reason_kind`; la accion segura es inspeccionar
+  artefactos protegidos, no reintentar automaticamente.
+- `waiting_usage_limit` programa `retry_due`; espera `cursor_wait_until` o ejecuta
+  `scheduler tick` tras ese instante (solo retry verificado de usage-limit).
+- El timer empaquetado avanza progreso cada ~30s **solo mientras WSL esta activo**;
+  no despierta Windows ni sustituye `scheduler tick` manual en tests.
+- La aceptacion manual de systemd user units no esta completada hasta validacion
+  explicita fuera de CI.

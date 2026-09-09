@@ -42,6 +42,9 @@ class FakeAttemptScenario:
     stale_identity: bool = False
     observation_unavailable: bool = False
     launch_raises: bool = False
+    stays_active_after_terminate: bool = False
+    terminate_raises_value_error: bool = False
+    terminate_unavailable: bool = False
 
 
 @dataclass
@@ -126,6 +129,14 @@ class FakeAgentProcessBackend(AgentProcessBackend):
                 lifecycle_state=UnitLifecycleState.MISSING,
                 owned=True,
                 absence_proven=True,
+            )
+        if scenario.stays_active_after_terminate and any(
+            call_attempt_id == attempt_id for _, call_attempt_id in self.terminate_calls
+        ):
+            return ObserveResult(
+                lifecycle_state=UnitLifecycleState.ACTIVE,
+                owned=True,
+                absence_proven=False,
             )
         request = self._launched[attempt_id]
         if attempt_id in self._completed:
@@ -247,13 +258,17 @@ class FakeAgentProcessBackend(AgentProcessBackend):
         if unit_identity != expected:
             raise ValueError("unit_identity does not match attempt_id")
         scenario = self.scenarios.get(attempt_id, self.default_scenario)
-        if scenario.observation_unavailable:
+        if scenario.terminate_unavailable:
             raise RuntimeError("refusing to terminate unit without authoritative observation")
+        if scenario.terminate_raises_value_error:
+            raise ValueError("fake terminate unavailable")
         if scenario.stale_identity or not scenario.owned:
             raise RuntimeError("refusing to terminate unit without validated ownership")
         if attempt_id not in self._launched:
             return
         self.terminate_calls.append((unit_identity, attempt_id))
+        if scenario.stays_active_after_terminate:
+            return
         self._completed[attempt_id] = ObserveResult(
             lifecycle_state=UnitLifecycleState.INACTIVE,
             owned=True,

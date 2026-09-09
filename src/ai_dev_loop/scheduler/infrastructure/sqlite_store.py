@@ -86,6 +86,7 @@ NON_TERMINAL_STATE_KINDS = frozenset(
         "waiting_usage_limit",
         "awaiting_codex_review",
         "waiting_for_cursor_fix",
+        "blocked",
     }
 )
 TICK_ELIGIBLE_STATE_KINDS = frozenset(
@@ -105,8 +106,10 @@ EFFECT_STATUS_CLAIMED = "claimed"
 EFFECT_STATUS_SUCCEEDED = "succeeded"
 EFFECT_STATUS_SUPERSEDED = "superseded"
 EFFECT_STATUS_BLOCKED = "blocked"
+EFFECT_STATUS_CANCELLED = "cancelled"
 TIMER_STATUS_PENDING = "pending"
 TIMER_STATUS_FIRED = "fired"
+TIMER_STATUS_CANCELLED = "cancelled"
 TICK_LEASE_NAME = "global"
 CAPACITY_NAME = "global_active_agent"
 ATTEMPT_STATUS_LAUNCHING = "launching"
@@ -821,7 +824,11 @@ class SqliteSchedulerStore:
             """,
             tuple(TICK_ELIGIBLE_STATE_KINDS),
         ).fetchall()
-        return [str(row[0]) for row in rows]
+        run_ids = [str(row[0]) for row in rows]
+        for run_id in self.list_aborted_reconcile_run_ids(conn):
+            if run_id not in run_ids:
+                run_ids.append(run_id)
+        return run_ids
 
     def find_runs_for_controller(
         self,
@@ -970,7 +977,14 @@ class SqliteSchedulerStore:
               AND NOT EXISTS (
                   SELECT 1 FROM scheduler_attempts
                   WHERE scheduler_attempts.capacity_claim_id = scheduler_capacity.holder_claim_id
-                    AND scheduler_attempts.status IN ('launching', 'active', 'uncertain')
+                    AND (
+                      scheduler_attempts.status IN ('launching', 'active', 'uncertain')
+                      OR (
+                        scheduler_attempts.status = 'cancelled'
+                        AND scheduler_attempts.completion_fence_id IS NOT NULL
+                        AND scheduler_attempts.ingested = 0
+                      )
+                    )
               )
             """,
             (now_text, CAPACITY_NAME, current_generation),
@@ -984,7 +998,14 @@ class SqliteSchedulerStore:
               AND NOT EXISTS (
                   SELECT 1 FROM scheduler_attempts
                   WHERE scheduler_attempts.dispatch_id = scheduler_effects.dispatch_id
-                    AND scheduler_attempts.status IN ('launching', 'active', 'uncertain')
+                    AND (
+                      scheduler_attempts.status IN ('launching', 'active', 'uncertain')
+                      OR (
+                        scheduler_attempts.status = 'cancelled'
+                        AND scheduler_attempts.completion_fence_id IS NOT NULL
+                        AND scheduler_attempts.ingested = 0
+                      )
+                    )
               )
             """,
             (
@@ -1524,6 +1545,137 @@ class SqliteSchedulerStore:
         ).fetchone()
         return cast(sqlite3.Row, row) if row is not None else None
 
+    def get_cancelled_reconcile_attempt_for_run(
+        self, conn: sqlite3.Connection, run_id: str
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_attempts
+            WHERE run_id = ? AND status = ?
+              AND completion_fence_id IS NOT NULL
+              AND ingested = 0
+            ORDER BY created_at DESC, attempt_id DESC
+            LIMIT 1
+            """,
+            (run_id, ATTEMPT_STATUS_CANCELLED),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def has_unresolved_abort_hold(self, conn: sqlite3.Connection, run_id: str) -> bool:
+        row = conn.execute(
+            """
+            SELECT 1 FROM scheduler_attempts
+            WHERE run_id = ?
+              AND (
+                status IN (?, ?, ?)
+                OR (
+                  status = ?
+                  AND completion_fence_id IS NOT NULL
+                  AND ingested = 0
+                )
+              )
+            LIMIT 1
+            """,
+            (
+                run_id,
+                ATTEMPT_STATUS_LAUNCHING,
+                ATTEMPT_STATUS_ACTIVE,
+                ATTEMPT_STATUS_UNCERTAIN,
+                ATTEMPT_STATUS_CANCELLED,
+            ),
+        ).fetchone()
+        return row is not None
+
+    def has_unreleased_abort_resources(self, conn: sqlite3.Connection, run_id: str) -> bool:
+        capacity = self.get_capacity_row(conn)
+        if capacity["holder_run_id"] is not None and str(capacity["holder_run_id"]) == run_id:
+            return True
+        return self.get_reservation_for_run(conn, run_id) is not None
+
+    def list_pending_abort_attempts(
+        self, conn: sqlite3.Connection, run_id: str
+    ) -> list[sqlite3.Row]:
+        rows = conn.execute(
+            """
+            SELECT * FROM scheduler_attempts
+            WHERE run_id = ?
+              AND (
+                status IN (?, ?, ?)
+                OR (
+                  status = ?
+                  AND completion_fence_id IS NOT NULL
+                  AND ingested = 0
+                )
+              )
+            ORDER BY created_at ASC, attempt_id ASC
+            """,
+            (
+                run_id,
+                ATTEMPT_STATUS_LAUNCHING,
+                ATTEMPT_STATUS_ACTIVE,
+                ATTEMPT_STATUS_UNCERTAIN,
+                ATTEMPT_STATUS_CANCELLED,
+            ),
+        ).fetchall()
+        return [cast(sqlite3.Row, row) for row in rows]
+
+    def list_aborted_reconcile_run_ids(self, conn: sqlite3.Connection) -> list[str]:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT sr.run_id
+            FROM scheduler_runs sr
+            WHERE sr.state_kind = 'aborted'
+              AND (
+                sr.run_id IN (
+                    SELECT run_id FROM scheduler_attempts
+                    WHERE status IN (?, ?, ?)
+                       OR (
+                         status = ?
+                         AND completion_fence_id IS NOT NULL
+                         AND ingested = 0
+                       )
+                )
+                OR (
+                  NOT EXISTS (
+                      SELECT 1 FROM scheduler_attempts
+                      WHERE run_id = sr.run_id
+                        AND (
+                          status IN (?, ?, ?)
+                          OR (
+                            status = ?
+                            AND completion_fence_id IS NOT NULL
+                            AND ingested = 0
+                          )
+                        )
+                  )
+                  AND (
+                    EXISTS (
+                        SELECT 1 FROM scheduler_capacity
+                        WHERE holder_run_id = sr.run_id
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM scheduler_repository_reservations
+                        WHERE run_id = sr.run_id AND status = ?
+                    )
+                  )
+                )
+              )
+            ORDER BY sr.created_at ASC, sr.run_id ASC
+            """,
+            (
+                ATTEMPT_STATUS_LAUNCHING,
+                ATTEMPT_STATUS_ACTIVE,
+                ATTEMPT_STATUS_UNCERTAIN,
+                ATTEMPT_STATUS_CANCELLED,
+                ATTEMPT_STATUS_LAUNCHING,
+                ATTEMPT_STATUS_ACTIVE,
+                ATTEMPT_STATUS_UNCERTAIN,
+                ATTEMPT_STATUS_CANCELLED,
+                ReservationStatus.ACTIVE.value,
+            ),
+        ).fetchall()
+        return [str(row[0]) for row in rows]
+
     def get_nonterminal_attempt_for_run(
         self, conn: sqlite3.Connection, run_id: str
     ) -> sqlite3.Row | None:
@@ -2028,3 +2180,152 @@ class SqliteSchedulerStore:
             (now_text, attempt_id),
         )
         return cursor.rowcount == 1
+
+    def cancel_live_work(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        now: datetime,
+    ) -> None:
+        now_text = encode_utc_instant(now)
+        conn.execute(
+            """
+            UPDATE scheduler_effects
+            SET status = ?, updated_at = ?,
+                claim_id = NULL, claim_owner_id = NULL,
+                claim_lease_generation = NULL, claimed_at = NULL
+            WHERE run_id = ? AND status IN (?, ?, ?)
+            """,
+            (
+                EFFECT_STATUS_CANCELLED,
+                now_text,
+                run_id,
+                EFFECT_STATUS_PENDING,
+                EFFECT_STATUS_CLAIMED,
+                "retry_wait",
+            ),
+        )
+        conn.execute(
+            """
+            UPDATE scheduler_timers
+            SET status = ?, updated_at = ?
+            WHERE run_id = ? AND status = ?
+            """,
+            (TIMER_STATUS_CANCELLED, now_text, run_id, TIMER_STATUS_PENDING),
+        )
+        conn.execute(
+            """
+            UPDATE scheduler_claims
+            SET status = 'stale', released_at = ?, updated_at = ?
+            WHERE run_id = ? AND status = 'active'
+            """,
+            (now_text, now_text, run_id),
+        )
+        conn.execute(
+            """
+            UPDATE scheduler_run_tick_claims
+            SET status = 'stale', released_at = ?, updated_at = ?
+            WHERE run_id = ? AND status = 'active'
+            """,
+            (now_text, now_text, run_id),
+        )
+
+    def cancel_nonterminal_attempts(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        completion_fence_id: str,
+        now: datetime,
+    ) -> list[sqlite3.Row]:
+        now_text = encode_utc_instant(now)
+        rows = conn.execute(
+            """
+            SELECT * FROM scheduler_attempts
+            WHERE run_id = ? AND status IN (?, ?, ?)
+            """,
+            (
+                run_id,
+                ATTEMPT_STATUS_LAUNCHING,
+                ATTEMPT_STATUS_ACTIVE,
+                ATTEMPT_STATUS_UNCERTAIN,
+            ),
+        ).fetchall()
+        conn.execute(
+            """
+            UPDATE scheduler_attempts
+            SET status = ?, completion_fence_id = ?, updated_at = ?
+            WHERE run_id = ? AND status IN (?, ?, ?)
+              AND completion_fence_id IS NULL
+            """,
+            (
+                ATTEMPT_STATUS_CANCELLED,
+                completion_fence_id,
+                now_text,
+                run_id,
+                ATTEMPT_STATUS_LAUNCHING,
+                ATTEMPT_STATUS_ACTIVE,
+                ATTEMPT_STATUS_UNCERTAIN,
+            ),
+        )
+        return [cast(sqlite3.Row, row) for row in rows]
+
+    def release_capacity_for_run(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        now: datetime,
+    ) -> bool:
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            UPDATE scheduler_capacity
+            SET holder_run_id = NULL, holder_claim_id = NULL,
+                holder_tick_generation = NULL, updated_at = ?
+            WHERE capacity_name = ? AND holder_run_id = ?
+            """,
+            (now_text, CAPACITY_NAME, run_id),
+        )
+        return cursor.rowcount == 1
+
+    def list_events_for_run(
+        self,
+        conn: sqlite3.Connection,
+        run_id: str,
+        *,
+        limit: int,
+        newest_first: bool,
+    ) -> list[sqlite3.Row]:
+        if limit < 1:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "history limit must be positive",
+            )
+        order = "DESC" if newest_first else "ASC"
+        rows = conn.execute(
+            f"""
+            SELECT event_id, run_id, sequence, event_kind, event_payload, created_at
+            FROM scheduler_events
+            WHERE run_id = ?
+            ORDER BY sequence {order}
+            LIMIT ?
+            """,
+            (run_id, limit),
+        ).fetchall()
+        return [cast(sqlite3.Row, row) for row in rows]
+
+    def get_nonterminal_attempt_rows(
+        self, conn: sqlite3.Connection, run_id: str
+    ) -> list[sqlite3.Row]:
+        placeholders = ",".join("?" * len(NON_TERMINAL_ATTEMPT_STATUSES))
+        rows = conn.execute(
+            f"""
+            SELECT * FROM scheduler_attempts
+            WHERE run_id = ? AND status IN ({placeholders})
+            ORDER BY created_at ASC, attempt_id ASC
+            """,
+            (run_id, *NON_TERMINAL_ATTEMPT_STATUSES),
+        ).fetchall()
+        return [cast(sqlite3.Row, row) for row in rows]

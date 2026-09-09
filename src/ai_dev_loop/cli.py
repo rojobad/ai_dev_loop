@@ -44,10 +44,15 @@ from ai_dev_loop.commands.resume import render_resume_output, resume_run
 from ai_dev_loop.commands.scheduler import (
     SubmitOptions,
     render_list_output,
+    render_scheduler_abort_output,
+    render_scheduler_history_output,
     render_status_output,
     render_submit_output,
     render_tick_output,
+    render_timer_validate_output,
     run_scheduler_tick,
+    scheduler_abort_run,
+    scheduler_history,
     scheduler_list,
     scheduler_status,
     submit_run,
@@ -537,6 +542,60 @@ def scheduler_list_command(
     def run() -> None:
         summaries = scheduler_list()
         typer.echo(render_list_output(summaries, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@scheduler_app.command("abort")
+def scheduler_abort_command(
+    run_id: Annotated[str, typer.Argument(help="Scheduler run ID.")],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Persist scheduler abort first, then stop only the exact owned attempt unit."""
+
+    def run() -> None:
+        result = scheduler_abort_run(run_id)
+        typer.echo(render_scheduler_abort_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@scheduler_app.command("history")
+def scheduler_history_command(
+    run_id: Annotated[str, typer.Argument(help="Scheduler run ID.")],
+    limit: Annotated[int, typer.Option(help="Maximum events to return.")] = 50,
+    order: Annotated[
+        str,
+        typer.Option(help="Event order: oldest or newest."),
+    ] = "oldest",
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Show bounded redacted scheduler event history for one run."""
+
+    def run() -> None:
+        result = scheduler_history(run_id, limit=limit, order=order)
+        typer.echo(render_scheduler_history_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+timer_app = typer.Typer(help="Packaged systemd timer asset helpers (no auto-enable).")
+scheduler_app.add_typer(timer_app, name="timer")
+
+
+@timer_app.command("validate")
+def scheduler_timer_validate_command(
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Validate packaged scheduler timer/service templates without enabling systemd."""
+
+    def run() -> None:
+        from ai_dev_loop.scheduler.infrastructure.systemd_assets import validate_packaged_assets
+
+        errors = validate_packaged_assets()
+        typer.echo(render_timer_validate_output(errors, output=output.value), nl=False)
+        if errors:
+            raise typer.Exit(code=1)
 
     _handle(run)
 

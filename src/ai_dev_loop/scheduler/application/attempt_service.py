@@ -4,11 +4,19 @@ from __future__ import annotations
 
 import json
 import secrets
+import sqlite3
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
 from ai_dev_loop.errors import ValidationError
+from ai_dev_loop.scheduler.application.abort_reconcile import (
+    append_attempt_result_stale_event,
+    attempt_stop_action,
+    finalize_aborted_run_cleanup,
+    finalize_resolved_abort_attempt,
+    unit_observation_stopped,
+)
 from ai_dev_loop.scheduler.application.attempt_backend import (
     AgentProcessBackend,
     LaunchRequest,
@@ -65,6 +73,7 @@ from ai_dev_loop.scheduler.domain.events import (
     AttemptUncertainEvent,
 )
 from ai_dev_loop.scheduler.domain.state import (
+    AbortedState,
     AdmittedState,
     AwaitingCodexReviewState,
     CursorReadyState,
@@ -79,6 +88,7 @@ from ai_dev_loop.scheduler.infrastructure.protected_artifacts import (
 )
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import (
     ATTEMPT_STATUS_ACTIVE,
+    ATTEMPT_STATUS_CANCELLED,
     ATTEMPT_STATUS_COMPLETED,
     ATTEMPT_STATUS_FAILED,
     ATTEMPT_STATUS_LAUNCHING,
@@ -132,6 +142,13 @@ class AttemptService:
         tick_lease_generation: int,
         run_id: str,
     ) -> TickRunReceipt | None:
+        cleanup = self._maybe_finalize_aborted_resources(
+            tick_owner_id,
+            tick_lease_generation,
+            run_id,
+        )
+        if cleanup is not None:
+            return cleanup
         reconcile = self._reconcile_existing_attempt(
             tick_owner_id,
             tick_lease_generation,
@@ -655,14 +672,31 @@ class AttemptService:
                 now=now,
             ):
                 return TickRunReceipt(run_id=run_id, action="attempt_stale")
+            state, version, _ = self.store.load_validated_snapshot(conn, run_id)
             attempt = self.store.get_nonterminal_attempt_for_run(conn, run_id)
+            if attempt is None and isinstance(state, AbortedState):
+                attempt = self.store.get_cancelled_reconcile_attempt_for_run(conn, run_id)
             if attempt is None:
                 return None
-            state, version, _ = self.store.load_validated_snapshot(conn, run_id)
+            if isinstance(state, AbortedState):
+                return self._reconcile_aborted_attempt(
+                    tick_owner_id=tick_owner_id,
+                    tick_lease_generation=tick_lease_generation,
+                    run_id=run_id,
+                    attempt=attempt,
+                )
             if not isinstance(state, _ATTEMPT_RECONCILE_STATES):
                 return TickRunReceipt(run_id=run_id, action="attempt_state_changed")
             attempt_id = str(attempt["attempt_id"])
             unit_identity = str(attempt["unit_identity"])
+            if str(attempt["status"]) == ATTEMPT_STATUS_CANCELLED:
+                return self._reconcile_cancelled_attempt(
+                    tick_owner_id=tick_owner_id,
+                    tick_lease_generation=tick_lease_generation,
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                    unit_identity=unit_identity,
+                )
             dispatch_id = str(attempt["dispatch_id"])
             claim_id = str(attempt["capacity_claim_id"])
             result_rel = str(attempt["result_artifact_path"])
@@ -1283,8 +1317,54 @@ class AttemptService:
             ):
                 return TickRunReceipt(run_id=run_id, action="attempt_stale")
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
+            if isinstance(state, AbortedState):
+                self._reject_stale_attempt_result(
+                    tick_owner_id=tick_owner_id,
+                    tick_lease_generation=tick_lease_generation,
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                    rejection_kind="run_aborted",
+                    safe_summary="attempt completion blocked by scheduler abort",
+                    conn=conn,
+                )
+                self.store.mark_attempt_ingested(conn, attempt_id=attempt_id, now=now)
+                finalize_aborted_run_cleanup(
+                    self.store,
+                    conn,
+                    run_id=run_id,
+                    now=now,
+                )
+                return TickRunReceipt(
+                    run_id=run_id,
+                    action="attempt_result_stale",
+                    detail="run_aborted",
+                )
             if not isinstance(state, _ATTEMPT_RECONCILE_STATES):
                 return TickRunReceipt(run_id=run_id, action="attempt_state_changed")
+            attempt_row = self.store.get_attempt_by_id(conn, attempt_id)
+            if attempt_row is not None and str(attempt_row["status"]) == ATTEMPT_STATUS_CANCELLED:
+                self._reject_stale_attempt_result(
+                    tick_owner_id=tick_owner_id,
+                    tick_lease_generation=tick_lease_generation,
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                    rejection_kind="attempt_cancelled",
+                    safe_summary="attempt completion blocked by cancellation fence",
+                    conn=conn,
+                )
+                self.store.mark_attempt_ingested(conn, attempt_id=attempt_id, now=now)
+                if isinstance(state, AbortedState):
+                    finalize_aborted_run_cleanup(
+                        self.store,
+                        conn,
+                        run_id=run_id,
+                        now=now,
+                    )
+                return TickRunReceipt(
+                    run_id=run_id,
+                    action="attempt_result_stale",
+                    detail="attempt_cancelled",
+                )
             capacity_claim_owner_id = self.store.get_claim_owner_id(conn, claim_id)
             if capacity_claim_owner_id is None:
                 return TickRunReceipt(run_id=run_id, action="attempt_complete_stale")
@@ -1397,6 +1477,220 @@ class AttemptService:
                 now=now,
             )
         return TickRunReceipt(run_id=run_id, action="attempt_uncertain", detail=attempt_id)
+
+    def _maybe_finalize_aborted_resources(
+        self,
+        tick_owner_id: str,
+        tick_lease_generation: int,
+        run_id: str,
+    ) -> TickRunReceipt | None:
+        now = self._now_factory()
+        with self.store.begin_read() as conn:
+            if not tick_lease_is_active(
+                self.store,
+                conn,
+                owner_id=tick_owner_id,
+                generation=tick_lease_generation,
+                now=now,
+            ):
+                return TickRunReceipt(run_id=run_id, action="attempt_stale")
+            state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            if not isinstance(state, AbortedState):
+                return None
+            if self.store.has_unresolved_abort_hold(conn, run_id):
+                return None
+            if not self.store.has_unreleased_abort_resources(conn, run_id):
+                return None
+        with self.store.begin_immediate() as conn:
+            if not tick_lease_is_active(
+                self.store,
+                conn,
+                owner_id=tick_owner_id,
+                generation=tick_lease_generation,
+                now=now,
+            ):
+                return TickRunReceipt(run_id=run_id, action="attempt_stale")
+            state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            if not isinstance(state, AbortedState):
+                return None
+            if self.store.has_unresolved_abort_hold(conn, run_id):
+                return None
+            finalize_aborted_run_cleanup(
+                self.store,
+                conn,
+                run_id=run_id,
+                now=now,
+            )
+            if self.store.has_unreleased_abort_resources(conn, run_id):
+                return None
+        return TickRunReceipt(run_id=run_id, action="abort_resource_cleanup")
+
+    def _reconcile_aborted_attempt(
+        self,
+        *,
+        tick_owner_id: str,
+        tick_lease_generation: int,
+        run_id: str,
+        attempt: sqlite3.Row,
+    ) -> TickRunReceipt:
+        attempt_id = str(attempt["attempt_id"])
+        unit_identity = attempt["unit_identity"]
+        if unit_identity is None:
+            now = self._now_factory()
+            with self.store.begin_immediate() as conn:
+                if not tick_lease_is_active(
+                    self.store,
+                    conn,
+                    owner_id=tick_owner_id,
+                    generation=tick_lease_generation,
+                    now=now,
+                ):
+                    return TickRunReceipt(run_id=run_id, action="attempt_stale")
+                finalize_resolved_abort_attempt(
+                    self.store,
+                    conn,
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                    now=now,
+                    event_id_factory=self._event_id_factory,
+                    stale_rejection_kind="run_aborted",
+                    stale_safe_summary="attempt result arrived after scheduler abort",
+                )
+            return TickRunReceipt(
+                run_id=run_id,
+                action="attempt_result_stale",
+                detail="run_aborted",
+            )
+
+        _, observation = attempt_stop_action(
+            self.backend,
+            unit_identity=str(unit_identity),
+            attempt_id=attempt_id,
+        )
+        if not unit_observation_stopped(observation):
+            return TickRunReceipt(
+                run_id=run_id,
+                action="attempt_abort_pending",
+                detail=attempt_id,
+            )
+        now = self._now_factory()
+        with self.store.begin_immediate() as conn:
+            if not tick_lease_is_active(
+                self.store,
+                conn,
+                owner_id=tick_owner_id,
+                generation=tick_lease_generation,
+                now=now,
+            ):
+                return TickRunReceipt(run_id=run_id, action="attempt_stale")
+            finalize_resolved_abort_attempt(
+                self.store,
+                conn,
+                run_id=run_id,
+                attempt_id=attempt_id,
+                now=now,
+                event_id_factory=self._event_id_factory,
+                stale_rejection_kind="run_aborted",
+                stale_safe_summary="attempt result arrived after scheduler abort",
+            )
+        return TickRunReceipt(
+            run_id=run_id,
+            action="attempt_result_stale",
+            detail="run_aborted",
+        )
+
+    def _reconcile_cancelled_attempt(
+        self,
+        *,
+        tick_owner_id: str,
+        tick_lease_generation: int,
+        run_id: str,
+        attempt_id: str,
+        unit_identity: str,
+    ) -> TickRunReceipt:
+        _, observation = attempt_stop_action(
+            self.backend,
+            unit_identity=unit_identity,
+            attempt_id=attempt_id,
+        )
+        if not unit_observation_stopped(observation):
+            return TickRunReceipt(
+                run_id=run_id,
+                action="attempt_abort_pending",
+                detail=attempt_id,
+            )
+        now = self._now_factory()
+        with self.store.begin_immediate() as conn:
+            if not tick_lease_is_active(
+                self.store,
+                conn,
+                owner_id=tick_owner_id,
+                generation=tick_lease_generation,
+                now=now,
+            ):
+                return TickRunReceipt(run_id=run_id, action="attempt_stale")
+            finalize_resolved_abort_attempt(
+                self.store,
+                conn,
+                run_id=run_id,
+                attempt_id=attempt_id,
+                now=now,
+                event_id_factory=self._event_id_factory,
+                stale_rejection_kind="attempt_cancelled",
+                stale_safe_summary="attempt result arrived after cancellation fence",
+            )
+        return TickRunReceipt(
+            run_id=run_id,
+            action="attempt_result_stale",
+            detail="attempt_cancelled",
+        )
+
+    def _reject_stale_attempt_result(
+        self,
+        *,
+        tick_owner_id: str,
+        tick_lease_generation: int,
+        run_id: str,
+        attempt_id: str,
+        rejection_kind: str,
+        safe_summary: str,
+        conn: sqlite3.Connection | None = None,
+    ) -> TickRunReceipt:
+        now = self._now_factory()
+
+        def _append(connection: sqlite3.Connection) -> TickRunReceipt | None:
+            if not tick_lease_is_active(
+                self.store,
+                connection,
+                owner_id=tick_owner_id,
+                generation=tick_lease_generation,
+                now=now,
+            ):
+                return TickRunReceipt(run_id=run_id, action="attempt_stale")
+            append_attempt_result_stale_event(
+                self.store,
+                connection,
+                run_id=run_id,
+                attempt_id=attempt_id,
+                rejection_kind=rejection_kind,
+                safe_summary=safe_summary,
+                now=now,
+                event_id_factory=self._event_id_factory,
+            )
+            return TickRunReceipt(
+                run_id=run_id,
+                action="attempt_result_stale",
+                detail=rejection_kind,
+            )
+
+        if isinstance(conn, sqlite3.Connection):
+            result = _append(conn)
+            assert result is not None
+            return result
+        with self.store.begin_immediate() as new_conn:
+            result = _append(new_conn)
+            assert result is not None
+            return result
 
 
 def default_attempt_id_factory() -> Callable[[], str]:

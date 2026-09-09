@@ -40,6 +40,9 @@ class ReservationStatus(StrEnum):
 class SafeNextActionKind(StrEnum):
     SCHEDULER_START = "scheduler_start"
     SCHEDULER_TICK = "scheduler_tick"
+    SCHEDULER_ABORT = "scheduler_abort"
+    WAIT_UNTIL = "wait_until"
+    INSPECT_BLOCKED = "inspect_blocked"
     NONE = "none"
 
 
@@ -99,6 +102,41 @@ class TickReceipt(AppModel):
     run_receipts: tuple[TickRunReceipt, ...]
     lease_acquired: bool
     safe_next_action: SafeNextAction
+
+
+class AbortProcessAction(StrEnum):
+    NONE = "none"
+    TERMINATED = "terminated"
+    REFUSED = "refused"
+    UNAVAILABLE = "unavailable"
+
+
+class AbortResult(AppModel):
+    run_id: str
+    state_kind: str
+    abort_persisted: bool
+    idempotent_replay: bool
+    process_action: AbortProcessAction
+    termination_pending: bool = False
+    safe_next_action: SafeNextAction
+
+
+HARD_HISTORY_MAX = 200
+
+
+class HistoryEntry(AppModel):
+    sequence: int
+    event_kind: str
+    created_at: str
+    safe_detail: str
+
+
+class HistoryResult(AppModel):
+    run_id: str
+    order: str
+    limit: int
+    truncated: bool
+    entries: tuple[HistoryEntry, ...]
 
 
 class ControllerSchedulerCandidate(AppModel):
@@ -166,14 +204,72 @@ def terminal_review_safe_next_action() -> SafeNextAction:
     )
 
 
-def blocked_safe_next_action() -> SafeNextAction:
+def aborted_safe_next_action() -> SafeNextAction:
     return SafeNextAction(
         kind=SafeNextActionKind.NONE,
         command=None,
     )
 
 
-def safe_next_action_for_state_kind(state_kind: str, run_id: str) -> SafeNextAction:
+def aborted_pending_termination_safe_next_action(run_id: str) -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.SCHEDULER_ABORT,
+        command=(
+            f"Scheduler abort termination is still pending for run {run_id}. "
+            f"Retry with ai_dev_loop scheduler abort {run_id} after verifying the "
+            "owned unit is inactive. Do not relaunch or advance the run."
+        ),
+    )
+
+
+def aborted_pending_resource_cleanup_safe_next_action(run_id: str) -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.SCHEDULER_TICK,
+        command=(
+            f"Aborted run {run_id} still holds scheduler capacity or reservation. "
+            "Run ai_dev_loop scheduler tick to finalize cleanup. "
+            "Do not relaunch or advance the run."
+        ),
+    )
+
+
+def blocked_safe_next_action(
+    run_id: str, *, block_reason_kind: str | None = None
+) -> SafeNextAction:
+    detail = block_reason_kind or "blocked"
+    return SafeNextAction(
+        kind=SafeNextActionKind.INSPECT_BLOCKED,
+        command=(
+            f"Inspect protected scheduler artifacts for run {run_id} "
+            f"(block_reason_kind={detail}). No automatic retry is available."
+        ),
+    )
+
+
+def waiting_usage_limit_safe_next_action(wait_until: str) -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.WAIT_UNTIL,
+        command=(
+            f"Wait until {wait_until}, then run ai_dev_loop scheduler tick "
+            "(verified usage-limit retry only)."
+        ),
+    )
+
+
+def scheduler_abort_safe_next_action(run_id: str) -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.SCHEDULER_ABORT,
+        command=f"ai_dev_loop scheduler abort {run_id}",
+    )
+
+
+def safe_next_action_for_state_kind(
+    state_kind: str,
+    run_id: str,
+    *,
+    cursor_wait_until: str | None = None,
+    block_reason_kind: str | None = None,
+) -> SafeNextAction:
     if state_kind == "queued":
         return queued_safe_next_action(run_id)
     if state_kind == "authorized":
@@ -182,8 +278,11 @@ def safe_next_action_for_state_kind(state_kind: str, run_id: str) -> SafeNextAct
         "admitted",
         "preflight_complete",
         "cursor_ready",
-        "waiting_usage_limit",
     }:
+        return active_cursor_safe_next_action()
+    if state_kind == "waiting_usage_limit":
+        if cursor_wait_until:
+            return waiting_usage_limit_safe_next_action(cursor_wait_until)
         return active_cursor_safe_next_action()
     if state_kind == "awaiting_codex_review":
         return awaiting_codex_review_safe_next_action()
@@ -191,7 +290,11 @@ def safe_next_action_for_state_kind(state_kind: str, run_id: str) -> SafeNextAct
         return waiting_for_cursor_fix_safe_next_action()
     if state_kind in {"completed", "completed_with_residual_risk", "max_iterations_reached"}:
         return terminal_review_safe_next_action()
-    return blocked_safe_next_action()
+    if state_kind == "aborted":
+        return aborted_safe_next_action()
+    if state_kind == "blocked":
+        return blocked_safe_next_action(run_id, block_reason_kind=block_reason_kind)
+    return blocked_safe_next_action(run_id)
 
 
 def redacted_session_prefix(session_id: str) -> str:
@@ -227,7 +330,12 @@ def summary_from_context(
         reviewer_prefix = None
     else:
         reviewer_prefix = redacted_session_prefix(context.codex.session_id)
-    action = safe_next_action or safe_next_action_for_state_kind(state_kind, run_id)
+    action = safe_next_action or safe_next_action_for_state_kind(
+        state_kind,
+        run_id,
+        cursor_wait_until=cursor_wait_until,
+        block_reason_kind=block_reason_kind,
+    )
     return SchedulerRunSummary(
         run_id=run_id,
         state_kind=state_kind,

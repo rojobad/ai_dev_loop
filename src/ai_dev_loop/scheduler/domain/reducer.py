@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from ai_dev_loop.scheduler.domain.events import (
+    AbortRequestedEvent,
     AttemptCompletedEvent,
     AttemptLaunchRequestedEvent,
+    AttemptResultStaleEvent,
     AttemptUncertainEvent,
     AwaitingCodexReviewEnteredEvent,
     CodexBootstrapUncertainEvent,
@@ -19,6 +21,7 @@ from ai_dev_loop.scheduler.domain.events import (
     MaxIterationsReachedEvent,
     PreflightBlockedEvent,
     PreflightCompletedEvent,
+    RunAbortedEvent,
     RunAuthorizedEvent,
     RunCompletedEvent,
     RunCompletedWithResidualRiskEvent,
@@ -32,6 +35,9 @@ from ai_dev_loop.scheduler.domain.events import (
     WorktreeAdmittedEvent,
 )
 from ai_dev_loop.scheduler.domain.state import (
+    SCHEDULER_ABORTABLE_STATE_KINDS,
+    SCHEDULER_TERMINAL_STATE_KINDS,
+    AbortedState,
     AdmittedRunCheckpoint,
     AdmittedState,
     AuthorizedState,
@@ -671,6 +677,136 @@ def apply_attempt_uncertain(
     state: AdmittedState,
     event: AttemptUncertainEvent,
 ) -> AdmittedState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    return state
+
+
+def _abort_checkpoint_from_state(
+    state: object,
+) -> tuple[
+    AdmittedRunCheckpoint | None,
+    CursorWorkflowCheckpoint | None,
+    CodexWorkflowCheckpoint | None,
+    str | None,
+    str | None,
+]:
+    checkpoint = getattr(state, "checkpoint", None)
+    cursor = getattr(state, "cursor", None)
+    codex = getattr(state, "codex", None)
+    authorized_at = getattr(state, "authorized_at", None)
+    authorized_controller_session_id = getattr(state, "authorized_controller_session_id", None)
+    if isinstance(state, AdmittedState) and checkpoint is None:
+        checkpoint = AdmittedRunCheckpoint(
+            authorized_at=state.authorized_at,
+            authorized_controller_session_id=state.authorized_controller_session_id,
+            admitted_at=state.admitted_at,
+            admission_status_artifact_path=state.admission_status_artifact_path,
+            admission_status_sha256=state.admission_status_sha256,
+        )
+    return checkpoint, cursor, codex, authorized_at, authorized_controller_session_id
+
+
+def apply_run_aborted(
+    state: (
+        SubmittedState
+        | AuthorizedState
+        | AdmittedState
+        | PreflightCompleteState
+        | CursorReadyState
+        | WaitingUsageLimitState
+        | AwaitingCodexReviewState
+        | WaitingForCursorFixState
+        | AbortedState
+    ),
+    event: RunAbortedEvent,
+    *,
+    now_text: str,
+) -> AbortedState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    if isinstance(state, AbortedState):
+        if state.abort_reason != event.reason or state.prior_state_kind != event.prior_state_kind:
+            raise ValueError("aborted state disagrees with event")
+        return state
+    if state.kind in SCHEDULER_TERMINAL_STATE_KINDS:
+        raise ValueError("run_aborted applies only to non-terminal runs")
+    if state.kind not in SCHEDULER_ABORTABLE_STATE_KINDS:
+        raise ValueError("run_aborted applies only to abortable runs")
+    checkpoint, cursor, codex, authorized_at, authorized_controller_session_id = (
+        _abort_checkpoint_from_state(state)
+    )
+    return AbortedState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        aborted_at=now_text,
+        abort_reason=event.reason,
+        prior_state_kind=event.prior_state_kind,
+        checkpoint=checkpoint,
+        cursor=cursor,
+        codex=codex,
+        authorized_at=authorized_at,
+        authorized_controller_session_id=authorized_controller_session_id,
+    )
+
+
+def apply_abort_requested(
+    state: (
+        SubmittedState
+        | AuthorizedState
+        | AdmittedState
+        | PreflightCompleteState
+        | CursorReadyState
+        | WaitingUsageLimitState
+        | AwaitingCodexReviewState
+        | WaitingForCursorFixState
+        | AbortedState
+    ),
+    event: AbortRequestedEvent,
+) -> (
+    SubmittedState
+    | AuthorizedState
+    | AdmittedState
+    | PreflightCompleteState
+    | CursorReadyState
+    | WaitingUsageLimitState
+    | AwaitingCodexReviewState
+    | WaitingForCursorFixState
+    | AbortedState
+):
+    """Abort request is durable evidence only until run_aborted is applied."""
+
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    return state
+
+
+def apply_attempt_result_stale(
+    state: (
+        AdmittedState
+        | PreflightCompleteState
+        | CursorReadyState
+        | WaitingUsageLimitState
+        | AwaitingCodexReviewState
+        | WaitingForCursorFixState
+        | AbortedState
+    ),
+    event: AttemptResultStaleEvent,
+) -> (
+    AdmittedState
+    | PreflightCompleteState
+    | CursorReadyState
+    | WaitingUsageLimitState
+    | AwaitingCodexReviewState
+    | WaitingForCursorFixState
+    | AbortedState
+):
+    """Late attempt evidence after abort/cancellation must not mutate run state."""
+
     if event.run_id != state.run_id:
         raise ValueError("event run_id disagrees with state")
     return state
