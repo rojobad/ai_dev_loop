@@ -99,8 +99,12 @@ objetivo. Resuelve solo la raiz canonica del worktree (marcador `.git`) y congel
 inputs inmutables; no ejecuta Git CLI ni escribe baseline de estado. No crea
 reviewer B; congela `--controller-session-id`, `--codex-review-model` y
 `--codex-review-reasoning-effort` como inputs inmutables. El primer review del
-scheduler (Phase 17.5) creara exactamente un B sin `--sandbox` y los reviews posteriores
-reanudaran esa identidad.
+scheduler (Phase 17.5) crea exactamente un B con `codex exec` en
+`--sandbox read-only`, valida y persiste su identidad, y los reviews posteriores
+reanudan esa misma sesion con `codex exec resume` (nunca `--last` ni un segundo B).
+Tras staging, el tick puede completar sin hallazgos, terminalizar con riesgo residual,
+alcanzar `max_iterations_reached`, o programar una correccion Cursor con el fix prompt
+exacto de Codex.
 
 La admision del worktree (`require_clean_worktree`, branch, HEAD y status) ocurre
 una sola vez en el primer tick/preflight (Phase 17.2), no en submit.

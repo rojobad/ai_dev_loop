@@ -85,6 +85,7 @@ NON_TERMINAL_STATE_KINDS = frozenset(
         "cursor_ready",
         "waiting_usage_limit",
         "awaiting_codex_review",
+        "waiting_for_cursor_fix",
     }
 )
 TICK_ELIGIBLE_STATE_KINDS = frozenset(
@@ -95,6 +96,8 @@ TICK_ELIGIBLE_STATE_KINDS = frozenset(
         "preflight_complete",
         "cursor_ready",
         "waiting_usage_limit",
+        "awaiting_codex_review",
+        "waiting_for_cursor_fix",
     }
 )
 EFFECT_STATUS_PENDING = "pending"
@@ -1559,6 +1562,8 @@ class SqliteSchedulerStore:
         stderr_artifact_path: str,
         result_artifact_path: str,
         now: datetime,
+        component: str = "cursor",
+        iteration: int = 1,
     ) -> None:
         now_text = encode_utc_instant(now)
         conn.execute(
@@ -1569,12 +1574,14 @@ class SqliteSchedulerStore:
                 stderr_artifact_path, completion_envelope_sha256, created_at, updated_at,
                 launch_nonce, unit_identity, capacity_claim_id, capacity_tick_generation,
                 result_artifact_path, launch_requested_at
-            ) VALUES (?, ?, ?, 'cursor', 1, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 attempt_id,
                 run_id,
                 dispatch_id,
+                component,
+                iteration,
                 ATTEMPT_STATUS_LAUNCHING,
                 unit_identity,
                 launch_intent_sha256,
@@ -1971,6 +1978,35 @@ class SqliteSchedulerStore:
                 ATTEMPT_STATUS_FAILED,
                 "cursor.create_chat",
                 "cursor.run_turn",
+            ),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def get_latest_completed_codex_attempt(
+        self, conn: sqlite3.Connection, run_id: str
+    ) -> sqlite3.Row | None:
+        from ai_dev_loop.scheduler.domain.codex_contract import CODEX_ATTEMPT_EFFECT_KINDS
+
+        placeholders = ",".join("?" * len(CODEX_ATTEMPT_EFFECT_KINDS))
+        row = conn.execute(
+            f"""
+            SELECT scheduler_attempts.*
+            FROM scheduler_attempts
+            JOIN scheduler_effects
+              ON scheduler_effects.dispatch_id = scheduler_attempts.dispatch_id
+            WHERE scheduler_attempts.run_id = ?
+              AND scheduler_attempts.status IN (?, ?)
+              AND scheduler_attempts.component = 'codex'
+              AND scheduler_attempts.ingested = 0
+              AND scheduler_effects.effect_kind IN ({placeholders})
+            ORDER BY scheduler_attempts.completed_at DESC, scheduler_attempts.attempt_id DESC
+            LIMIT 1
+            """,
+            (
+                run_id,
+                ATTEMPT_STATUS_COMPLETED,
+                ATTEMPT_STATUS_FAILED,
+                *CODEX_ATTEMPT_EFFECT_KINDS,
             ),
         ).fetchone()
         return cast(sqlite3.Row | None, row)

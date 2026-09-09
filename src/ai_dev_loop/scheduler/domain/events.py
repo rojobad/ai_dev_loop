@@ -30,6 +30,15 @@ CURSOR_USAGE_LIMIT_DETECTED_EVENT_KIND = "cursor_usage_limit_detected"
 STAGING_COMPLETED_EVENT_KIND = "staging_completed"
 STAGING_BLOCKED_EVENT_KIND = "staging_blocked"
 AWAITING_CODEX_REVIEW_EVENT_KIND = "awaiting_codex_review_entered"
+CODEX_REVIEWER_BOUND_EVENT_KIND = "codex_reviewer_bound"
+CODEX_BOOTSTRAP_UNCERTAIN_EVENT_KIND = "codex_bootstrap_uncertain"
+CODEX_REVIEW_SCHEDULED_EVENT_KIND = "codex_review_scheduled"
+CODEX_REVIEW_COMPLETED_EVENT_KIND = "codex_review_completed"
+CODEX_REVIEW_BLOCKED_EVENT_KIND = "codex_review_blocked"
+WAITING_FOR_CURSOR_FIX_EVENT_KIND = "waiting_for_cursor_fix_entered"
+RUN_COMPLETED_EVENT_KIND = "run_completed"
+RUN_COMPLETED_WITH_RESIDUAL_RISK_EVENT_KIND = "run_completed_with_residual_risk"
+MAX_ITERATIONS_REACHED_EVENT_KIND = "max_iterations_reached"
 
 
 class RunSubmittedEvent(DomainModel):
@@ -329,6 +338,134 @@ class AwaitingCodexReviewEnteredEvent(DomainModel):
         return value
 
 
+class CodexReviewerBoundEvent(DomainModel):
+    kind: str = Field(default=CODEX_REVIEWER_BOUND_EVENT_KIND)
+    run_id: str
+    reviewer_session_id_prefix: NonEmptyStr
+    binding_artifact_path: NonEmptyStr
+    binding_artifact_sha256: Sha256Hex
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_codex_reviewer_bound(cls, value: str) -> str:
+        if value != CODEX_REVIEWER_BOUND_EVENT_KIND:
+            raise ValueError("kind must be codex_reviewer_bound")
+        return value
+
+
+class CodexBootstrapUncertainEvent(DomainModel):
+    kind: str = Field(default=CODEX_BOOTSTRAP_UNCERTAIN_EVENT_KIND)
+    run_id: str
+    uncertainty_reason: NonEmptyStr
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_codex_bootstrap_uncertain(cls, value: str) -> str:
+        if value != CODEX_BOOTSTRAP_UNCERTAIN_EVENT_KIND:
+            raise ValueError("kind must be codex_bootstrap_uncertain")
+        return value
+
+
+class CodexReviewScheduledEvent(DomainModel):
+    kind: str = Field(default=CODEX_REVIEW_SCHEDULED_EVENT_KIND)
+    run_id: str
+    review_iteration: int
+    effect_kind: NonEmptyStr
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_codex_review_scheduled(cls, value: str) -> str:
+        if value != CODEX_REVIEW_SCHEDULED_EVENT_KIND:
+            raise ValueError("kind must be codex_review_scheduled")
+        return value
+
+
+class CodexReviewCompletedEvent(DomainModel):
+    kind: str = Field(default=CODEX_REVIEW_COMPLETED_EVENT_KIND)
+    run_id: str
+    review_iteration: int
+    has_actionable_findings: bool
+    review_result_path: NonEmptyStr
+    review_result_sha256: Sha256Hex
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_codex_review_completed(cls, value: str) -> str:
+        if value != CODEX_REVIEW_COMPLETED_EVENT_KIND:
+            raise ValueError("kind must be codex_review_completed")
+        return value
+
+
+class CodexReviewBlockedEvent(DomainModel):
+    kind: str = Field(default=CODEX_REVIEW_BLOCKED_EVENT_KIND)
+    run_id: str
+    block_reason_kind: NonEmptyStr
+    block_reason_summary: NonEmptyStr
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_codex_review_blocked(cls, value: str) -> str:
+        if value != CODEX_REVIEW_BLOCKED_EVENT_KIND:
+            raise ValueError("kind must be codex_review_blocked")
+        return value
+
+
+class WaitingForCursorFixEnteredEvent(DomainModel):
+    kind: str = Field(default=WAITING_FOR_CURSOR_FIX_EVENT_KIND)
+    run_id: str
+    review_iteration: int
+    fix_prompt_path: NonEmptyStr
+    fix_prompt_sha256: Sha256Hex
+    correction_envelope_path: NonEmptyStr
+    correction_envelope_sha256: Sha256Hex
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_waiting_for_cursor_fix_entered(cls, value: str) -> str:
+        if value != WAITING_FOR_CURSOR_FIX_EVENT_KIND:
+            raise ValueError("kind must be waiting_for_cursor_fix_entered")
+        return value
+
+
+class RunCompletedEvent(DomainModel):
+    kind: str = Field(default=RUN_COMPLETED_EVENT_KIND)
+    run_id: str
+    review_iteration: int
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_run_completed(cls, value: str) -> str:
+        if value != RUN_COMPLETED_EVENT_KIND:
+            raise ValueError("kind must be run_completed")
+        return value
+
+
+class RunCompletedWithResidualRiskEvent(DomainModel):
+    kind: str = Field(default=RUN_COMPLETED_WITH_RESIDUAL_RISK_EVENT_KIND)
+    run_id: str
+    review_iteration: int
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_run_completed_with_residual_risk(cls, value: str) -> str:
+        if value != RUN_COMPLETED_WITH_RESIDUAL_RISK_EVENT_KIND:
+            raise ValueError("kind must be run_completed_with_residual_risk")
+        return value
+
+
+class MaxIterationsReachedEvent(DomainModel):
+    kind: str = Field(default=MAX_ITERATIONS_REACHED_EVENT_KIND)
+    run_id: str
+    review_iteration: int
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_max_iterations_reached(cls, value: str) -> str:
+        if value != MAX_ITERATIONS_REACHED_EVENT_KIND:
+            raise ValueError("kind must be max_iterations_reached")
+        return value
+
+
 def _scheduler_event_discriminator(value: object) -> str:
     if isinstance(value, dict):
         kind = value.get("kind")
@@ -360,7 +497,16 @@ SchedulerEvent = Annotated[
     | Annotated[CursorUsageLimitDetectedEvent, Tag(CURSOR_USAGE_LIMIT_DETECTED_EVENT_KIND)]
     | Annotated[StagingCompletedEvent, Tag(STAGING_COMPLETED_EVENT_KIND)]
     | Annotated[StagingBlockedEvent, Tag(STAGING_BLOCKED_EVENT_KIND)]
-    | Annotated[AwaitingCodexReviewEnteredEvent, Tag(AWAITING_CODEX_REVIEW_EVENT_KIND)],
+    | Annotated[AwaitingCodexReviewEnteredEvent, Tag(AWAITING_CODEX_REVIEW_EVENT_KIND)]
+    | Annotated[CodexReviewerBoundEvent, Tag(CODEX_REVIEWER_BOUND_EVENT_KIND)]
+    | Annotated[CodexBootstrapUncertainEvent, Tag(CODEX_BOOTSTRAP_UNCERTAIN_EVENT_KIND)]
+    | Annotated[CodexReviewScheduledEvent, Tag(CODEX_REVIEW_SCHEDULED_EVENT_KIND)]
+    | Annotated[CodexReviewCompletedEvent, Tag(CODEX_REVIEW_COMPLETED_EVENT_KIND)]
+    | Annotated[CodexReviewBlockedEvent, Tag(CODEX_REVIEW_BLOCKED_EVENT_KIND)]
+    | Annotated[WaitingForCursorFixEnteredEvent, Tag(WAITING_FOR_CURSOR_FIX_EVENT_KIND)]
+    | Annotated[RunCompletedEvent, Tag(RUN_COMPLETED_EVENT_KIND)]
+    | Annotated[RunCompletedWithResidualRiskEvent, Tag(RUN_COMPLETED_WITH_RESIDUAL_RISK_EVENT_KIND)]
+    | Annotated[MaxIterationsReachedEvent, Tag(MAX_ITERATIONS_REACHED_EVENT_KIND)],
     Discriminator(_scheduler_event_discriminator),
 ]
 

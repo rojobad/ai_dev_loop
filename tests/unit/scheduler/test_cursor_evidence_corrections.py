@@ -37,9 +37,9 @@ def test_admission_artifact_parses_frozen_git_paths() -> None:
     assert parsed["git_dir"] == "/repo/.git"
 
 
-def test_awaiting_codex_review_is_nonterminal_but_not_tick_eligible() -> None:
+def test_awaiting_codex_review_is_nonterminal_and_tick_eligible() -> None:
     assert "awaiting_codex_review" in NON_TERMINAL_STATE_KINDS
-    assert "awaiting_codex_review" not in TICK_ELIGIBLE_STATE_KINDS
+    assert "awaiting_codex_review" in TICK_ELIGIBLE_STATE_KINDS
 
 
 def test_authenticated_outcome_rejects_identity_mismatch(tmp_path: Path) -> None:

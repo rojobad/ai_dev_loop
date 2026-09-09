@@ -7,13 +7,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ai_dev_loop.iterations import iteration_label
+from ai_dev_loop.iterations import extract_correction_fix_prompt, iteration_label
 from ai_dev_loop.runners.cursor_output import (
     fingerprints_match,
     load_fingerprint_artifact,
     recompute_cursor_output_fingerprint,
     recompute_usage_limit_failure_fingerprint,
 )
+from ai_dev_loop.runners.git import validate_staged_patch_matches_artifact
 from ai_dev_loop.scheduler.application.attempt_backend import TerminationClass
 from ai_dev_loop.scheduler.application.attempt_envelope import (
     validate_completion_evidence,
@@ -127,6 +128,31 @@ def validate_frozen_repository_identity(
         expected_head=identity.initial_head,
         context=context,
     )
+
+
+def verify_correction_envelope_binding(
+    run_root: Path,
+    *,
+    envelope_path: str,
+    envelope_sha256: str,
+    fix_prompt_path: str,
+    fix_prompt_sha256: str,
+) -> None:
+    verify_prompt_binding(
+        run_root,
+        prompt_path=envelope_path,
+        prompt_sha256=envelope_sha256,
+    )
+    fix_abs = run_root / fix_prompt_path
+    if not fix_abs.is_file():
+        raise CursorEvidenceError("fix prompt artifact missing for correction binding")
+    fix_digest = sha256_bytes(fix_abs.read_bytes())
+    if fix_digest != fix_prompt_sha256:
+        raise CursorEvidenceError("fix prompt artifact hash does not match binding")
+    envelope_text = (run_root / envelope_path).read_text(encoding="utf-8")
+    embedded = extract_correction_fix_prompt(envelope_text)
+    if sha256_bytes(embedded.encode("utf-8")) != fix_prompt_sha256:
+        raise CursorEvidenceError("correction envelope does not embed exact fix prompt")
 
 
 def verify_prompt_binding(
@@ -255,6 +281,27 @@ def verify_pre_execution_cursor_guards(
             prompt_path=str(evidence["prompt_path"]),
             prompt_sha256=str(evidence["prompt_sha256"]),
         )
+        fix_prompt_path = evidence.get("fix_prompt_path")
+        fix_prompt_sha = evidence.get("fix_prompt_sha256")
+        if fix_prompt_path and fix_prompt_sha:
+            verify_correction_envelope_binding(
+                run_root,
+                envelope_path=str(evidence["prompt_path"]),
+                envelope_sha256=str(evidence["prompt_sha256"]),
+                fix_prompt_path=str(fix_prompt_path),
+                fix_prompt_sha256=str(fix_prompt_sha),
+            )
+        staged_patch_path = evidence.get("staged_patch_path")
+        staged_patch_sha = evidence.get("staged_patch_sha256")
+        if staged_patch_path and staged_patch_sha:
+            patch_rel = str(staged_patch_path)
+            patch_abs = run_root / patch_rel
+            if not patch_abs.is_file():
+                raise CursorEvidenceError("staged patch artifact missing for correction binding")
+            digest = sha256_bytes(patch_abs.read_bytes())
+            if digest != str(staged_patch_sha):
+                raise CursorEvidenceError("staged patch artifact hash does not match binding")
+            validate_staged_patch_matches_artifact(repo_root, patch_abs)
 
 
 def authenticate_pinned_invocation_evidence(

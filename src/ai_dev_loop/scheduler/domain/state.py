@@ -281,6 +281,30 @@ class AdmittedRunCheckpoint(DomainModel):
     admission_status_sha256: Sha256Hex
 
 
+class CodexWorkflowCheckpoint(DomainModel):
+    """Durable Codex review checkpoint carried across Phase 17.5 states."""
+
+    review_iteration: int = Field(default=1)
+    reviews_completed: int = Field(default=0)
+    reviewer_session_id: UuidSessionId | None = None
+    binding_artifact_path: NonEmptyStr | None = None
+    binding_artifact_sha256: Sha256Hex | None = None
+    bootstrap_uncertainty_reason: NonEmptyStr | None = None
+    latest_fix_prompt_path: NonEmptyStr | None = None
+    latest_fix_prompt_sha256: Sha256Hex | None = None
+    latest_correction_envelope_path: NonEmptyStr | None = None
+    latest_correction_envelope_sha256: Sha256Hex | None = None
+    latest_review_result_path: NonEmptyStr | None = None
+    latest_review_result_sha256: Sha256Hex | None = None
+
+    @field_validator("review_iteration", "reviews_completed")
+    @classmethod
+    def non_negative_review_counters(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("review counters must be >= 0")
+        return value
+
+
 class CursorWorkflowCheckpoint(DomainModel):
     """Durable cursor/staging checkpoint carried across Phase 17.4 states."""
 
@@ -335,6 +359,7 @@ class CursorReadyState(SchedulerRunBase):
     schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
     checkpoint: AdmittedRunCheckpoint
     cursor: CursorWorkflowCheckpoint
+    codex: CodexWorkflowCheckpoint = Field(default_factory=CodexWorkflowCheckpoint)
 
     @field_validator("schema_version")
     @classmethod
@@ -355,6 +380,7 @@ class WaitingUsageLimitState(SchedulerRunBase):
     schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
     checkpoint: AdmittedRunCheckpoint
     cursor: CursorWorkflowCheckpoint
+    codex: CodexWorkflowCheckpoint = Field(default_factory=CodexWorkflowCheckpoint)
 
     @field_validator("schema_version")
     @classmethod
@@ -375,12 +401,13 @@ class WaitingUsageLimitState(SchedulerRunBase):
 
 
 class AwaitingCodexReviewState(SchedulerRunBase):
-    """Run staged and waiting for Phase 17.5 Codex review bootstrap."""
+    """Run staged and waiting for Phase 17.5 Codex review bootstrap or resume."""
 
     kind: Literal["awaiting_codex_review"] = "awaiting_codex_review"
     schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
     checkpoint: AdmittedRunCheckpoint
     cursor: CursorWorkflowCheckpoint
+    codex: CodexWorkflowCheckpoint = Field(default_factory=CodexWorkflowCheckpoint)
 
     @field_validator("schema_version")
     @classmethod
@@ -391,6 +418,94 @@ class AwaitingCodexReviewState(SchedulerRunBase):
     def staging_fields_required(self) -> AwaitingCodexReviewState:
         if not self.cursor.staged_patch_path or not self.cursor.staged_patch_sha256:
             raise ValueError("awaiting_codex_review requires staged patch artifacts")
+        if self.codex.bootstrap_uncertainty_reason:
+            raise ValueError("awaiting_codex_review cannot carry bootstrap uncertainty")
+        return self
+
+
+class WaitingForCursorFixState(SchedulerRunBase):
+    """Run waiting for a Cursor correction turn after actionable Codex findings."""
+
+    kind: Literal["waiting_for_cursor_fix"] = "waiting_for_cursor_fix"
+    schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
+    checkpoint: AdmittedRunCheckpoint
+    cursor: CursorWorkflowCheckpoint
+    codex: CodexWorkflowCheckpoint
+
+    @field_validator("schema_version")
+    @classmethod
+    def schema_version_is_four(cls, value: int) -> int:
+        return _schema_version_is_four(value)
+
+    @model_validator(mode="after")
+    def fix_prompt_required(self) -> WaitingForCursorFixState:
+        if not self.codex.reviewer_session_id:
+            raise ValueError("waiting_for_cursor_fix requires bound reviewer identity")
+        if not self.codex.latest_fix_prompt_path or not self.codex.latest_fix_prompt_sha256:
+            raise ValueError("waiting_for_cursor_fix requires persisted fix prompt")
+        return self
+
+
+class CompletedState(SchedulerRunBase):
+    """Run completed with no actionable findings and acceptable tests status."""
+
+    kind: Literal["completed"] = "completed"
+    schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
+    checkpoint: AdmittedRunCheckpoint
+    cursor: CursorWorkflowCheckpoint
+    codex: CodexWorkflowCheckpoint
+
+    @field_validator("schema_version")
+    @classmethod
+    def schema_version_is_four(cls, value: int) -> int:
+        return _schema_version_is_four(value)
+
+    @model_validator(mode="after")
+    def reviewer_bound(self) -> CompletedState:
+        if not self.codex.reviewer_session_id:
+            raise ValueError("completed requires bound reviewer identity")
+        return self
+
+
+class CompletedWithResidualRiskState(SchedulerRunBase):
+    """Run completed with no actionable findings but residual test risk."""
+
+    kind: Literal["completed_with_residual_risk"] = "completed_with_residual_risk"
+    schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
+    checkpoint: AdmittedRunCheckpoint
+    cursor: CursorWorkflowCheckpoint
+    codex: CodexWorkflowCheckpoint
+
+    @field_validator("schema_version")
+    @classmethod
+    def schema_version_is_four(cls, value: int) -> int:
+        return _schema_version_is_four(value)
+
+    @model_validator(mode="after")
+    def reviewer_bound(self) -> CompletedWithResidualRiskState:
+        if not self.codex.reviewer_session_id:
+            raise ValueError("completed_with_residual_risk requires bound reviewer identity")
+        return self
+
+
+class MaxIterationsReachedState(SchedulerRunBase):
+    """Run reached the review iteration budget with actionable findings remaining."""
+
+    kind: Literal["max_iterations_reached"] = "max_iterations_reached"
+    schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
+    checkpoint: AdmittedRunCheckpoint
+    cursor: CursorWorkflowCheckpoint
+    codex: CodexWorkflowCheckpoint
+
+    @field_validator("schema_version")
+    @classmethod
+    def schema_version_is_four(cls, value: int) -> int:
+        return _schema_version_is_four(value)
+
+    @model_validator(mode="after")
+    def reviewer_bound(self) -> MaxIterationsReachedState:
+        if not self.codex.reviewer_session_id:
+            raise ValueError("max_iterations_reached requires bound reviewer identity")
         return self
 
 
@@ -413,6 +528,10 @@ SchedulerState = Annotated[
     | Annotated[CursorReadyState, Tag("cursor_ready")]
     | Annotated[WaitingUsageLimitState, Tag("waiting_usage_limit")]
     | Annotated[AwaitingCodexReviewState, Tag("awaiting_codex_review")]
+    | Annotated[WaitingForCursorFixState, Tag("waiting_for_cursor_fix")]
+    | Annotated[CompletedState, Tag("completed")]
+    | Annotated[CompletedWithResidualRiskState, Tag("completed_with_residual_risk")]
+    | Annotated[MaxIterationsReachedState, Tag("max_iterations_reached")]
     | Annotated[BlockedState, Tag("blocked")],
     Discriminator(_scheduler_state_discriminator),
 ]
@@ -436,6 +555,10 @@ def parse_scheduler_state(
     | CursorReadyState
     | WaitingUsageLimitState
     | AwaitingCodexReviewState
+    | WaitingForCursorFixState
+    | CompletedState
+    | CompletedWithResidualRiskState
+    | MaxIterationsReachedState
     | BlockedState
 ):
     if isinstance(
@@ -448,6 +571,10 @@ def parse_scheduler_state(
             CursorReadyState,
             WaitingUsageLimitState,
             AwaitingCodexReviewState,
+            WaitingForCursorFixState,
+            CompletedState,
+            CompletedWithResidualRiskState,
+            MaxIterationsReachedState,
             BlockedState,
         ),
     ):

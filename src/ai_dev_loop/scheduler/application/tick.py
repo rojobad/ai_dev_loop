@@ -14,6 +14,7 @@ from ai_dev_loop.scheduler.application.attempt_service import (
     default_attempt_id_factory,
     default_launch_nonce_factory,
 )
+from ai_dev_loop.scheduler.application.codex_workflow_service import CodexWorkflowService
 from ai_dev_loop.scheduler.application.contracts import (
     TickReceipt,
     TickRunReceipt,
@@ -86,6 +87,7 @@ class TickService:
         self._lease_ttl_seconds = lease_ttl_seconds
         self._attempt_service: AttemptService | None = None
         self._cursor_workflow: CursorWorkflowService | None = None
+        self._codex_workflow: CodexWorkflowService | None = None
         if attempt_backend is not None:
             self._cursor_workflow = CursorWorkflowService(
                 store,
@@ -94,6 +96,13 @@ class TickService:
                 event_id_factory=self._event_id_factory,
                 dispatch_id_factory=self._dispatch_id_factory,
                 preflight_port=preflight_port,
+            )
+            self._codex_workflow = CodexWorkflowService(
+                store,
+                artifacts,
+                now_factory=self._now_factory,
+                event_id_factory=self._event_id_factory,
+                dispatch_id_factory=self._dispatch_id_factory,
             )
             self._attempt_service = AttemptService(
                 store,
@@ -106,6 +115,7 @@ class TickService:
                 fence_id_factory=self._fence_id_factory,
                 launch_nonce_factory=self._launch_nonce_factory,
                 cursor_workflow=self._cursor_workflow,
+                codex_workflow=self._codex_workflow,
             )
 
     def run_once(self) -> TickReceipt:
@@ -185,6 +195,14 @@ class TickService:
         if self._cursor_workflow is not None:
             receipts.extend(
                 self._cursor_workflow.process_run(
+                    tick_owner_id,
+                    tick_lease_generation,
+                    run_id,
+                )
+            )
+        if self._codex_workflow is not None:
+            receipts.extend(
+                self._codex_workflow.process_run(
                     tick_owner_id,
                     tick_lease_generation,
                     run_id,

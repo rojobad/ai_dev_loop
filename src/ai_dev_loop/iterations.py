@@ -148,6 +148,15 @@ def cursor_prompt_path(
     return fix_prompt_path(iteration_number - 1)
 
 
+def extract_correction_fix_prompt(envelope_text: str) -> str:
+    """Return the exact Codex fix prompt body embedded in a correction envelope."""
+
+    header = CORRECTION_ENVELOPE_HEADER + "\n"
+    if not envelope_text.startswith(header):
+        raise ValidationError("correction envelope missing expected header")
+    return envelope_text[len(header) :]
+
+
 def build_correction_execution_envelope(fix_prompt: str) -> str:
     """Wrap the exact Codex fix prompt in a deterministic operational envelope.
 

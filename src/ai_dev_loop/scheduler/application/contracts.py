@@ -147,6 +147,20 @@ def active_cursor_safe_next_action() -> SafeNextAction:
 
 def awaiting_codex_review_safe_next_action() -> SafeNextAction:
     return SafeNextAction(
+        kind=SafeNextActionKind.SCHEDULER_TICK,
+        command="ai_dev_loop scheduler tick",
+    )
+
+
+def waiting_for_cursor_fix_safe_next_action() -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.SCHEDULER_TICK,
+        command="ai_dev_loop scheduler tick",
+    )
+
+
+def terminal_review_safe_next_action() -> SafeNextAction:
+    return SafeNextAction(
         kind=SafeNextActionKind.NONE,
         command=None,
     )
@@ -173,6 +187,10 @@ def safe_next_action_for_state_kind(state_kind: str, run_id: str) -> SafeNextAct
         return active_cursor_safe_next_action()
     if state_kind == "awaiting_codex_review":
         return awaiting_codex_review_safe_next_action()
+    if state_kind == "waiting_for_cursor_fix":
+        return waiting_for_cursor_fix_safe_next_action()
+    if state_kind in {"completed", "completed_with_residual_risk", "max_iterations_reached"}:
+        return terminal_review_safe_next_action()
     return blocked_safe_next_action()
 
 

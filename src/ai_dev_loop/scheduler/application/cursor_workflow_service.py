@@ -71,6 +71,7 @@ from ai_dev_loop.scheduler.domain.state import (
     AdmittedState,
     CursorReadyState,
     PreflightCompleteState,
+    WaitingForCursorFixState,
     WaitingUsageLimitState,
 )
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import (
@@ -252,6 +253,7 @@ class CursorWorkflowService:
                 context=state.context,
                 checkpoint=state.checkpoint,
                 cursor=state.cursor.model_copy(update={"wait_until": None}),
+                codex=state.codex,
             )
             if not self.store.compare_and_swap_state(
                 conn,
@@ -817,7 +819,9 @@ class CursorWorkflowService:
 
         with self.store.begin_read() as conn:
             state, _, _ = self.store.load_validated_snapshot(conn, run_id)
-            if not isinstance(state, (CursorReadyState, WaitingUsageLimitState)):
+            if not isinstance(
+                state, (CursorReadyState, WaitingUsageLimitState, WaitingForCursorFixState)
+            ):
                 return TickRunReceipt(run_id=run_id, action="ingest_state_changed")
             repo_root = Path(state.context.repository.root)
             checkpoint = checkpoint_from_state(state)
@@ -890,7 +894,9 @@ class CursorWorkflowService:
 
         with self.store.begin_immediate() as conn:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
-            if not isinstance(state, (CursorReadyState, WaitingUsageLimitState)):
+            if not isinstance(
+                state, (CursorReadyState, WaitingUsageLimitState, WaitingForCursorFixState)
+            ):
                 return TickRunReceipt(run_id=run_id, action="ingest_state_changed")
             event = CursorTurnCompletedEvent(
                 run_id=run_id,
@@ -949,16 +955,18 @@ class CursorWorkflowService:
         run_root = self.artifacts.run_root(run_id)
         with self.store.begin_read() as conn:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
-            if not isinstance(state, (CursorReadyState, WaitingUsageLimitState)):
+            if not isinstance(
+                state, (CursorReadyState, WaitingUsageLimitState, WaitingForCursorFixState)
+            ):
                 return TickRunReceipt(run_id=run_id, action="ingest_state_changed")
-            if not isinstance(state, CursorReadyState):
+            if isinstance(state, WaitingUsageLimitState):
                 return self._block_from_ingest(
                     run_id,
                     dispatch_id="",
                     attempt_id=attempt_id,
                     kind="cursor_turn_blocked",
                     reason_kind="usage_limit_state_invalid",
-                    summary="usage-limit detection requires cursor_ready state",
+                    summary="usage-limit detection requires cursor_ready or waiting_for_cursor_fix",
                 )
         records = tuple(item for item in structured_errors if isinstance(item, dict))
         checkpoint = checkpoint_from_state(state)
@@ -966,29 +974,63 @@ class CursorWorkflowService:
         wait_until = now + timedelta(seconds=retry_seconds)
         wait_until_text = wait_until.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
-        original_prompt_path = (
-            state.cursor.original_prompt_path or state.context.plan_prompt.prompt_artifact_path
-        )
-        original_prompt_sha = (
-            state.cursor.original_prompt_sha256 or state.context.plan_prompt.prompt_sha256
-        )
-        try:
-            original_prompt = self.artifacts.read_verified_bytes(
-                run_id,
-                original_prompt_path,
-                expected_sha256=original_prompt_sha,
+        if isinstance(state, WaitingForCursorFixState):
+            source_prompt_path = state.codex.latest_fix_prompt_path
+            source_prompt_sha = state.codex.latest_fix_prompt_sha256
+            if not source_prompt_path or not source_prompt_sha:
+                return self._block_from_ingest(
+                    run_id,
+                    dispatch_id="",
+                    attempt_id=attempt_id,
+                    kind="cursor_turn_blocked",
+                    reason_kind="fix_prompt_missing",
+                    summary="correction usage-limit requires persisted fix prompt",
+                )
+            try:
+                from ai_dev_loop.iterations import build_correction_execution_envelope
+
+                fix_prompt = self.artifacts.read_verified_bytes(
+                    run_id,
+                    source_prompt_path,
+                    expected_sha256=source_prompt_sha,
+                )
+            except (ProtectedArtifactError, ValidationError, CursorEvidenceError, OSError) as exc:
+                return self._block_from_ingest(
+                    run_id,
+                    dispatch_id="",
+                    attempt_id=attempt_id,
+                    kind="cursor_turn_blocked",
+                    reason_kind="prompt_binding_drift",
+                    summary=str(exc)[:240],
+                )
+            envelope = build_correction_execution_envelope(fix_prompt.decode("utf-8"))
+            envelope_rel = state.codex.latest_correction_envelope_path or (
+                usage_limit_continuation_path_for_attempt(iteration, attempt_id)
             )
-        except (ProtectedArtifactError, ValidationError, CursorEvidenceError, OSError) as exc:
-            return self._block_from_ingest(
-                run_id,
-                dispatch_id="",
-                attempt_id=attempt_id,
-                kind="cursor_turn_blocked",
-                reason_kind="prompt_binding_drift",
-                summary=str(exc)[:240],
+        else:
+            original_prompt_path = (
+                state.cursor.original_prompt_path or state.context.plan_prompt.prompt_artifact_path
             )
-        envelope = build_usage_limit_continuation_envelope(original_prompt.decode("utf-8"))
-        envelope_rel = usage_limit_continuation_path_for_attempt(iteration, attempt_id)
+            original_prompt_sha = (
+                state.cursor.original_prompt_sha256 or state.context.plan_prompt.prompt_sha256
+            )
+            try:
+                original_prompt = self.artifacts.read_verified_bytes(
+                    run_id,
+                    original_prompt_path,
+                    expected_sha256=original_prompt_sha,
+                )
+            except (ProtectedArtifactError, ValidationError, CursorEvidenceError, OSError) as exc:
+                return self._block_from_ingest(
+                    run_id,
+                    dispatch_id="",
+                    attempt_id=attempt_id,
+                    kind="cursor_turn_blocked",
+                    reason_kind="prompt_binding_drift",
+                    summary=str(exc)[:240],
+                )
+            envelope = build_usage_limit_continuation_envelope(original_prompt.decode("utf-8"))
+            envelope_rel = usage_limit_continuation_path_for_attempt(iteration, attempt_id)
         try:
             stored_path, stored_sha = self._store_or_verify_continuation_envelope(
                 run_id,
@@ -1004,7 +1046,17 @@ class CursorWorkflowService:
                 reason_kind="continuation_envelope_conflict",
                 summary=str(exc)[:240],
             )
-        if original_prompt.decode("utf-8") not in envelope:
+        if isinstance(state, WaitingForCursorFixState):
+            if fix_prompt.decode("utf-8") not in envelope:
+                return self._block_from_ingest(
+                    run_id,
+                    dispatch_id="",
+                    attempt_id=attempt_id,
+                    kind="cursor_turn_blocked",
+                    reason_kind="continuation_envelope_invalid",
+                    summary="correction envelope must embed exact fix prompt bytes",
+                )
+        elif original_prompt.decode("utf-8") not in envelope:
             return self._block_from_ingest(
                 run_id,
                 dispatch_id="",
@@ -1063,7 +1115,7 @@ class CursorWorkflowService:
 
         with self.store.begin_immediate() as conn:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
-            if not isinstance(state, CursorReadyState):
+            if not isinstance(state, (CursorReadyState, WaitingForCursorFixState)):
                 return TickRunReceipt(run_id=run_id, action="ingest_state_changed")
             event = CursorUsageLimitDetectedEvent(
                 run_id=run_id,
@@ -1142,7 +1194,9 @@ class CursorWorkflowService:
                     version=version,
                     now=now,
                 )
-            elif isinstance(state, (CursorReadyState, WaitingUsageLimitState)):
+            elif isinstance(
+                state, (CursorReadyState, WaitingUsageLimitState, WaitingForCursorFixState)
+            ):
                 turn_blocked_event = CursorTurnBlockedEvent(
                     run_id=run_id,
                     block_reason_kind=reason_kind,
@@ -1223,7 +1277,9 @@ class CursorWorkflowService:
                     version=version,
                     now=commit_now,
                 )
-            elif isinstance(state, (CursorReadyState, WaitingUsageLimitState)):
+            elif isinstance(
+                state, (CursorReadyState, WaitingUsageLimitState, WaitingForCursorFixState)
+            ):
                 turn_blocked_event = CursorTurnBlockedEvent(
                     run_id=run_id,
                     block_reason_kind=reason_kind,

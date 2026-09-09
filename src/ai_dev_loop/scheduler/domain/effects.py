@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from ai_dev_loop.scheduler.domain.codex_contract import (
+    BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND,
+    RESUME_CODEX_REVIEW_EFFECT_KIND,
+)
 from ai_dev_loop.scheduler.domain.cursor_contract import (
     CREATE_CHAT_EFFECT_KIND,
     INGEST_CURSOR_RESULT_EFFECT_KIND,
@@ -28,5 +32,12 @@ LOCAL_CURSOR_EFFECT_KINDS = frozenset(
         PREFLIGHT_EFFECT_KIND,
         INGEST_CURSOR_RESULT_EFFECT_KIND,
         NORMALIZE_STAGING_EFFECT_KIND,
+    }
+)
+
+CODEX_ATTEMPT_EFFECT_KINDS = frozenset(
+    {
+        BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND,
+        RESUME_CODEX_REVIEW_EFFECT_KIND,
     }
 )

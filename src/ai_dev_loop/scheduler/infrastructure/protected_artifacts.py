@@ -99,6 +99,35 @@ class ProtectedArtifactStore:
             max_bytes=max_bytes,
         )
 
+    def write_text_or_verify(
+        self,
+        run_id: str,
+        relative_path: str,
+        text: str,
+        *,
+        max_bytes: int,
+    ) -> StoredArtifact:
+        """Write once or accept an existing artifact with identical content."""
+
+        content = text.encode("utf-8")
+        if len(content) > max_bytes:
+            raise ProtectedArtifactError("artifact exceeds size limit")
+        if not content:
+            raise ProtectedArtifactError("artifact content is empty")
+        root = self.run_root(run_id)
+        destination = resolve_run_relative_path(root, relative_path)
+        digest = hashlib.sha256(content).hexdigest()
+        if destination.is_file():
+            existing = destination.read_bytes()
+            if hashlib.sha256(existing).hexdigest() != digest:
+                raise ProtectedArtifactError("artifact content conflicts with existing file")
+            return StoredArtifact(
+                relative_path=relative_path,
+                sha256=digest,
+                size_bytes=len(existing),
+            )
+        return self.write_bytes(run_id, relative_path, content, max_bytes=max_bytes)
+
     def write_yaml(
         self,
         run_id: str,

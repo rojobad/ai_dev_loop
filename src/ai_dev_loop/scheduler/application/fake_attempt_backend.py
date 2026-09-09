@@ -62,8 +62,12 @@ class FakeAgentProcessBackend(AgentProcessBackend):
         self.scenarios[attempt_id] = scenario
 
     @staticmethod
-    def _is_cursor_attempt(request: LaunchRequest) -> bool:
-        return any("cursor_attempt_runner" in part for part in request.agent_argv)
+    def _is_agent_attempt(request: LaunchRequest) -> bool:
+        return any(
+            marker in part
+            for part in request.agent_argv
+            for marker in ("cursor_attempt_runner", "codex_attempt_runner")
+        )
 
     def _execute_cursor_attempt(self, request: LaunchRequest) -> int:
         result = subprocess.run(
@@ -142,7 +146,7 @@ class FakeAgentProcessBackend(AgentProcessBackend):
             )
         if attempt_id in self._completed:
             return self._completed[attempt_id]
-        if self._is_cursor_attempt(request):
+        if self._is_agent_attempt(request):
             exit_code = self._execute_cursor_attempt(request)
             if exit_code == 0:
                 termination = TerminationClass.SUCCESS
