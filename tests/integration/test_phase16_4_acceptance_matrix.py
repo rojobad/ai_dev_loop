@@ -41,6 +41,7 @@ from ai_dev_loop.pr_review_v2.domain import (
     ResumeRequested,
     SourceRunOrigin,
     StartRequested,
+    ThreadReplyConfirmedOutcome,
     TransientErrorKind,
     VerifiedNoFindingsEvidence,
     VerifiedNoFindingsOutcome,
@@ -834,6 +835,27 @@ def test_simulated_workflows_reach_terminal_and_waiting_outcomes(
     )
     status = eng.get_status(prepared.run_id)
     assert status.state_kind == "waiting_for_user"
+    assert status.next_action is NextActionCategory.EXECUTE_EFFECT
+    while status.next_action is NextActionCategory.EXECUTE_EFFECT:
+        lease, claim = claim_next(eng, prepared.run_id)
+        assert claim.effect.kind == "post_thread_reply"
+        complete_ok(
+            eng,
+            lease,
+            claim,
+            f"post-reply-{claim.effect.thread_id}",
+            EffectSucceeded(
+                occurred_at=clock.now(),
+                token=claim.completion_token,
+                outcome=ThreadReplyConfirmedOutcome(
+                    thread_id=claim.effect.thread_id,
+                    reply_ref=claim.effect.reply_ref,
+                ),
+            ),
+        )
+        status = eng.get_status(prepared.run_id)
+        assert status.state_kind == "waiting_for_user"
+    assert status.next_action is NextActionCategory.WAIT_FOR_USER
     outcomes["waiting_for_user"] = status.next_action
 
     eng = make_engine(tmp_path / "wf-paused.sqlite3", clock, prefix="wfp")

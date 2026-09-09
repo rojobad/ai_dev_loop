@@ -36,10 +36,14 @@ through an explicit, verified cutover operation.
 
 ## Required Context
 
-Read the master, results/findings for Phases 17.1–17.6, all Cursor rules, `AGENTS.md`,
+Read the master, the consolidated pre-cutover findings artifact
+`archive/implementation-history/findings/phase-17-precutover-acceptance.md`,
+and any available results/findings for Phases 17.1–17.6; all Cursor rules; `AGENTS.md`;
 `cli.py`, path/config/integration docs, current cleanup/locking primitives,
 `README.md`, all relevant `docs/`, and the staged-review skill. Inspect the
-actual XDG layout read-only before defining cleanup tests or code.
+actual XDG layout read-only before defining cleanup tests or code. An absent,
+incomplete, or failed pre-cutover artifact blocks cutover; the artifact is not
+authority to delete user state or enable a timer.
 
 ## Cursor Rules And Skills
 
@@ -66,8 +70,10 @@ skill must review the final staged diff independently.
 
 ## Implementation Plan
 
-1. Audit Phase 17.1–17.6 acceptance evidence. If any required suite/finding is
-   missing, stop; do not cut over based on code presence alone.
+1. Audit the consolidated pre-cutover findings artifact and any available
+   Phase 17.1–17.6 findings. Require a passing full validation record and an
+   explicit phase-to-evidence matrix; missing, incomplete, or failed evidence
+   blocks cutover. Do not cut over based on code presence alone.
 2. Remove legacy local A/B fork/pre-existing-reviewer public CLI registration,
    configuration references, docs claims, package assets, and tests that only
    assert retired behavior. Retain shared primitives only where the scheduler

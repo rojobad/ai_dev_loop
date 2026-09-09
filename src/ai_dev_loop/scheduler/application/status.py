@@ -35,9 +35,7 @@ class SchedulerStatusService:
             if self.store.has_unresolved_abort_hold(conn, state.run_id):
                 safe_next_action = aborted_pending_termination_safe_next_action(state.run_id)
             elif self.store.has_unreleased_abort_resources(conn, state.run_id):
-                safe_next_action = aborted_pending_resource_cleanup_safe_next_action(
-                    state.run_id
-                )
+                safe_next_action = aborted_pending_resource_cleanup_safe_next_action(state.run_id)
         return summary_from_context(
             run_id=state.run_id,
             state_kind=state.kind,
