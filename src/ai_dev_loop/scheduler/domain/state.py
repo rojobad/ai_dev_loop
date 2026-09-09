@@ -24,6 +24,7 @@ from ai_dev_loop.scheduler.domain.common import (
 
 SUBMITTED_STATE_SCHEMA_VERSION = 1
 SCHEDULER_STATE_SCHEMA_VERSION = 2
+SCHEDULER_STATE_SCHEMA_VERSION_V4 = 4
 SUBMITTED_CONTEXT_SCHEMA_VERSION = 1
 SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH = 2
 SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED = 3
@@ -270,6 +271,129 @@ class BlockedState(SchedulerRunBase):
         return value
 
 
+class AdmittedRunCheckpoint(DomainModel):
+    """Shared admission checkpoint fields for active scheduler runs."""
+
+    authorized_at: NonEmptyStr
+    authorized_controller_session_id: UuidSessionId
+    admitted_at: NonEmptyStr
+    admission_status_artifact_path: NonEmptyStr
+    admission_status_sha256: Sha256Hex
+
+
+class CursorWorkflowCheckpoint(DomainModel):
+    """Durable cursor/staging checkpoint carried across Phase 17.4 states."""
+
+    iteration: int = Field(default=1)
+    chat_id: UuidSessionId | None = None
+    chat_artifact_path: NonEmptyStr | None = None
+    chat_artifact_sha256: Sha256Hex | None = None
+    original_prompt_path: NonEmptyStr | None = None
+    original_prompt_sha256: Sha256Hex | None = None
+    continuation_envelope_path: NonEmptyStr | None = None
+    continuation_envelope_sha256: Sha256Hex | None = None
+    usage_limit_fingerprint_path: NonEmptyStr | None = None
+    usage_limit_fingerprint_sha256: Sha256Hex | None = None
+    cursor_output_fingerprint_path: NonEmptyStr | None = None
+    cursor_output_fingerprint_sha256: Sha256Hex | None = None
+    staged_patch_path: NonEmptyStr | None = None
+    staged_patch_sha256: Sha256Hex | None = None
+    wait_until: NonEmptyStr | None = None
+
+    @field_validator("iteration")
+    @classmethod
+    def iteration_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("iteration must be >= 1")
+        return value
+
+
+def _schema_version_is_four(value: int) -> int:
+    if value != SCHEDULER_STATE_SCHEMA_VERSION_V4:
+        raise ValueError("schema_version must be 4")
+    return value
+
+
+class PreflightCompleteState(SchedulerRunBase):
+    """Run that passed bounded preflight and tool compatibility probes."""
+
+    kind: Literal["preflight_complete"] = "preflight_complete"
+    schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
+    checkpoint: AdmittedRunCheckpoint
+    cursor: CursorWorkflowCheckpoint = Field(default_factory=CursorWorkflowCheckpoint)
+
+    @field_validator("schema_version")
+    @classmethod
+    def schema_version_is_four(cls, value: int) -> int:
+        return _schema_version_is_four(value)
+
+
+class CursorReadyState(SchedulerRunBase):
+    """Run with a persisted exact Cursor chat ID bound for turns."""
+
+    kind: Literal["cursor_ready"] = "cursor_ready"
+    schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
+    checkpoint: AdmittedRunCheckpoint
+    cursor: CursorWorkflowCheckpoint
+
+    @field_validator("schema_version")
+    @classmethod
+    def schema_version_is_four(cls, value: int) -> int:
+        return _schema_version_is_four(value)
+
+    @model_validator(mode="after")
+    def chat_id_required(self) -> CursorReadyState:
+        if not self.cursor.chat_id:
+            raise ValueError("cursor_ready requires chat_id")
+        return self
+
+
+class WaitingUsageLimitState(SchedulerRunBase):
+    """Run waiting for provider retry-after or the five-hour fallback."""
+
+    kind: Literal["waiting_usage_limit"] = "waiting_usage_limit"
+    schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
+    checkpoint: AdmittedRunCheckpoint
+    cursor: CursorWorkflowCheckpoint
+
+    @field_validator("schema_version")
+    @classmethod
+    def schema_version_is_four(cls, value: int) -> int:
+        return _schema_version_is_four(value)
+
+    @model_validator(mode="after")
+    def usage_limit_fields_required(self) -> WaitingUsageLimitState:
+        if not self.cursor.chat_id:
+            raise ValueError("waiting_usage_limit requires chat_id")
+        if not self.cursor.wait_until:
+            raise ValueError("waiting_usage_limit requires wait_until")
+        if not self.cursor.usage_limit_fingerprint_path:
+            raise ValueError("waiting_usage_limit requires usage_limit fingerprint")
+        if not self.cursor.original_prompt_path:
+            raise ValueError("waiting_usage_limit requires original prompt binding")
+        return self
+
+
+class AwaitingCodexReviewState(SchedulerRunBase):
+    """Run staged and waiting for Phase 17.5 Codex review bootstrap."""
+
+    kind: Literal["awaiting_codex_review"] = "awaiting_codex_review"
+    schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
+    checkpoint: AdmittedRunCheckpoint
+    cursor: CursorWorkflowCheckpoint
+
+    @field_validator("schema_version")
+    @classmethod
+    def schema_version_is_four(cls, value: int) -> int:
+        return _schema_version_is_four(value)
+
+    @model_validator(mode="after")
+    def staging_fields_required(self) -> AwaitingCodexReviewState:
+        if not self.cursor.staged_patch_path or not self.cursor.staged_patch_sha256:
+            raise ValueError("awaiting_codex_review requires staged patch artifacts")
+        return self
+
+
 def _scheduler_state_discriminator(value: object) -> str:
     if isinstance(value, dict):
         kind = value.get("kind")
@@ -285,6 +409,10 @@ SchedulerState = Annotated[
     Annotated[SubmittedState, Tag("queued")]
     | Annotated[AuthorizedState, Tag("authorized")]
     | Annotated[AdmittedState, Tag("admitted")]
+    | Annotated[PreflightCompleteState, Tag("preflight_complete")]
+    | Annotated[CursorReadyState, Tag("cursor_ready")]
+    | Annotated[WaitingUsageLimitState, Tag("waiting_usage_limit")]
+    | Annotated[AwaitingCodexReviewState, Tag("awaiting_codex_review")]
     | Annotated[BlockedState, Tag("blocked")],
     Discriminator(_scheduler_state_discriminator),
 ]
@@ -300,8 +428,29 @@ def parse_submitted_state(payload: object) -> SubmittedState:
 
 def parse_scheduler_state(
     payload: object,
-) -> SubmittedState | AuthorizedState | AdmittedState | BlockedState:
-    if isinstance(payload, (SubmittedState, AuthorizedState, AdmittedState, BlockedState)):
+) -> (
+    SubmittedState
+    | AuthorizedState
+    | AdmittedState
+    | PreflightCompleteState
+    | CursorReadyState
+    | WaitingUsageLimitState
+    | AwaitingCodexReviewState
+    | BlockedState
+):
+    if isinstance(
+        payload,
+        (
+            SubmittedState,
+            AuthorizedState,
+            AdmittedState,
+            PreflightCompleteState,
+            CursorReadyState,
+            WaitingUsageLimitState,
+            AwaitingCodexReviewState,
+            BlockedState,
+        ),
+    ):
         return payload
     return SCHEDULER_STATE_ADAPTER.validate_python(payload)
 

@@ -21,12 +21,26 @@ from ai_dev_loop.runners.git import (
 from ai_dev_loop.state import RunState, atomic_write_json, sha256_bytes, utc_now
 
 
-def cursor_output_fingerprint_rel_path(iteration_number: int) -> str:
-    return f"git/cursor-output/{iteration_label(iteration_number)}.json"
+def usage_limit_failure_fingerprint_rel_path(
+    iteration_number: int,
+    *,
+    artifact_id: str | None = None,
+) -> str:
+    base = iteration_label(iteration_number)
+    if artifact_id:
+        return f"git/cursor-output/{base}.{artifact_id}.usage-limit-failure.json"
+    return f"git/cursor-output/{base}.usage-limit-failure.json"
 
 
-def usage_limit_failure_fingerprint_rel_path(iteration_number: int) -> str:
-    return f"git/cursor-output/{iteration_label(iteration_number)}.usage-limit-failure.json"
+def cursor_output_fingerprint_rel_path(
+    iteration_number: int,
+    *,
+    artifact_id: str | None = None,
+) -> str:
+    base = iteration_label(iteration_number)
+    if artifact_id:
+        return f"git/cursor-output/{base}.{artifact_id}.json"
+    return f"git/cursor-output/{base}.json"
 
 
 def usage_limit_adopted_fingerprint_rel_path(iteration_number: int) -> str:
@@ -173,6 +187,7 @@ def capture_cursor_output_fingerprint(
     *,
     iteration_number: int,
     status_text: str | None = None,
+    artifact_id: str | None = None,
 ) -> CursorOutputFingerprint:
     """Capture deterministic Git/content evidence after Cursor and before staging."""
 
@@ -183,7 +198,7 @@ def capture_cursor_output_fingerprint(
         status_text=status_text,
         kind="post_cursor",
     )
-    relative_path = cursor_output_fingerprint_rel_path(iteration_number)
+    relative_path = cursor_output_fingerprint_rel_path(iteration_number, artifact_id=artifact_id)
     atomic_write_json(run_directory / relative_path, payload, sensitive=True)
     return CursorOutputFingerprint(
         relative_path=relative_path,
@@ -198,6 +213,7 @@ def capture_usage_limit_failure_fingerprint(
     *,
     iteration_number: int,
     status_text: str | None = None,
+    artifact_id: str | None = None,
 ) -> CursorOutputFingerprint:
     """Capture content evidence after a classified usage-limit Cursor failure."""
 
@@ -208,7 +224,10 @@ def capture_usage_limit_failure_fingerprint(
         status_text=status_text,
         kind="usage_limit_failure",
     )
-    relative_path = usage_limit_failure_fingerprint_rel_path(iteration_number)
+    relative_path = usage_limit_failure_fingerprint_rel_path(
+        iteration_number,
+        artifact_id=artifact_id,
+    )
     atomic_write_json(run_directory / relative_path, payload, sensitive=True)
     return CursorOutputFingerprint(
         relative_path=relative_path,
@@ -379,6 +398,26 @@ def recompute_cursor_output_fingerprint(
     )
     return CursorOutputFingerprint(
         relative_path=cursor_output_fingerprint_rel_path(iteration_number),
+        payload=payload,
+        aggregate_sha256=str(payload["aggregate_sha256"]),
+    )
+
+
+def recompute_usage_limit_failure_fingerprint(
+    state: RunState,
+    *,
+    iteration_number: int,
+) -> CursorOutputFingerprint:
+    """Recompute usage-limit fingerprint without writing an artifact."""
+
+    payload = _compute_fingerprint_payload(
+        state,
+        iteration_number=iteration_number,
+        context="while recomputing usage-limit fingerprint",
+        kind="usage_limit_failure_recomputed",
+    )
+    return CursorOutputFingerprint(
+        relative_path=usage_limit_failure_fingerprint_rel_path(iteration_number),
         payload=payload,
         aggregate_sha256=str(payload["aggregate_sha256"]),
     )

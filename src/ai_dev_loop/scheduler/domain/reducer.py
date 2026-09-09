@@ -6,18 +6,34 @@ from ai_dev_loop.scheduler.domain.events import (
     AttemptCompletedEvent,
     AttemptLaunchRequestedEvent,
     AttemptUncertainEvent,
+    AwaitingCodexReviewEnteredEvent,
+    CursorChatBlockedEvent,
+    CursorChatCreatedEvent,
+    CursorTurnBlockedEvent,
+    CursorTurnCompletedEvent,
+    CursorUsageLimitDetectedEvent,
+    PreflightBlockedEvent,
+    PreflightCompletedEvent,
     RunAuthorizedEvent,
     RunSubmittedEvent,
+    StagingBlockedEvent,
+    StagingCompletedEvent,
     SyntheticEffectCompletedEvent,
     TickStaleRejectedEvent,
     WorktreeAdmissionBlockedEvent,
     WorktreeAdmittedEvent,
 )
 from ai_dev_loop.scheduler.domain.state import (
+    AdmittedRunCheckpoint,
     AdmittedState,
     AuthorizedState,
+    AwaitingCodexReviewState,
     BlockedState,
+    CursorReadyState,
+    CursorWorkflowCheckpoint,
+    PreflightCompleteState,
     SubmittedState,
+    WaitingUsageLimitState,
 )
 
 
@@ -63,6 +79,16 @@ def apply_run_authorized(
         context=state.context,
         authorized_at=now_text,
         authorized_controller_session_id=event.controller_session_id,
+    )
+
+
+def _admitted_checkpoint(state: AdmittedState) -> AdmittedRunCheckpoint:
+    return AdmittedRunCheckpoint(
+        authorized_at=state.authorized_at,
+        authorized_controller_session_id=state.authorized_controller_session_id,
+        admitted_at=state.admitted_at,
+        admission_status_artifact_path=state.admission_status_artifact_path,
+        admission_status_sha256=state.admission_status_sha256,
     )
 
 
@@ -114,6 +140,243 @@ def apply_worktree_admission_blocked(
         authorized_at=state.authorized_at,
         authorized_controller_session_id=state.authorized_controller_session_id,
     )
+
+
+def apply_preflight_completed(
+    state: AdmittedState,
+    event: PreflightCompletedEvent,
+    *,
+    now_text: str,
+) -> PreflightCompleteState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    if state.kind != "admitted":
+        raise ValueError("preflight_completed applies only to admitted runs")
+    return PreflightCompleteState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        checkpoint=_admitted_checkpoint(state),
+        cursor=CursorWorkflowCheckpoint(),
+    )
+
+
+def apply_preflight_blocked(
+    state: AdmittedState,
+    event: PreflightBlockedEvent,
+    *,
+    now_text: str,
+) -> BlockedState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    return BlockedState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        blocked_at=now_text,
+        block_reason_kind=event.block_reason_kind,
+        block_reason_summary=event.block_reason_summary,
+        authorized_at=state.authorized_at,
+        authorized_controller_session_id=state.authorized_controller_session_id,
+    )
+
+
+def apply_cursor_chat_created(
+    state: PreflightCompleteState,
+    event: CursorChatCreatedEvent,
+    *,
+    now_text: str,
+) -> CursorReadyState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    cursor = state.cursor.model_copy(
+        update={
+            "chat_id": event.chat_id,
+            "chat_artifact_path": event.chat_artifact_path,
+            "chat_artifact_sha256": event.chat_artifact_sha256,
+            "original_prompt_path": state.context.plan_prompt.prompt_artifact_path,
+            "original_prompt_sha256": state.context.plan_prompt.prompt_sha256,
+        }
+    )
+    return CursorReadyState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        checkpoint=state.checkpoint,
+        cursor=cursor,
+    )
+
+
+def apply_cursor_chat_blocked(
+    state: PreflightCompleteState,
+    event: CursorChatBlockedEvent,
+    *,
+    now_text: str,
+) -> BlockedState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    return BlockedState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        blocked_at=now_text,
+        block_reason_kind=event.block_reason_kind,
+        block_reason_summary=event.block_reason_summary,
+        authorized_at=state.checkpoint.authorized_at,
+        authorized_controller_session_id=state.checkpoint.authorized_controller_session_id,
+    )
+
+
+def apply_cursor_turn_completed(
+    state: CursorReadyState | WaitingUsageLimitState,
+    event: CursorTurnCompletedEvent,
+    *,
+    now_text: str,
+) -> CursorReadyState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    cursor = state.cursor.model_copy(
+        update={
+            "iteration": event.iteration,
+            "cursor_output_fingerprint_path": event.cursor_output_fingerprint_path,
+            "cursor_output_fingerprint_sha256": event.cursor_output_fingerprint_sha256,
+            "wait_until": None,
+        }
+    )
+    return CursorReadyState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        checkpoint=state.checkpoint,
+        cursor=cursor,
+    )
+
+
+def apply_cursor_turn_blocked(
+    state: CursorReadyState | WaitingUsageLimitState,
+    event: CursorTurnBlockedEvent,
+    *,
+    now_text: str,
+) -> BlockedState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    return BlockedState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        blocked_at=now_text,
+        block_reason_kind=event.block_reason_kind,
+        block_reason_summary=event.block_reason_summary,
+        authorized_at=state.checkpoint.authorized_at,
+        authorized_controller_session_id=state.checkpoint.authorized_controller_session_id,
+    )
+
+
+def apply_cursor_usage_limit_detected(
+    state: CursorReadyState,
+    event: CursorUsageLimitDetectedEvent,
+    *,
+    now_text: str,
+) -> WaitingUsageLimitState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    cursor = state.cursor.model_copy(
+        update={
+            "iteration": event.iteration,
+            "wait_until": event.wait_until,
+            "usage_limit_fingerprint_path": event.usage_limit_fingerprint_path,
+            "usage_limit_fingerprint_sha256": event.usage_limit_fingerprint_sha256,
+            "continuation_envelope_path": event.continuation_envelope_path,
+            "continuation_envelope_sha256": event.continuation_envelope_sha256,
+        }
+    )
+    return WaitingUsageLimitState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        checkpoint=state.checkpoint,
+        cursor=cursor,
+    )
+
+
+def apply_staging_completed(
+    state: CursorReadyState,
+    event: StagingCompletedEvent,
+    *,
+    now_text: str,
+) -> AwaitingCodexReviewState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    cursor = state.cursor.model_copy(
+        update={
+            "iteration": event.iteration,
+            "staged_patch_path": event.staged_patch_path,
+            "staged_patch_sha256": event.staged_patch_sha256,
+        }
+    )
+    return AwaitingCodexReviewState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        checkpoint=state.checkpoint,
+        cursor=cursor,
+    )
+
+
+def apply_staging_blocked(
+    state: CursorReadyState,
+    event: StagingBlockedEvent,
+    *,
+    now_text: str,
+) -> BlockedState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    return BlockedState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        blocked_at=now_text,
+        block_reason_kind=event.block_reason_kind,
+        block_reason_summary=event.block_reason_summary,
+        authorized_at=state.checkpoint.authorized_at,
+        authorized_controller_session_id=state.checkpoint.authorized_controller_session_id,
+    )
+
+
+def apply_awaiting_codex_review_entered(
+    state: AwaitingCodexReviewState,
+    event: AwaitingCodexReviewEnteredEvent,
+) -> AwaitingCodexReviewState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    return state
 
 
 def apply_tick_stale_rejected(

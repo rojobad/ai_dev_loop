@@ -66,6 +66,8 @@ class SchedulerRunSummary(AppModel):
     submitted_at: str
     updated_at: str
     safe_next_action: SafeNextAction
+    cursor_wait_until: str | None = None
+    block_reason_kind: str | None = None
 
 
 class SchedulerStatusResult(AppModel):
@@ -109,6 +111,8 @@ class ControllerSchedulerCandidate(AppModel):
     safe_next_action: SafeNextAction
     capacity_holder_run_id: str | None
     last_event_kind: str | None
+    cursor_wait_until: str | None = None
+    block_reason_kind: str | None = None
 
 
 def queued_safe_next_action(run_id: str) -> SafeNextAction:
@@ -134,6 +138,20 @@ def admitted_safe_next_action() -> SafeNextAction:
     )
 
 
+def active_cursor_safe_next_action() -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.SCHEDULER_TICK,
+        command="ai_dev_loop scheduler tick",
+    )
+
+
+def awaiting_codex_review_safe_next_action() -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.NONE,
+        command=None,
+    )
+
+
 def blocked_safe_next_action() -> SafeNextAction:
     return SafeNextAction(
         kind=SafeNextActionKind.NONE,
@@ -146,8 +164,15 @@ def safe_next_action_for_state_kind(state_kind: str, run_id: str) -> SafeNextAct
         return queued_safe_next_action(run_id)
     if state_kind == "authorized":
         return authorized_safe_next_action()
-    if state_kind == "admitted":
-        return admitted_safe_next_action()
+    if state_kind in {
+        "admitted",
+        "preflight_complete",
+        "cursor_ready",
+        "waiting_usage_limit",
+    }:
+        return active_cursor_safe_next_action()
+    if state_kind == "awaiting_codex_review":
+        return awaiting_codex_review_safe_next_action()
     return blocked_safe_next_action()
 
 
@@ -155,6 +180,17 @@ def redacted_session_prefix(session_id: str) -> str:
     if len(session_id) <= 12:
         return session_id
     return f"{session_id[:8]}…{session_id[-4:]}"
+
+
+def scheduler_status_projection_from_state(state: object) -> dict[str, str | None]:
+    from ai_dev_loop.scheduler.domain.state import BlockedState, WaitingUsageLimitState
+
+    projection: dict[str, str | None] = {"cursor_wait_until": None, "block_reason_kind": None}
+    if isinstance(state, WaitingUsageLimitState):
+        projection["cursor_wait_until"] = state.cursor.wait_until
+    if isinstance(state, BlockedState):
+        projection["block_reason_kind"] = state.block_reason_kind
+    return projection
 
 
 def summary_from_context(
@@ -165,6 +201,8 @@ def summary_from_context(
     updated_at: str,
     context: SubmittedRunContext,
     safe_next_action: SafeNextAction | None = None,
+    cursor_wait_until: str | None = None,
+    block_reason_kind: str | None = None,
 ) -> SchedulerRunSummary:
     reviewer_prefix = None
     if isinstance(context.codex, FreshCodexReviewerBinding):
@@ -184,4 +222,6 @@ def summary_from_context(
         submitted_at=submitted_at,
         updated_at=updated_at,
         safe_next_action=action,
+        cursor_wait_until=cursor_wait_until,
+        block_reason_kind=block_reason_kind,
     )

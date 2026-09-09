@@ -35,10 +35,11 @@ from ai_dev_loop.scheduler.domain.state import (
     SubmittedState,
 )
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 MIGRATION_V1_NAME = "0001_initial"
 MIGRATION_V2_NAME = "0002_tick_control"
 MIGRATION_V3_NAME = "0003_attempt_executor"
+MIGRATION_V4_NAME = "0004_cursor_workflow"
 REQUIRED_TABLES = frozenset(
     {
         "scheduler_schema_migrations",
@@ -75,7 +76,27 @@ REQUIRED_INDEXES = frozenset(
         "idx_scheduler_runs_controller_repo",
     }
 )
-NON_TERMINAL_STATE_KINDS = frozenset({"queued", "authorized", "admitted"})
+NON_TERMINAL_STATE_KINDS = frozenset(
+    {
+        "queued",
+        "authorized",
+        "admitted",
+        "preflight_complete",
+        "cursor_ready",
+        "waiting_usage_limit",
+        "awaiting_codex_review",
+    }
+)
+TICK_ELIGIBLE_STATE_KINDS = frozenset(
+    {
+        "queued",
+        "authorized",
+        "admitted",
+        "preflight_complete",
+        "cursor_ready",
+        "waiting_usage_limit",
+    }
+)
 EFFECT_STATUS_PENDING = "pending"
 EFFECT_STATUS_CLAIMED = "claimed"
 EFFECT_STATUS_SUCCEEDED = "succeeded"
@@ -113,6 +134,10 @@ def _migration_v3_sql() -> str:
     return _migration_sql("0003_attempt_executor.sql")
 
 
+def _migration_v4_sql() -> str:
+    return _migration_sql("0004_cursor_workflow.sql")
+
+
 def _split_sql_statements(sql: str) -> list[str]:
     statements: list[str] = []
     for chunk in sql.split(";"):
@@ -135,6 +160,8 @@ def migration_checksum(version: int) -> str:
         return hashlib.sha256(_migration_v2_sql().encode("utf-8")).hexdigest()
     if version == 3:
         return hashlib.sha256(_migration_v3_sql().encode("utf-8")).hexdigest()
+    if version == 4:
+        return hashlib.sha256(_migration_v4_sql().encode("utf-8")).hexdigest()
     raise ValueError(f"unsupported migration version {version}")
 
 
@@ -223,14 +250,21 @@ class SqliteSchedulerStore:
                 self._bootstrap_v1(conn)
                 self._migrate_v1_to_v2(conn)
                 self._migrate_v2_to_v3(conn)
+                self._migrate_v3_to_v4(conn)
             elif version == 1:
                 self._verify_migration_checksum(conn, 1)
                 self._migrate_v1_to_v2(conn)
                 self._migrate_v2_to_v3(conn)
+                self._migrate_v3_to_v4(conn)
             elif version == 2:
                 self._verify_migration_checksum(conn, 1)
                 self._verify_migration_checksum(conn, 2)
                 self._migrate_v2_to_v3(conn)
+                self._migrate_v3_to_v4(conn)
+            elif version == 3:
+                for migration_version in (1, 2, 3):
+                    self._verify_migration_checksum(conn, migration_version)
+                self._migrate_v3_to_v4(conn)
             else:
                 self._verify_current_schema(conn)
             self._apply_database_permissions(self.db_path)
@@ -332,6 +366,32 @@ class SqliteSchedulerStore:
             raise
         self._apply_database_permissions(self.db_path)
 
+    def _migrate_v3_to_v4(self, conn: sqlite3.Connection) -> None:
+        if self._user_version(conn) >= 4:
+            self._verify_current_schema(conn)
+            return
+        for migration_version in (1, 2, 3):
+            self._verify_migration_checksum(conn, migration_version)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for statement in _split_sql_statements(_migration_v4_sql()):
+                self._fault_maybe_raise_migration(statement)
+                conn.execute(statement)
+            applied_at = encode_utc_instant(datetime.now(tz=UTC))
+            conn.execute(
+                """
+                INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (4, MIGRATION_V4_NAME, migration_checksum(4), applied_at),
+            )
+            conn.execute("PRAGMA user_version = 4")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        self._apply_database_permissions(self.db_path)
+
     def _fault_maybe_raise_migration(self, statement: str) -> None:
         hook = self._migration_fault_hook
         if hook is not None:
@@ -360,7 +420,7 @@ class SqliteSchedulerStore:
                 SchedulerEngineErrorKind.SCHEMA,
                 f"unsupported schema version {version}",
             )
-        for migration_version in (1, 2, 3):
+        for migration_version in (1, 2, 3, 4):
             self._verify_migration_checksum(conn, migration_version)
         tables = self._table_names(conn)
         missing = REQUIRED_TABLES - tables
@@ -749,14 +809,14 @@ class SqliteSchedulerStore:
         )
 
     def list_tick_eligible_run_ids(self, conn: sqlite3.Connection) -> list[str]:
-        placeholders = ",".join("?" * len(NON_TERMINAL_STATE_KINDS))
+        placeholders = ",".join("?" * len(TICK_ELIGIBLE_STATE_KINDS))
         rows = conn.execute(
             f"""
             SELECT run_id FROM scheduler_runs
             WHERE state_kind IN ({placeholders})
             ORDER BY created_at ASC, run_id ASC
             """,
-            tuple(NON_TERMINAL_STATE_KINDS),
+            tuple(TICK_ELIGIBLE_STATE_KINDS),
         ).fetchall()
         return [str(row[0]) for row in rows]
 
@@ -1445,6 +1505,22 @@ class SqliteSchedulerStore:
         )
         return cursor.rowcount == 1
 
+    def get_fired_retry_timer_for_run(
+        self,
+        conn: sqlite3.Connection,
+        run_id: str,
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_timers
+            WHERE run_id = ? AND timer_kind = 'retry_due' AND status = ?
+            ORDER BY due_at DESC, timer_id DESC
+            LIMIT 1
+            """,
+            (run_id, TIMER_STATUS_FIRED),
+        ).fetchone()
+        return cast(sqlite3.Row, row) if row is not None else None
+
     def get_nonterminal_attempt_for_run(
         self, conn: sqlite3.Connection, run_id: str
     ) -> sqlite3.Row | None:
@@ -1709,5 +1785,210 @@ class SqliteSchedulerStore:
                 claim_id,
                 tick_lease_generation,
             ),
+        )
+        return cursor.rowcount == 1
+
+    def settle_prelaunch_guard_failure(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        attempt_id: str,
+        dispatch_id: str,
+        claim_id: str,
+        capacity_claim_owner_id: str,
+        capacity_tick_generation: int,
+        now: datetime,
+    ) -> bool:
+        """Abort a never-launched attempt and release its claimed effect and capacity."""
+        from ai_dev_loop.scheduler.application.attempt_backend import TerminationClass
+
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            UPDATE scheduler_attempts
+            SET status = ?, exit_code = ?, termination_class = ?,
+                ingested = 1, completed_at = ?, updated_at = ?
+            WHERE attempt_id = ? AND run_id = ? AND status = ?
+              AND capacity_claim_id = ?
+              AND capacity_tick_generation = ?
+            """,
+            (
+                ATTEMPT_STATUS_FAILED,
+                1,
+                TerminationClass.NONZERO_EXIT.value,
+                now_text,
+                now_text,
+                attempt_id,
+                run_id,
+                ATTEMPT_STATUS_LAUNCHING,
+                claim_id,
+                capacity_tick_generation,
+            ),
+        )
+        if cursor.rowcount != 1:
+            return False
+        self.mark_effect_stale(
+            conn,
+            dispatch_id=dispatch_id,
+            claim_id=claim_id,
+            now=now,
+        )
+        return self.release_capacity(
+            conn,
+            run_id=run_id,
+            claim_id=claim_id,
+            tick_owner_id=capacity_claim_owner_id,
+            tick_lease_generation=capacity_tick_generation,
+            now=now,
+        )
+
+    def insert_effect(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        dispatch_id: str,
+        source_event_id: str,
+        run_id: str,
+        effect_id: str,
+        effect_kind: str,
+        effect_payload: dict[str, object],
+        available_at: datetime,
+        claimed_run_version: int,
+        now: datetime,
+    ) -> None:
+        payload = json.dumps(effect_payload, sort_keys=True, separators=(",", ":"))
+        digest = payload_sha256(payload)
+        now_text = encode_utc_instant(now)
+        conn.execute(
+            """
+            INSERT INTO scheduler_effects(
+                dispatch_id, source_event_id, effect_ordinal, run_id, effect_id,
+                idempotency_key, effect_kind, effect_payload, effect_payload_sha256,
+                status, available_at, claimed_run_version, created_at, updated_at
+            ) VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                dispatch_id,
+                source_event_id,
+                run_id,
+                effect_id,
+                f"{run_id}:{effect_id}",
+                effect_kind,
+                payload,
+                digest,
+                EFFECT_STATUS_PENDING,
+                encode_utc_instant(available_at),
+                claimed_run_version,
+                now_text,
+                now_text,
+            ),
+        )
+
+    def insert_preflight_effect(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        dispatch_id: str,
+        source_event_id: str,
+        run_id: str,
+        available_at: datetime,
+        claimed_run_version: int,
+        now: datetime,
+    ) -> None:
+        from ai_dev_loop.scheduler.domain.cursor_contract import (
+            PREFLIGHT_EFFECT_ID,
+            PREFLIGHT_EFFECT_KIND,
+        )
+
+        self.insert_effect(
+            conn,
+            dispatch_id=dispatch_id,
+            source_event_id=source_event_id,
+            run_id=run_id,
+            effect_id=PREFLIGHT_EFFECT_ID,
+            effect_kind=PREFLIGHT_EFFECT_KIND,
+            effect_payload={"effect_kind": PREFLIGHT_EFFECT_KIND},
+            available_at=available_at,
+            claimed_run_version=claimed_run_version,
+            now=now,
+        )
+
+    def complete_effect_by_id(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        dispatch_id: str,
+        now: datetime,
+    ) -> bool:
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            UPDATE scheduler_effects
+            SET status = ?, completed_at = ?, updated_at = ?
+            WHERE dispatch_id = ? AND status IN (?, ?)
+            """,
+            (
+                EFFECT_STATUS_SUCCEEDED,
+                now_text,
+                now_text,
+                dispatch_id,
+                EFFECT_STATUS_PENDING,
+                EFFECT_STATUS_CLAIMED,
+            ),
+        )
+        return cursor.rowcount == 1
+
+    def get_effect_by_dispatch_id(
+        self, conn: sqlite3.Connection, dispatch_id: str
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            "SELECT * FROM scheduler_effects WHERE dispatch_id = ?",
+            (dispatch_id,),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def get_latest_completed_cursor_attempt(
+        self, conn: sqlite3.Connection, run_id: str
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            """
+            SELECT scheduler_attempts.*
+            FROM scheduler_attempts
+            JOIN scheduler_effects
+              ON scheduler_effects.dispatch_id = scheduler_attempts.dispatch_id
+            WHERE scheduler_attempts.run_id = ?
+              AND scheduler_attempts.status IN (?, ?)
+              AND scheduler_attempts.component = 'cursor'
+              AND scheduler_attempts.ingested = 0
+              AND scheduler_effects.effect_kind IN (?, ?)
+            ORDER BY scheduler_attempts.completed_at DESC, scheduler_attempts.attempt_id DESC
+            LIMIT 1
+            """,
+            (
+                run_id,
+                ATTEMPT_STATUS_COMPLETED,
+                ATTEMPT_STATUS_FAILED,
+                "cursor.create_chat",
+                "cursor.run_turn",
+            ),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def mark_attempt_ingested(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        attempt_id: str,
+        now: datetime,
+    ) -> bool:
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            UPDATE scheduler_attempts
+            SET ingested = 1, updated_at = ?
+            WHERE attempt_id = ?
+            """,
+            (now_text, attempt_id),
         )
         return cursor.rowcount == 1

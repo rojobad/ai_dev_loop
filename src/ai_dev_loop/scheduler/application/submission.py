@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Protocol
 
 import yaml
 
@@ -43,9 +44,6 @@ from ai_dev_loop.scheduler.domain.state import (
     SUBMITTED_CONTEXT_SCHEMA_VERSION,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH,
-    AdmittedState,
-    AuthorizedState,
-    BlockedState,
     CodexRuntimeBinding,
     ControllerBinding,
     CursorBinding,
@@ -85,6 +83,17 @@ SESSION_RUNTIME_ARTIFACT = "codex/session-runtime.json"
 
 RepositoryDiscoverer = Callable[[Path], RepositoryTarget]
 SessionRuntimeReader = Callable[[str], CodexSessionRuntime]
+
+
+class _SubmitResultState(Protocol):
+    @property
+    def run_id(self) -> str: ...
+
+    @property
+    def kind(self) -> str: ...
+
+    @property
+    def context(self) -> SubmittedRunContext: ...
 
 
 @dataclass(frozen=True)
@@ -392,9 +401,7 @@ def _build_context(
     )
 
 
-def _result_from_state(
-    state: SubmittedState | AuthorizedState | BlockedState | AdmittedState, *, reused_existing: bool
-) -> SubmitResult:
+def _result_from_state(state: _SubmitResultState, *, reused_existing: bool) -> SubmitResult:
     return SubmitResult(
         run_id=state.run_id,
         project_name=state.context.project_name,

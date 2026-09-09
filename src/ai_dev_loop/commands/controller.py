@@ -46,6 +46,8 @@ class ControllerStatusResult:
     scheduler_state_kind: str | None = None
     capacity_holder_run_id_prefix: str | None = None
     last_event_kind: str | None = None
+    cursor_wait_until: str | None = None
+    block_reason_kind: str | None = None
     run_source: str | None = None
     read_failure: str | None = None
 
@@ -318,6 +320,8 @@ def _build_scheduler_result(
         scheduler_state_kind=candidate.state_kind,
         capacity_holder_run_id_prefix=capacity_prefix,
         last_event_kind=candidate.last_event_kind,
+        cursor_wait_until=candidate.cursor_wait_until,
+        block_reason_kind=candidate.block_reason_kind,
         run_source="scheduler",
     )
 
@@ -417,6 +421,8 @@ def render_controller_status(result: ControllerStatusResult, *, output: str = "t
             "scheduler_state_kind": result.scheduler_state_kind,
             "capacity_holder_run_id_prefix": result.capacity_holder_run_id_prefix,
             "last_event_kind": result.last_event_kind,
+            "cursor_wait_until": result.cursor_wait_until,
+            "block_reason_kind": result.block_reason_kind,
             "run_source": result.run_source,
             "read_failure": result.read_failure,
         }
@@ -446,6 +452,10 @@ def render_controller_status(result: ControllerStatusResult, *, output: str = "t
             lines.append(f"Scheduler state: {result.scheduler_state_kind}")
             if result.last_event_kind:
                 lines.append(f"Last event: {result.last_event_kind}")
+            if result.cursor_wait_until:
+                lines.append(f"Cursor wait until: {result.cursor_wait_until}")
+            if result.block_reason_kind:
+                lines.append(f"Block reason: {result.block_reason_kind}")
             if result.capacity_holder_run_id_prefix:
                 lines.append(f"Capacity holder prefix: {result.capacity_holder_run_id_prefix}")
         launcher = result.launcher

@@ -476,6 +476,27 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                     file=sys.stderr,
                 )
                 sys.exit(2)
+            if mode == "usage_limit_retry":
+                if modify_mode != "none" and "--workspace" in args:
+                    workspace = args[args.index("--workspace") + 1]
+                    if modify_mode == "tracked":
+                        target = os.path.join(workspace, "ai_dev_loop.yaml")
+                        with open(target, "a", encoding="utf-8") as handle:
+                            handle.write("\\n# modified before usage limit retry\\n")
+                retry_after = int(os.environ.get("FAKE_AGENT_RETRY_AFTER_SECONDS", "120"))
+                print(
+                    json.dumps(
+                        {{
+                            "type": "error",
+                            "message": (
+                                "ActionRequiredError: You've hit your usage limit for this model. "
+                                "Switch to Auto or another model to continue."
+                            ),
+                            "retry_after_seconds": retry_after,
+                        }}
+                    )
+                )
+                sys.exit(2)
             if mode == "usage_limit_structured":
                 if modify_mode != "none" and "--workspace" in args:
                     workspace = args[args.index("--workspace") + 1]

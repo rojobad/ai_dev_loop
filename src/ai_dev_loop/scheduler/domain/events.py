@@ -20,6 +20,16 @@ ATTEMPT_LAUNCH_REQUESTED_EVENT_KIND = "attempt_launch_requested"
 ATTEMPT_COMPLETED_EVENT_KIND = "attempt_completed"
 ATTEMPT_UNCERTAIN_EVENT_KIND = "attempt_uncertain"
 TICK_STALE_REJECTED_EVENT_KIND = "tick_stale_rejected"
+PREFLIGHT_COMPLETED_EVENT_KIND = "preflight_completed"
+PREFLIGHT_BLOCKED_EVENT_KIND = "preflight_blocked"
+CURSOR_CHAT_CREATED_EVENT_KIND = "cursor_chat_created"
+CURSOR_CHAT_BLOCKED_EVENT_KIND = "cursor_chat_blocked"
+CURSOR_TURN_COMPLETED_EVENT_KIND = "cursor_turn_completed"
+CURSOR_TURN_BLOCKED_EVENT_KIND = "cursor_turn_blocked"
+CURSOR_USAGE_LIMIT_DETECTED_EVENT_KIND = "cursor_usage_limit_detected"
+STAGING_COMPLETED_EVENT_KIND = "staging_completed"
+STAGING_BLOCKED_EVENT_KIND = "staging_blocked"
+AWAITING_CODEX_REVIEW_EVENT_KIND = "awaiting_codex_review_entered"
 
 
 class RunSubmittedEvent(DomainModel):
@@ -176,6 +186,149 @@ class TickStaleRejectedEvent(DomainModel):
         return value
 
 
+class PreflightCompletedEvent(DomainModel):
+    kind: str = Field(default=PREFLIGHT_COMPLETED_EVENT_KIND)
+    run_id: str
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_preflight_completed(cls, value: str) -> str:
+        if value != PREFLIGHT_COMPLETED_EVENT_KIND:
+            raise ValueError("kind must be preflight_completed")
+        return value
+
+
+class PreflightBlockedEvent(DomainModel):
+    kind: str = Field(default=PREFLIGHT_BLOCKED_EVENT_KIND)
+    run_id: str
+    block_reason_kind: NonEmptyStr
+    block_reason_summary: NonEmptyStr
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_preflight_blocked(cls, value: str) -> str:
+        if value != PREFLIGHT_BLOCKED_EVENT_KIND:
+            raise ValueError("kind must be preflight_blocked")
+        return value
+
+
+class CursorChatCreatedEvent(DomainModel):
+    kind: str = Field(default=CURSOR_CHAT_CREATED_EVENT_KIND)
+    run_id: str
+    chat_id: UuidSessionId
+    chat_artifact_path: NonEmptyStr
+    chat_artifact_sha256: Sha256Hex
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_cursor_chat_created(cls, value: str) -> str:
+        if value != CURSOR_CHAT_CREATED_EVENT_KIND:
+            raise ValueError("kind must be cursor_chat_created")
+        return value
+
+
+class CursorChatBlockedEvent(DomainModel):
+    kind: str = Field(default=CURSOR_CHAT_BLOCKED_EVENT_KIND)
+    run_id: str
+    block_reason_kind: NonEmptyStr
+    block_reason_summary: NonEmptyStr
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_cursor_chat_blocked(cls, value: str) -> str:
+        if value != CURSOR_CHAT_BLOCKED_EVENT_KIND:
+            raise ValueError("kind must be cursor_chat_blocked")
+        return value
+
+
+class CursorTurnCompletedEvent(DomainModel):
+    kind: str = Field(default=CURSOR_TURN_COMPLETED_EVENT_KIND)
+    run_id: str
+    iteration: int
+    cursor_output_fingerprint_path: NonEmptyStr
+    cursor_output_fingerprint_sha256: Sha256Hex
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_cursor_turn_completed(cls, value: str) -> str:
+        if value != CURSOR_TURN_COMPLETED_EVENT_KIND:
+            raise ValueError("kind must be cursor_turn_completed")
+        return value
+
+
+class CursorTurnBlockedEvent(DomainModel):
+    kind: str = Field(default=CURSOR_TURN_BLOCKED_EVENT_KIND)
+    run_id: str
+    block_reason_kind: NonEmptyStr
+    block_reason_summary: NonEmptyStr
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_cursor_turn_blocked(cls, value: str) -> str:
+        if value != CURSOR_TURN_BLOCKED_EVENT_KIND:
+            raise ValueError("kind must be cursor_turn_blocked")
+        return value
+
+
+class CursorUsageLimitDetectedEvent(DomainModel):
+    kind: str = Field(default=CURSOR_USAGE_LIMIT_DETECTED_EVENT_KIND)
+    run_id: str
+    iteration: int
+    wait_until: NonEmptyStr
+    usage_limit_fingerprint_path: NonEmptyStr
+    usage_limit_fingerprint_sha256: Sha256Hex
+    continuation_envelope_path: NonEmptyStr
+    continuation_envelope_sha256: Sha256Hex
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_cursor_usage_limit_detected(cls, value: str) -> str:
+        if value != CURSOR_USAGE_LIMIT_DETECTED_EVENT_KIND:
+            raise ValueError("kind must be cursor_usage_limit_detected")
+        return value
+
+
+class StagingCompletedEvent(DomainModel):
+    kind: str = Field(default=STAGING_COMPLETED_EVENT_KIND)
+    run_id: str
+    iteration: int
+    staged_patch_path: NonEmptyStr
+    staged_patch_sha256: Sha256Hex
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_staging_completed(cls, value: str) -> str:
+        if value != STAGING_COMPLETED_EVENT_KIND:
+            raise ValueError("kind must be staging_completed")
+        return value
+
+
+class StagingBlockedEvent(DomainModel):
+    kind: str = Field(default=STAGING_BLOCKED_EVENT_KIND)
+    run_id: str
+    block_reason_kind: NonEmptyStr
+    block_reason_summary: NonEmptyStr
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_staging_blocked(cls, value: str) -> str:
+        if value != STAGING_BLOCKED_EVENT_KIND:
+            raise ValueError("kind must be staging_blocked")
+        return value
+
+
+class AwaitingCodexReviewEnteredEvent(DomainModel):
+    kind: str = Field(default=AWAITING_CODEX_REVIEW_EVENT_KIND)
+    run_id: str
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_awaiting_codex_review_entered(cls, value: str) -> str:
+        if value != AWAITING_CODEX_REVIEW_EVENT_KIND:
+            raise ValueError("kind must be awaiting_codex_review_entered")
+        return value
+
+
 def _scheduler_event_discriminator(value: object) -> str:
     if isinstance(value, dict):
         kind = value.get("kind")
@@ -197,7 +350,17 @@ SchedulerEvent = Annotated[
     | Annotated[AttemptLaunchRequestedEvent, Tag(ATTEMPT_LAUNCH_REQUESTED_EVENT_KIND)]
     | Annotated[AttemptCompletedEvent, Tag(ATTEMPT_COMPLETED_EVENT_KIND)]
     | Annotated[AttemptUncertainEvent, Tag(ATTEMPT_UNCERTAIN_EVENT_KIND)]
-    | Annotated[TickStaleRejectedEvent, Tag(TICK_STALE_REJECTED_EVENT_KIND)],
+    | Annotated[TickStaleRejectedEvent, Tag(TICK_STALE_REJECTED_EVENT_KIND)]
+    | Annotated[PreflightCompletedEvent, Tag(PREFLIGHT_COMPLETED_EVENT_KIND)]
+    | Annotated[PreflightBlockedEvent, Tag(PREFLIGHT_BLOCKED_EVENT_KIND)]
+    | Annotated[CursorChatCreatedEvent, Tag(CURSOR_CHAT_CREATED_EVENT_KIND)]
+    | Annotated[CursorChatBlockedEvent, Tag(CURSOR_CHAT_BLOCKED_EVENT_KIND)]
+    | Annotated[CursorTurnCompletedEvent, Tag(CURSOR_TURN_COMPLETED_EVENT_KIND)]
+    | Annotated[CursorTurnBlockedEvent, Tag(CURSOR_TURN_BLOCKED_EVENT_KIND)]
+    | Annotated[CursorUsageLimitDetectedEvent, Tag(CURSOR_USAGE_LIMIT_DETECTED_EVENT_KIND)]
+    | Annotated[StagingCompletedEvent, Tag(STAGING_COMPLETED_EVENT_KIND)]
+    | Annotated[StagingBlockedEvent, Tag(STAGING_BLOCKED_EVENT_KIND)]
+    | Annotated[AwaitingCodexReviewEnteredEvent, Tag(AWAITING_CODEX_REVIEW_EVENT_KIND)],
     Discriminator(_scheduler_event_discriminator),
 ]
 

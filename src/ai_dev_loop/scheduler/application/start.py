@@ -30,12 +30,10 @@ class StartService:
         *,
         now_factory: Callable[[], datetime] | None = None,
         event_id_factory: Callable[[], str] | None = None,
-        dispatch_id_factory: Callable[[], str] | None = None,
     ) -> None:
         self.store = store
         self._now_factory = now_factory or (lambda: utc_now())
         self._event_id_factory = event_id_factory or (lambda: f"evt-{secrets.token_hex(16)}")
-        self._dispatch_id_factory = dispatch_id_factory or (lambda: f"fx-{secrets.token_hex(16)}")
 
     def start(self, run_id: str, controller_session_id: str) -> StartResult:
         controller_id = require_codex_session_id(controller_session_id)
@@ -106,16 +104,6 @@ class StartService:
                     SchedulerEngineErrorKind.CONFLICT,
                     "authorization lost a concurrent state update",
                 )
-            dispatch_id = self._dispatch_id_factory()
-            self.store.insert_fake_agent_self_test_effect(
-                conn,
-                dispatch_id=dispatch_id,
-                source_event_id=event_id,
-                run_id=run_id,
-                available_at=now,
-                claimed_run_version=new_state.version,
-                now=now,
-            )
             return StartResult(
                 run_id=run_id,
                 state_kind=new_state.kind,

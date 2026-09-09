@@ -20,7 +20,9 @@ from ai_dev_loop.scheduler.application.contracts import (
     admitted_safe_next_action,
     authorized_safe_next_action,
 )
+from ai_dev_loop.scheduler.application.cursor_workflow_service import CursorWorkflowService
 from ai_dev_loop.scheduler.application.git_admission import GitAdmissionPort
+from ai_dev_loop.scheduler.application.scheduler_preflight import SchedulerPreflightPort
 from ai_dev_loop.scheduler.application.tick_fencing import (
     admission_claim_matches,
     tick_lease_is_active,
@@ -62,10 +64,12 @@ class TickService:
         tick_owner_factory: Callable[[], str] | None = None,
         event_id_factory: Callable[[], str] | None = None,
         claim_id_factory: Callable[[], str] | None = None,
+        dispatch_id_factory: Callable[[], str] | None = None,
         attempt_id_factory: Callable[[], str] | None = None,
         fence_id_factory: Callable[[], str] | None = None,
         launch_nonce_factory: Callable[[], str] | None = None,
         attempt_backend: AgentProcessBackend | None = None,
+        preflight_port: SchedulerPreflightPort | None = None,
         lease_ttl_seconds: int = DEFAULT_TICK_LEASE_SECONDS,
     ) -> None:
         self.store = store
@@ -75,12 +79,22 @@ class TickService:
         self._tick_owner_factory = tick_owner_factory or (lambda: f"tick-{secrets.token_hex(8)}")
         self._event_id_factory = event_id_factory or (lambda: f"evt-{secrets.token_hex(16)}")
         self._claim_id_factory = claim_id_factory or (lambda: f"clm-{secrets.token_hex(16)}")
+        self._dispatch_id_factory = dispatch_id_factory or (lambda: f"fx-{secrets.token_hex(16)}")
         self._attempt_id_factory = attempt_id_factory or default_attempt_id_factory()
         self._fence_id_factory = fence_id_factory or (lambda: f"fnc-{secrets.token_hex(16)}")
         self._launch_nonce_factory = launch_nonce_factory or default_launch_nonce_factory()
         self._lease_ttl_seconds = lease_ttl_seconds
         self._attempt_service: AttemptService | None = None
+        self._cursor_workflow: CursorWorkflowService | None = None
         if attempt_backend is not None:
+            self._cursor_workflow = CursorWorkflowService(
+                store,
+                artifacts,
+                now_factory=self._now_factory,
+                event_id_factory=self._event_id_factory,
+                dispatch_id_factory=self._dispatch_id_factory,
+                preflight_port=preflight_port,
+            )
             self._attempt_service = AttemptService(
                 store,
                 artifacts,
@@ -91,6 +105,7 @@ class TickService:
                 attempt_id_factory=self._attempt_id_factory,
                 fence_id_factory=self._fence_id_factory,
                 launch_nonce_factory=self._launch_nonce_factory,
+                cursor_workflow=self._cursor_workflow,
             )
 
     def run_once(self) -> TickReceipt:
@@ -167,6 +182,14 @@ class TickService:
             )
             if attempt_receipt is not None:
                 receipts.append(attempt_receipt)
+        if self._cursor_workflow is not None:
+            receipts.extend(
+                self._cursor_workflow.process_run(
+                    tick_owner_id,
+                    tick_lease_generation,
+                    run_id,
+                )
+            )
         effect_receipt = self._maybe_run_synthetic_effect(
             tick_owner_id,
             tick_lease_generation,
@@ -636,6 +659,25 @@ class TickService:
                 lease_generation=tick_lease_generation,
             )
             return TickRunReceipt(run_id=run_id, action="admission_cas_lost")
+        dispatch_id = self._dispatch_id_factory()
+        pending_effect = conn.execute(
+            """
+            SELECT 1 FROM scheduler_effects
+            WHERE run_id = ? AND status IN ('pending', 'claimed')
+            LIMIT 1
+            """,
+            (run_id,),
+        ).fetchone()
+        if pending_effect is None:
+            self.store.insert_preflight_effect(
+                conn,
+                dispatch_id=dispatch_id,
+                source_event_id=event_id,
+                run_id=run_id,
+                available_at=now,
+                claimed_run_version=new_state.version,
+                now=now,
+            )
         self.store.release_admission_tick_claim(
             conn,
             claim_id=claim_id,
@@ -974,6 +1016,7 @@ def default_tick_service(
     artifact_root: Path | None = None,
     git_admission: GitAdmissionPort | None = None,
     attempt_backend: AgentProcessBackend | None = None,
+    preflight_port: SchedulerPreflightPort | None = None,
 ) -> TickService:
     from ai_dev_loop.scheduler.application.git_admission import BoundedGitAdmissionPort
     from ai_dev_loop.scheduler.application.systemd_backend import SystemdUserBackend
@@ -988,6 +1031,7 @@ def default_tick_service(
         artifacts,
         git_admission or BoundedGitAdmissionPort(),
         attempt_backend=backend,
+        preflight_port=preflight_port,
     )
 
 
@@ -997,10 +1041,12 @@ def run_scheduler_tick(
     artifact_root: Path | None = None,
     git_admission: GitAdmissionPort | None = None,
     attempt_backend: AgentProcessBackend | None = None,
+    preflight_port: SchedulerPreflightPort | None = None,
 ) -> TickReceipt:
     return default_tick_service(
         db_path=db_path,
         artifact_root=artifact_root,
         git_admission=git_admission,
         attempt_backend=attempt_backend,
+        preflight_port=preflight_port,
     ).run_once()

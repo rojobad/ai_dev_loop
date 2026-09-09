@@ -17,6 +17,8 @@ class GitAdmissionEvidence:
     resolved_root: str
     branch: str
     head: str
+    git_common_dir: str
+    git_dir: str
     status_porcelain: str
 
 
@@ -43,6 +45,8 @@ def format_admission_artifact_text(evidence: GitAdmissionEvidence) -> str:
     return (
         f"branch={evidence.branch}\n"
         f"head={evidence.head}\n"
+        f"git_common_dir={evidence.git_common_dir}\n"
+        f"git_dir={evidence.git_dir}\n"
         f"status_porcelain={evidence.status_porcelain}\n"
     )
 
@@ -86,6 +90,12 @@ def discover_repository_bounded(
         return _require_git_success(result, context=" ".join(args))
 
     root = Path(git(["rev-parse", "--show-toplevel"])).resolve()
+    git_common_dir = Path(git(["rev-parse", "--git-common-dir"]))
+    if not git_common_dir.is_absolute():
+        git_common_dir = (root / git_common_dir).resolve()
+    git_dir = Path(git(["rev-parse", "--git-dir"]))
+    if not git_dir.is_absolute():
+        git_dir = (root / git_dir).resolve()
     branch = git(["rev-parse", "--abbrev-ref", "HEAD"])
     head = git(["rev-parse", "HEAD"])
     status = git(["status", "--porcelain=v2", "--untracked-files=all"])
@@ -96,6 +106,8 @@ def discover_repository_bounded(
         resolved_root=str(root),
         branch=branch,
         head=head,
+        git_common_dir=str(git_common_dir),
+        git_dir=str(git_dir),
         status_porcelain=status,
     )
     return _apply_clean_policy(evidence, staged_paths=staged_paths, submitted_root=str(repo_path))
@@ -151,6 +163,22 @@ class BoundedGitAdmissionPort:
                     failure_summary="git repository probe failed",
                 )
             root = Path(_require_git_success(result, context="rev-parse --show-toplevel")).resolve()
+            git_common_dir = _git_text(
+                repo_path,
+                ["rev-parse", "--git-common-dir"],
+                timeout_seconds=self._timeout_seconds,
+            )
+            git_common_dir_path = Path(git_common_dir)
+            if not git_common_dir_path.is_absolute():
+                git_common_dir_path = (root / git_common_dir_path).resolve()
+            git_dir = _git_text(
+                repo_path,
+                ["rev-parse", "--git-dir"],
+                timeout_seconds=self._timeout_seconds,
+            )
+            git_dir_path = Path(git_dir)
+            if not git_dir_path.is_absolute():
+                git_dir_path = (root / git_dir_path).resolve()
             branch = _git_text(
                 repo_path,
                 ["rev-parse", "--abbrev-ref", "HEAD"],
@@ -197,6 +225,8 @@ class BoundedGitAdmissionPort:
             resolved_root=str(root),
             branch=branch,
             head=head,
+            git_common_dir=str(git_common_dir_path),
+            git_dir=str(git_dir_path),
             status_porcelain=status,
         )
         if str(root) != str(repo_path.resolve()):

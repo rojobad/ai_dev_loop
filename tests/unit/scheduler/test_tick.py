@@ -9,11 +9,16 @@ from pathlib import Path
 
 from tests.unit.scheduler.helpers import CONTROLLER_SESSION, sample_submitted_state
 
+from ai_dev_loop.runners.git import discover_repository
 from ai_dev_loop.scheduler.application.fake_attempt_backend import (
     FakeAgentProcessBackend,
     FakeAttemptScenario,
 )
 from ai_dev_loop.scheduler.application.git_admission import GitAdmissionEvidence, GitAdmissionResult
+from ai_dev_loop.scheduler.application.scheduler_preflight import (
+    SchedulerPreflightPort,
+    SchedulerPreflightResult,
+)
 from ai_dev_loop.scheduler.application.start import StartService
 from ai_dev_loop.scheduler.application.tick import TickService
 from ai_dev_loop.scheduler.domain.admission_contract import ADMISSION_STATUS_ARTIFACT
@@ -47,10 +52,23 @@ class FakeGitAdmissionPort:
     ) -> GitAdmissionResult:
         self.calls.append((repository_root, require_clean_worktree))
         root = self._resolved_root or repository_root
+        try:
+            discovered = discover_repository(Path(root))
+            branch = discovered.branch
+            head = discovered.head
+            git_common_dir = str(discovered.git_common_dir)
+            git_dir = str(discovered.git_dir)
+        except Exception:
+            branch = "main"
+            head = "abc123"
+            git_common_dir = f"{root}/.git"
+            git_dir = f"{root}/.git"
         evidence = GitAdmissionEvidence(
             resolved_root=root,
-            branch="main",
-            head="abc123",
+            branch=branch,
+            head=head,
+            git_common_dir=git_common_dir,
+            git_dir=git_dir,
             status_porcelain=self._status,
         )
         if not self._ok or root != repository_root:
@@ -74,8 +92,50 @@ class FakeGitAdmissionPort:
                 failure_kind="dirty_worktree",
                 failure_summary="worktree is not clean",
             )
-        text = f"branch=main\nhead=abc123\nstatus_porcelain={self._status}\n"
+        text = (
+            f"branch={evidence.branch}\n"
+            f"head={evidence.head}\n"
+            f"git_common_dir={evidence.git_common_dir}\n"
+            f"git_dir={evidence.git_dir}\n"
+            f"status_porcelain={self._status}\n"
+        )
         return GitAdmissionResult(ok=True, evidence=evidence, artifact_text=text)
+
+
+class OkPreflightPort:
+    def run(
+        self,
+        *,
+        run_id: str,
+        context: object,
+        artifacts: ProtectedArtifactStore,
+        state: object | None = None,
+    ) -> SchedulerPreflightResult:
+        return SchedulerPreflightResult(ok=True)
+
+
+def _insert_fake_agent_effect(store: SqliteSchedulerStore, run_id: str) -> None:
+    now = datetime(2026, 9, 4, 12, 1, 30, tzinfo=UTC)
+    with store.begin_immediate() as conn:
+        state, version, _ = store.load_validated_snapshot(conn, run_id)
+        event_row = conn.execute(
+            """
+            SELECT event_id FROM scheduler_events
+            WHERE run_id = ? AND event_kind = 'run_authorized'
+            ORDER BY sequence DESC LIMIT 1
+            """,
+            (run_id,),
+        ).fetchone()
+        source_event_id = str(event_row[0]) if event_row is not None else "evt-fake-agent"
+        store.insert_fake_agent_self_test_effect(
+            conn,
+            dispatch_id="fake-agent-self-test",
+            source_event_id=source_event_id,
+            run_id=run_id,
+            available_at=now,
+            claimed_run_version=version,
+            now=now,
+        )
 
 
 def _bootstrap_run(
@@ -120,6 +180,7 @@ def _bootstrap_run(
         state.run_id,
         CONTROLLER_SESSION,
     )
+    _insert_fake_agent_effect(store, state.run_id)
     return store, artifacts, state.run_id
 
 
@@ -148,6 +209,7 @@ def _tick_service(
     now: datetime | None = None,
     owner: str = "tick-owner-a",
     attempt_backend: FakeAgentProcessBackend | None = None,
+    preflight_port: SchedulerPreflightPort | None = None,
 ) -> TickService:
     backend = attempt_backend or FakeAgentProcessBackend()
     base = now or datetime(2026, 9, 4, 12, 2, tzinfo=UTC)
@@ -161,6 +223,7 @@ def _tick_service(
         claim_id_factory=_claim_ids(),
         attempt_id_factory=lambda: "att-" + "a" * 32,
         attempt_backend=backend,
+        preflight_port=preflight_port or OkPreflightPort(),
     )
 
 
@@ -176,7 +239,7 @@ def test_authorized_tick_admits_with_fake_git(tmp_path: Path) -> None:
     assert artifact_path.is_file()
     with store.begin_read() as conn:
         state, _, _ = store.load_validated_snapshot(conn, run_id)
-        assert state.kind == "admitted"
+        assert state.kind in {"admitted", "preflight_complete"}
 
 
 def test_admission_blocks_dirty_worktree(tmp_path: Path) -> None:

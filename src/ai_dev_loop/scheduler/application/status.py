@@ -10,6 +10,7 @@ from ai_dev_loop.scheduler.application.contracts import (
     SchedulerRunSummary,
     SchedulerStatusResult,
     safe_next_action_for_state_kind,
+    scheduler_status_projection_from_state,
     summary_from_context,
 )
 from ai_dev_loop.scheduler.infrastructure.paths import default_engine_db_path
@@ -23,6 +24,7 @@ class SchedulerStatusService:
     def get_status(self, run_id: str) -> SchedulerStatusResult:
         with self.store.begin_read() as conn:
             state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            projection = scheduler_status_projection_from_state(state)
             summary = summary_from_context(
                 run_id=state.run_id,
                 state_kind=state.kind,
@@ -30,6 +32,8 @@ class SchedulerStatusService:
                 updated_at=state.updated_at,
                 context=state.context,
                 safe_next_action=safe_next_action_for_state_kind(state.kind, state.run_id),
+                cursor_wait_until=projection["cursor_wait_until"],
+                block_reason_kind=projection["block_reason_kind"],
             )
             capacity = self.store.get_capacity_row(conn)
             last_event = conn.execute(
@@ -57,6 +61,7 @@ class SchedulerStatusService:
         with self.store.begin_read() as conn:
             for row in self.store.list_runs(conn):
                 state, _, _ = self.store.load_validated_snapshot(conn, str(row["run_id"]))
+                projection = scheduler_status_projection_from_state(state)
                 summaries.append(
                     summary_from_context(
                         run_id=state.run_id,
@@ -65,6 +70,8 @@ class SchedulerStatusService:
                         updated_at=state.updated_at,
                         context=state.context,
                         safe_next_action=safe_next_action_for_state_kind(state.kind, state.run_id),
+                        cursor_wait_until=projection["cursor_wait_until"],
+                        block_reason_kind=projection["block_reason_kind"],
                     )
                 )
         return summaries

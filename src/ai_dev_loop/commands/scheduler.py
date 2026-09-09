@@ -44,7 +44,7 @@ def render_submit_output(result: SubmitResult, *, output: str) -> str:
 def _render_summary(summary: SchedulerRunSummary, *, output: str) -> dict[str, object] | list[str]:
     if output == "json":
         return summary.model_dump(mode="json")
-    return [
+    lines = [
         f"Run: {summary.run_id}",
         f"State: {summary.state_kind}",
         f"Project: {summary.project_name}",
@@ -53,8 +53,13 @@ def _render_summary(summary: SchedulerRunSummary, *, output: str) -> dict[str, o
         f"Reviewer: {summary.reviewer_session_id_prefix}",
         f"Submitted: {summary.submitted_at}",
         f"Updated: {summary.updated_at}",
-        f"Next action: {summary.safe_next_action.command}",
     ]
+    if summary.cursor_wait_until:
+        lines.append(f"Cursor wait until: {summary.cursor_wait_until}")
+    if summary.block_reason_kind:
+        lines.append(f"Block reason: {summary.block_reason_kind}")
+    lines.append(f"Next action: {summary.safe_next_action.command}")
+    return lines
 
 
 def render_start_output(result: StartResult, *, output: str) -> str:

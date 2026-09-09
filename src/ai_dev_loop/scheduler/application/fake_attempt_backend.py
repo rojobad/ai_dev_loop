@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -59,6 +60,26 @@ class FakeAgentProcessBackend(AgentProcessBackend):
     def set_scenario(self, attempt_id: str, scenario: FakeAttemptScenario) -> None:
         validate_attempt_id(attempt_id)
         self.scenarios[attempt_id] = scenario
+
+    @staticmethod
+    def _is_cursor_attempt(request: LaunchRequest) -> bool:
+        return any("cursor_attempt_runner" in part for part in request.agent_argv)
+
+    def _execute_cursor_attempt(self, request: LaunchRequest) -> int:
+        result = subprocess.run(
+            request.agent_argv,
+            cwd=request.working_directory,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.stdout:
+            request.stdout_path.parent.mkdir(parents=True, exist_ok=True)
+            request.stdout_path.write_text(result.stdout, encoding="utf-8")
+        if result.stderr:
+            request.stderr_path.parent.mkdir(parents=True, exist_ok=True)
+            request.stderr_path.write_text(result.stderr, encoding="utf-8")
+        return int(result.returncode)
 
     def launch(self, request: LaunchRequest) -> None:
         validate_attempt_id(request.attempt_id)
@@ -121,6 +142,55 @@ class FakeAgentProcessBackend(AgentProcessBackend):
             )
         if attempt_id in self._completed:
             return self._completed[attempt_id]
+        if self._is_cursor_attempt(request):
+            exit_code = self._execute_cursor_attempt(request)
+            if exit_code == 0:
+                termination = TerminationClass.SUCCESS
+                lifecycle = UnitLifecycleState.INACTIVE
+            elif exit_code == 124:
+                termination = TerminationClass.TIMEOUT
+                lifecycle = UnitLifecycleState.FAILED
+            else:
+                termination = TerminationClass.NONZERO_EXIT
+                lifecycle = UnitLifecycleState.FAILED
+            envelope_path = request.result_envelope_path
+            if not envelope_path.is_file():
+                stdout_path = request.stdout_path
+                stderr_path = request.stderr_path
+                stdout_rel = attempt_stdout_rel(attempt_id)
+                stderr_rel = attempt_stderr_rel(attempt_id)
+                stdout_path.parent.mkdir(parents=True, exist_ok=True)
+                stderr_path.parent.mkdir(parents=True, exist_ok=True)
+                if not stdout_path.is_file():
+                    stdout_path.write_text("", encoding="utf-8")
+                if not stderr_path.is_file():
+                    stderr_path.write_text("", encoding="utf-8")
+                stdout_sha = sha256_file(stdout_path)
+                stderr_sha = sha256_file(stderr_path)
+                envelope = build_result_envelope(
+                    attempt_id=attempt_id,
+                    unit_identity=unit_identity,
+                    exit_code=exit_code,
+                    termination_class=termination,
+                    stdout_artifact_path=stdout_rel,
+                    stdout_sha256=stdout_sha,
+                    stderr_artifact_path=stderr_rel,
+                    stderr_sha256=stderr_sha,
+                )
+                envelope_path.parent.mkdir(parents=True, exist_ok=True)
+                envelope_path.write_bytes(envelope)
+                if os.name != "nt":
+                    os.chmod(envelope_path, SENSITIVE_FILE_MODE)
+            result = ObserveResult(
+                lifecycle_state=lifecycle,
+                owned=True,
+                absence_proven=False,
+                exit_code=exit_code,
+                termination_class=termination,
+                result_envelope_path=envelope_path,
+            )
+            self._completed[attempt_id] = result
+            return result
         envelope_path = request.result_envelope_path
         stdout_path = request.stdout_path
         stderr_path = request.stderr_path

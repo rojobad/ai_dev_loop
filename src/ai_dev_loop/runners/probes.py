@@ -16,6 +16,7 @@ from ai_dev_loop.process import require_success, run_process
 from ai_dev_loop.redaction import redact_text
 from ai_dev_loop.runners.tool_updates import write_compatibility_artifact
 
+AUTH_PROBE_TIMEOUT_SECONDS = 30.0
 VERSION_PROBE_TIMEOUT_SECONDS = 30.0
 MODEL_CATALOG_TIMEOUT_SECONDS = 60.0
 
@@ -87,7 +88,16 @@ def _parse_cursor_models(stdout: str) -> set[str]:
 
 
 def probe_cursor_auth(cursor_command: str) -> ProbeResult:
-    result = run_process([cursor_command, "status", "--format", "json"])
+    result = run_process(
+        [cursor_command, "status", "--format", "json"],
+        timeout=AUTH_PROBE_TIMEOUT_SECONDS,
+    )
+    if result.timed_out:
+        return ProbeResult(
+            command=cursor_command,
+            ok=False,
+            detail="Cursor auth probe timed out",
+        )
     if result.returncode != 0:
         detail = redact_text(result.stderr.strip() or result.stdout.strip() or "auth probe failed")
         return ProbeResult(command=cursor_command, ok=False, detail=detail)
@@ -108,7 +118,16 @@ def probe_cursor_auth(cursor_command: str) -> ProbeResult:
 
 
 def probe_cursor_model(cursor_command: str, model: str) -> ProbeResult:
-    result = run_process([cursor_command, "models"])
+    result = run_process(
+        [cursor_command, "models"],
+        timeout=AUTH_PROBE_TIMEOUT_SECONDS,
+    )
+    if result.timed_out:
+        return ProbeResult(
+            command=cursor_command,
+            ok=False,
+            detail="Cursor models probe timed out",
+        )
     if result.returncode != 0:
         detail = redact_text(
             result.stderr.strip() or result.stdout.strip() or "models probe failed"
@@ -125,7 +144,16 @@ def probe_cursor_model(cursor_command: str, model: str) -> ProbeResult:
 
 
 def probe_codex_auth(codex_command: str) -> ProbeResult:
-    result = run_process([codex_command, "login", "status"])
+    result = run_process(
+        [codex_command, "login", "status"],
+        timeout=AUTH_PROBE_TIMEOUT_SECONDS,
+    )
+    if result.timed_out:
+        return ProbeResult(
+            command=codex_command,
+            ok=False,
+            detail="Codex auth probe timed out",
+        )
     if result.returncode != 0:
         detail = redact_text(result.stderr.strip() or result.stdout.strip() or "auth probe failed")
         return ProbeResult(command=codex_command, ok=False, detail=detail)
