@@ -631,11 +631,18 @@ class SqliteSchedulerStore:
                 """,
                 (event_id, run_id, event_kind, event_payload, event_digest, now_text),
             )
-            conn.execute(
+            reservation = conn.execute(
                 """
                 INSERT INTO scheduler_repository_reservations(
                     worktree_key, run_id, repository_root, status, created_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(worktree_key) DO UPDATE SET
+                    run_id = excluded.run_id,
+                    repository_root = excluded.repository_root,
+                    status = excluded.status,
+                    created_at = excluded.created_at,
+                    updated_at = excluded.updated_at
+                WHERE scheduler_repository_reservations.status = 'released'
                 """,
                 (
                     worktree_key,
@@ -646,6 +653,11 @@ class SqliteSchedulerStore:
                     now_text,
                 ),
             )
+            if reservation.rowcount != 1:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CONFLICT,
+                    "repository worktree reservation could not be claimed",
+                )
         except sqlite3.IntegrityError as exc:
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.CONFLICT,

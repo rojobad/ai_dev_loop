@@ -40,7 +40,12 @@ def scheduler_paths(isolated_xdg: Path) -> dict[str, Path]:
     }
 
 
-def _submit(git_repo: Path, scheduler_paths: dict[str, Path]) -> str:
+def _submit(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+    *,
+    max_review_iterations: int | None = None,
+) -> str:
     prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
     options = SubmitOptions(
         repo_path=git_repo,
@@ -51,6 +56,7 @@ def _submit(git_repo: Path, scheduler_paths: dict[str, Path]) -> str:
         codex_review_reasoning_effort="high",
         db_path=scheduler_paths["db_path"],
         artifact_root=scheduler_paths["artifact_root"],
+        max_review_iterations=max_review_iterations,
     )
     with patch("sys.stdin", StringIO(prompt)):
         return submit_run(options).run_id
@@ -208,6 +214,44 @@ def test_create_chat_execution_failure_is_not_reported_as_an_invalid_chat_id(
             )
             return
     raise AssertionError("create-chat failure did not reach a blocked state")
+
+
+def test_released_worktree_reservation_allows_a_fresh_submit(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del fake_clis
+    monkeypatch.setenv("FAKE_AGENT_CREATE_CHAT_MODE", "fail")
+    blocked_run_id = _submit(git_repo, scheduler_paths)
+    start_run(blocked_run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    tick = _tick_service(
+        git_repo,
+        scheduler_paths,
+        now=datetime(2026, 9, 8, 12, 0, tzinfo=UTC),
+        backend=FakeAgentProcessBackend(
+            default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
+        ),
+    )
+    _run_until(tick, blocked_run_id, target_kind="blocked", max_ticks=8)
+
+    fresh_run_id = _submit(git_repo, scheduler_paths, max_review_iterations=8)
+
+    assert fresh_run_id != blocked_run_id
+    with tick.store.begin_read() as conn:
+        fresh_state, _, _ = tick.store.load_validated_snapshot(conn, fresh_run_id)
+        reservation = conn.execute(
+            """
+            SELECT run_id, status FROM scheduler_repository_reservations
+            WHERE worktree_key = ?
+            """,
+            (fresh_state.context.repository.worktree_key,),
+        ).fetchone()
+    assert fresh_state.kind == "queued"
+    assert reservation is not None
+    assert str(reservation["run_id"]) == fresh_run_id
+    assert str(reservation["status"]) == "active"
 
 
 def test_happy_path_reaches_awaiting_codex_review(
