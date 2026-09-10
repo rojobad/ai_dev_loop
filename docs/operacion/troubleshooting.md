@@ -132,6 +132,26 @@ composer-2.5-fast - Composer 2.5 Fast
 
 Configura `cursor.model` con el identificador exacto, por ejemplo `composer-2.5-fast`.
 
+## Cursor o Codex no se encuentra desde `scheduler tick`
+
+Los servicios de usuario de systemd suelen usar un `PATH` más reducido que la
+terminal WSL. Desde esta versión, `scheduler submit` resuelve los nombres de
+`cursor.command` y `codex.command` en la terminal de A y congela rutas absolutas
+en los artefactos protegidos; no hace falta —ni conviene— guardar rutas locales
+en `ai_dev_loop.yaml` ni modificar el `PATH` global de systemd.
+
+Si submit indica que no encuentra uno de los ejecutables, verifica desde la
+misma terminal de A:
+
+```bash
+command -v agent
+command -v codex
+```
+
+Repara la instalación o el `PATH` de esa terminal y prepara un `scheduler submit`
+fresco. Un run que ya quedó bloqueado preserva su contexto congelado y no se
+reintenta automáticamente.
+
 ## Cursor chat creation timeout o fallo ambiguo
 
 `agent create-chat` corre con timeout acotado, registro de proceso activo y

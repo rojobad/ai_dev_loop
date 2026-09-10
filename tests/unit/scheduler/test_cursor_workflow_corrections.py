@@ -510,6 +510,7 @@ def test_runner_rejects_evidence_tampered_after_backend_dispatch(
                 assert state.block_reason_kind in {
                     "launch_guard_failed",
                     "outcome_evidence_invalid",
+                    "cursor_chat_attempt_failed",
                     "invalid_chat_id",
                 }
                 _assert_capacity_free(store)

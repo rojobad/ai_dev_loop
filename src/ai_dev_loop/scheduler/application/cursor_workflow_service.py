@@ -686,6 +686,25 @@ class CursorWorkflowService:
                 reason_kind="outcome_evidence_invalid",
                 summary="authenticated cursor chat outcome failed validation",
             )
+        failure_kind = str(outcome.get("failure_kind", ""))
+        if failure_kind == "cursor_chat_create_failed":
+            return self._block_from_ingest(
+                run_id,
+                dispatch_id=dispatch_id,
+                attempt_id=attempt_id,
+                kind="cursor_chat_blocked",
+                reason_kind="cursor_chat_create_failed",
+                summary="Cursor chat creation failed before a chat ID was received",
+            )
+        if failure_kind:
+            return self._block_from_ingest(
+                run_id,
+                dispatch_id=dispatch_id,
+                attempt_id=attempt_id,
+                kind="cursor_chat_blocked",
+                reason_kind="cursor_chat_attempt_failed",
+                summary="Cursor chat attempt failed before a chat ID was received",
+            )
         chat_id = str(outcome.get("chat_id", ""))
         if not chat_id:
             return self._block_from_ingest(

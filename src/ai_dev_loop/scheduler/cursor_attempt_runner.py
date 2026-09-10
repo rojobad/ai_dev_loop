@@ -405,6 +405,25 @@ def main(argv: list[str] | None = None) -> int:
             effect_kind=effect_kind,
         )
         verify_pre_execution_cursor_guards(run_root, evidence, run_id=args.run_id)
+    except Exception as exc:
+        return _write_attempt_artifacts(
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            result_path=result_path,
+            stdout_rel=stdout_rel,
+            stderr_rel=stderr_rel,
+            attempt_id=args.attempt_id,
+            unit_identity=args.unit_identity,
+            effect_kind=effect_kind,
+            dispatch_id=args.dispatch_id,
+            run_id=args.run_id,
+            exit_code=1,
+            termination_class=TerminationClass.NONZERO_EXIT,
+            stderr_text=_bounded_diagnostic(exc),
+            stdout_payload={"failure_kind": "pre_execution_guard_failed"},
+        )
+
+    try:
         if effect_kind == CREATE_CHAT_EFFECT_KIND:
             cursor_outcome = _run_create_chat(evidence, run_root, args.run_id)
         else:
@@ -430,6 +449,11 @@ def main(argv: list[str] | None = None) -> int:
             ):
                 exit_code = 1
     except Exception as exc:
+        failure_kind = (
+            "cursor_chat_create_failed"
+            if effect_kind == CREATE_CHAT_EFFECT_KIND
+            else "cursor_turn_execution_failed"
+        )
         return _write_attempt_artifacts(
             stdout_path=stdout_path,
             stderr_path=stderr_path,
@@ -444,7 +468,7 @@ def main(argv: list[str] | None = None) -> int:
             exit_code=1,
             termination_class=TerminationClass.NONZERO_EXIT,
             stderr_text=_bounded_diagnostic(exc),
-            stdout_payload={"failure_kind": "pre_execution_guard_failed"},
+            stdout_payload={"failure_kind": failure_kind},
         )
 
     return _finalize_success_artifacts(

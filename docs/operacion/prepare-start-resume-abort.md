@@ -36,6 +36,9 @@ Requisitos:
 - `--controller-session-id`, `--codex-review-model` y `--codex-review-reasoning-effort` son obligatorios;
 - no admite `--codex-session-id` (reviewer B se crea en el primer review);
 - congela inputs inmutables; la admision del worktree ocurre en el primer tick.
+- resuelve `cursor.command` y `codex.command` en la terminal que hace submit y
+  congela sus rutas absolutas sólo en los artefactos protegidos del run; el YAML
+  del repositorio permanece portable y los workers no dependen del `PATH` de systemd.
 
 ## `scheduler start`
 

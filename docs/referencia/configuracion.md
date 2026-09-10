@@ -74,6 +74,13 @@ prompt:
 
 El prompt se pasa como argumento posicional, no por stdin.
 
+Al hacer `scheduler submit`, `cursor.command` se resuelve desde el entorno
+interactivo de A y se congela como una ruta absoluta canónica sólo en el contexto
+y la configuración efectiva protegidos del run. El YAML fuente no se modifica.
+Así, un worker invocado más tarde por systemd no depende de que su `PATH` coincida
+con el de la terminal que creó el run. El valor debe ser un único ejecutable (un
+nombre resoluble o una ruta), sin argumentos.
+
 ## `codex`
 
 | Campo | Default | Descripcion |
@@ -91,6 +98,11 @@ En el flujo scheduler actual:
   `codex exec resume` (nunca `--last` ni un segundo B).
 - Los campos YAML `review_model` y `review_reasoning_effort` no sustituyen los
   flags de submit en runs nuevos del scheduler.
+
+Al igual que Cursor, `codex.command` se resuelve y congela durante `scheduler
+submit` para que el reviewer B pueda ejecutarse desde el entorno aislado del
+worker. Conserva `codex` en el YAML cuando quieras una configuración portable;
+no añadas rutas locales al archivo del repositorio.
 
 Valores soportados de `review_reasoning_effort` cuando se usan como override
 explicito en submit:

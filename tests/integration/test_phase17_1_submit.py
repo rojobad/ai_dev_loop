@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from dataclasses import replace
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -14,6 +15,7 @@ from tests.conftest import (
 )
 from tests.unit.scheduler.helpers import CONTROLLER_SESSION
 
+from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.paths import runs_dir
 from ai_dev_loop.scheduler.application.contracts import SchedulerEngineError
 from ai_dev_loop.scheduler.application.submission import (
@@ -64,7 +66,8 @@ def _submission_service(
 
 
 @pytest.fixture
-def scheduler_paths(isolated_xdg: Path) -> dict[str, Path]:
+def scheduler_paths(isolated_xdg: Path, fake_clis: dict[str, Path]) -> dict[str, Path]:
+    del fake_clis
     state_root = isolated_xdg / "state" / "ai_dev_loop"
     return {
         "db_path": state_root / "engine.sqlite3",
@@ -126,6 +129,55 @@ def test_identical_submit_reuses_run(
     with SqliteSchedulerStore(scheduler_paths["db_path"]).begin_read() as conn:
         count = conn.execute("SELECT COUNT(*) FROM scheduler_runs").fetchone()[0]
     assert count == 1
+
+
+def test_submit_freezes_resolved_scheduler_executables(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+    fake_clis: dict[str, Path],
+    codex_env: None,
+) -> None:
+    prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
+    with patch("sys.stdin", StringIO(prompt)):
+        submitted = submit_run(_submit_options(git_repo, **scheduler_paths))
+
+    with SqliteSchedulerStore(scheduler_paths["db_path"]).begin_read() as conn:
+        state, _, _ = SqliteSchedulerStore(scheduler_paths["db_path"]).load_validated_snapshot(
+            conn,
+            submitted.run_id,
+        )
+    assert state.context.cursor.command == str((fake_clis["bin_dir"] / "agent").resolve())
+    assert state.context.codex.command == str((fake_clis["bin_dir"] / "codex").resolve())
+
+    run_root = run_artifact_root(scheduler_paths["artifact_root"], submitted.run_id)
+    source_config = (run_root / "source-config.yaml").read_text(encoding="utf-8")
+    effective_config = (run_root / "effective-config.yaml").read_text(encoding="utf-8")
+    assert "command: agent" in source_config
+    assert "command: codex" in source_config
+    assert state.context.cursor.command in effective_config
+    assert state.context.codex.command in effective_config
+
+
+def test_submit_rejects_an_unresolvable_scheduler_executable(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+    codex_env: None,
+) -> None:
+    prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
+    options = replace(
+        _submit_options(git_repo, **scheduler_paths),
+        cursor_command="definitely-missing-cursor-command",
+    )
+
+    with (
+        patch("sys.stdin", StringIO(prompt)),
+        pytest.raises(ValidationError, match="Cursor executable not found while freezing"),
+    ):
+        submit_run(options)
+
+    with SqliteSchedulerStore(scheduler_paths["db_path"]).begin_read() as conn:
+        count = conn.execute("SELECT COUNT(*) FROM scheduler_runs").fetchone()[0]
+    assert count == 0
 
 
 def test_conflicting_worktree_rejected(

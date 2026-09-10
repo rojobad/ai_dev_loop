@@ -117,6 +117,7 @@ def test_no_findings_completes_with_fresh_bootstrap_and_resume_argv(
     monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "no_findings")
     run_id = _submit(git_repo, scheduler_paths)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
     start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
     backend = FakeAgentProcessBackend(
         default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
@@ -135,6 +136,7 @@ def test_no_findings_completes_with_fresh_bootstrap_and_resume_argv(
     with tick.store.begin_read() as conn:
         state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
         assert state.codex.reviewer_session_id == BOOTSTRAP_ID
+        assert state.context.codex.command == str((fake_clis["bin_dir"] / "codex").resolve())
 
 
 def test_findings_then_correction_then_no_findings(

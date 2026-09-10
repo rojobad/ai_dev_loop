@@ -177,6 +177,39 @@ def test_create_chat_effect_pending_after_preflight(
         assert str(row[1]) in {"pending", "claimed"}
 
 
+def test_create_chat_execution_failure_is_not_reported_as_an_invalid_chat_id(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del fake_clis
+    monkeypatch.setenv("FAKE_AGENT_CREATE_CHAT_MODE", "fail")
+    run_id = _submit(git_repo, scheduler_paths)
+    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    tick = _tick_service(
+        git_repo,
+        scheduler_paths,
+        now=datetime(2026, 9, 8, 12, 0, tzinfo=UTC),
+        backend=FakeAgentProcessBackend(
+            default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
+        ),
+    )
+
+    for _ in range(8):
+        tick.run_once()
+        with tick.store.begin_read() as conn:
+            state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
+        if state.kind == "blocked":
+            assert state.block_reason_kind == "cursor_chat_create_failed"
+            assert (
+                state.block_reason_summary
+                == "Cursor chat creation failed before a chat ID was received"
+            )
+            return
+    raise AssertionError("create-chat failure did not reach a blocked state")
+
+
 def test_happy_path_reaches_awaiting_codex_review(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
@@ -203,6 +236,34 @@ def test_happy_path_reaches_awaiting_codex_review(
         assert staged is not None
     agent_log = fake_clis["agent_log"].read_text(encoding="utf-8")
     assert agent_log.count("CREATE_CHAT:") == 1
+
+
+def test_cursor_uses_the_command_frozen_before_detached_path_changes(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The worker PATH must not need the interactive directory containing agent."""
+
+    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    run_id = _submit(git_repo, scheduler_paths)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    tick = _tick_service(
+        git_repo,
+        scheduler_paths,
+        now=datetime(2026, 9, 8, 12, 0, tzinfo=UTC),
+        backend=FakeAgentProcessBackend(
+            default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
+        ),
+    )
+
+    _run_until(tick, run_id, target_kind="awaiting_codex_review")
+    with tick.store.begin_read() as conn:
+        state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
+    assert state.context.cursor.command == str((fake_clis["bin_dir"] / "agent").resolve())
+    assert fake_clis["agent_log"].read_text(encoding="utf-8").count("CREATE_CHAT:") == 1
 
 
 def test_usage_limit_waits_for_structured_retry_before_continuation(

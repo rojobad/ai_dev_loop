@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import shutil
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -141,6 +142,49 @@ def _build_overrides(options: SubmitOptions) -> ConfigOverrides:
         max_review_iterations=options.max_review_iterations,
         cursor_timeout_minutes=options.cursor_timeout_minutes,
         codex_timeout_minutes=options.codex_timeout_minutes,
+    )
+
+
+def _resolve_frozen_command(command: str, *, label: str) -> str:
+    """Resolve one scheduler executable to the exact file a detached unit can run.
+
+    Scheduler attempts run under the systemd user manager, whose PATH need not
+    match the interactive shell that submitted the run.  Resolve a single
+    executable name while the controller's environment is available, then
+    freeze the canonical file path in the private submitted context.
+    """
+
+    candidate = command.strip()
+    if not candidate or any(character.isspace() for character in candidate):
+        raise ValidationError(
+            f"{label} command must be one executable name or path, without arguments"
+        )
+    located = shutil.which(candidate)
+    if located is None:
+        raise ValidationError(
+            f"{label} executable not found while freezing scheduler run: {command}"
+        )
+    try:
+        resolved = Path(located).resolve(strict=True)
+    except OSError as exc:
+        raise ValidationError(
+            f"{label} executable could not be resolved while freezing scheduler run"
+        ) from exc
+    if not resolved.is_file():
+        raise ValidationError(f"{label} command does not resolve to an executable file")
+    return str(resolved)
+
+
+def _freeze_execution_commands(effective: ProjectConfig) -> ProjectConfig:
+    """Return the private effective config with stable Cursor and Codex paths."""
+
+    cursor_command = _resolve_frozen_command(effective.cursor.command, label="Cursor")
+    codex_command = _resolve_frozen_command(effective.codex.command, label="Codex")
+    return effective.model_copy(
+        update={
+            "cursor": effective.cursor.model_copy(update={"command": cursor_command}),
+            "codex": effective.codex.model_copy(update={"command": codex_command}),
+        }
     )
 
 
@@ -445,6 +489,7 @@ class SubmissionService:
             config_path=options.config_path,
             overrides=_build_overrides(options),
         )
+        effective = _freeze_execution_commands(effective)
         plan_path, prompt_source_path = _resolve_inputs(options, repo_target)
         controller_session_id = require_codex_session_id(options.controller_session_id)
         if options.codex_session_id is not None:
