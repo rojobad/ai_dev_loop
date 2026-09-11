@@ -1,0 +1,11 @@
+[Unit]
+Description=ai_dev_loop scheduler one-shot tick
+After=network.target
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/env ai_dev_loop scheduler tick
+
+[Install]
+WantedBy=default.target

@@ -76,18 +76,21 @@ pedir la passphrase, pero la clave debe estar cargada en el agente que OpenSSH
 usará. Comprueba finalmente:
 
 ```bash
-ai_dev_loop github doctor --repo-path /ruta/al/repositorio
+ai_dev_loop doctor --repo /ruta/al/repositorio
 ```
 
 Tras reiniciar WSL o Windows, el servicio vuelve a iniciar pero no conserva la
 clave descifrada: repite sólo `ssh-add` desde una terminal accesible. No elimines
 la passphrase ni crees una deploy key sin cifrar para evitar el prompt.
 
-## `prepare` rechaza el worktree
+## El primer `scheduler tick` rechaza el worktree
+
+Phase 17.7 retiro `prepare` y `start`. La admision one-shot del worktree ocurre en
+el primer tick, no en `scheduler submit`.
 
 Causas comunes:
 
-- staged changes preexistentes;
+- staged changes preexistentes cuando `require_clean_worktree: true`;
 - archivos tracked modificados no relacionados;
 - untracked files no permitidos;
 - prompt source tracked o no ignorado;
@@ -99,22 +102,18 @@ Acciones:
 ```bash
 git status --short
 git diff --cached --name-only
+ai_dev_loop scheduler status <run-id>
 ```
 
-Limpia o mueve trabajo no relacionado antes de preparar el run. No uses `git reset` o `git clean` sin revisar manualmente.
+Limpia o mueve trabajo no relacionado antes del primer tick. Si el plan o prompt
+cambiaron legitimamente, haz un `scheduler submit` fresco.
 
-## `start` falla por drift
+## `scheduler tick` falla por drift de inputs congelados
 
-`start` revalida el contrato de `prepare`. Falla si cambiaron:
+El tick revalida inputs congelados en submit. Falla si cambiaron branch, HEAD,
+plan, prompt o repo path respecto al ledger.
 
-- branch;
-- HEAD;
-- plan;
-- prompt;
-- baseline del worktree;
-- repo path.
-
-Accion: si el plan o prompt cambiaron legitimamente, ejecuta `prepare` de nuevo.
+Accion: si el plan o prompt cambiaron legitimamente, ejecuta `scheduler submit` de nuevo.
 
 ## Cursor auth/model probe falla
 
@@ -132,6 +131,33 @@ composer-2.5-fast - Composer 2.5 Fast
 ```
 
 Configura `cursor.model` con el identificador exacto, por ejemplo `composer-2.5-fast`.
+
+## Cursor o Codex no se encuentra desde `scheduler tick`
+
+Los servicios de usuario de systemd suelen usar un `PATH` más reducido que la
+terminal WSL. Desde esta versión, `scheduler submit` resuelve los nombres de
+`cursor.command` y `codex.command` en la terminal de A y congela rutas absolutas
+en los artefactos protegidos; no hace falta —ni conviene— guardar rutas locales
+en `ai_dev_loop.yaml` ni modificar el `PATH` global de systemd.
+
+La unidad empaquetada `ai-dev-loop-scheduler-tick.service` localiza el propio CLI
+con `/usr/bin/env` y un `PATH` acotado que incluye `%h/.local/bin` (layout habitual
+de `uv tool`) mas los binarios del sistema. No invoca un shell ni lee perfiles
+interactivos. Si el timer falla con exit 203/EXEC, reinstala con
+`ai_dev_loop scheduler timer validate` y `scheduler timer install` tras confirmar
+que `command -v ai_dev_loop` funciona en una terminal normal.
+
+Si submit indica que no encuentra uno de los ejecutables, verifica desde la
+misma terminal de A:
+
+```bash
+command -v agent
+command -v codex
+```
+
+Repara la instalación o el `PATH` de esa terminal y prepara un `scheduler submit`
+fresco. Un run que ya quedó bloqueado preserva su contexto congelado y no se
+reintenta automáticamente.
 
 ## Cursor chat creation timeout o fallo ambiguo
 
@@ -162,20 +188,18 @@ Accion:
 
 Los updates no modifican Codex Desktop ni Cursor Desktop en Windows.
 
-Para reasoning:
+Para reasoning en runs nuevos del scheduler, pasa `--codex-review-reasoning-effort`
+explicito en `scheduler submit`. No se captura de la sesion Codex ni de YAML en
+submit time.
 
-- Omite `review_reasoning_effort` para capturarlo de la sesion durante `prepare`.
-- Si fijas un valor, usa solo `minimal`, `low`, `medium`, `high`, `xhigh`, `max` o `ultra`.
+## Modelo o reasoning de review no coinciden con lo esperado
 
-## Sesion grabada con un modelo y resume usa otro
+En el scheduler, modelo y reasoning se congelan en submit:
 
-En runs nuevos, esto no debe depender del default WSL: `prepare` captura modelo/reasoning de la sesion y cada review los pasa explicitamente.
-
-Acciones:
-
-1. Ejecuta `ai_dev_loop inspect <run-id>` y compara runtime de sesion, runtime efectivo y procedencia.
-2. Si el run es historico de Fase 9 con ambos valores `null` y sin procedencia, su camino legacy omite overrides. Prepara un run nuevo; no interpretes esos `null` como session-derived.
-3. Si existe un override explicito, revisa YAML/flags y vuelve a preparar para cambiarlo.
+1. Ejecuta `ai_dev_loop scheduler status <run-id>` y revisa artefactos
+   `codex/fresh-reviewer-input.json` bajo `artifacts/`.
+2. Si necesitas otro modelo o reasoning, haz `scheduler submit` fresco con flags
+   explicitos; no hay override silencioso desde YAML tras submit.
 
 ## `Failed to run pre-sampling compact`
 
@@ -234,24 +258,25 @@ Sintoma: el primer review fallo con bootstrap incierto (`fresh Codex reviewer bo
 
 Accion: inspecciona `codex/events/NN.jsonl` y `codex/fresh-reviewer-bootstrap-uncertainty.json`. No reintentes bootstrap ni crees un segundo B. Prepara o `scheduler submit` un run fresco con `--codex-review-model` y `--codex-review-reasoning-effort` explicitos.
 
-## Worker / launcher stale
+## Run bloqueado o tick sin progreso
 
-`controller status` y `launch` verifican identidad del worker (PID vivo + PGID +
-`/proc` starttime cuando esta disponible), no solo que el PID exista. Un PID
-reutilizado o un registro `running` huerfano se trata como stale: no bloquea un
-nuevo `launch` y no autoriza senalizacion. Inspecciona `locks/launcher.json` y
-los logs del launcher si necesitas diagnostico manual.
+Usa:
 
-Accion: conserva diagnosticos; usa `abort` (persiste el abort request) o
-`status`/`inspect`/`logs`. No mates PIDs a mano por un registro dudoso. Si el
-worker fallo tras progreso durable, usa `recover`/`resume` solo cuando la
-elegibilidad lo permita.
+```bash
+ai_dev_loop scheduler status <run-id>
+ai_dev_loop scheduler history <run-id>
+ai_dev_loop controller status --controller-session-id ... --repo-path ...
+```
 
-## Falta capacidad de fork o mensaje A↔B (legacy)
+Accion: conserva diagnosticos; usa `scheduler abort` si necesitas cancelar sin
+borrar artefactos ni cambios staged. No existe `recover` publico en el scheduler;
+para trabajo nuevo, `scheduler submit` fresco.
 
-Los runs controller A frescos ya no requieren fork ni mensaje B→A: A prepara con modelo/reasoning congelados y el worker crea B en el primer review.
+## Reviewer B duplicado o sesion incorrecta
 
-Si usas el flujo legacy sin `--controller-session-id`, sigue siendo valido pasar `--codex-session-id` exacto desde WSL. No uses `--last`, no inventes session IDs y no scrapees rollouts para inferir parentesco.
+Los runs controller A frescos no admiten `--codex-session-id` en submit. El scheduler
+crea exactamente un B en el primer review con `codex exec` read-only y reanuda
+solo esa sesion despues. No uses `--last` ni un segundo B.
 
 ## WSL distro ambiguo
 
@@ -298,101 +323,69 @@ ai_dev_loop integrations sessions install
 
 `remove` solo borra el symlink `from-desktop`. Si hay un archivo o directorio no symlink en esa ruta, lo rechaza.
 
-## `resume` rechaza drift de staged patch
+## Correccion con staged patch drift
 
-Durante correcciones, el staged patch actual debe coincidir con el patch registrado por el orquestador. Si alguien modifico el index, `resume` falla.
+Durante correcciones, el staged patch actual debe coincidir con el checkpoint del
+scheduler. Si alguien modifico el index fuera del tick, el siguiente tick puede fallar.
 
 Acciones:
 
-- inspecciona `git/diffs/NN.patch`;
 - revisa el index actual con `git diff --cached`;
-- decide manualmente si debes abandonar el run o preparar uno nuevo.
+- consulta `scheduler history <run-id>`;
+- decide manualmente si abortas el run o haces `scheduler submit` fresco.
 
-## `recover` rechaza el run o pide dry-run
+## Recuperacion de runs fallidos
 
-`resume` sigue rechazando `failed`. Para fallos elegibles:
+`recover` y `resume` legacy fueron retirados en Phase 17.7. El scheduler no crea
+sucesores automaticos desde runs `failed`. Ante un fallo:
 
-```bash
-ai_dev_loop recover --dry-run <failed-run-id>
-```
+- inspecciona `scheduler status` y `scheduler history`;
+- preserva artefactos bajo `artifacts/` para auditoria manual;
+- para continuar trabajo, usa `scheduler submit` con `--resubmission-id <uuid>`
+  y los mismos inputs congelados si aun aplican.
 
-Si el blocker es `post_cursor_fingerprint_missing` en un fallo de **correccion** (`correction_staging_failed`) y el status actual coincide con `NN-after-cursor.txt`:
+## Repetir submit tras abort sin crear un run nuevo
 
-```bash
-ai_dev_loop recover --dry-run <failed-run-id> --adopt-current-cursor-output
-ai_dev_loop recover <failed-run-id> --adopt-current-cursor-output
-```
+Sintoma:
 
-La recovery de staging inicial (`initial_staging_failed`, iteracion 1) exige `git/cursor-output/01.json` y coincidencia de fingerprint; no admite `--adopt-current-cursor-output`.
+- tras `scheduler abort`, el mismo `scheduler submit` devuelve `reused_existing: true`
+  con `state_kind: aborted` y sin accion de `scheduler start`;
+- `scheduler start` sobre el run abortado falla porque la reserva ya se libero.
 
-Si hay otros blockers (`staged_patch_drift`, `untracked_files`, `branch_mismatch`, `cursor_output_fingerprint_drift`, `initial_staging_does_not_support_adoption`, etc.), corrigelos o prepara un run nuevo. No mutes el run origen.
+Causa: el submit idempotente base reutiliza el run terminal inmutable; no revive
+ni reencola ese run.
 
-Si dry-run es elegible:
+Accion segura:
 
-```bash
-ai_dev_loop recover <failed-run-id>
-ai_dev_loop resume <recovery-run-id> [--update-tools]
-```
-
-`recover` nunca actualiza CLIs ni invoca agentes. Si un sucesor tambien fallo, recupera ese sucesor (cadena), no el abuelo.
-
-Para staging recovery (inicial o correccion), el sucesor `resume` ejecuta `git add -A` y Codex sin re-ejecutar Cursor.
+1. conserva el run abortado como registro de auditoria;
+2. elige un UUID nuevo (`uuidgen`) y repite submit con `--resubmission-id`;
+3. reutiliza exactamente ese UUID si necesitas repetir el comando sin duplicar;
+4. autoriza el run nuevo con `scheduler start` cuando quede `queued`.
 
 ## Cursor alcanzo el limite de uso del modelo
 
 Sintoma:
 
-- el run termina en `failed` durante un turno Cursor;
-- `status` o la salida de `start`/`resume` indican limite de uso del modelo configurado;
-- existe `git/cursor-output/NN.usage-limit-failure.json` en el run origen (Phase 13), o evidencia historica compatible con adopcion explicita (`stderr.txt` protegido + status after-cursor + ambos flags).
+- `scheduler status` muestra `waiting_usage_limit` con `cursor_wait_until`;
+- `scheduler history` registra `cursor_usage_limit_detected`;
+- artefactos protegidos bajo `artifacts/` incluyen fingerprint y envelope de
+  continuacion para el mismo chat ID.
 
-Por que `resume` no reabre el origen:
-
-- `failed` es terminal; `resume` rechaza runs terminales;
-- el origen queda inmutable para auditoria; la continuacion requiere un sucesor via `recover`.
-
-Accion:
+Accion segura:
 
 ```bash
-ai_dev_loop recover --dry-run <failed-run-id> --cursor-model auto
-ai_dev_loop recover <failed-run-id> --cursor-model auto
-ai_dev_loop resume <recovery-run-id>
+ai_dev_loop scheduler status <run-id>
+ai_dev_loop scheduler history <run-id>
 ```
 
-Historico sin fingerprint contemporaneo (pre-Phase 13 o evidencia incompleta):
+Espera hasta `cursor_wait_until` y ejecuta `ai_dev_loop scheduler tick`. El
+scheduler reanuda el mismo run con el chat ID preservado y el reintento verificado
+de usage-limit. No descartes trabajo parcial unstaged/untracked antes del tick.
 
-```bash
-ai_dev_loop recover --dry-run <failed-run-id> --adopt-current-cursor-output --cursor-model auto
-ai_dev_loop recover <failed-run-id> --adopt-current-cursor-output --cursor-model auto
-ai_dev_loop resume <recovery-run-id>
-```
-
-No edites manualmente el repositorio entre `--dry-run` y el `recover` real; el segundo revalida status y fingerprint y rechaza drift.
-
-Ejemplo operativo documentado (no ejecutar como validacion de implementacion):
-
-```bash
-ai_dev_loop recover --dry-run crypto-sentinel-20260712T205916Z-b2d828 \
-  --adopt-current-cursor-output --cursor-model auto
-ai_dev_loop recover crypto-sentinel-20260712T205916Z-b2d828 \
-  --adopt-current-cursor-output --cursor-model auto
-ai_dev_loop resume <recovery-run-id>
-```
-
-En TTY, `start`/`resume` pueden ofrecer crear el sucesor con el mismo chat y modelo `auto`. En scripts o CI, debes pasar `--cursor-model auto` explicitamente; no hay cambio automatico de modelo.
-
-Trabajo parcial:
-
-- no descartes manualmente cambios unstaged/untracked antes de `recover`; el fingerprint captura el contenido parcial al fallo;
-- el envelope de continuacion embebe el prompt exacto previo para que Cursor retome el mismo chat;
-- evita editar el worktree salvo que abandones el run y prepares uno nuevo.
-
-Casos que `recover` rechaza:
-
-- drift del fingerprint (`usage_limit_fingerprint_drift`);
-- fingerprint ausente o invalido (`usage_limit_fingerprint_missing`, `usage_limit_fingerprint_invalid`);
-- fallos Cursor ordinarios (timeout, auth, exit distinto) no clasificados como `cursor_usage_limit`;
-- drift de branch/HEAD/plan/prompt, chat ID faltante, o proceso hijo activo.
+El run solo debe tratarse como terminal si `scheduler status` indica un bloqueo
+distinto (`blocked`, `failed`, etc.) o si decides abortar explicitamente con
+`scheduler abort`. Los contratos legacy `recover --cursor-model` aplicaban solo al
+motor `runs/` retirado.
 
 ## Pytest falla con temporales en `/mnt/c`
 
@@ -404,76 +397,73 @@ TMPDIR=/tmp TMP=/tmp TEMP=/tmp uv run python -m pytest -q
 
 Para simulaciones DrvFS puntuales, usa `-s` si la captura de pytest falla antes de coleccion.
 
-## PR-review v2 (motor SQLite)
+## PR-review v2 y `github doctor` retirados (Phase 17.7)
 
-Los runs v1 (`RunState.github_pr_review`) y subcomandos retirados (`continue`,
-`recover`, `set-cursor-model`) **no tienen soporte** tras Phase 16.9. No hay
-adaptador de migracion ni lectura de estado legacy.
+Los comandos `pr-review`, `github doctor` y el motor bajo
+`$XDG_STATE_HOME/ai_dev_loop/pr-review-v2/` ya no tienen superficie CLI publica.
+El workflow soportado es el scheduler central.
 
-Estado durable y artefactos protegidos viven bajo XDG (directorio interno
-`pr-review-v2/`), no en `state.json` del run A/B local:
+Para retirar estado legacy de forma controlada:
 
-```text
-$XDG_STATE_HOME/ai_dev_loop/pr-review-v2/
-├── engine.sqlite3              # autoridad: runs, eventos, claims, leases, timers
-└── artifacts/
-    └── runs/<sha256(run_id)>/   # prompts, patches, resultados Codex, evidencia writes
-        └── writes/<kind>/<sha256>.json
+```bash
+ai_dev_loop scheduler cutover cleanup --dry-run --confirm delete-legacy-state
 ```
+
+La eliminacion real requiere aceptacion humana independiente. Consulta
+[Desinstalacion y limpieza](desinstalacion-limpieza.md) y el historial archivado
+en `archive/implementation-history/` para contexto de PR-review v2.
+
+## Scheduler central: abort, bloqueos y timer (Phase 17.6)
+
+Ledger: `$XDG_STATE_HOME/ai_dev_loop/engine.sqlite3` y artefactos bajo
+`$XDG_STATE_HOME/ai_dev_loop/artifacts/`.
 
 Comandos utiles:
 
 ```bash
-ai_dev_loop pr-review status <run-id> --output json
-ai_dev_loop pr-review history <run-id> --limit 50 --output json
-ai_dev_loop pr-review resume <run-id> [--confirm-user-continuation]
-ai_dev_loop pr-review abort <run-id>
+ai_dev_loop scheduler status <run-id> --output json
+ai_dev_loop scheduler history <run-id> --limit 50 --order newest --output json
+ai_dev_loop scheduler abort <run-id>
+ai_dev_loop scheduler timer validate
+systemctl --user status ai-dev-loop-scheduler-tick.timer   # manual; no auto-enable en CI
 ```
 
-- `create` / `prepare` son read-only respecto a GitHub y agentes.
-- `start` es la unica puerta a efectos externos (supervisor detached, publicacion).
-- `resume` en `waiting_for_user` exige `--confirm-user-continuation`.
-- No edites SQLite, claims ni artefactos a mano.
+- `abort` es durable-first: no confies en matar procesos sin el evento `run_aborted`.
+- Si un run `aborted` conserva capacity/reservation sin attempts activos, ejecuta
+  `scheduler tick` (la accion segura en `status`) para completar la liberacion.
+- Runs `blocked` muestran `block_reason_kind`; la accion segura es inspeccionar
+  artefactos protegidos, no reintentar automaticamente.
+- `waiting_usage_limit` programa `retry_due`; espera `cursor_wait_until` o ejecuta
+  `scheduler tick` tras ese instante (solo retry verificado de usage-limit).
+- El timer empaquetado avanza progreso cada ~30s **solo mientras WSL esta activo**;
+  no despierta Windows ni sustituye `scheduler tick` manual en tests.
+- La aceptacion manual de systemd user units no esta completada hasta validacion
+  explicita fuera de CI.
 
-Para resiliencia diferida (supervisor muerto, reconciliacion de writes, no-findings
-con evidencia contradictoria), ver las secciones Phase 16.8 mas abajo y
-`PHASE_16_8_DEFERRED_ISSUES.md`. Gate A (automatizado) no sustituye aceptacion live.
+## Codex: artefacto de eventos alcanzo su limite acotado
 
-## `pr-review`: supervisor muerto tras claim mutante (Phase 16.8 Gate B)
+Sintoma:
 
-Sintoma: `start` dejo el run en `waiting_for_bot` con `request_bot_review`
-claimed, el supervisor detached salio, y GitHub no muestra el trigger.
+- un intento Codex del scheduler termina con `block_reason_kind:
+  codex_review_output_truncated`, o los metadatos protegidos del review muestran
+  `stdout_truncated: true` / `stderr_truncated: true`;
+- el run queda `blocked` aunque el proceso Codex haya salido con exito aparente.
 
-Accion segura (no edites SQLite, claims ni comentarios a mano):
+Causa:
 
-1. Espera a que `status` reporte `resumable: true` y `next_action: resume`
-   (supervisor no vivo y lease expirado). Si `lease_active` sigue true, no
-   lances un `resume` competidor.
-2. Desde el controller A: `ai_dev_loop pr-review resume <run-id>`.
-3. El resume repara el supervisor; un claim mutante expirado entra primero a
-   reconciliacion. Solo si la evidencia prueba `PROVEN_NOT_APPLIED` se permite
-   exactamente un trigger posterior. `APPLIED` no duplica; `UNRESOLVED` falla
-   cerrado.
-4. No prepares un run nuevo ni publiques el trigger manualmente: eso puede
-   crear duplicados y pierde la evidencia de recovery.
+- la traza JSONL de eventos supero el limite duro de captura (8 MiB) antes de
+  producir un resultado de review valido segun el esquema;
+- la truncacion de salida es distinta de un timeout real (`timed_out` solo indica
+  vencimiento del plazo congelado).
 
-## `pr-review`: el bot reacciono pero el run no completa (Phase 16.8)
+Accion segura:
 
-Sintoma: hay una reaccion en GitHub pero `status` sigue en polling o pausa con
-evidencia contradictoria/malformada.
-
-Accion segura (no edites SQLite ni artefactos a mano):
-
-1. Confirma `pr_review_v2.no_findings.enabled: true` y al menos una regla:
-   `accepted_comment_prefixes` o `accept_bot_thumbs_up: true`.
-2. Con `accept_bot_thumbs_up`, solo cuenta `+1` del login en `reviewer_logins`
-   sobre el **comentario trigger exacto** del ciclo (marker opaco), con
-   timestamp posterior al trigger y **sin** hilos elegibles abiertos.
-3. `eyes` u otras reacciones no completan el run; varias `+1` validas fallan
-   cerrado.
-4. Si head/PR/trigger/hilos cambiaron, usa la accion segura de `status`/`history`
-   (`resume` documentado, `abort` si hay drift) y deja evidencia para rollback
-   manual.
-
-Gate A (automatizado) no implica aceptacion live; Gate B requiere el PR de
-aceptacion controlado en un checkout limpio de parish360-poc.
+1. Inspecciona solo resumenes seguros: `scheduler status`, `scheduler history`,
+   rutas de artefactos en metadatos protegidos (`codex/reviews/NN.metadata.json`).
+   No copies trazas JSONL completas, prompts ni IDs de sesion en tickets.
+2. Si el review no puede validarse tras truncacion, el run queda bloqueado de
+   forma no reanudable para ese intento de review; no se crea un segundo reviewer B.
+3. Tras instalar la correccion, presenta un `scheduler submit` fresco con un
+   reviewer B nuevo si necesitas repetir el ciclo. Un run ya bloqueado antes del
+   fix no se repara automaticamente.
+4. Un timeout real de Codex sigue clasificandose como timeout, no como truncacion.

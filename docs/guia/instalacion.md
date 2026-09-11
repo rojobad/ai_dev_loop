@@ -43,7 +43,7 @@ Para reinstalar un build local actualizado en WSL despues de cambios:
 uv tool install --force .
 which ai_dev_loop
 ai_dev_loop --version
-ai_dev_loop prepare --help
+ai_dev_loop scheduler --help
 ```
 
 Desde un wheel:
@@ -91,7 +91,8 @@ No guardes ni publiques respuestas completas de autenticacion. `doctor` resume l
 ai_dev_loop doctor
 ```
 
-`start` y `resume` vuelven a consultar versiones y catalogos de modelos antes de lanzar agentes. Si una CLI WSL es incompatible, una sesion interactiva puede ofrecer `agent update` o `codex update`; la respuesta por defecto es no. En non-TTY nunca se pregunta ni se actualiza sin `--update-tools`.
+El scheduler ejecuta Cursor y Codex durante `scheduler tick`. Manten las CLIs
+actualizadas; `doctor` ayuda a detectar problemas de entorno antes de submit.
 
 Tambien puedes actualizar manualmente:
 

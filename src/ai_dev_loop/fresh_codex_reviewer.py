@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from ai_dev_loop.state import CodexState, FreshCodexReviewerBinding, RunState
 
 CODEX_BOOTSTRAP_SESSION_EVENT_TYPE = "thread.started"
-CODEX_REVIEWER_SANDBOX = "read-only"
 FRESH_REVIEWER_INPUT_ARTIFACT = "codex/fresh-reviewer-input.json"
 FRESH_REVIEWER_BINDING_ARTIFACT = "codex/fresh-reviewer-binding.json"
 FRESH_REVIEWER_BOOTSTRAP_UNCERTAINTY_ARTIFACT = "codex/fresh-reviewer-bootstrap-uncertainty.json"

@@ -1,0 +1,10 @@
+[Unit]
+Description=ai_dev_loop scheduler tick timer
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=30
+Unit=ai-dev-loop-scheduler-tick.service
+
+[Install]
+WantedBy=timers.target

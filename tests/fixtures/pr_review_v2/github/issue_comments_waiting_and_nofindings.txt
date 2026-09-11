@@ -1,4 +1,0 @@
-HTTP/2 200
-Content-Type: application/json
-
-{"data":{"repository":{"nameWithOwner":"acme/demo","pullRequest":{"comments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"IC_1","databaseId":101,"body":"please review <!-- pr-review:run-1:cycle:01:review-trigger -->","createdAt":"2026-07-21T12:00:00Z","author":{"login":"orchestrator"}},{"id":"IC_2","databaseId":102,"body":"No findings found.\n\nReviewed commit: `bbbbbbbbbbbb`\n","createdAt":"2026-07-21T12:05:00Z","author":{"login":"chatgpt-codex-connector"}}]}}}}}

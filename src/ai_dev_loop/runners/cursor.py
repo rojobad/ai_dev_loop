@@ -76,6 +76,12 @@ class CursorExecutionResult:
         return self.failure.code.value
 
 
+def cursor_metadata_errors(execution: CursorExecutionResult) -> list[str]:
+    if execution.failure.is_usage_limit:
+        return []
+    return list(execution.parse.errors)
+
+
 def redact_create_chat_args(args: list[str]) -> list[str]:
     return list(args)
 
@@ -95,6 +101,20 @@ def _write_create_chat_metadata(
     if failure_category is not None:
         payload["failure_category"] = failure_category
     atomic_write_json(metadata_path, payload, sensitive=True)
+    set_sensitive_file_mode(metadata_path)
+
+
+def _write_create_chat_runner_failure_metadata(metadata_path: Path, args: list[str]) -> None:
+    """Preserve a safe diagnostic when the child could not be started at all."""
+
+    atomic_write_json(
+        metadata_path,
+        {
+            "args": redact_create_chat_args(args),
+            "failure_category": "runner_error",
+        },
+        sensitive=True,
+    )
     set_sensitive_file_mode(metadata_path)
 
 
@@ -130,6 +150,7 @@ def create_chat(
             active_process=active_process,
         )
     except AiDevLoopError as exc:
+        _write_create_chat_runner_failure_metadata(metadata_path, args)
         raise ValidationError(CURSOR_CHAT_CREATE_FAILED_MESSAGE) from exc
 
     if process.timed_out:

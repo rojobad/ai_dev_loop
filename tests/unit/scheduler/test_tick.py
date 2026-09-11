@@ -1,0 +1,358 @@
+"""Unit tests for scheduler tick service and Git admission port."""
+
+from __future__ import annotations
+
+import ast
+import inspect
+from datetime import UTC, datetime
+from pathlib import Path
+
+from tests.unit.scheduler.helpers import CONTROLLER_SESSION, sample_submitted_state
+
+from ai_dev_loop.runners.git import discover_repository
+from ai_dev_loop.scheduler.application.fake_attempt_backend import (
+    FakeAgentProcessBackend,
+    FakeAttemptScenario,
+)
+from ai_dev_loop.scheduler.application.git_admission import GitAdmissionEvidence, GitAdmissionResult
+from ai_dev_loop.scheduler.application.scheduler_preflight import (
+    SchedulerPreflightPort,
+    SchedulerPreflightResult,
+)
+from ai_dev_loop.scheduler.application.start import StartService
+from ai_dev_loop.scheduler.application.tick import TickService
+from ai_dev_loop.scheduler.domain.admission_contract import ADMISSION_STATUS_ARTIFACT
+from ai_dev_loop.scheduler.domain.events import RunSubmittedEvent
+from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
+from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
+
+
+class FakeGitAdmissionPort:
+    def __init__(
+        self,
+        *,
+        ok: bool = True,
+        resolved_root: str | None = None,
+        require_clean: bool = True,
+        status_porcelain: str = "",
+        staged: bool = False,
+    ) -> None:
+        self.calls: list[tuple[str, bool]] = []
+        self._ok = ok
+        self._resolved_root = resolved_root
+        self._status = status_porcelain
+        self._staged = staged
+        self._require_clean = require_clean
+
+    def admit(
+        self,
+        *,
+        repository_root: str,
+        require_clean_worktree: bool,
+    ) -> GitAdmissionResult:
+        self.calls.append((repository_root, require_clean_worktree))
+        root = self._resolved_root or repository_root
+        try:
+            discovered = discover_repository(Path(root))
+            branch = discovered.branch
+            head = discovered.head
+            git_common_dir = str(discovered.git_common_dir)
+            git_dir = str(discovered.git_dir)
+        except Exception:
+            branch = "main"
+            head = "abc123"
+            git_common_dir = f"{root}/.git"
+            git_dir = f"{root}/.git"
+        evidence = GitAdmissionEvidence(
+            resolved_root=root,
+            branch=branch,
+            head=head,
+            git_common_dir=git_common_dir,
+            git_dir=git_dir,
+            status_porcelain=self._status,
+        )
+        if not self._ok or root != repository_root:
+            return GitAdmissionResult(
+                ok=False,
+                evidence=evidence,
+                failure_kind="repository_root_mismatch",
+                failure_summary="resolved repository root does not match submitted target",
+            )
+        if require_clean_worktree and self._staged:
+            return GitAdmissionResult(
+                ok=False,
+                evidence=evidence,
+                failure_kind="dirty_worktree",
+                failure_summary="worktree has pre-existing staged changes",
+            )
+        if require_clean_worktree and self._status.strip():
+            return GitAdmissionResult(
+                ok=False,
+                evidence=evidence,
+                failure_kind="dirty_worktree",
+                failure_summary="worktree is not clean",
+            )
+        text = (
+            f"branch={evidence.branch}\n"
+            f"head={evidence.head}\n"
+            f"git_common_dir={evidence.git_common_dir}\n"
+            f"git_dir={evidence.git_dir}\n"
+            f"status_porcelain={self._status}\n"
+        )
+        return GitAdmissionResult(ok=True, evidence=evidence, artifact_text=text)
+
+
+class OkPreflightPort:
+    def run(
+        self,
+        *,
+        run_id: str,
+        context: object,
+        artifacts: ProtectedArtifactStore,
+        state: object | None = None,
+    ) -> SchedulerPreflightResult:
+        return SchedulerPreflightResult(ok=True)
+
+
+def _insert_fake_agent_effect(store: SqliteSchedulerStore, run_id: str) -> None:
+    now = datetime(2026, 9, 4, 12, 1, 30, tzinfo=UTC)
+    with store.begin_immediate() as conn:
+        state, version, _ = store.load_validated_snapshot(conn, run_id)
+        event_row = conn.execute(
+            """
+            SELECT event_id FROM scheduler_events
+            WHERE run_id = ? AND event_kind = 'run_authorized'
+            ORDER BY sequence DESC LIMIT 1
+            """,
+            (run_id,),
+        ).fetchone()
+        source_event_id = str(event_row[0]) if event_row is not None else "evt-fake-agent"
+        store.insert_fake_agent_self_test_effect(
+            conn,
+            dispatch_id="fake-agent-self-test",
+            source_event_id=source_event_id,
+            run_id=run_id,
+            available_at=now,
+            claimed_run_version=version,
+            now=now,
+        )
+
+
+def _bootstrap_run(
+    tmp_path: Path,
+    *,
+    repo_root: str = "/tmp/repo",
+    require_clean: bool = True,
+) -> tuple[SqliteSchedulerStore, ProtectedArtifactStore, str]:
+    db = tmp_path / "engine.sqlite3"
+    artifacts = ProtectedArtifactStore(tmp_path / "artifacts")
+    store = SqliteSchedulerStore(db)
+    state = sample_submitted_state(repo_root=repo_root)
+    if not require_clean:
+        state = state.model_copy(
+            update={
+                "context": state.context.model_copy(
+                    update={
+                        "workflow": state.context.workflow.model_copy(
+                            update={"require_clean_worktree": False}
+                        )
+                    }
+                )
+            }
+        )
+    event = RunSubmittedEvent(
+        run_id=state.run_id,
+        idempotency_key=state.idempotency_key,
+        worktree_key=state.context.repository.worktree_key,
+        reused_existing=False,
+    )
+    now = datetime(2026, 9, 4, 12, 0, 0, tzinfo=UTC)
+    with store.begin_immediate() as conn:
+        store.insert_submitted_run(
+            conn,
+            run_id=state.run_id,
+            state=state,
+            event_id="evt-submit",
+            event=event,
+            now=now,
+        )
+    StartService(store, now_factory=lambda: datetime(2026, 9, 4, 12, 1, tzinfo=UTC)).start(
+        state.run_id,
+        CONTROLLER_SESSION,
+    )
+    _insert_fake_agent_effect(store, state.run_id)
+    return store, artifacts, state.run_id
+
+
+def test_tick_service_has_no_subprocess_or_sleep() -> None:
+    source = inspect.getsource(TickService)
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name) and func.id == "sleep":
+                raise AssertionError("TickService must not call sleep")
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr in {"Popen", "run", "call"}
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "subprocess"
+            ):
+                raise AssertionError("TickService must not invoke subprocess")
+
+
+def _tick_service(
+    store: SqliteSchedulerStore,
+    artifacts: ProtectedArtifactStore,
+    fake_git: FakeGitAdmissionPort,
+    *,
+    now: datetime | None = None,
+    owner: str = "tick-owner-a",
+    attempt_backend: FakeAgentProcessBackend | None = None,
+    preflight_port: SchedulerPreflightPort | None = None,
+) -> TickService:
+    backend = attempt_backend or FakeAgentProcessBackend()
+    base = now or datetime(2026, 9, 4, 12, 2, tzinfo=UTC)
+    return TickService(
+        store,
+        artifacts,
+        fake_git,
+        now_factory=lambda: base,
+        tick_owner_factory=lambda: owner,
+        event_id_factory=_event_ids(),
+        claim_id_factory=_claim_ids(),
+        attempt_id_factory=lambda: "att-" + "a" * 32,
+        attempt_backend=backend,
+        preflight_port=preflight_port or OkPreflightPort(),
+    )
+
+
+def test_authorized_tick_admits_with_fake_git(tmp_path: Path) -> None:
+    repo_root = str(tmp_path / "repo")
+    store, artifacts, run_id = _bootstrap_run(tmp_path, repo_root=repo_root)
+    fake = FakeGitAdmissionPort(resolved_root=repo_root)
+    tick = _tick_service(store, artifacts, fake)
+    receipt = tick.run_once()
+    assert receipt.lease_acquired is True
+    assert any(item.action == "admitted" for item in receipt.run_receipts)
+    artifact_path = artifacts.run_root(run_id) / ADMISSION_STATUS_ARTIFACT
+    assert artifact_path.is_file()
+    with store.begin_read() as conn:
+        state, _, _ = store.load_validated_snapshot(conn, run_id)
+        assert state.kind in {"admitted", "preflight_complete"}
+
+
+def test_admission_blocks_dirty_worktree(tmp_path: Path) -> None:
+    repo_root = str(tmp_path / "repo")
+    store, artifacts, run_id = _bootstrap_run(tmp_path, repo_root=repo_root)
+    fake = FakeGitAdmissionPort(resolved_root=repo_root, status_porcelain="?? dirty.txt")
+    tick = _tick_service(store, artifacts, fake)
+    receipt = tick.run_once()
+    assert any(item.action == "blocked" for item in receipt.run_receipts)
+    with store.begin_read() as conn:
+        state, _, _ = store.load_validated_snapshot(conn, run_id)
+        assert state.kind == "blocked"
+
+
+def test_admission_allows_dirty_when_not_required(tmp_path: Path) -> None:
+    repo_root = str(tmp_path / "repo")
+    store, artifacts, run_id = _bootstrap_run(
+        tmp_path,
+        repo_root=repo_root,
+        require_clean=False,
+    )
+    fake = FakeGitAdmissionPort(
+        resolved_root=repo_root,
+        status_porcelain="?? dirty.txt",
+    )
+    tick = _tick_service(store, artifacts, fake)
+    receipt = tick.run_once()
+    assert any(item.action == "admitted" for item in receipt.run_receipts)
+
+
+def test_empty_tick_on_queued_run_only(tmp_path: Path) -> None:
+    store = SqliteSchedulerStore(tmp_path / "engine.sqlite3")
+    state = sample_submitted_state()
+    event = RunSubmittedEvent(
+        run_id=state.run_id,
+        idempotency_key=state.idempotency_key,
+        worktree_key=state.context.repository.worktree_key,
+        reused_existing=False,
+    )
+    now = datetime(2026, 9, 4, 12, 0, 0, tzinfo=UTC)
+    with store.begin_immediate() as conn:
+        store.insert_submitted_run(
+            conn,
+            run_id=state.run_id,
+            state=state,
+            event_id="evt-submit",
+            event=event,
+            now=now,
+        )
+    tick = TickService(
+        store,
+        ProtectedArtifactStore(tmp_path / "artifacts"),
+        FakeGitAdmissionPort(),
+        now_factory=lambda: datetime(2026, 9, 4, 12, 2, tzinfo=UTC),
+        tick_owner_factory=lambda: "tick-owner-a",
+        attempt_backend=None,
+    )
+    receipt = tick.run_once()
+    assert receipt.visited_runs == 1
+    assert receipt.run_receipts == ()
+
+
+def test_tick_lease_contention_while_active(tmp_path: Path) -> None:
+    store = SqliteSchedulerStore(tmp_path / "engine.sqlite3")
+    now = datetime(2026, 9, 4, 12, 2, tzinfo=UTC)
+    with store.begin_immediate() as conn:
+        first = store.acquire_global_tick_lease(
+            conn,
+            owner_id="tick-owner-a",
+            now=now,
+            ttl_seconds=60,
+        )
+        assert first is not None
+        second = store.acquire_global_tick_lease(
+            conn,
+            owner_id="tick-owner-b",
+            now=now,
+            ttl_seconds=60,
+        )
+        assert second is None
+
+
+def test_fake_agent_attempt_claims_and_releases_capacity(tmp_path: Path) -> None:
+    repo_root = str(tmp_path / "repo")
+    store, artifacts, run_id = _bootstrap_run(tmp_path, repo_root=repo_root)
+    fake_git = FakeGitAdmissionPort(resolved_root=repo_root)
+    backend = FakeAgentProcessBackend(default_scenario=FakeAttemptScenario(active_ticks=0))
+    tick = _tick_service(store, artifacts, fake_git, attempt_backend=backend)
+    receipt = tick.run_once()
+    assert any(item.action == "admitted" for item in receipt.run_receipts)
+    assert any(item.action == "attempt_launched" for item in receipt.run_receipts)
+    receipt2 = tick.run_once()
+    assert any(item.action == "attempt_completed" for item in receipt2.run_receipts)
+    with store.begin_read() as conn:
+        capacity = store.get_capacity_row(conn)
+        assert capacity["holder_run_id"] is None
+
+
+def _event_ids():
+    counter = {"n": 0}
+
+    def factory() -> str:
+        counter["n"] += 1
+        return f"evt-{counter['n']}"
+
+    return factory
+
+
+def _claim_ids():
+    counter = {"n": 0}
+
+    def factory() -> str:
+        counter["n"] += 1
+        return f"clm-{counter['n']}"
+
+    return factory

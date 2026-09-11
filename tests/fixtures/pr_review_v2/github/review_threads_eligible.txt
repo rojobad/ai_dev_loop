@@ -1,4 +1,0 @@
-HTTP/2 200
-Content-Type: application/json
-
-{"data":{"repository":{"nameWithOwner":"acme/demo","pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"PRRT_1","isResolved":false,"comments":{"nodes":[{"id":"PRRC_1","body":"Please fix the null check. token=should-redact ghp_abcdefghijklmnopqrstuv","createdAt":"2026-07-21T12:06:00Z","author":{"login":"chatgpt-codex-connector"},"commit":{"oid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"path":"src/app.py","line":10,"pullRequestReview":{"id":"PRR_1"}}]}}]}}}}}

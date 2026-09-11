@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from ai_dev_loop.scheduler.application.contracts import (
@@ -9,10 +10,12 @@ from ai_dev_loop.scheduler.application.contracts import (
     SchedulerEngineErrorKind,
     SchedulerRunSummary,
     SchedulerStatusResult,
-    queued_safe_next_action,
+    bound_reviewer_session_id_from_state,
+    scheduler_status_projection_from_state,
     summary_from_context,
 )
-from ai_dev_loop.scheduler.domain.state import SubmittedState
+from ai_dev_loop.scheduler.application.safe_actions import safe_next_action_for_scheduler_state
+from ai_dev_loop.scheduler.domain.state import SchedulerState
 from ai_dev_loop.scheduler.infrastructure.paths import default_engine_db_path
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
@@ -21,28 +24,47 @@ class SchedulerStatusService:
     def __init__(self, store: SqliteSchedulerStore) -> None:
         self.store = store
 
+    def _summary_for_state(
+        self,
+        conn: sqlite3.Connection,
+        state: SchedulerState,
+    ) -> SchedulerRunSummary:
+        projection = scheduler_status_projection_from_state(state)
+        return summary_from_context(
+            run_id=state.run_id,
+            state_kind=state.kind,
+            submitted_at=state.submitted_at,
+            updated_at=state.updated_at,
+            context=state.context,
+            safe_next_action=safe_next_action_for_scheduler_state(self.store, conn, state),
+            bound_reviewer_session_id=bound_reviewer_session_id_from_state(state),
+            cursor_wait_until=projection["cursor_wait_until"],
+            block_reason_kind=projection["block_reason_kind"],
+        )
+
     def get_status(self, run_id: str) -> SchedulerStatusResult:
         with self.store.begin_read() as conn:
             state, _, _ = self.store.load_validated_snapshot(conn, run_id)
-            if not isinstance(state, SubmittedState):
-                raise SchedulerEngineError(
-                    SchedulerEngineErrorKind.VALIDATION,
-                    "unsupported scheduler state kind for status projection",
-                )
-            summary = summary_from_context(
-                run_id=state.run_id,
-                state_kind=state.kind,
-                submitted_at=state.submitted_at,
-                updated_at=state.updated_at,
-                context=state.context,
-                safe_next_action=queued_safe_next_action(state.run_id)
-                if state.kind == "queued"
-                else queued_safe_next_action(state.run_id),
-            )
+            summary = self._summary_for_state(conn, state)
+            capacity = self.store.get_capacity_row(conn)
+            last_event = conn.execute(
+                """
+                SELECT event_kind FROM scheduler_events
+                WHERE run_id = ?
+                ORDER BY sequence DESC LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
             return SchedulerStatusResult(
                 summary=summary,
                 idempotency_key_prefix=state.idempotency_key[:16],
                 worktree_key_prefix=state.context.repository.worktree_key[:16],
+                capacity_holder_run_id=(
+                    str(capacity["holder_run_id"])
+                    if capacity["holder_run_id"] is not None
+                    else None
+                ),
+                last_event_kind=str(last_event[0]) if last_event is not None else None,
             )
 
     def list_runs(self) -> list[SchedulerRunSummary]:
@@ -50,18 +72,7 @@ class SchedulerStatusService:
         with self.store.begin_read() as conn:
             for row in self.store.list_runs(conn):
                 state, _, _ = self.store.load_validated_snapshot(conn, str(row["run_id"]))
-                if not isinstance(state, SubmittedState):
-                    continue
-                summaries.append(
-                    summary_from_context(
-                        run_id=state.run_id,
-                        state_kind=state.kind,
-                        submitted_at=state.submitted_at,
-                        updated_at=state.updated_at,
-                        context=state.context,
-                        safe_next_action=queued_safe_next_action(state.run_id),
-                    )
-                )
+                summaries.append(self._summary_for_state(conn, state))
         return summaries
 
 

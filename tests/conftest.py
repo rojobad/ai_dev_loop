@@ -11,13 +11,9 @@ import sys
 import tempfile
 import textwrap
 from collections.abc import Iterator
-from io import StringIO
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
-
-from ai_dev_loop.commands.prepare import PrepareOptions, prepare_run
 
 FIXTURE_REPO = Path(__file__).resolve().parent / "fixtures" / "sample_repo"
 
@@ -476,6 +472,27 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                     file=sys.stderr,
                 )
                 sys.exit(2)
+            if mode == "usage_limit_retry":
+                if modify_mode != "none" and "--workspace" in args:
+                    workspace = args[args.index("--workspace") + 1]
+                    if modify_mode == "tracked":
+                        target = os.path.join(workspace, "ai_dev_loop.yaml")
+                        with open(target, "a", encoding="utf-8") as handle:
+                            handle.write("\\n# modified before usage limit retry\\n")
+                retry_after = int(os.environ.get("FAKE_AGENT_RETRY_AFTER_SECONDS", "120"))
+                print(
+                    json.dumps(
+                        {{
+                            "type": "error",
+                            "message": (
+                                "ActionRequiredError: You've hit your usage limit for this model. "
+                                "Switch to Auto or another model to continue."
+                            ),
+                            "retry_after_seconds": retry_after,
+                        }}
+                    )
+                )
+                sys.exit(2)
             if mode == "usage_limit_structured":
                 if modify_mode != "none" and "--workspace" in args:
                     workspace = args[args.index("--workspace") + 1]
@@ -732,6 +749,43 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                         handle.write("not-json")
                 print(json.dumps({{"type": "message", "content": "invalid"}}))
                 sys.exit(0)
+            if mode in {{"large_jsonl", "large_jsonl_no_result"}}:
+                fill_bytes = int(
+                    os.environ.get(
+                        "FAKE_CODEX_JSONL_FILL_BYTES",
+                        str(9 * 1024 * 1024),
+                    )
+                )
+                if "resume" not in args:
+                    bootstrap_id = os.environ.get(
+                        "FAKE_CODEX_BOOTSTRAP_SESSION_ID",
+                        "019def00-0000-0000-0000-0000000000bb",
+                    )
+                    print(
+                        json.dumps({{"type": "thread.started", "thread_id": bootstrap_id}}),
+                        flush=True,
+                    )
+                filler_line = json.dumps({{"type": "message", "content": "fill"}}) + "\\n"
+                line_bytes = len(filler_line.encode("utf-8"))
+                for _ in range((fill_bytes // line_bytes) + 1):
+                    print(filler_line, end="", flush=True)
+                if mode == "large_jsonl_no_result":
+                    time.sleep(float(os.environ.get("FAKE_CODEX_SLEEP_SECONDS", "30")))
+                    sys.exit(0)
+                result = {{
+                    "has_actionable_findings": False,
+                    "findings_count": 0,
+                    "highest_severity": None,
+                    "review_markdown": "# Review\\n\\nNo issues found.",
+                    "cursor_fix_prompt": None,
+                    "tests_status": "passed",
+                    "summary": "No actionable findings.",
+                }}
+                if output_last_message:
+                    with open(output_last_message, "w", encoding="utf-8") as handle:
+                        json.dump(result, handle)
+                print(json.dumps({{"type": "message", "content": "review complete"}}))
+                sys.exit(0)
             if mode == "findings":
                 result = {{
                     "has_actionable_findings": True,
@@ -804,31 +858,3 @@ def fixture_codex_session(isolated_home: Path, monkeypatch: pytest.MonkeyPatch) 
     write_session_rollout(codex_home / "sessions")
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
     return codex_home
-
-
-@pytest.fixture
-def prepared_run(
-    git_repo: Path,
-    isolated_xdg,
-    isolated_home,
-    fake_clis,
-    monkeypatch: pytest.MonkeyPatch,
-) -> dict[str, object]:
-    codex_home = isolated_home / ".codex"
-    sessions = codex_home / "sessions"
-    write_session_rollout(sessions)
-    monkeypatch.setenv("CODEX_HOME", str(codex_home))
-    prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
-    with patch("sys.stdin", StringIO(prompt)):
-        result = prepare_run(
-            PrepareOptions(
-                repo_path=git_repo,
-                plan_path=Path("docs/plans/sample-plan.md"),
-                prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
-                codex_session_id=DEFAULT_FIXTURE_SESSION_ID,
-            )
-        )
-    from ai_dev_loop.paths import run_dir
-
-    run_path = run_dir("fixture-project", result.run_id)
-    return {"run_id": result.run_id, "run_path": run_path, "repo": git_repo}

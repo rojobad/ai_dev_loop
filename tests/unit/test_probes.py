@@ -34,6 +34,7 @@ def test_probe_cursor_auth_accepts_is_authenticated(monkeypatch) -> None:
             returncode = 0
             stdout = '{"status":"authenticated","isAuthenticated":true}'
             stderr = ""
+            timed_out = False
 
         return Result()
 
@@ -50,6 +51,7 @@ def test_probe_cursor_model_matches_formatted_models(monkeypatch) -> None:
             returncode = 0
             stdout = "composer-2.5-fast - Composer 2.5 Fast\n"
             stderr = ""
+            timed_out = False
 
         return Result()
 

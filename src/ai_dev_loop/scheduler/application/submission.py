@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import secrets
+import shutil
+import sqlite3
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Protocol, cast
 
 import yaml
 
@@ -22,6 +25,7 @@ from ai_dev_loop.fresh_codex_reviewer import (
 )
 from ai_dev_loop.integrations.codex.session_runtime import (
     CodexSessionRuntime,
+    is_valid_codex_session_id,
     read_codex_session_runtime,
     require_codex_session_id,
 )
@@ -32,17 +36,19 @@ from ai_dev_loop.runners.git import (
     resolve_repo_relative_path,
 )
 from ai_dev_loop.scheduler.application.contracts import (
+    SafeNextActionKind,
     SchedulerEngineError,
     SchedulerEngineErrorKind,
     SubmitResult,
-    queued_safe_next_action,
 )
+from ai_dev_loop.scheduler.application.safe_actions import safe_next_action_for_scheduler_state
 from ai_dev_loop.scheduler.domain.common import canonical_json_sha256, worktree_key
 from ai_dev_loop.scheduler.domain.events import RunSubmittedEvent
 from ai_dev_loop.scheduler.domain.state import (
     SUBMITTED_CONTEXT_SCHEMA_VERSION,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH,
+    AbortedState,
     CodexRuntimeBinding,
     ControllerBinding,
     CursorBinding,
@@ -51,6 +57,7 @@ from ai_dev_loop.scheduler.domain.state import (
     PlanPromptBinding,
     RepositoryBinding,
     RepositoryTargetBinding,
+    SchedulerState,
     SubmittedRunContext,
     SubmittedState,
     WorkflowLimits,
@@ -84,6 +91,17 @@ RepositoryDiscoverer = Callable[[Path], RepositoryTarget]
 SessionRuntimeReader = Callable[[str], CodexSessionRuntime]
 
 
+class _SubmitResultState(Protocol):
+    @property
+    def run_id(self) -> str: ...
+
+    @property
+    def kind(self) -> str: ...
+
+    @property
+    def context(self) -> SubmittedRunContext: ...
+
+
 @dataclass(frozen=True)
 class SubmitOptions:
     config_path: Path | None = None
@@ -105,6 +123,30 @@ class SubmitOptions:
     codex_timeout_minutes: int | None = None
     db_path: Path | None = None
     artifact_root: Path | None = None
+    resubmission_id: str | None = None
+
+
+def require_resubmission_id(resubmission_id: str | None) -> str:
+    if resubmission_id is None or not resubmission_id.strip():
+        raise ValidationError("--resubmission-id must be a non-empty UUID when supplied")
+    cleaned = resubmission_id.strip()
+    if not is_valid_codex_session_id(cleaned):
+        raise ValidationError(
+            "--resubmission-id must be a UUID "
+            "(8-4-4-4-12 hexadecimal form); refusing unsafe resubmission identity"
+        )
+    return cleaned
+
+
+def _submission_idempotency_key(
+    context: SubmittedRunContext,
+    *,
+    resubmission_id: str | None = None,
+) -> str:
+    payload: dict[str, object] = {"identity": submission_identity_payload(context)}
+    if resubmission_id is not None:
+        payload["resubmission_sha256"] = sha256_text(resubmission_id)
+    return canonical_json_sha256(payload)
 
 
 def _read_stdin_prompt() -> str:
@@ -129,6 +171,49 @@ def _build_overrides(options: SubmitOptions) -> ConfigOverrides:
         max_review_iterations=options.max_review_iterations,
         cursor_timeout_minutes=options.cursor_timeout_minutes,
         codex_timeout_minutes=options.codex_timeout_minutes,
+    )
+
+
+def _resolve_frozen_command(command: str, *, label: str) -> str:
+    """Resolve one scheduler executable to the exact file a detached unit can run.
+
+    Scheduler attempts run under the systemd user manager, whose PATH need not
+    match the interactive shell that submitted the run.  Resolve a single
+    executable name while the controller's environment is available, then
+    freeze the canonical file path in the private submitted context.
+    """
+
+    candidate = command.strip()
+    if not candidate or any(character.isspace() for character in candidate):
+        raise ValidationError(
+            f"{label} command must be one executable name or path, without arguments"
+        )
+    located = shutil.which(candidate)
+    if located is None:
+        raise ValidationError(
+            f"{label} executable not found while freezing scheduler run: {command}"
+        )
+    try:
+        resolved = Path(located).resolve(strict=True)
+    except OSError as exc:
+        raise ValidationError(
+            f"{label} executable could not be resolved while freezing scheduler run"
+        ) from exc
+    if not resolved.is_file():
+        raise ValidationError(f"{label} command does not resolve to an executable file")
+    return str(resolved)
+
+
+def _freeze_execution_commands(effective: ProjectConfig) -> ProjectConfig:
+    """Return the private effective config with stable Cursor and Codex paths."""
+
+    cursor_command = _resolve_frozen_command(effective.cursor.command, label="Cursor")
+    codex_command = _resolve_frozen_command(effective.codex.command, label="Codex")
+    return effective.model_copy(
+        update={
+            "cursor": effective.cursor.model_copy(update={"command": cursor_command}),
+            "codex": effective.codex.model_copy(update={"command": codex_command}),
+        }
     )
 
 
@@ -389,13 +474,52 @@ def _build_context(
     )
 
 
-def _result_from_state(state: SubmittedState, *, reused_existing: bool) -> SubmitResult:
+def _ensure_worktree_available_for_fresh_submission(
+    store: SqliteSchedulerStore,
+    conn: sqlite3.Connection,
+    worktree_key: str,
+) -> None:
+    reservation = store.get_worktree_reservation(conn, worktree_key)
+    if reservation is None:
+        return
+    blocking_run_id = str(reservation["run_id"])
+    state, _, _ = store.load_validated_snapshot(conn, blocking_run_id)
+    if isinstance(state, AbortedState):
+        safe_action = safe_next_action_for_scheduler_state(store, conn, state)
+        if safe_action.kind is not SafeNextActionKind.NONE:
+            detail = safe_action.command or safe_action.kind.value
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "repository worktree reservation still held by aborted run "
+                f"{blocking_run_id}. {detail}",
+            )
+        raise SchedulerEngineError(
+            SchedulerEngineErrorKind.CORRUPTION,
+            f"aborted run {blocking_run_id} holds an active reservation after cleanup",
+        )
+    raise SchedulerEngineError(
+        SchedulerEngineErrorKind.CONFLICT,
+        f"repository worktree already has an active scheduler reservation (run {blocking_run_id})",
+    )
+
+
+def _result_from_state(
+    store: SqliteSchedulerStore,
+    conn: sqlite3.Connection,
+    state: _SubmitResultState,
+    *,
+    reused_existing: bool,
+) -> SubmitResult:
     return SubmitResult(
         run_id=state.run_id,
         project_name=state.context.project_name,
         state_kind=state.kind,
         reused_existing=reused_existing,
-        safe_next_action=queued_safe_next_action(state.run_id),
+        safe_next_action=safe_next_action_for_scheduler_state(
+            store,
+            conn,
+            cast(SchedulerState, state),
+        ),
     )
 
 
@@ -410,6 +534,7 @@ class SubmissionService:
         now_factory: Callable[[], datetime] | None = None,
         run_id_factory: Callable[[str, datetime], str] | None = None,
         event_id_factory: Callable[[], str] | None = None,
+        admission_pause_hook: Callable[[], None] | None = None,
     ) -> None:
         self.store = store
         self.artifacts = artifacts
@@ -418,6 +543,7 @@ class SubmissionService:
         self._now_factory = now_factory or (lambda: utc_now())
         self._run_id_factory = run_id_factory
         self._event_id_factory = event_id_factory or (lambda: f"evt-{secrets.token_hex(16)}")
+        self._admission_pause_hook = admission_pause_hook
 
     def submit(self, options: SubmitOptions) -> SubmitResult:
         prompt_text = _read_stdin_prompt()
@@ -433,8 +559,14 @@ class SubmissionService:
             config_path=options.config_path,
             overrides=_build_overrides(options),
         )
+        effective = _freeze_execution_commands(effective)
         plan_path, prompt_source_path = _resolve_inputs(options, repo_target)
         controller_session_id = require_codex_session_id(options.controller_session_id)
+        resubmission_id = (
+            require_resubmission_id(options.resubmission_id)
+            if options.resubmission_id is not None
+            else None
+        )
         if options.codex_session_id is not None:
             raise ValidationError(
                 "scheduler submit must not pass --codex-session-id; "
@@ -478,79 +610,45 @@ class SubmissionService:
             review_reasoning_effort=review_reasoning,
             artifact_hashes=artifact_hashes,
         )
-        idempotency_key = canonical_json_sha256({"identity": submission_identity_payload(context)})
+        idempotency_key = _submission_idempotency_key(
+            context,
+            resubmission_id=resubmission_id,
+        )
         wt_key = context.repository.worktree_key
+        now = self._now_factory()
 
         with self.store.begin_immediate() as conn:
             existing = self.store.get_run_by_idempotency_key(conn, idempotency_key)
             if existing is not None:
                 state, _, _ = self.store.load_validated_snapshot(conn, str(existing["run_id"]))
-                return _result_from_state(state, reused_existing=True)
-            conflict = self.store.get_active_reservation(conn, wt_key)
-            if conflict is not None:
-                raise SchedulerEngineError(
-                    SchedulerEngineErrorKind.CONFLICT,
-                    "repository worktree already has an active scheduler reservation "
-                    f"(run {conflict['run_id']})",
-                )
+                return _result_from_state(self.store, conn, state, reused_existing=True)
+            _ensure_worktree_available_for_fresh_submission(self.store, conn, wt_key)
 
-        now = self._now_factory()
-        run_id = (
-            self._run_id_factory(effective.project.name, now)
-            if self._run_id_factory is not None
-            else generate_run_id(effective.project.name, now=now)
-        )
+            run_id = (
+                self._run_id_factory(effective.project.name, now)
+                if self._run_id_factory is not None
+                else generate_run_id(effective.project.name, now=now)
+            )
+            now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            state = SubmittedState(
+                run_id=run_id,
+                version=1,
+                submitted_at=now_text,
+                updated_at=now_text,
+                idempotency_key=idempotency_key,
+                context=context,
+            )
+            event = RunSubmittedEvent(
+                run_id=run_id,
+                idempotency_key=idempotency_key,
+                worktree_key=wt_key,
+                reused_existing=False,
+            )
+            event_id = self._event_id_factory()
 
-        self.artifacts.write_bytes(run_id, PLAN_ARTIFACT, plan_bytes, max_bytes=MAX_PLAN_BYTES)
-        self.artifacts.write_text(run_id, PROMPT_ARTIFACT, prompt_text, max_bytes=MAX_PROMPT_BYTES)
-        self.artifacts.write_bytes(
-            run_id,
-            EFFECTIVE_CONFIG_ARTIFACT,
-            effective_yaml,
-            max_bytes=MAX_PLAN_BYTES,
-        )
-        self.artifacts.write_bytes(
-            run_id,
-            SOURCE_CONFIG_ARTIFACT,
-            source_yaml,
-            max_bytes=MAX_PLAN_BYTES,
-        )
-        self.artifacts.write_bytes(
-            run_id,
-            FRESH_REVIEWER_INPUT_ARTIFACT,
-            fresh_binding_bytes,
-            max_bytes=MAX_SESSION_RUNTIME_BYTES,
-        )
+            if self._admission_pause_hook is not None:
+                self._admission_pause_hook()
 
-        now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-        state = SubmittedState(
-            run_id=run_id,
-            version=1,
-            submitted_at=now_text,
-            updated_at=now_text,
-            idempotency_key=idempotency_key,
-            context=context,
-        )
-        event = RunSubmittedEvent(
-            run_id=run_id,
-            idempotency_key=idempotency_key,
-            worktree_key=wt_key,
-            reused_existing=False,
-        )
-        event_id = self._event_id_factory()
-
-        with self.store.begin_immediate() as conn:
-            existing = self.store.get_run_by_idempotency_key(conn, idempotency_key)
-            if existing is not None:
-                loaded, _, _ = self.store.load_validated_snapshot(conn, str(existing["run_id"]))
-                return _result_from_state(loaded, reused_existing=True)
-            conflict = self.store.get_active_reservation(conn, wt_key)
-            if conflict is not None:
-                raise SchedulerEngineError(
-                    SchedulerEngineErrorKind.CONFLICT,
-                    "repository worktree already has an active scheduler reservation "
-                    f"(run {conflict['run_id']})",
-                )
             self.store.insert_submitted_run(
                 conn,
                 run_id=run_id,
@@ -559,8 +657,30 @@ class SubmissionService:
                 event=event,
                 now=now,
             )
+            self.artifacts.write_bytes(run_id, PLAN_ARTIFACT, plan_bytes, max_bytes=MAX_PLAN_BYTES)
+            self.artifacts.write_text(
+                run_id, PROMPT_ARTIFACT, prompt_text, max_bytes=MAX_PROMPT_BYTES
+            )
+            self.artifacts.write_bytes(
+                run_id,
+                EFFECTIVE_CONFIG_ARTIFACT,
+                effective_yaml,
+                max_bytes=MAX_PLAN_BYTES,
+            )
+            self.artifacts.write_bytes(
+                run_id,
+                SOURCE_CONFIG_ARTIFACT,
+                source_yaml,
+                max_bytes=MAX_PLAN_BYTES,
+            )
+            self.artifacts.write_bytes(
+                run_id,
+                FRESH_REVIEWER_INPUT_ARTIFACT,
+                fresh_binding_bytes,
+                max_bytes=MAX_SESSION_RUNTIME_BYTES,
+            )
 
-        return _result_from_state(state, reused_existing=False)
+            return _result_from_state(self.store, conn, state, reused_existing=False)
 
 
 def default_submission_service(

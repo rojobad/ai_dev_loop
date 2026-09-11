@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import json
+
+import pytest
+
+from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.runners.cursor import (
     build_cursor_args,
+    create_chat,
     parse_stream_json,
     redact_cursor_args,
 )
@@ -56,3 +62,25 @@ def test_parse_stream_json_marks_invalid_json_as_parse_failure() -> None:
     parsed = parse_stream_json("not-json\n")
     assert parsed.final_text is None
     assert parsed.parse_ok is False
+
+
+def test_create_chat_records_runner_failure_without_leaking_process_details(tmp_path) -> None:
+    run_directory = tmp_path / "run"
+    run_directory.mkdir()
+
+    with pytest.raises(ValidationError, match="Cursor chat creation failed"):
+        create_chat(
+            "definitely-missing-cursor-command",
+            repo_root=str(tmp_path),
+            timeout_seconds=1,
+            run_directory=run_directory,
+            run_id="run-test",
+        )
+
+    metadata = json.loads(
+        (run_directory / "cursor/create-chat/metadata.json").read_text(encoding="utf-8")
+    )
+    assert metadata == {
+        "args": ["definitely-missing-cursor-command", "create-chat"],
+        "failure_category": "runner_error",
+    }

@@ -36,6 +36,13 @@ Tampoco symlinkees:
 ~/.codex/sessions -> /mnt/c/Users/<usuario>/.codex/sessions
 ```
 
+Los workers desacoplados de `ai_dev_loop` eliminan `CODEX_HOME` y
+`CODEX_SQLITE_HOME` heredados solo cuando apuntan a DrvFS (`/mnt/...`). Por eso
+un fresh reviewer B usa la autenticacion, configuracion, sesiones y SQLite
+nativos de WSL (`~/.codex` por defecto), aunque la sesion controladora A viva
+en Codex Desktop. Los overrides que ya apunten a una ruta nativa de WSL se
+conservan.
+
 ## Puente soportado
 
 El puente permitido es un symlink anidado:

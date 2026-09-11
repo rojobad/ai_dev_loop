@@ -13,7 +13,6 @@ from pydantic import ValidationError as PydanticValidationError
 from ai_dev_loop.abort_control import is_abort_requested
 from ai_dev_loop.errors import AiDevLoopError, ValidationError
 from ai_dev_loop.fresh_codex_reviewer import (
-    CODEX_REVIEWER_SANDBOX,
     FRESH_BOOTSTRAP_UNCERTAIN_MESSAGE,
     FRESH_REVIEWER_BINDING_ARTIFACT,
     FRESH_REVIEWER_BOOTSTRAP_UNCERTAINTY_ARTIFACT,
@@ -183,8 +182,6 @@ def build_codex_bootstrap_args(
         "exec",
         "--cd",
         repo_root,
-        "--sandbox",
-        CODEX_REVIEWER_SANDBOX,
         "--model",
         review_model,
         "-c",
@@ -209,17 +206,17 @@ def build_codex_resume_args(
 ) -> list[str]:
     from ai_dev_loop.review_runtime import is_legacy_phase9_codex_state
 
-    sandbox = CODEX_REVIEWER_SANDBOX if is_fresh_codex_reviewer_run(codex) else codex.sandbox
+    fresh_reviewer = is_fresh_codex_reviewer_run(codex)
     args = [
         codex.command,
         "exec",
         "--cd",
         repo_root,
-        "--sandbox",
-        sandbox,
-        "resume",
     ]
-    if is_fresh_codex_reviewer_run(codex):
+    if not fresh_reviewer:
+        args.extend(["--sandbox", codex.sandbox])
+    args.append("resume")
+    if fresh_reviewer:
         if codex.fresh_reviewer is None:
             raise ValidationError("fresh reviewer binding is required for resume review")
         args.extend(["--model", codex.fresh_reviewer.review_model])

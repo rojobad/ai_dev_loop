@@ -2,171 +2,78 @@
 
 `ai_dev_loop` guarda estado fuera del repositorio objetivo. Esto evita mezclar auditoria del orquestador con el codigo que Cursor modifica.
 
-## Rutas XDG
+## Autoridad del scheduler (Phase 17.7)
 
-Si las variables XDG existen:
-
-```text
-$XDG_CONFIG_HOME/ai_dev_loop
-$XDG_STATE_HOME/ai_dev_loop
-$XDG_CACHE_HOME/ai_dev_loop
-```
-
-Fallbacks:
+El flujo soportado persiste estado durable en:
 
 ```text
-~/.config/ai_dev_loop
-~/.local/state/ai_dev_loop
-~/.cache/ai_dev_loop
+$XDG_STATE_HOME/ai_dev_loop/engine.sqlite3
+$XDG_STATE_HOME/ai_dev_loop/artifacts/
 ```
 
-Permisos esperados cuando el filesystem los soporta:
+Los comandos `scheduler status`, `scheduler list` y `scheduler history` leen solo
+ese ledger central.
 
-- directorios: `0700`;
-- prompts, session IDs, output de agentes, patches y reviews: `0600`.
-
-## Directorio de run
-
-```text
-$XDG_STATE_HOME/ai_dev_loop/runs/<project>/<run-id>/
-├── state.json
-├── effective-config.yaml
-├── source-config.yaml
-├── manifest.json
-├── plan/
-│   ├── plan.md
-│   └── metadata.json
-├── prompts/
-│   ├── cursor-initial.txt
-│   ├── cursor-recovery/
-│   └── fixes/
-├── cursor/
-│   ├── chat.json
-│   └── iterations/
-├── codex/
-│   ├── session-runtime.json
-│   ├── events/
-│   └── reviews/
-├── git/
-│   ├── baseline-status.txt
-│   ├── status/
-│   └── diffs/
-├── logs/
-│   ├── ai_dev_loop.log
-│   └── events.jsonl
-└── locks/
-    ├── run.lock
-    ├── abort-request.json
-    └── active-process.json
-```
-
-No todos los archivos existen en todos los estados. Por ejemplo, `prompts/fixes/NN.txt` existe solo si Codex reporto findings en review `NN`.
-
-## PR-review v2 (SQLite + artefactos XDG)
-
-Tras Phase 16.9, el ciclo `ai_dev_loop pr-review` usa un motor durable separado del
-`state.json` del run A/B local. Los runs v1 con `RunState.github_pr_review` y el lock
-`locks/pr-review-worker.json` ya no aplican.
-
-Layout bajo `$XDG_STATE_HOME/ai_dev_loop/pr-review-v2/`:
-
-```text
-engine.sqlite3                 # autoridad: PreparedState, eventos, claims, leases
-artifacts/
-  runs/<sha256(run_id)>/       # contenido protegido content-addressed
-    writes/<kind>/<sha256>.json
-    ...                        # prompts, patches, resultados Codex, metadata
-```
-
-- `status` / `history` leen SQLite y rutas relativas redactadas; no exponen cuerpos
-  completos, tokens, session IDs ni argv.
-- El supervisor detached registra ownership fuera del repositorio objetivo.
-- `abort` persiste solicitud durable antes de senalar procesos owned.
-
-Resiliencia publica (`pr-review recover`, migracion v1): no implementada; ver
-`PHASE_16_8_DEFERRED_ISSUES.md`.
-
-## Scheduler central (Phase 17.1+)
-
-El scheduler A/B local usa una autoridad SQLite generica separada del run legacy
-`state.json` y del motor `pr-review-v2`:
+## Layout del scheduler
 
 ```text
 $XDG_STATE_HOME/ai_dev_loop/
-├── engine.sqlite3              # autoridad: runs queued/authorized, eventos, reservas
-└── artifacts/
-    runs/<sha256(run_id)>/      # snapshots inmutables verificados por hash
-        plan/plan.md
-        prompts/cursor-initial.txt
-        effective-config.yaml
-        source-config.yaml
-        codex/fresh-reviewer-input.json     # v2/v3: modelo/reasoning congelados en prepare/submit
-        codex/fresh-reviewer-binding.json   # evidencia de bootstrap read-only (post-review)
-        codex/fresh-reviewer-bootstrap-uncertainty.json  # bloqueo durable si la identidad es ambigua
-        codex/session-runtime.json          # v1 legacy session-bound solamente
-        git/baseline-status.txt             # v1/v2 legacy submit o prepare/start local
-        git/admission-status.txt            # Phase 17.2: admision one-shot antes del primer Cursor
+├── engine.sqlite3              # autoridad: runs, eventos, leases, attempts
+├── artifacts/
+│   └── runs/<sha256(run_id)>/  # snapshots inmutables verificados por hash
+│       plan/plan.md
+│       prompts/cursor-initial.txt
+│       effective-config.yaml
+│       source-config.yaml
+│       codex/fresh-reviewer-input.json
+│       codex/fresh-reviewer-binding.json
+│       git/admission-status.txt
+├── repository-locks/
+├── codex-sessions/             # metadata minima del hook SessionStart
+└── locks/                      # locks de cutover y otros control-plane
 ```
 
-- `ai_dev_loop scheduler submit` congela un run `queued` sin lanzar agentes, probes,
-  Git CLI ni systemd. Requiere `--controller-session-id`, `--codex-review-model` y
-  `--codex-review-reasoning-effort`; no acepta `--codex-session-id`. El contexto
-  v3 persiste solo la raiz del repositorio y `codex/fresh-reviewer-input.json`
-  en el manifiesto; no escribe `git/baseline-status.txt`. La evidencia de
-  bootstrap (`codex/fresh-reviewer-binding.json`) se escribe solo en el primer review.
-- Los submits v1/v2 historicos permanecen read-only en el ledger con sus artefactos
-  baseline intactos; la accion segura es un submit v3 fresco, no una conversion automatica.
-- `require_clean_worktree` se congela en submit pero se aplica solo en la admision
-  one-shot del primer tick (Phase 17.2), no como rechazo en submit.
-- `scheduler status` y `scheduler list` son proyecciones read-only con IDs redactados.
-- `scheduler start`, `scheduler tick` y la ejecucion de agentes llegan en fases
-  posteriores; Phase 17.1 se detiene en el limite `queued`.
+- `scheduler submit` congela un run `queued` sin lanzar agentes ni mutar el repo.
+- `scheduler start` autoriza el run desde la sesion controller.
+- `scheduler tick` ejecuta preflight, Cursor, staging, review y correcciones segun el checkpoint.
+- `require_clean_worktree` se congela en submit y se aplica en la admision one-shot del primer tick.
 
-## Lineage de recovery
+## Estado legacy retirado
 
-Un sucesor creado por `ai_dev_loop recover` incluye en `state.json` una seccion opcional `recovery`:
+Los arboles historicos siguientes ya no tienen comandos de ejecucion:
 
 ```text
-source_run_id
-source_status                 # failed
-source_iteration
-recovered_checkpoint          # staging | reviewing | process_review | cursor
-source_staged_patch_sha256    # null para cursor e initial_staging_failed
-cursor_output_fingerprint_sha256   # requerido para staging
-previous_staged_patch_sha256       # requerido para correction_staging_failed; null para initial
-legacy_cursor_output_adopted       # opcional; solo correction staging historico
-legacy_cursor_usage_limit_adopted  # opcional; adopcion historica de limite de uso Cursor
-source_cursor_model                # checkpoint cursor
-cursor_model_fallback              # checkpoint cursor; congelado por --cursor-model
-source_prompt_path                   # checkpoint cursor
-source_prompt_sha256               # checkpoint cursor
-usage_limit_fingerprint_path       # checkpoint cursor
-usage_limit_fingerprint_sha256     # checkpoint cursor
-continuation_envelope_path         # checkpoint cursor
-continuation_envelope_sha256       # checkpoint cursor
-created_at
-runtime_migration             # none | phase9_session_capture
-reason_code                   # incluye initial_staging_failed, correction_staging_failed,
-                              # cursor_usage_limit, codex_review_result_artifact_missing
+$XDG_STATE_HOME/ai_dev_loop/runs/<project>/<run-id>/   # state.json legacy
+$XDG_STATE_HOME/ai_dev_loop/pr-review-v2/              # motor PR-review v2
 ```
 
-`ai_dev_loop recover` usa checkpoints `staging`, `reviewing`, `process_review` y
-`cursor` del loop local A/B.
+Eliminalos solo con `scheduler cutover cleanup --confirm delete-legacy-state` tras
+aceptacion humana independiente (ver [Desinstalacion y limpieza](desinstalacion-limpieza.md)).
 
-El sucesor del loop local no republica triggers GitHub. El run origen permanece
-terminal e inmutable. El sucesor copia snapshots/artefactos necesarios para
-continuar (plan, prompt, chat, Cursor/git hasta la iteracion recuperada, reviews
-previos, y el review valido solo si el checkpoint es `process_review`). Los
-intentos Codex fallidos quedan en el origen.
+El layout legacy `runs/` incluia `state.json`, `cursor/`, `codex/`, `git/`, etc.
+Esa informacion ya no es la autoridad operativa; conservala solo para auditoria
+manual hasta el cutover.
+
+## Recuperacion
+
+No existe `recover` publico en el scheduler central. Ante fallos:
+
+- usa `scheduler status` y `scheduler history` para el checkpoint durable;
+- `scheduler abort` cancela sin borrar artefactos ni cambios staged;
+- para trabajo nuevo tras un run terminal, `scheduler submit` con
+  `--resubmission-id <uuid>` e identidad controller y modelo de review explicitos;
+  repetir submit sin esa opcion reutiliza el run terminal existente.
+
+Los contratos de recovery legacy (`recover`, sucesores `interrupted`, checkpoints
+`cursor`/`staging`) aplicaban solo al motor `runs/` retirado.
 
 ## Locks
 
 `ai_dev_loop` usa:
 
-- un lock por run bajo el directorio del run;
-- un lock por worktree bajo `$XDG_STATE_HOME/ai_dev_loop/repository-locks/`.
-
-Esto previene dos loops mutando el mismo worktree simultaneamente.
+- locks del scheduler en SQLite (tick lease, capacity, attempts);
+- un lock por worktree bajo `$XDG_STATE_HOME/ai_dev_loop/repository-locks/`;
+- `locks/cutover.cleanup.lock` durante cleanup destructivo legacy.
 
 ## SessionStart records
 

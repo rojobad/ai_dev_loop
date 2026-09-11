@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from ai_dev_loop.scheduler.domain.common import worktree_key
 from ai_dev_loop.scheduler.domain.state import (
     SUBMITTED_CONTEXT_SCHEMA_VERSION,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
@@ -32,7 +33,7 @@ def sample_agent_led_submitted_context(*, repo_root: str = "/tmp/repo") -> Submi
         project_name="fixture-project",
         repository=RepositoryTargetBinding(
             root=repo_root,
-            worktree_key=DIGEST,
+            worktree_key=worktree_key(repo_root),
         ),
         plan_prompt=PlanPromptBinding(
             plan_repository_path="docs/plans/sample-plan.md",
@@ -88,7 +89,7 @@ def sample_fresh_submitted_context(*, repo_root: str = "/tmp/repo") -> Submitted
             git_dir=f"{repo_root}/.git",
             branch="main",
             initial_head="abc123",
-            worktree_key=DIGEST,
+            worktree_key=worktree_key(repo_root),
         ),
         plan_prompt=PlanPromptBinding(
             plan_repository_path="docs/plans/sample-plan.md",
@@ -146,7 +147,7 @@ def sample_legacy_submitted_context(*, repo_root: str = "/tmp/repo") -> Submitte
             git_dir=f"{repo_root}/.git",
             branch="main",
             initial_head="abc123",
-            worktree_key=DIGEST,
+            worktree_key=worktree_key(repo_root),
         ),
         plan_prompt=PlanPromptBinding(
             plan_repository_path="docs/plans/sample-plan.md",

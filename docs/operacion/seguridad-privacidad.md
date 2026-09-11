@@ -21,7 +21,7 @@ git restore --staged
 git rm --cached
 ```
 
-Cursor no puede commit, amend, reset, checkout/switch, stash, clean, merge, rebase, tag ni push. Durante el turno inicial y las correcciones, Cursor puede mutar el index (`git add`, `git restore --staged`, `git rm --cached`). El indice vacio/pre-staged se exige solo en el boundary confiable pre-Cursor (`prepare`/`start`), no despues de que Cursor termine. Tras Cursor, el orquestador siempre normaliza con `git add -A` (`stage_mode: all`) y Codex revisa el snapshot staged acumulativo completo. Solo unstagear un tracked no-ignored no lo excluye del snapshot final; para excluir un generado hay que actualizar `.gitignore` y quitarlo del index.
+Cursor no puede commit, amend, reset, checkout/switch, stash, clean, merge, rebase, tag ni push. Durante el turno inicial y las correcciones, Cursor puede mutar el index (`git add`, `git restore --staged`, `git rm --cached`). El indice vacio/pre-staged se exige solo en el boundary confiable pre-Cursor del primer tick del scheduler, no despues de que Cursor termine. Tras Cursor, el orquestador siempre normaliza con `git add -A` (`stage_mode: all`) y Codex revisa el snapshot staged acumulativo completo. Solo unstagear un tracked no-ignored no lo excluye del snapshot final; para excluir un generado hay que actualizar `.gitignore` y quitarlo del index.
 
 No permitido por el workflow local ordinario:
 
@@ -34,20 +34,16 @@ git clean
 git stash
 ```
 
-Tras `pr-review create` (opt-in GitHub, origen `source_run`), el worker puede hacer `git commit` solo del patch staged aceptado y `git push` no-force de la rama preparada, despues de verificar el head remoto esperado. Tras `pr-review prepare` (origen `independent_pr`) no hay escritura GitHub hasta `pr-review start`, que publica el marcador de review y arranca el worker. Siguen prohibidos merge, force push, reset, clean, stash y unstage. Las credenciales GitHub viven solo en la sesion `gh` autenticada; el push Git usa SSH + `ssh-agent`.
+El CLI `pr-review` y el motor SQLite v2 fueron retirados en Phase 17.7. El workflow
+local soportado no hace commit, push ni escritura GitHub desde el scheduler. Las
+credenciales GitHub, si se usan fuera de este producto, viven solo en la sesion `gh`
+autenticada; el push Git usa SSH + `ssh-agent`.
 
-El CLI `pr-review` (motor SQLite v2) separa preparacion de ejecucion:
-`create`/`prepare` solo congelan `PreparedState` (sin workers, agentes, writes,
-commits ni pushes). `start` es la unica puerta a efectos externos y lanza un
-supervisor detached con metadata de ownership (token/PID/PGID/start time/
-executable/run binding); nunca reporta `spawned` sin proceso propio. Status/history
-v2 no exponen prompts, patches, bodies de threads, tokens, session IDs
-completos, argv, PID/PGID ni environments; los resumenes de adjudicacion en
-eventos son operacionales fijos. Abort v2 persiste primero y solo senala
-procesos locales con ownership OS exacta. Phase 16.8 (Gate A) anade evidencia
-fail-closed de reaccion `+1` sobre el trigger exacto (`accept_bot_thumbs_up`);
-los artefactos protegidos guardan proveniencia tipada y hash-verificada, no solo
-un reaction ID. **Gate A** valida con fakes/process boundaries; **Gate B** es
+El scheduler central separa congelado (`scheduler submit`) de ejecucion (`scheduler start`
++ `scheduler tick`). `scheduler abort` persiste primero y solo senala procesos locales
+con ownership OS exacta. Status/history del scheduler no exponen prompts, patches,
+tokens, session IDs completos, argv, PID/PGID ni environments. **Gate A** valida con
+fakes/process boundaries; **Gate B** es
 aceptacion live pendiente hasta completar el ciclo controlado en parish360-poc.
 
 ### Opcional: conservar la llave SSH durante la sesion WSL
@@ -74,53 +70,45 @@ recomienda quitar la passphrase de la llave para evitar ese aviso.
 
 Sin el ciclo GitHub, el usuario decide manualmente si commitea despues de revisar el resultado final.
 
-`recover` es solo lectura sobre el repositorio: no hace `git add`, no altera el index y no reescribe el working tree. El staging del sucesor ocurre solo con `resume`.
-
 ## Clasificacion de limite de uso de Cursor
 
-- La clasificacion usa stderr crudo capturado en artefactos protegidos (`cursor/iterations/NN/stderr.txt`), no el texto de `last_error`.
-- Solo coincide la senal conservadora `ActionRequiredError` con marcadores de limite de uso y cambio de modelo; fallos genericos no califican.
-- `status`, `inspect` y eventos estructurados usan codigos seguros (`cursor_usage_limit`) y resumenes breves; no incluyen detalles de facturacion ni stderr completo en salida normal.
-- `recover` valida el fingerprint de contenido parcial (`git/cursor-output/NN.usage-limit-failure.json` en Phase 13, o `git/cursor-output/NN.usage-limit-adopted.json` tras adopcion historica explicita) contra el worktree actual antes de crear un sucesor.
-- El run origen permanece `failed` e inmutable; el sucesor conserva el chat ID y congela el modelo fallback solicitado con `--cursor-model`.
+- La clasificacion usa stderr crudo capturado en artefactos protegidos del scheduler,
+  no el texto resumido de `last_error`.
+- Solo coincide la senal conservadora `ActionRequiredError` con marcadores de limite
+  de uso y cambio de modelo; fallos genericos no califican.
+- `scheduler status` y `scheduler history` usan codigos seguros y resumenes breves;
+  no incluyen detalles de facturacion ni stderr completo en salida normal.
+- Un limite de uso verificado transiciona el run a `waiting_usage_limit`, persiste
+  un fingerprint y programa un timer de reintento; el mismo run continua cuando
+  `scheduler tick` ejecuta tras `wait_until`. No crea un sucesor ni exige
+  `scheduler submit` fresco salvo que el operador decida abandonar el run.
 
-## Proteccion del contrato preparado
+## Proteccion del contrato congelado en submit
 
-`prepare` captura:
+`scheduler submit` congela en el ledger:
 
-- branch;
-- HEAD;
-- baseline Git status;
-- plan aprobado;
-- prompt exacto;
+- la raiz canonica del worktree y su identidad de repositorio;
+- plan aprobado y prompt exacto;
 - configuracion fuente y efectiva;
-- Codex session ID (reviewer) cuando el run ya lo tiene congelado;
-- en runs controller A frescos (schema v2), `codex.session_id` puede ser `null`
-  hasta el primer review; `codex/fresh-reviewer-input.json` congela modelo y
-  reasoning en prepare; `codex/fresh-reviewer-binding.json` registra la identidad
-  exacta de B solo tras un bootstrap read-only exitoso o parcial con evidencia;
-- controller session ID cuando se paso `--controller-session-id`;
-- modelo y reasoning congelados con procedencia `explicit` en runs controller A
-  frescos; en legacy/direct, captura de sesion o overrides explicitos;
-- modelo y reasoning efectivos, con procedencia `session` o `explicit` en runs
-  legacy session-bound;
-- hashes SHA-256.
+- `--controller-session-id`, `--codex-review-model` y
+  `--codex-review-reasoning-effort`;
+- hashes SHA-256 de inputs inmutables.
 
-`start` y `resume` revalidan esos datos antes de mutar. Si plan, prompt, branch, HEAD o baseline cambian inesperadamente, el run falla.
+La admision one-shot de branch, HEAD y estado del worktree (`require_clean_worktree`,
+entre otros) ocurre en el primer tick, no en submit. El scheduler no ejecuta
+comprobaciones continuas de baseline durante los turnos Cursor/Codex posteriores;
+solo revalida los inputs congelados y los checkpoints durablemente registrados.
 
 ## Identidad de agentes
 
 - Un run crea o reutiliza exactamente un Cursor chat ID.
 - Todo review resume la identidad Codex exacta congelada para ese run.
 - En runs controller A frescos, A elige `--codex-review-model` y
-  `--codex-review-reasoning-effort` en `prepare`/`scheduler submit`; no hay
-  fallback desde YAML, sesion preexistente ni default de CLI en review time.
-  El worker crea exactamente un B read-only en el primer review (`codex exec`
-  sin `resume`, sin `--last`), captura su session ID y los reviews posteriores
-  usan `codex exec resume <exact-id>` con el mismo modelo y reasoning congelados.
-- En runs legacy/direct o session-bound historicos, `prepare` congela
-  `--codex-session-id`, captura modelo y reasoning de esa sesion cuando aplica,
-  y cada review usa `codex exec resume <exact-id>`.
+  `--codex-review-reasoning-effort` en `scheduler submit`; no hay fallback desde
+  YAML, sesion preexistente ni default de CLI en review time.
+  El scheduler crea exactamente un B con `codex exec` en `--sandbox read-only` en
+  el primer review, captura su session ID y los reviews posteriores usan
+  `codex exec resume <exact-id>` con el mismo modelo y reasoning congelados.
 - En runs controller A, el controller session ID (A) se persiste solo para
   lookup/control; no se reanuda para review.
 - Controller y reviewer IDs son sensibles: la salida por defecto (`status`, `controller status`, logs humanos) los acorta o muestra prefijos; no imprimas IDs completos en chats compartidos.

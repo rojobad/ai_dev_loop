@@ -104,8 +104,11 @@ def test_structured_errors_can_classify() -> None:
 
 def test_usage_limit_metadata_omits_structured_billing_details() -> None:
     from ai_dev_loop.process import StreamingProcessResult
-    from ai_dev_loop.runners.cursor import CursorExecutionResult, CursorParseResult
-    from ai_dev_loop.workflow_engine import _cursor_metadata_errors
+    from ai_dev_loop.runners.cursor import (
+        CursorExecutionResult,
+        CursorParseResult,
+        cursor_metadata_errors,
+    )
 
     process = StreamingProcessResult(
         args=["agent", "-p", "prompt"],
@@ -133,7 +136,7 @@ def test_usage_limit_metadata_omits_structured_billing_details() -> None:
         failure=failure,
     )
     assert execution.failure.is_usage_limit
-    metadata_errors = _cursor_metadata_errors(execution)
+    metadata_errors = cursor_metadata_errors(execution)
     assert metadata_errors == []
     assert "Billing" not in str(metadata_errors)
     assert "2026-08-01" not in str(metadata_errors)

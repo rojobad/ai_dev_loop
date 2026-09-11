@@ -133,8 +133,8 @@ def test_reused_pgid_with_stale_parent_lock_is_not_signaled(tmp_path: Path) -> N
 
     from datetime import UTC, datetime
 
-    from ai_dev_loop.launcher import read_process_starttime
     from ai_dev_loop.locking import FileLock, LockMetadata, run_lock_path
+    from ai_dev_loop.process import read_process_starttime
 
     script = tmp_path / "sleeper.py"
     script.write_text("import time\ntime.sleep(60)\n", encoding="utf-8")
@@ -251,10 +251,10 @@ def test_is_stale_live_process_signal(tmp_path: Path) -> None:
 
 
 def test_child_execution_aborted_requires_abort_request(tmp_path: Path) -> None:
-    from ai_dev_loop.workflow_engine import _child_execution_aborted
+    from ai_dev_loop.abort_control import child_execution_aborted
 
     run_directory = tmp_path / "run"
     run_directory.mkdir()
-    assert _child_execution_aborted(run_directory, returncode=-15, timed_out=False) is False
+    assert child_execution_aborted(run_directory, returncode=-15, timed_out=False) is False
     write_abort_request(run_directory, run_id="demo-run")
-    assert _child_execution_aborted(run_directory, returncode=-15, timed_out=False) is True
+    assert child_execution_aborted(run_directory, returncode=-15, timed_out=False) is True

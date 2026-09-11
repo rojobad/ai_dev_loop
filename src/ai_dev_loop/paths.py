@@ -54,7 +54,6 @@ def ensure_app_dirs() -> None:
     ensure_dir(config_dir())
     ensure_dir(state_dir())
     ensure_dir(cache_dir())
-    ensure_dir(runs_dir())
 
 
 def set_sensitive_file_mode(path: Path) -> None:
