@@ -111,6 +111,10 @@ La unidad de servicio empaquetada invoca `ai_dev_loop scheduler tick` mediante
 habitual con `uv tool`) mas los directorios binarios del sistema. No ejecuta un
 shell ni lee archivos de perfil interactivos.
 
+La configuración real en WSL (systemd, `linger`, habilitación, actualización,
+verificación y deshabilitación) se documenta en
+[Timer del scheduler en WSL](../operacion/timer-systemd-wsl.md).
+
 ## `controller status`
 
 ```bash

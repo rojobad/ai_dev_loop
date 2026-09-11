@@ -38,6 +38,18 @@ No elimina sesiones de Windows ni archivos rollout.
 
 ## Desinstalar el comando
 
+Antes de retirar el ejecutable, deshabilita y detén el timer si estaba activo:
+
+```bash
+ai_dev_loop scheduler timer disable --output json
+ai_dev_loop scheduler timer status --output json
+```
+
+Esto evita que una unidad systemd habilitada intente ejecutar un comando ya
+desinstalado. `disable` conserva los archivos de unidad owned; consulta
+[Timer del scheduler en WSL](timer-systemd-wsl.md) para el procedimiento
+completo y la decisión independiente sobre `linger`.
+
 Si instalaste con `uv tool`:
 
 ```bash

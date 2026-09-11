@@ -30,3 +30,11 @@ normal orchestrator flow, artifact and state integrity, prohibited side effects,
 and user-visible safety. Do not block acceptance on exhaustive handling of rare
 Git edge cases unless the plan explicitly promises that behavior or the case
 breaks the supported normal workflow.
+
+## Scheduler timer operations
+
+For real workstation setup, enablement, recovery, or removal of the packaged
+user-systemd scheduler timer in WSL, follow
+`docs/operacion/timer-systemd-wsl.md`. Treat timer and WSL lingering changes as
+explicit operator actions; do not perform them during implementation or tests
+unless the active phase and user explicitly authorize real workstation work.

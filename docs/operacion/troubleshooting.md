@@ -435,8 +435,12 @@ systemctl --user status ai-dev-loop-scheduler-tick.timer   # manual; no auto-ena
   artefactos protegidos, no reintentar automaticamente.
 - `waiting_usage_limit` programa `retry_due`; espera `cursor_wait_until` o ejecuta
   `scheduler tick` tras ese instante (solo retry verificado de usage-limit).
-- El timer empaquetado avanza progreso cada ~30s **solo mientras WSL esta activo**;
-  no despierta Windows ni sustituye `scheduler tick` manual en tests.
+- El timer empaquetado es un mecanismo periódico de progreso eventual, no un
+  reloj de tiempo real: aunque el asset solicita intervalos de 30 segundos,
+  systemd puede agrupar o retrasar activaciones. Funciona cuando la distribución
+  WSL está activa; no despierta Windows ni sustituye `scheduler tick` manual en
+  tests. Consulta [Timer del scheduler en WSL](timer-systemd-wsl.md) para
+  `linger`, verificación y límites de ciclo de vida.
 - La aceptacion manual de systemd user units no esta completada hasta validacion
   explicita fuera de CI.
 

@@ -24,6 +24,7 @@ nav:
       - Confianza de hooks: integraciones/confianza-hooks.md
   - Operación:
       - Ejecutar runs: operacion/prepare-start-resume-abort.md
+      - Timer del scheduler en WSL: operacion/timer-systemd-wsl.md
       - Estado, logs e inspección: operacion/observabilidad.md
       - Estado y artefactos: operacion/estado-artefactos.md
       - Seguridad y privacidad: operacion/seguridad-privacidad.md

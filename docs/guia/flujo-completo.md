@@ -56,7 +56,9 @@ ai_dev_loop scheduler start <run-id> --controller-session-id ...
 ai_dev_loop scheduler tick
 ```
 
-O instala y habilita el timer systemd solo tras aceptacion manual independiente.
+O configura el [timer systemd en WSL](../operacion/timer-systemd-wsl.md) solo
+tras aceptacion manual independiente. El runbook incluye los requisitos de
+systemd, `linger`, verificación y límites del ciclo de vida de WSL.
 
 ## 5. Observar y cerrar
 

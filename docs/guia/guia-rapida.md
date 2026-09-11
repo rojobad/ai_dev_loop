@@ -115,8 +115,11 @@ ai_dev_loop scheduler start <run-id> --controller-session-id "<session-id-exacto
 ai_dev_loop scheduler tick
 ```
 
-Durante desarrollo invoca `scheduler tick` manualmente. Para progreso eventual con WSL
-activo, instala y habilita el timer solo tras aceptacion manual independiente:
+Durante desarrollo invoca `scheduler tick` manualmente. Para progreso eventual,
+configura el timer solo tras aceptacion manual independiente. La guía
+[Timer del scheduler en WSL](../operacion/timer-systemd-wsl.md) cubre systemd,
+`linger`, instalación persistente, verificación y recuperación. Los comandos
+de producto son:
 
 ```bash
 ai_dev_loop scheduler timer validate

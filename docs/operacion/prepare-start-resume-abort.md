@@ -122,7 +122,10 @@ ai_dev_loop scheduler timer status
 ai_dev_loop scheduler timer disable
 ```
 
-Solo habilita el timer en produccion tras aceptacion manual independiente.
+Solo habilita el timer en produccion tras aceptacion manual independiente. Para
+los requisitos de WSL/systemd, `linger`, persistencia tras reiniciar la
+distribucion, observabilidad, actualizaciones y desinstalacion, sigue
+[Timer del scheduler en WSL](timer-systemd-wsl.md).
 
 La unidad de servicio fija un `PATH` acotado con `%h/.local/bin` para localizar el
 CLI instalado con `uv tool` desde un entorno systemd minimo, sin shell ni perfiles

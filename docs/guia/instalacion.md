@@ -55,6 +55,14 @@ uv tool install --force dist/ai_dev_loop-0.1.0-py3-none-any.whl
 
 `pipx install .` es una alternativa valida si ya usas `pipx`, pero en este proyecto `uv` es la ruta recomendada porque puede administrar Python 3.11+ sin tocar `/usr/bin/python3`.
 
+## Timer persistente del scheduler en WSL
+
+La instalación del comando no habilita ejecuciones automáticas. Para configurar
+el timer de usuario systemd, incluyendo requisitos de WSL, `linger`, verificación
+después de un reinicio, actualización y deshabilitación segura, sigue
+[Timer del scheduler en WSL](../operacion/timer-systemd-wsl.md). Es una acción
+operativa explícita y separada de `submit` o `scheduler tick`.
+
 ## Validacion local
 
 ```bash
