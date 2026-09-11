@@ -35,7 +35,11 @@ from ai_dev_loop.scheduler.application.fake_attempt_backend import (
     FakeAgentProcessBackend,
     FakeAttemptScenario,
 )
-from ai_dev_loop.scheduler.application.systemd_backend import SystemdUserBackend
+from ai_dev_loop.scheduler.application.systemd_backend import (
+    ATTEMPT_FINALIZATION_GRACE_SECONDS,
+    ATTEMPT_STOP_GRACE_SECONDS,
+    SystemdUserBackend,
+)
 from ai_dev_loop.scheduler.application.systemd_show import observe_from_show, parse_systemctl_show
 from ai_dev_loop.scheduler.domain.events import RunSubmittedEvent
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
@@ -253,6 +257,29 @@ def test_safe_unit_identity_and_lock_path(tmp_path: Path, monkeypatch: pytest.Mo
     assert argv[4] == "python"
 
 
+def test_systemd_launch_rejects_invalid_stop_grace_seconds(tmp_path: Path) -> None:
+    attempt_id = "att-" + "a" * 32
+    unit = unit_identity_from_attempt_id(attempt_id)
+    backend = SystemdUserBackend(
+        runner=lambda *a, **k: ProcessResult(args=[], returncode=0, stdout="", stderr=""),
+        stop_grace_seconds=0,
+    )
+    with pytest.raises(ValueError, match="stop_grace_seconds must be a positive integer"):
+        backend.launch(
+            LaunchRequest(
+                attempt_id=attempt_id,
+                unit_identity=unit,
+                working_directory=tmp_path,
+                agent_argv=["true"],
+                lock_path=tmp_path / "lock",
+                stdout_path=tmp_path / "stdout.txt",
+                stderr_path=tmp_path / "stderr.txt",
+                result_envelope_path=tmp_path / "result.json",
+                execution_timeout_seconds=5400,
+            )
+        )
+
+
 def test_systemd_launch_argv_shape(tmp_path: Path) -> None:
     calls: list[list[str]] = []
 
@@ -260,10 +287,12 @@ def test_systemd_launch_argv_shape(tmp_path: Path) -> None:
         calls.append(list(args))
         return ProcessResult(args=list(args), returncode=0, stdout="", stderr="")
 
-    backend = SystemdUserBackend(runner=runner, attempt_runtime_seconds=120)
+    backend = SystemdUserBackend(runner=runner)
     attempt_id = "att-" + "c" * 32
     unit = unit_identity_from_attempt_id(attempt_id)
     lock = tmp_path / "lock.file"
+    execution_timeout_seconds = 5400
+    runtime_envelope = execution_timeout_seconds + ATTEMPT_FINALIZATION_GRACE_SECONDS
     request = backend.build_agent_argv(
         run_id="run-1",
         attempt_id=attempt_id,
@@ -280,6 +309,7 @@ def test_systemd_launch_argv_shape(tmp_path: Path) -> None:
             stdout_path=tmp_path / "stdout.txt",
             stderr_path=tmp_path / "stderr.txt",
             result_envelope_path=tmp_path / "result.json",
+            execution_timeout_seconds=execution_timeout_seconds,
         )
     )
     assert calls
@@ -288,8 +318,9 @@ def test_systemd_launch_argv_shape(tmp_path: Path) -> None:
     assert "--user" in argv
     assert f"--unit={unit}" in argv
     assert "--property=RemainAfterExit=yes" in argv
-    assert "--property=RuntimeMaxSec=120" in argv
-    assert "--property=TimeoutStopSec=120" in argv
+    assert f"--property=RuntimeMaxSec={runtime_envelope}" in argv
+    assert f"--property=TimeoutStartSec={runtime_envelope}" in argv
+    assert f"--property=TimeoutStopSec={ATTEMPT_STOP_GRACE_SECONDS}" in argv
     assert "--collect" not in argv
     flock_index = argv.index("flock")
     assert argv[flock_index : flock_index + 4] == ["flock", "--exclusive", "--nonblock", str(lock)]
@@ -377,6 +408,7 @@ def test_systemd_observe_timeout_and_stop_failure(tmp_path: Path) -> None:
             stdout_path=tmp_path / "stdout.txt",
             stderr_path=tmp_path / "stderr.txt",
             result_envelope_path=tmp_path / "result.json",
+            execution_timeout_seconds=5400,
         )
     )
 
@@ -461,6 +493,7 @@ def test_fake_backend_lifecycle_matrix(tmp_path: Path) -> None:
         stdout_path=tmp_path / "stdout.txt",
         stderr_path=tmp_path / "stderr.txt",
         result_envelope_path=tmp_path / "result.json",
+        execution_timeout_seconds=5400,
     )
     backend.launch(request)
     first = backend.observe(unit_identity=unit, attempt_id=attempt_id)
@@ -586,6 +619,7 @@ def test_terminal_evidence_survives_missing_unit(tmp_path: Path) -> None:
         stdout_path=tmp_path / "stdout.txt",
         stderr_path=tmp_path / "stderr.txt",
         result_envelope_path=tmp_path / "result.json",
+        execution_timeout_seconds=5400,
     )
     backend.launch(request)
     completed = backend.observe(unit_identity=unit, attempt_id=attempt_id)
@@ -652,6 +686,7 @@ def test_malformed_envelope_stays_uncertain_without_capacity_release(tmp_path: P
         stdout_path=stdout_path,
         stderr_path=stderr_path,
         result_envelope_path=result_path,
+        execution_timeout_seconds=5400,
     )
     second = tick.run_once()
     assert any(item.action == "attempt_uncertain" for item in second.run_receipts)
@@ -941,6 +976,7 @@ def test_finished_without_verified_result_stays_uncertain_when_unit_disappears(
         stdout_path=stdout_path,
         stderr_path=stderr_path,
         result_envelope_path=result_path,
+        execution_timeout_seconds=5400,
     )
 
     tick_b = _tick_service_unique_events(
@@ -1216,6 +1252,7 @@ def test_invalid_envelope_service_records_uncertain_without_releasing_capacity(
         stdout_path=stdout_path,
         stderr_path=stderr_path,
         result_envelope_path=result_path,
+        execution_timeout_seconds=5400,
     )
     second = tick.run_once()
     assert any(item.action == "attempt_uncertain" for item in second.run_receipts)

@@ -127,6 +127,12 @@ ultra
 | `cursor_timeout_minutes` | `90` | Timeout por turno Cursor. |
 | `codex_timeout_minutes` | `90` | Timeout por review Codex. |
 
+Los valores congelados de `cursor_timeout_minutes` y `codex_timeout_minutes` en el
+contexto submitido tambien forman el presupuesto de ejecucion de cada unidad
+transitoria del scheduler (`RuntimeMaxSec` / `TimeoutStartSec`), mas una gracia
+interna acotada de finalizacion. No los sustituye un default generico de una hora
+del backend systemd.
+
 ## `prompt`
 
 | Campo | Default | Descripcion |

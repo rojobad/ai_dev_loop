@@ -308,6 +308,81 @@ def test_bounded_streaming_preserves_utf8_across_read_boundaries(tmp_path: Path)
     assert stderr_path.read_text(encoding="utf-8") == expected
 
 
+def test_bounded_streaming_terminates_on_stdout_limit_without_timeout(tmp_path: Path) -> None:
+    script = tmp_path / "huge_stdout.py"
+    script.write_text(
+        "import sys\nsys.stdout.write('x' * 500000)\n",
+        encoding="utf-8",
+    )
+    result = run_process_streaming(
+        [sys.executable, str(script)],
+        max_stdout_bytes=256 * 1024,
+        max_stderr_bytes=256 * 1024,
+    )
+    assert result.timed_out is False
+    assert result.stdout_truncated is True
+    assert result.returncode == 2
+    assert result.stdout_captured_bytes <= 256 * 1024
+
+
+def test_bounded_streaming_drain_after_limit_preserves_exit_code(tmp_path: Path) -> None:
+    script = tmp_path / "huge_then_exit.py"
+    script.write_text(
+        "import sys\nsys.stdout.write('y' * 500000)\nprint('done', file=sys.stderr)\n",
+        encoding="utf-8",
+    )
+    result = run_process_streaming(
+        [sys.executable, str(script)],
+        max_stdout_bytes=256 * 1024,
+        max_stderr_bytes=256 * 1024,
+        drain_after_limit=True,
+    )
+    assert result.timed_out is False
+    assert result.stdout_truncated is True
+    assert result.returncode == 0
+    assert result.stderr == "done\n"
+    assert result.stdout_captured_bytes <= 256 * 1024
+
+
+def test_bounded_streaming_drain_after_limit_still_times_out(tmp_path: Path) -> None:
+    script = tmp_path / "overflow_then_stall.py"
+    script.write_text(
+        "import sys, time\nsys.stdout.write('z' * 500000)\ntime.sleep(30)\n",
+        encoding="utf-8",
+    )
+    start = time.monotonic()
+    result = run_process_streaming(
+        [sys.executable, str(script)],
+        timeout=0.5,
+        max_stdout_bytes=256 * 1024,
+        max_stderr_bytes=256 * 1024,
+        drain_after_limit=True,
+    )
+    elapsed = time.monotonic() - start
+    assert result.timed_out is True
+    assert result.stdout_truncated is True
+    assert elapsed < 5.0
+
+
+def test_bounded_streaming_retains_partial_chunk_at_exact_limit(tmp_path: Path) -> None:
+    payload = "a" * 260
+    script = tmp_path / "exact_limit.py"
+    script.write_text(
+        f"import sys\nsys.stdout.buffer.write({payload.encode('utf-8')!r})\n",
+        encoding="utf-8",
+    )
+    result = run_process_streaming(
+        [sys.executable, str(script)],
+        max_stdout_bytes=256,
+        max_stderr_bytes=256 * 1024,
+        drain_after_limit=True,
+    )
+    assert result.returncode == 0
+    assert result.stdout_truncated is True
+    assert result.stdout_captured_bytes == 256
+    assert result.stdout == "a" * 256
+
+
 def test_bounded_streaming_terminates_child_on_unexpected_capture_exception(
     tmp_path: Path,
 ) -> None:

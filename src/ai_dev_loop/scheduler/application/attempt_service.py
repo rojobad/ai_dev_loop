@@ -997,6 +997,16 @@ class AttemptService:
                 return TickRunReceipt(run_id=run_id, action="attempt_state_changed")
             repository_root = Path(str(state.context.repository.root))
             worktree_key = state.context.repository.worktree_key
+            if codex_attempt:
+                execution_timeout_seconds = state.context.workflow.codex_timeout_minutes * 60
+            else:
+                execution_timeout_seconds = state.context.workflow.cursor_timeout_minutes * 60
+            if execution_timeout_seconds <= 0:
+                return TickRunReceipt(
+                    run_id=run_id,
+                    action="attempt_launch_blocked",
+                    detail=attempt_id,
+                )
         lock_path = worktree_lock_path(scheduler_state_dir(), worktree_key)
         launch_intent_sha256: str | None = None
         launch_nonce: str | None = None
@@ -1110,6 +1120,7 @@ class AttemptService:
             stdout_path=stdout_path,
             stderr_path=stderr_path,
             result_envelope_path=result_path,
+            execution_timeout_seconds=execution_timeout_seconds,
         )
         observation = self.backend.observe(unit_identity=unit_identity, attempt_id=attempt_id)
         if observation.lifecycle_state == UnitLifecycleState.UNAVAILABLE:

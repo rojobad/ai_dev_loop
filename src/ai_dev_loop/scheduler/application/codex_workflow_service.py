@@ -252,6 +252,37 @@ class CodexWorkflowService:
                 summary="authenticated codex outcome failed validation",
             )
 
+        uncertainty = str(outcome.get("bootstrap_uncertainty_reason", "")).strip()
+        if uncertainty:
+            return self._handle_bootstrap_uncertainty(
+                run_id,
+                attempt_id=attempt_id,
+                uncertainty_reason=uncertainty,
+                outcome=outcome,
+            )
+
+        if outcome.get("timed_out"):
+            return self._block_review(
+                run_id,
+                attempt_id=attempt_id,
+                reason_kind="codex_review_timeout",
+                summary="codex review timed out before producing a valid schema result",
+            )
+
+        review_block_reason = str(outcome.get("review_block_reason", "")).strip()
+        if review_block_reason:
+            summary = (
+                "codex review output truncated before a valid schema result"
+                if review_block_reason == "codex_review_output_truncated"
+                else "codex review blocked before producing a valid schema result"
+            )
+            return self._block_review(
+                run_id,
+                attempt_id=attempt_id,
+                reason_kind=review_block_reason,
+                summary=summary,
+            )
+
         failure_kind = str(outcome.get("failure_kind", "")).strip()
         if failure_kind or outcome.get("parse_ok") is False:
             stderr_rel = str(attempt["stderr_artifact_path"])  # type: ignore[index]
@@ -288,15 +319,7 @@ class CodexWorkflowService:
             review_iteration = int(payload.get("review_iteration", state.cursor.iteration))
             effect_kind = str(outcome.get("effect_kind", ""))
 
-        uncertainty = str(outcome.get("bootstrap_uncertainty_reason", "")).strip()
-        if uncertainty:
-            return self._handle_bootstrap_uncertainty(
-                run_id,
-                attempt_id=attempt_id,
-                uncertainty_reason=uncertainty,
-                outcome=outcome,
-            )
-
+        output_truncated = bool(outcome.get("stdout_truncated") or outcome.get("stderr_truncated"))
         bootstrap_session_id = str(outcome.get("bootstrap_session_id", "")).strip()
         if effect_kind == BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND and bootstrap_session_id:
             with self.store.begin_read() as conn:
@@ -322,6 +345,20 @@ class CodexWorkflowService:
             )
             review = load_validated_review_result(run_root, outcome)
         except CodexEvidenceError as exc:
+            if outcome.get("timed_out"):
+                return self._block_review(
+                    run_id,
+                    attempt_id=attempt_id,
+                    reason_kind="codex_review_timeout",
+                    summary="codex review timed out before producing a valid schema result",
+                )
+            if output_truncated:
+                return self._block_review(
+                    run_id,
+                    attempt_id=attempt_id,
+                    reason_kind="codex_review_output_truncated",
+                    summary="codex review output truncated before a valid schema result",
+                )
             return self._block_review(
                 run_id,
                 attempt_id=attempt_id,

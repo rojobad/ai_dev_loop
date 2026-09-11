@@ -414,3 +414,31 @@ systemctl --user status ai-dev-loop-scheduler-tick.timer   # manual; no auto-ena
   no despierta Windows ni sustituye `scheduler tick` manual en tests.
 - La aceptacion manual de systemd user units no esta completada hasta validacion
   explicita fuera de CI.
+
+## Codex: artefacto de eventos alcanzo su limite acotado
+
+Sintoma:
+
+- un intento Codex del scheduler termina con `block_reason_kind:
+  codex_review_output_truncated`, o los metadatos protegidos del review muestran
+  `stdout_truncated: true` / `stderr_truncated: true`;
+- el run queda `blocked` aunque el proceso Codex haya salido con exito aparente.
+
+Causa:
+
+- la traza JSONL de eventos supero el limite duro de captura (8 MiB) antes de
+  producir un resultado de review valido segun el esquema;
+- la truncacion de salida es distinta de un timeout real (`timed_out` solo indica
+  vencimiento del plazo congelado).
+
+Accion segura:
+
+1. Inspecciona solo resumenes seguros: `scheduler status`, `scheduler history`,
+   rutas de artefactos en metadatos protegidos (`codex/reviews/NN.metadata.json`).
+   No copies trazas JSONL completas, prompts ni IDs de sesion en tickets.
+2. Si el review no puede validarse tras truncacion, el run queda bloqueado de
+   forma no reanudable para ese intento de review; no se crea un segundo reviewer B.
+3. Tras instalar la correccion, presenta un `scheduler submit` fresco con un
+   reviewer B nuevo si necesitas repetir el ciclo. Un run ya bloqueado antes del
+   fix no se repara automaticamente.
+4. Un timeout real de Codex sigue clasificandose como timeout, no como truncacion.

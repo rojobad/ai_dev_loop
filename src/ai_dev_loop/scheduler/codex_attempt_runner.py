@@ -327,6 +327,7 @@ def _run_codex_review(
         sensitive=True,
         max_stdout_bytes=MAX_CODEX_CAPTURE_STDOUT_BYTES,
         max_stderr_bytes=MAX_CODEX_CAPTURE_STDERR_BYTES,
+        drain_after_limit=True,
     )
 
     bootstrap_session_id: str | None = None
@@ -371,12 +372,17 @@ def _run_codex_review(
             atomic_write_text(run_root / envelope_rel, envelope_text, sensitive=True)
             envelope_sha = sha256_bytes(envelope_text.encode("utf-8"))
 
+    output_truncated = process.stdout_truncated or process.stderr_truncated
     metadata = {
         "args_redacted": redact_codex_args(args),
         "review_mode": review_mode,
         "exit_code": process.returncode,
         "timed_out": process.timed_out,
         "elapsed_seconds": process.elapsed_seconds,
+        "stdout_truncated": process.stdout_truncated,
+        "stderr_truncated": process.stderr_truncated,
+        "stdout_captured_bytes": process.stdout_captured_bytes,
+        "stderr_captured_bytes": process.stderr_captured_bytes,
         "bootstrap_session_id_prefix": (bootstrap_session_id or "")[:8] or None,
         "bootstrap_uncertainty_reason": bootstrap_uncertainty,
         "review_error": review_error,
@@ -392,6 +398,9 @@ def _run_codex_review(
         "review_mode": review_mode,
         "returncode": process.returncode,
         "timed_out": process.timed_out,
+        "stdout_truncated": process.stdout_truncated,
+        "stderr_truncated": process.stderr_truncated,
+        "review_output_truncated": output_truncated,
         "events_path": events_rel,
         "stderr_path": stderr_rel,
         "review_result_path": result_rel,
@@ -469,9 +478,14 @@ def main(argv: list[str] | None = None) -> int:
                 returncode = 0
             if returncode != 0:
                 exit_code = returncode
-            elif codex_outcome.get("bootstrap_uncertainty_reason") or not codex_outcome.get(
+            elif codex_outcome.get("bootstrap_uncertainty_reason"):
+                exit_code = 2
+            elif codex_outcome.get("review_output_truncated") and not codex_outcome.get(
                 "review_result_sha256"
             ):
+                codex_outcome["review_block_reason"] = "codex_review_output_truncated"
+                exit_code = 2
+            elif not codex_outcome.get("review_result_sha256"):
                 exit_code = 2
             else:
                 try:
@@ -480,12 +494,18 @@ def main(argv: list[str] | None = None) -> int:
                         not result_artifact.is_file()
                         or result_artifact.stat().st_size > MAX_CODEX_REVIEW_RESULT_BYTES
                     ):
+                        if codex_outcome.get("review_output_truncated"):
+                            codex_outcome["review_block_reason"] = "codex_review_output_truncated"
                         exit_code = 2
                     else:
                         raw = read_bounded_bytes(result_artifact, MAX_CODEX_REVIEW_RESULT_BYTES)
                         payload = json.loads(raw.decode("utf-8"))
                         CodexReviewResult.model_validate(payload)
+                        if codex_outcome.get("review_output_truncated"):
+                            codex_outcome.pop("review_block_reason", None)
                 except Exception:
+                    if codex_outcome.get("review_output_truncated"):
+                        codex_outcome["review_block_reason"] = "codex_review_output_truncated"
                     exit_code = 2
     except Exception as exc:
         return _write_attempt_artifacts(

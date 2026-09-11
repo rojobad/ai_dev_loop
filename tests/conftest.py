@@ -749,6 +749,43 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                         handle.write("not-json")
                 print(json.dumps({{"type": "message", "content": "invalid"}}))
                 sys.exit(0)
+            if mode in {{"large_jsonl", "large_jsonl_no_result"}}:
+                fill_bytes = int(
+                    os.environ.get(
+                        "FAKE_CODEX_JSONL_FILL_BYTES",
+                        str(9 * 1024 * 1024),
+                    )
+                )
+                if "resume" not in args:
+                    bootstrap_id = os.environ.get(
+                        "FAKE_CODEX_BOOTSTRAP_SESSION_ID",
+                        "019def00-0000-0000-0000-0000000000bb",
+                    )
+                    print(
+                        json.dumps({{"type": "thread.started", "thread_id": bootstrap_id}}),
+                        flush=True,
+                    )
+                filler_line = json.dumps({{"type": "message", "content": "fill"}}) + "\\n"
+                line_bytes = len(filler_line.encode("utf-8"))
+                for _ in range((fill_bytes // line_bytes) + 1):
+                    print(filler_line, end="", flush=True)
+                if mode == "large_jsonl_no_result":
+                    time.sleep(float(os.environ.get("FAKE_CODEX_SLEEP_SECONDS", "30")))
+                    sys.exit(0)
+                result = {{
+                    "has_actionable_findings": False,
+                    "findings_count": 0,
+                    "highest_severity": None,
+                    "review_markdown": "# Review\\n\\nNo issues found.",
+                    "cursor_fix_prompt": None,
+                    "tests_status": "passed",
+                    "summary": "No actionable findings.",
+                }}
+                if output_last_message:
+                    with open(output_last_message, "w", encoding="utf-8") as handle:
+                        json.dump(result, handle)
+                print(json.dumps({{"type": "message", "content": "review complete"}}))
+                sys.exit(0)
             if mode == "findings":
                 result = {{
                     "has_actionable_findings": True,

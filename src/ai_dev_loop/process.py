@@ -76,6 +76,10 @@ class StreamingProcessResult:
     stderr: str
     timed_out: bool
     elapsed_seconds: float
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
+    stdout_captured_bytes: int = 0
+    stderr_captured_bytes: int = 0
 
 
 def _set_nonblocking(fd: int) -> None:
@@ -102,26 +106,51 @@ class _BoundedTextCapture:
         self._handle = handle
         self._limit = limit
         self._total = 0
+        self._truncated = False
         self._decoder = codecs.getincrementaldecoder("utf-8")()
 
-    def append(self, piece: bytes) -> bool:
+    @property
+    def truncated(self) -> bool:
+        return self._truncated
+
+    @property
+    def captured_bytes(self) -> int:
+        return self._total
+
+    def append(self, piece: bytes, *, drain_after_limit: bool = False) -> bool:
+        """Return True when the caller must stop and terminate (default limit policy)."""
         if not piece:
             return False
-        new_total = self._total + len(piece)
-        if self._limit is not None and new_total > self._limit:
-            return True
-        self._total = new_total
-        text = self._decoder.decode(piece, final=False)
+        if self._limit is None:
+            self._total += len(piece)
+            text = self._decoder.decode(piece, final=False)
+            self._emit(text)
+            return False
+        if self._total >= self._limit:
+            self._truncated = True
+            return not drain_after_limit
+        remaining = self._limit - self._total
+        if len(piece) <= remaining:
+            self._total += len(piece)
+            text = self._decoder.decode(piece, final=False)
+            self._emit(text)
+            return False
+        retained = piece[:remaining]
+        self._total = self._limit
+        self._truncated = True
+        text = self._decoder.decode(retained, final=False)
         self._emit(text)
-        return False
+        return not drain_after_limit
 
-    def finalize(self) -> bool:
+    def finalize(self, *, drain_after_limit: bool = False) -> bool:
+        if self._truncated and drain_after_limit:
+            return False
         try:
             text = self._decoder.decode(b"", final=True)
         except UnicodeDecodeError:
             text = "\ufffd"
         self._emit(text)
-        return False
+        return self._truncated and not drain_after_limit
 
     def _emit(self, text: str) -> None:
         if not text:
@@ -168,7 +197,8 @@ def _capture_bounded_streams(
     stderr_chunks: list[str],
     stdout_handle: IO[str] | None,
     stderr_handle: IO[str] | None,
-) -> tuple[bool, bool]:
+    drain_after_limit: bool = False,
+) -> tuple[bool, bool, bool, bool]:
     """Multiplex stdin/stdout/stderr under one deadline with byte limits and EOF draining."""
 
     assert proc.stdout is not None
@@ -192,7 +222,7 @@ def _capture_bounded_streams(
     stdout_eof = False
     stderr_eof = False
     timed_out = False
-    overflow = False
+    limit_terminate = False
     stdout_capture = _BoundedTextCapture(stdout_chunks, stdout_handle, max_stdout_bytes)
     stderr_capture = _BoundedTextCapture(stderr_chunks, stderr_handle, max_stderr_bytes)
 
@@ -206,32 +236,36 @@ def _capture_bounded_streams(
         stdin_fd = None
 
     def _consume_stdout(piece: bytes, *, eof: bool) -> bool:
-        nonlocal stdout_eof, overflow
+        nonlocal stdout_eof, limit_terminate
         if eof:
             stdout_eof = True
-            if stdout_capture.finalize():
-                overflow = True
+            if stdout_capture.finalize(drain_after_limit=drain_after_limit):
+                limit_terminate = True
                 return True
             return False
         if not piece:
             return False
-        if stdout_capture.append(piece):
-            overflow = True
+        if drain_after_limit and stdout_capture.truncated:
+            return False
+        if stdout_capture.append(piece, drain_after_limit=drain_after_limit):
+            limit_terminate = True
             return True
         return False
 
     def _consume_stderr(piece: bytes, *, eof: bool) -> bool:
-        nonlocal stderr_eof, overflow
+        nonlocal stderr_eof, limit_terminate
         if eof:
             stderr_eof = True
-            if stderr_capture.finalize():
-                overflow = True
+            if stderr_capture.finalize(drain_after_limit=drain_after_limit):
+                limit_terminate = True
                 return True
             return False
         if not piece:
             return False
-        if stderr_capture.append(piece):
-            overflow = True
+        if drain_after_limit and stderr_capture.truncated:
+            return False
+        if stderr_capture.append(piece, drain_after_limit=drain_after_limit):
+            limit_terminate = True
             return True
         return False
 
@@ -289,7 +323,7 @@ def _capture_bounded_streams(
                                 break
                             if eof or not piece:
                                 break
-                if overflow:
+                if limit_terminate:
                     break
                 for fd in writable:
                     if fd == stdin_fd and stdin_fd is not None and not stdin_closed:
@@ -306,10 +340,10 @@ def _capture_bounded_streams(
             else:
                 time.sleep(_select_timeout(deadline))
 
-            if overflow:
+            if limit_terminate:
                 break
 
-        if not timed_out and not overflow:
+        if not timed_out and not limit_terminate:
             while not (stdout_eof and stderr_eof):
                 if deadline is not None and time.monotonic() > deadline:
                     timed_out = True
@@ -323,12 +357,17 @@ def _capture_bounded_streams(
         _terminate_process_group(proc)
         raise
 
-    if timed_out or overflow:
+    if timed_out or limit_terminate:
         _terminate_process_group(proc)
     elif not stdin_closed:
         _close_stdin_input()
 
-    return timed_out, overflow
+    return (
+        timed_out,
+        stdout_capture.truncated,
+        stderr_capture.truncated,
+        limit_terminate,
+    )
 
 
 def _open_capture_file(path: Path, *, sensitive: bool) -> IO[str]:
@@ -459,6 +498,7 @@ def run_process_streaming(
     active_process: ActiveProcessRegistration | None = None,
     max_stdout_bytes: int | None = None,
     max_stderr_bytes: int | None = None,
+    drain_after_limit: bool = False,
 ) -> StreamingProcessResult:
     """Run a subprocess in its own process group with optional artifact capture."""
     start = time.monotonic()
@@ -531,7 +571,9 @@ def run_process_streaming(
                 ) from exc
 
     timed_out = False
-    output_overflow = False
+    stdout_truncated = False
+    stderr_truncated = False
+    limit_terminate = False
     handles_already_written = False
     returncode = 1
     clear_reason = "completed"
@@ -542,7 +584,12 @@ def run_process_streaming(
         if max_stdout_bytes is not None or max_stderr_bytes is not None:
             handles_already_written = stdout_handle is not None or stderr_handle is not None
             try:
-                timed_out, output_overflow = _capture_bounded_streams(
+                (
+                    timed_out,
+                    stdout_truncated,
+                    stderr_truncated,
+                    limit_terminate,
+                ) = _capture_bounded_streams(
                     proc,
                     stdin_text=stdin_text,
                     timeout=timeout,
@@ -552,6 +599,7 @@ def run_process_streaming(
                     stderr_chunks=stderr_chunks,
                     stdout_handle=stdout_handle,
                     stderr_handle=stderr_handle,
+                    drain_after_limit=drain_after_limit,
                 )
             except Exception:
                 if proc.poll() is None:
@@ -569,11 +617,12 @@ def run_process_streaming(
             except subprocess.TimeoutExpired:
                 _terminate_process_group(proc)
                 proc.wait(timeout=5)
-            returncode = (
-                proc.returncode if proc.returncode is not None else (124 if timed_out else 1)
-            )
-            if output_overflow:
+            if limit_terminate and not timed_out:
                 returncode = 2
+            else:
+                returncode = (
+                    proc.returncode if proc.returncode is not None else (124 if timed_out else 1)
+                )
         else:
             try:
                 if timeout is None:
@@ -614,13 +663,19 @@ def run_process_streaming(
                 set_sensitive_file_mode(stderr_path)
 
     elapsed = time.monotonic() - start
+    stdout_bytes = len(stdout_text.encode("utf-8"))
+    stderr_bytes = len(stderr_text.encode("utf-8"))
     return StreamingProcessResult(
         args=list(args),
-        returncode=returncode if not output_overflow else 2,
+        returncode=returncode,
         stdout=stdout_text,
         stderr=stderr_text,
-        timed_out=timed_out or output_overflow,
+        timed_out=timed_out,
         elapsed_seconds=elapsed,
+        stdout_truncated=stdout_truncated,
+        stderr_truncated=stderr_truncated,
+        stdout_captured_bytes=stdout_bytes,
+        stderr_captured_bytes=stderr_bytes,
     )
 
 

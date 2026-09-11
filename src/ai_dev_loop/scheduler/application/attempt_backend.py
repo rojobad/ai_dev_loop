@@ -34,6 +34,7 @@ class LaunchRequest:
     stdout_path: Path
     stderr_path: Path
     result_envelope_path: Path
+    execution_timeout_seconds: int
 
 
 @dataclass(frozen=True)

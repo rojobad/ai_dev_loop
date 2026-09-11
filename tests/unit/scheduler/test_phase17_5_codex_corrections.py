@@ -21,7 +21,7 @@ from ai_dev_loop.iterations import (
     correction_execution_envelope_path,
     fix_prompt_path,
 )
-from ai_dev_loop.process import run_process_streaming
+from ai_dev_loop.process import StreamingProcessResult, run_process_streaming
 from ai_dev_loop.scheduler.application.codex_argv import (
     build_scheduler_codex_bootstrap_args,
     build_scheduler_codex_resume_args,
@@ -33,6 +33,7 @@ from ai_dev_loop.scheduler.application.codex_evidence import (
     verify_codex_invocation_evidence,
     verify_pre_execution_codex_guards,
 )
+from ai_dev_loop.scheduler.application.codex_workflow_service import CodexWorkflowService
 from ai_dev_loop.scheduler.application.cursor_evidence import (
     CursorEvidenceError,
     invocation_evidence_sha256,
@@ -50,6 +51,7 @@ from ai_dev_loop.scheduler.domain.codex_contract import (
     BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND,
     MAX_CODEX_CAPTURE_STDERR_BYTES,
     MAX_CODEX_CAPTURE_STDOUT_BYTES,
+    MAX_CODEX_EVENTS_ARTIFACT_BYTES,
     SCHEDULER_CODEX_BINDING_ARTIFACT,
     SCHEDULER_CODEX_REVIEW_SANDBOX,
 )
@@ -388,12 +390,13 @@ def test_bounded_process_capture_terminates_on_stdout_overflow(tmp_path: Path) -
     )
     result = run_process_streaming(
         ["python3", str(script)],
-        max_stdout_bytes=MAX_CODEX_CAPTURE_STDOUT_BYTES,
+        max_stdout_bytes=256 * 1024,
         max_stderr_bytes=MAX_CODEX_CAPTURE_STDERR_BYTES,
     )
-    assert result.timed_out
+    assert result.timed_out is False
+    assert result.stdout_truncated is True
     assert result.returncode == 2
-    assert len(result.stdout.encode("utf-8")) <= MAX_CODEX_CAPTURE_STDOUT_BYTES + 4096
+    assert result.stdout_captured_bytes <= 256 * 1024
 
 
 def test_envelope_replacement_after_waiting_for_cursor_fix_blocks(
@@ -710,3 +713,314 @@ def test_invalid_review_json_blocks_without_sensitive_payload(
                 assert "cursor_fix_prompt" not in state.block_reason_summary
                 return
     pytest.fail("expected blocked run after invalid review JSON")
+
+
+def test_codex_capture_stdout_limit_matches_events_artifact_bound() -> None:
+    assert MAX_CODEX_CAPTURE_STDOUT_BYTES == MAX_CODEX_EVENTS_ARTIFACT_BYTES
+
+
+def test_launch_request_uses_frozen_ninety_minute_cursor_timeout(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    run_id = _submit(git_repo, scheduler_paths)
+    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    backend = FakeAgentProcessBackend(
+        default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
+    )
+    tick = _tick_service(
+        git_repo,
+        scheduler_paths,
+        now=datetime(2026, 9, 9, 18, 45, tzinfo=UTC),
+        backend=backend,
+    )
+    for _ in range(30):
+        tick.run_once()
+        cursor_launches = [
+            call
+            for call in backend.launch_calls
+            if any("cursor_attempt_runner" in part for part in call.agent_argv)
+        ]
+        if cursor_launches:
+            assert cursor_launches[0].execution_timeout_seconds == 90 * 60
+            return
+    pytest.fail("expected a cursor attempt launch")
+
+
+def test_launch_request_uses_frozen_ninety_minute_codex_timeout(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
+    monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "no_findings")
+    run_id = _submit(git_repo, scheduler_paths)
+    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    backend = FakeAgentProcessBackend(
+        default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
+    )
+    tick = _tick_service(
+        git_repo,
+        scheduler_paths,
+        now=datetime(2026, 9, 9, 19, 0, tzinfo=UTC),
+        backend=backend,
+    )
+    _run_until(tick, run_id, target_kind="awaiting_codex_review", max_ticks=30)
+    tick.run_once()
+    codex_launches = [
+        call
+        for call in backend.launch_calls
+        if any("codex_attempt_runner" in part for part in call.agent_argv)
+    ]
+    assert codex_launches, "expected a codex attempt launch"
+    assert codex_launches[0].execution_timeout_seconds == 90 * 60
+
+
+def test_large_jsonl_truncation_still_completes_valid_review(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
+    monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "large_jsonl")
+    run_id = _submit(git_repo, scheduler_paths)
+    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    backend = FakeAgentProcessBackend(
+        default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
+    )
+    tick = _tick_service(
+        git_repo,
+        scheduler_paths,
+        now=datetime(2026, 9, 9, 19, 30, tzinfo=UTC),
+        backend=backend,
+    )
+    _run_until(tick, run_id, target_kind="completed", max_ticks=40)
+    run_root = run_artifact_root(scheduler_paths["artifact_root"], run_id)
+    events_files = list((run_root / "codex" / "events").glob("01.*.jsonl"))
+    assert events_files, "expected codex events artifact"
+    assert events_files[0].stat().st_size <= MAX_CODEX_EVENTS_ARTIFACT_BYTES
+    metadata_path = run_root / "codex" / "reviews" / "01.metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert metadata.get("stdout_truncated") is True
+    codex_log = Path(fake_clis["codex_log"]).read_text(encoding="utf-8")
+    bootstrap_count = sum(
+        1 for line in codex_log.splitlines() if line.startswith("ARGS:") and "'resume'" not in line
+    )
+    assert bootstrap_count == 1
+    with tick.store.begin_read() as conn:
+        state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
+        assert state.codex.reviewer_session_id == BOOTSTRAP_ID
+
+
+def test_large_jsonl_without_valid_result_blocks_with_truncated_reason(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
+    monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "large_jsonl_no_result")
+    run_id = _submit(git_repo, scheduler_paths)
+    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    backend = FakeAgentProcessBackend(
+        default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
+    )
+    tick = _tick_service(
+        git_repo,
+        scheduler_paths,
+        now=datetime(2026, 9, 9, 20, 0, tzinfo=UTC),
+        backend=backend,
+    )
+    _run_until(tick, run_id, target_kind="awaiting_codex_review", max_ticks=30)
+    for _ in range(20):
+        tick.run_once()
+        with tick.store.begin_read() as conn:
+            state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
+            if state.kind == "blocked":
+                assert state.block_reason_kind == "codex_review_output_truncated"
+                assert "truncated" in state.block_reason_summary.lower()
+                assert BOOTSTRAP_ID not in state.block_reason_summary
+                capacity = tick.store.get_capacity_row(conn)
+                assert capacity["holder_run_id"] is None
+                return
+    pytest.fail("expected blocked run after truncated codex review without valid result")
+
+
+def _awaiting_codex_review_workflow(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    fake_clis: dict[str, Path],
+) -> tuple[CodexWorkflowService, str, dict[str, object], str]:
+    _ = fake_clis
+    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
+    monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "no_findings")
+    run_id = _submit(git_repo, scheduler_paths)
+    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    tick = _tick_service(
+        git_repo,
+        scheduler_paths,
+        now=datetime(2026, 9, 9, 20, 30, tzinfo=UTC),
+        backend=FakeAgentProcessBackend(
+            default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
+        ),
+    )
+    _run_until(tick, run_id, target_kind="awaiting_codex_review", max_ticks=30)
+    assert tick._codex_workflow is not None
+    now = datetime(2026, 9, 9, 20, 31, tzinfo=UTC)
+    with tick.store.begin_read() as conn:
+        effects = tick.store.list_eligible_effects(conn, run_id=run_id, now=now)
+        codex_effects = [
+            row for row in effects if str(row["effect_kind"]) == BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND
+        ]
+        assert codex_effects, "expected bootstrap codex review effect"
+        dispatch_id = str(codex_effects[0]["dispatch_id"])
+    attempt_id = _next_attempt_id()
+    attempt: dict[str, object] = {
+        "attempt_id": attempt_id,
+        "dispatch_id": dispatch_id,
+        "stderr_artifact_path": f"attempts/{attempt_id}/stderr.txt",
+        "stdout_artifact_path": f"attempts/{attempt_id}/stdout.txt",
+        "result_artifact_path": f"attempts/{attempt_id}/result.json",
+        "exit_code": 124,
+        "completion_envelope_sha256": None,
+    }
+    return tick._codex_workflow, run_id, attempt, dispatch_id
+
+
+def test_run_codex_review_uses_frozen_timeout_from_invocation_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_dev_loop.scheduler import codex_attempt_runner
+
+    plan_rel = "plan/plan.md"
+    prompt_rel = "prompts/cursor-initial.txt"
+    run_root = tmp_path / "run-artifacts"
+    run_root.mkdir()
+    plan_path = run_root / plan_rel
+    prompt_path = run_root / prompt_rel
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    prompt_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_text("# plan\n", encoding="utf-8")
+    prompt_path.write_text("initial prompt\n", encoding="utf-8")
+    captured: dict[str, float | None] = {"timeout": None}
+
+    def fake_streaming(*args: object, **kwargs: object) -> StreamingProcessResult:
+        captured["timeout"] = kwargs.get("timeout")  # type: ignore[assignment]
+        argv = list(args[0]) if args else []
+        return StreamingProcessResult(
+            args=argv,
+            returncode=0,
+            stdout='{"type":"thread.started","thread_id":"019def00-0000-0000-0000-0000000000bb"}\n',
+            stderr="",
+            timed_out=False,
+            elapsed_seconds=0.1,
+        )
+
+    monkeypatch.setattr(codex_attempt_runner, "run_process_streaming", fake_streaming)
+    evidence = {
+        "effect_kind": BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND,
+        "attempt_id": "att-" + "a" * 32,
+        "run_id": "run-timeout-test",
+        "dispatch_id": "fx-timeout-test",
+        "repository_root": str(tmp_path),
+        "repository_git_common_dir": str(tmp_path / ".git"),
+        "repository_git_dir": str(tmp_path / ".git"),
+        "repository_branch": "main",
+        "repository_initial_head": "abc123",
+        "codex_timeout_minutes": 90,
+        "review_iteration": 1,
+        "codex_command": "codex",
+        "codex_sandbox": SCHEDULER_CODEX_REVIEW_SANDBOX,
+        "review_model": "gpt-5.6-sol",
+        "review_reasoning_effort": "high",
+        "review_skill": "review-staged-cursor-execution",
+        "plan_repository_path": "docs/plans/sample-plan.md",
+        "plan_artifact_path": plan_rel,
+        "plan_sha256": sha256_bytes(plan_path.read_bytes()),
+        "prompt_source_repository_path": "docs/plans/prompt.txt",
+        "prompt_artifact_path": prompt_rel,
+        "prompt_sha256": sha256_bytes(prompt_path.read_bytes()),
+        "max_review_iterations": 3,
+    }
+    codex_attempt_runner._run_codex_review(evidence, run_root, "run-timeout-test")
+    assert captured["timeout"] == 90 * 60
+
+
+def test_ingest_bootstrap_uncertainty_precedes_timeout_classification(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflow, run_id, attempt, dispatch_id = _awaiting_codex_review_workflow(
+        git_repo, scheduler_paths, monkeypatch, fake_clis=fake_clis
+    )
+    synthetic_outcome = {
+        "effect_kind": BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND,
+        "attempt_id": attempt["attempt_id"],
+        "dispatch_id": dispatch_id,
+        "review_iteration": 1,
+        "timed_out": True,
+        "stdout_truncated": True,
+        "stderr_truncated": False,
+        "bootstrap_uncertainty_reason": "missing_identity",
+        "bootstrap_session_id": "",
+        "review_result_sha256": "",
+    }
+    with patch.object(workflow, "_authenticated_outcome", return_value=synthetic_outcome):
+        receipt = workflow._ingest_codex_review(run_id, attempt)
+    assert receipt.action == "blocked"
+    assert receipt.detail == "codex_bootstrap_uncertain"
+    with workflow.store.begin_read() as conn:
+        state, _, _ = workflow.store.load_validated_snapshot(conn, run_id)
+        assert state.kind == "blocked"
+        assert state.block_reason_kind == "codex_bootstrap_uncertain"
+    binding_path = (
+        run_artifact_root(scheduler_paths["artifact_root"], run_id)
+        / SCHEDULER_CODEX_BINDING_ARTIFACT
+    )
+    assert not binding_path.is_file()
+
+
+def test_ingest_timeout_precedes_truncation_when_identity_is_established(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflow, run_id, attempt, dispatch_id = _awaiting_codex_review_workflow(
+        git_repo, scheduler_paths, monkeypatch, fake_clis=fake_clis
+    )
+    synthetic_outcome = {
+        "effect_kind": BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND,
+        "attempt_id": attempt["attempt_id"],
+        "dispatch_id": dispatch_id,
+        "review_iteration": 1,
+        "timed_out": True,
+        "stdout_truncated": True,
+        "stderr_truncated": False,
+        "bootstrap_uncertainty_reason": "",
+        "bootstrap_session_id": BOOTSTRAP_ID,
+        "review_result_sha256": "",
+    }
+    with patch.object(workflow, "_authenticated_outcome", return_value=synthetic_outcome):
+        receipt = workflow._ingest_codex_review(run_id, attempt)
+    assert receipt.action == "blocked"
+    assert receipt.detail == "codex_review_timeout"
+    with workflow.store.begin_read() as conn:
+        state, _, _ = workflow.store.load_validated_snapshot(conn, run_id)
+        assert state.kind == "blocked"
+        assert state.block_reason_kind == "codex_review_timeout"
+        assert state.block_reason_kind != "codex_review_output_truncated"
