@@ -7,7 +7,11 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict
 
 from ai_dev_loop.errors import AiDevLoopError, ValidationError
-from ai_dev_loop.scheduler.domain.state import FreshCodexReviewerBinding, SubmittedRunContext
+from ai_dev_loop.scheduler.domain.state import (
+    CodexRuntimeBinding,
+    SchedulerState,
+    SubmittedRunContext,
+)
 
 
 class AppModel(BaseModel):
@@ -149,6 +153,7 @@ class ControllerSchedulerCandidate(AppModel):
     safe_next_action: SafeNextAction
     capacity_holder_run_id: str | None
     last_event_kind: str | None
+    reviewer_session_id_prefix: str | None = None
     cursor_wait_until: str | None = None
     block_reason_kind: str | None = None
 
@@ -303,6 +308,28 @@ def redacted_session_prefix(session_id: str) -> str:
     return f"{session_id[:8]}…{session_id[-4:]}"
 
 
+def bound_reviewer_session_id_from_state(state: SchedulerState) -> str | None:
+    codex = getattr(state, "codex", None)
+    if codex is None:
+        return None
+    reviewer_session_id = getattr(codex, "reviewer_session_id", None)
+    if reviewer_session_id is None:
+        return None
+    return str(reviewer_session_id)
+
+
+def reviewer_session_id_prefix_for_projection(
+    context: SubmittedRunContext,
+    *,
+    bound_reviewer_session_id: str | None = None,
+) -> str | None:
+    if isinstance(context.codex, CodexRuntimeBinding):
+        return redacted_session_prefix(context.codex.session_id)
+    if bound_reviewer_session_id:
+        return redacted_session_prefix(bound_reviewer_session_id)
+    return None
+
+
 def scheduler_status_projection_from_state(state: object) -> dict[str, str | None]:
     from ai_dev_loop.scheduler.domain.state import BlockedState, WaitingUsageLimitState
 
@@ -322,14 +349,14 @@ def summary_from_context(
     updated_at: str,
     context: SubmittedRunContext,
     safe_next_action: SafeNextAction | None = None,
+    bound_reviewer_session_id: str | None = None,
     cursor_wait_until: str | None = None,
     block_reason_kind: str | None = None,
 ) -> SchedulerRunSummary:
-    reviewer_prefix = None
-    if isinstance(context.codex, FreshCodexReviewerBinding):
-        reviewer_prefix = None
-    else:
-        reviewer_prefix = redacted_session_prefix(context.codex.session_id)
+    reviewer_prefix = reviewer_session_id_prefix_for_projection(
+        context,
+        bound_reviewer_session_id=bound_reviewer_session_id,
+    )
     action = safe_next_action or safe_next_action_for_state_kind(
         state_kind,
         run_id,

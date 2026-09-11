@@ -10,6 +10,7 @@ from ai_dev_loop.scheduler.application.contracts import (
     SchedulerEngineErrorKind,
     SchedulerRunSummary,
     SchedulerStatusResult,
+    bound_reviewer_session_id_from_state,
     scheduler_status_projection_from_state,
     summary_from_context,
 )
@@ -36,6 +37,7 @@ class SchedulerStatusService:
             updated_at=state.updated_at,
             context=state.context,
             safe_next_action=safe_next_action_for_scheduler_state(self.store, conn, state),
+            bound_reviewer_session_id=bound_reviewer_session_id_from_state(state),
             cursor_wait_until=projection["cursor_wait_until"],
             block_reason_kind=projection["block_reason_kind"],
         )

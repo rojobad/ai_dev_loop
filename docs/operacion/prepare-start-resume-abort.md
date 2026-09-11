@@ -124,6 +124,12 @@ ai_dev_loop scheduler timer disable
 
 Solo habilita el timer en produccion tras aceptacion manual independiente.
 
+La unidad de servicio fija un `PATH` acotado con `%h/.local/bin` para localizar el
+CLI instalado con `uv tool` desde un entorno systemd minimo, sin shell ni perfiles
+interactivos. `scheduler status` y `scheduler list` muestran un prefijo redactado
+del reviewer B una vez autenticado y enlazado; antes del binding el prefijo es
+`null` y eso es esperado en runs fresh-B.
+
 ## Cutover de estado legacy (destructivo)
 
 Elimina unicamente `$XDG_STATE_HOME/ai_dev_loop/runs/` y `pr-review-v2/` tras confirmacion explicita. No toca `engine.sqlite3`, `artifacts/` ni otros datos del scheduler.

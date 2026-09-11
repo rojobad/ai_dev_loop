@@ -38,7 +38,10 @@ def test_timer_install_writes_owned_units_and_reloads(tmp_path: Path) -> None:
     assert service_path.is_file()
     assert timer_path.is_file()
     assert OWNERSHIP_MARKER in service_path.read_text(encoding="utf-8")
-    assert "ai_dev_loop scheduler tick" in service_path.read_text(encoding="utf-8")
+    service_text = service_path.read_text(encoding="utf-8")
+    assert "ai_dev_loop scheduler tick" in service_text
+    assert "/usr/bin/env ai_dev_loop scheduler tick" in service_text
+    assert "Environment=PATH=%h/.local/bin:" in service_text
     assert fake["calls"] == [["systemctl", "--user", "daemon-reload"]]
 
 

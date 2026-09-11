@@ -106,6 +106,11 @@ ai_dev_loop scheduler timer disable [--output text|json]
 `install` escribe unidades empaquetadas bajo `~/.config/systemd/user/` y recarga
 `systemctl --user`. `--enable` es explicito; `submit` y `tick` no habilitan timers.
 
+La unidad de servicio empaquetada invoca `ai_dev_loop scheduler tick` mediante
+`/usr/bin/env` con un `PATH` acotado que incluye `%h/.local/bin` (instalacion
+habitual con `uv tool`) mas los directorios binarios del sistema. No ejecuta un
+shell ni lee archivos de perfil interactivos.
+
 ## `controller status`
 
 ```bash

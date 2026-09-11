@@ -17,6 +17,8 @@ _SENSITIVE_PATTERNS = (
 
 SERVICE_NAME = "ai-dev-loop-scheduler-tick.service"
 TIMER_NAME = "ai-dev-loop-scheduler-tick.timer"
+EXPECTED_SERVICE_PATH = "%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+EXPECTED_SERVICE_EXEC_START = "/usr/bin/env ai_dev_loop scheduler tick"
 
 
 def _asset_text(name: str) -> str:
@@ -42,8 +44,12 @@ def validate_packaged_assets() -> list[str]:
                 errors.append(f"{label} template contains disallowed pattern: {pattern.pattern}")
     if "Type=oneshot" not in service:
         errors.append("service must be a one-shot tick invocation")
-    if "ai_dev_loop scheduler tick" not in service:
-        errors.append("service must invoke ai_dev_loop scheduler tick")
+    if f"Environment=PATH={EXPECTED_SERVICE_PATH}" not in service:
+        errors.append("service must set a constrained PATH for uv-tool CLI lookup")
+    if f"ExecStart={EXPECTED_SERVICE_EXEC_START}" not in service:
+        errors.append("service must invoke ai_dev_loop scheduler tick through /usr/bin/env")
+    if re.search(r"(?m)^ExecStart=ai_dev_loop scheduler tick\s*$", service):
+        errors.append("service must not invoke ai_dev_loop without /usr/bin/env")
     if "OnUnitActiveSec=30" not in timer:
         errors.append("timer interval must be 30 seconds")
     if "ai-dev-loop-scheduler-tick.service" not in timer:

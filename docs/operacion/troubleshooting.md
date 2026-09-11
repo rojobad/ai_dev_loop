@@ -140,6 +140,13 @@ terminal WSL. Desde esta versión, `scheduler submit` resuelve los nombres de
 en los artefactos protegidos; no hace falta —ni conviene— guardar rutas locales
 en `ai_dev_loop.yaml` ni modificar el `PATH` global de systemd.
 
+La unidad empaquetada `ai-dev-loop-scheduler-tick.service` localiza el propio CLI
+con `/usr/bin/env` y un `PATH` acotado que incluye `%h/.local/bin` (layout habitual
+de `uv tool`) mas los binarios del sistema. No invoca un shell ni lee perfiles
+interactivos. Si el timer falla con exit 203/EXEC, reinstala con
+`ai_dev_loop scheduler timer validate` y `scheduler timer install` tras confirmar
+que `command -v ai_dev_loop` funciona en una terminal normal.
+
 Si submit indica que no encuentra uno de los ejecutables, verifica desde la
 misma terminal de A:
 

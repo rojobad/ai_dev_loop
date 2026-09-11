@@ -9,6 +9,7 @@ from ai_dev_loop.scheduler.application.contracts import (
     ControllerSchedulerCandidate,
     SchedulerEngineError,
     SchedulerEngineErrorKind,
+    bound_reviewer_session_id_from_state,
     scheduler_status_projection_from_state,
     summary_from_context,
 )
@@ -49,6 +50,7 @@ def _candidate_from_validated_row(
         updated_at=state.updated_at,
         context=state.context,
         safe_next_action=safe_next_action_for_scheduler_state(store, conn, state),
+        bound_reviewer_session_id=bound_reviewer_session_id_from_state(state),
         cursor_wait_until=projection["cursor_wait_until"],
         block_reason_kind=projection["block_reason_kind"],
     )
@@ -62,6 +64,7 @@ def _candidate_from_validated_row(
         safe_next_action=summary.safe_next_action,
         capacity_holder_run_id=holder_run_id,
         last_event_kind=_last_event_kind(conn, db_run_id),
+        reviewer_session_id_prefix=summary.reviewer_session_id_prefix,
         cursor_wait_until=projection["cursor_wait_until"],
         block_reason_kind=projection["block_reason_kind"],
     )
@@ -140,6 +143,7 @@ def load_scheduler_candidate(
             updated_at=state.updated_at,
             context=state.context,
             safe_next_action=safe_next_action_for_scheduler_state(store, conn, state),
+            bound_reviewer_session_id=bound_reviewer_session_id_from_state(state),
             cursor_wait_until=projection["cursor_wait_until"],
             block_reason_kind=projection["block_reason_kind"],
         )
@@ -153,6 +157,7 @@ def load_scheduler_candidate(
             safe_next_action=summary.safe_next_action,
             capacity_holder_run_id=holder_run_id,
             last_event_kind=_last_event_kind(conn, state.run_id),
+            reviewer_session_id_prefix=summary.reviewer_session_id_prefix,
             cursor_wait_until=projection["cursor_wait_until"],
             block_reason_kind=projection["block_reason_kind"],
         )

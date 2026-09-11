@@ -36,7 +36,7 @@ class ControllerStatusResult:
     result: str | None
     abort_control: dict[str, object] | None
     controller_session_id: str
-    reviewer_session_id: str | None
+    reviewer_session_id_prefix: str | None
     candidate_run_ids: list[str]
     scheduler_state_kind: str | None = None
     capacity_holder_run_id_prefix: str | None = None
@@ -156,7 +156,7 @@ def _read_failure_result(
         result=None,
         abort_control=None,
         controller_session_id=controller_id,
-        reviewer_session_id=None,
+        reviewer_session_id_prefix=None,
         candidate_run_ids=[],
         read_failure=message,
     )
@@ -184,7 +184,7 @@ def _empty_controller_result(
         result=None,
         abort_control=None,
         controller_session_id=controller_id,
-        reviewer_session_id=None,
+        reviewer_session_id_prefix=None,
         candidate_run_ids=[],
     )
 
@@ -214,7 +214,7 @@ def _ambiguous_controller_result(
         result=None,
         abort_control=None,
         controller_session_id=controller_id,
-        reviewer_session_id=None,
+        reviewer_session_id_prefix=None,
         candidate_run_ids=candidate_run_ids,
     )
 
@@ -263,7 +263,7 @@ def _build_scheduler_result(
         result=None,
         abort_control=abort_control,
         controller_session_id=controller_id,
-        reviewer_session_id=None,
+        reviewer_session_id_prefix=candidate.reviewer_session_id_prefix,
         candidate_run_ids=candidate_run_ids,
         scheduler_state_kind=candidate.state_kind,
         capacity_holder_run_id_prefix=capacity_prefix,
@@ -290,9 +290,7 @@ def render_controller_status(result: ControllerStatusResult, *, output: str = "t
             "result": result.result,
             "abort_control": result.abort_control,
             "controller_session_id_prefix": result.controller_session_id[:8],
-            "reviewer_session_id_prefix": None
-            if result.reviewer_session_id is None
-            else result.reviewer_session_id[:8],
+            "reviewer_session_id_prefix": result.reviewer_session_id_prefix,
             "candidate_run_ids": result.candidate_run_ids,
             "scheduler_state_kind": result.scheduler_state_kind,
             "capacity_holder_run_id_prefix": result.capacity_holder_run_id_prefix,

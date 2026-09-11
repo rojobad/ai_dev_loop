@@ -86,7 +86,7 @@ def test_status_history_and_controller_remain_redacted(
         {
             "next_safe_action": controller.next_safe_action,
             "abort_control": controller.abort_control,
-            "reviewer_session_id_prefix": controller.reviewer_session_id,
+            "reviewer_session_id_prefix": controller.reviewer_session_id_prefix,
         }
     )
     blob = "\n".join([status_text, history_text, controller_text, unit_identity])

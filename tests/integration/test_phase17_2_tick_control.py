@@ -74,7 +74,7 @@ def test_submit_start_tick_controller_status_flow(
     assert status.run_id == run_id
     assert status.scheduler_state_kind == "admitted"
     assert status.run_source == "scheduler"
-    assert status.reviewer_session_id is None
+    assert status.reviewer_session_id_prefix is None
 
     rendered = render_controller_status(status, output="json")
     assert '"scheduler_state_kind": "admitted"' in rendered
