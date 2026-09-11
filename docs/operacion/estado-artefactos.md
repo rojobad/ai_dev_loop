@@ -60,7 +60,9 @@ No existe `recover` publico en el scheduler central. Ante fallos:
 
 - usa `scheduler status` y `scheduler history` para el checkpoint durable;
 - `scheduler abort` cancela sin borrar artefactos ni cambios staged;
-- para trabajo nuevo, `scheduler submit` fresco con identidad controller y modelo de review explicitos.
+- para trabajo nuevo tras un run terminal, `scheduler submit` con
+  `--resubmission-id <uuid>` e identidad controller y modelo de review explicitos;
+  repetir submit sin esa opcion reutiliza el run terminal existente.
 
 Los contratos de recovery legacy (`recover`, sucesores `interrupted`, checkpoints
 `cursor`/`staging`) aplicaban solo al motor `runs/` retirado.

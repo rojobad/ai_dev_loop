@@ -9,12 +9,10 @@ from ai_dev_loop.scheduler.application.contracts import (
     ControllerSchedulerCandidate,
     SchedulerEngineError,
     SchedulerEngineErrorKind,
-    aborted_pending_resource_cleanup_safe_next_action,
-    aborted_pending_termination_safe_next_action,
     scheduler_status_projection_from_state,
     summary_from_context,
 )
-from ai_dev_loop.scheduler.domain.state import AbortedState
+from ai_dev_loop.scheduler.application.safe_actions import safe_next_action_for_scheduler_state
 from ai_dev_loop.scheduler.infrastructure.paths import default_engine_db_path
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
@@ -44,19 +42,13 @@ def _candidate_from_validated_row(
     db_run_id = str(row["run_id"])
     state, _, _ = store.load_validated_snapshot(conn, db_run_id)
     projection = scheduler_status_projection_from_state(state)
-    safe_next_action = None
-    if isinstance(state, AbortedState):
-        if store.has_unresolved_abort_hold(conn, state.run_id):
-            safe_next_action = aborted_pending_termination_safe_next_action(state.run_id)
-        elif store.has_unreleased_abort_resources(conn, state.run_id):
-            safe_next_action = aborted_pending_resource_cleanup_safe_next_action(state.run_id)
     summary = summary_from_context(
         run_id=state.run_id,
         state_kind=state.kind,
         submitted_at=state.submitted_at,
         updated_at=state.updated_at,
         context=state.context,
-        safe_next_action=safe_next_action,
+        safe_next_action=safe_next_action_for_scheduler_state(store, conn, state),
         cursor_wait_until=projection["cursor_wait_until"],
         block_reason_kind=projection["block_reason_kind"],
     )
@@ -141,19 +133,13 @@ def load_scheduler_candidate(
             str(capacity["holder_run_id"]) if capacity["holder_run_id"] is not None else None
         )
         projection = scheduler_status_projection_from_state(state)
-        safe_next_action = None
-        if isinstance(state, AbortedState):
-            if store.has_unresolved_abort_hold(conn, state.run_id):
-                safe_next_action = aborted_pending_termination_safe_next_action(state.run_id)
-            elif store.has_unreleased_abort_resources(conn, state.run_id):
-                safe_next_action = aborted_pending_resource_cleanup_safe_next_action(state.run_id)
         summary = summary_from_context(
             run_id=state.run_id,
             state_kind=state.kind,
             submitted_at=state.submitted_at,
             updated_at=state.updated_at,
             context=state.context,
-            safe_next_action=safe_next_action,
+            safe_next_action=safe_next_action_for_scheduler_state(store, conn, state),
             cursor_wait_until=projection["cursor_wait_until"],
             block_reason_kind=projection["block_reason_kind"],
         )

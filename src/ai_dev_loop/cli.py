@@ -244,6 +244,16 @@ def scheduler_submit_command(
         int | None,
         typer.Option("--codex-timeout-minutes", help="Override workflow.codex_timeout_minutes."),
     ] = None,
+    resubmission_id: Annotated[
+        str | None,
+        typer.Option(
+            "--resubmission-id",
+            help=(
+                "Explicit UUID for an intentional fresh submission after a terminal run. "
+                "Reuse the same value to replay that submission idempotently."
+            ),
+        ),
+    ] = None,
     output: OutputOption = DEFAULT_OUTPUT,
 ) -> None:
     """Submit a frozen A/B scheduler run without launching agents or Git CLI probes."""
@@ -267,6 +277,7 @@ def scheduler_submit_command(
             max_review_iterations=max_review_iterations,
             cursor_timeout_minutes=cursor_timeout_minutes,
             codex_timeout_minutes=codex_timeout_minutes,
+            resubmission_id=resubmission_id,
         )
         result = submit_run(options)
         typer.echo(render_submit_output(result, output=output.value), nl=False)

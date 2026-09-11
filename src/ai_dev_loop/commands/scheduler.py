@@ -31,7 +31,7 @@ def render_submit_output(result: SubmitResult, *, output: str) -> str:
     if output == "json":
         payload = {
             "schema_version": 1,
-            "status": "queued",
+            "status": result.state_kind,
             "run_id": result.run_id,
             "project": result.project_name,
             "state_kind": result.state_kind,
@@ -39,15 +39,26 @@ def render_submit_output(result: SubmitResult, *, output: str) -> str:
             "safe_next_action": result.safe_next_action.model_dump(mode="json"),
         }
         return json.dumps(payload, indent=2) + "\n"
-    reused = " (reused existing run)" if result.reused_existing else ""
+    if result.reused_existing:
+        header = f"Scheduler run {result.run_id} (reused existing run)"
+    else:
+        header = f"Submitted scheduler run {result.run_id}"
     lines = [
-        f"Submitted scheduler run {result.run_id}{reused}",
+        header,
         f"Project: {result.project_name}",
         f"State: {result.state_kind}",
-        "Submit binds the repository target only; worktree admission runs once at the first tick (Phase 17.2).",
-        "Reviewer B is created at the first review boundary (Phase 17.5); submit only freezes model and reasoning.",
-        f"Next action: {result.safe_next_action.command}",
     ]
+    if result.state_kind == "queued":
+        lines.extend(
+            [
+                "Submit binds the repository target only; worktree admission runs once at the first tick (Phase 17.2).",
+                "Reviewer B is created at the first review boundary (Phase 17.5); submit only freezes model and reasoning.",
+            ]
+        )
+    if result.safe_next_action.command:
+        lines.append(f"Next action: {result.safe_next_action.command}")
+    else:
+        lines.append(f"Next action: {result.safe_next_action.kind.value}")
     return "\n".join(lines) + "\n"
 
 

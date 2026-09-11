@@ -41,10 +41,15 @@ Opciones principales:
 --max-review-iterations INTEGER
 --cursor-timeout-minutes INTEGER
 --codex-timeout-minutes INTEGER
+--resubmission-id UUID   (opcional; envio fresco idempotente tras un run terminal)
 --output [text|json]
 ```
 
-No admite `--codex-session-id`. El primer review del scheduler crea exactamente un
+No admite `--codex-session-id`. Repetir submit sin `--resubmission-id` reutiliza
+el run existente y reporta su `state_kind` real (por ejemplo `aborted` sin accion
+de `start`). Tras un run terminal, usa `--resubmission-id` con un UUID elegido
+por el operador para crear un run `queued` distinto; reutiliza el mismo UUID
+solo para replay idempotente de ese envio. El primer review del scheduler crea exactamente un
 reviewer B con `codex exec` en `--sandbox read-only`; los reviews posteriores reanudan
 esa misma sesion con `codex exec resume` (nunca `--last` ni un segundo B).
 

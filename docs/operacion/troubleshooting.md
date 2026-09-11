@@ -334,8 +334,26 @@ sucesores automaticos desde runs `failed`. Ante un fallo:
 
 - inspecciona `scheduler status` y `scheduler history`;
 - preserva artefactos bajo `artifacts/` para auditoria manual;
-- para continuar trabajo, usa `scheduler submit` fresco con los mismos inputs
-  congelados si aun aplican.
+- para continuar trabajo, usa `scheduler submit` con `--resubmission-id <uuid>`
+  y los mismos inputs congelados si aun aplican.
+
+## Repetir submit tras abort sin crear un run nuevo
+
+Sintoma:
+
+- tras `scheduler abort`, el mismo `scheduler submit` devuelve `reused_existing: true`
+  con `state_kind: aborted` y sin accion de `scheduler start`;
+- `scheduler start` sobre el run abortado falla porque la reserva ya se libero.
+
+Causa: el submit idempotente base reutiliza el run terminal inmutable; no revive
+ni reencola ese run.
+
+Accion segura:
+
+1. conserva el run abortado como registro de auditoria;
+2. elige un UUID nuevo (`uuidgen`) y repite submit con `--resubmission-id`;
+3. reutiliza exactamente ese UUID si necesitas repetir el comando sin duplicar;
+4. autoriza el run nuevo con `scheduler start` cuando quede `queued`.
 
 ## Cursor alcanzo el limite de uso del modelo
 

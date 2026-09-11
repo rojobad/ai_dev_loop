@@ -561,6 +561,18 @@ class SqliteSchedulerStore:
         ).fetchone()
         return cast(sqlite3.Row | None, row)
 
+    def get_worktree_reservation(
+        self, conn: sqlite3.Connection, worktree_key: str
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_repository_reservations
+            WHERE worktree_key = ? AND status = ?
+            """,
+            (worktree_key, ReservationStatus.ACTIVE.value),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
     def get_active_reservation(
         self, conn: sqlite3.Connection, worktree_key: str
     ) -> sqlite3.Row | None:

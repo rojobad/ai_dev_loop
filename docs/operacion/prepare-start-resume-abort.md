@@ -76,6 +76,40 @@ Cancela un run activo de forma no destructiva: preserva artefactos, prompts, pat
 ai_dev_loop scheduler abort <run-id>
 ```
 
+El run abortado queda terminal e inmutable. Repetir el mismo `scheduler submit`
+sin `--resubmission-id` reutiliza ese run y devuelve su estado real (`aborted`)
+sin accion de `start`. No crea un run nuevo ni recupera la reserva liberada.
+
+## Reenvio fresco tras un run terminal
+
+Para iniciar trabajo nuevo con los mismos inputs congelados tras un abort (u otro
+estado terminal), el operador elige un UUID explicito y lo conserva solo el
+tiempo necesario para repetir un submit incierto sin duplicar filas:
+
+```bash
+RESUBMISSION_ID="$(uuidgen)"
+
+ai_dev_loop scheduler submit \
+  --repo-path /path/al/repo \
+  --plan-path docs/plans/mi-plan.md \
+  --prompt-source-path docs/plans/prompt_mi-plan.txt \
+  --controller-session-id "<exact-controller-session-id>" \
+  --codex-review-model "<review-model>" \
+  --codex-review-reasoning-effort high \
+  --resubmission-id "$RESUBMISSION_ID" \
+  --output json < docs/plans/prompt_mi-plan.txt
+```
+
+Reglas:
+
+- `--resubmission-id` es opcional y solo para un envio intencionalmente distinto;
+- reutiliza el mismo UUID para replay idempotente de ese envio fresco;
+- el identificador no se persiste ni aparece en status, history, logs o JSON;
+- mientras otro run no terminal retenga la reserva del worktree, un segundo
+  `--resubmission-id` distinto falla con conflicto activo.
+
+Tras un envio fresco `queued`, autoriza con `scheduler start` como de costumbre.
+
 ## Timer systemd (habilitacion explicita)
 
 Instalar, validar o deshabilitar el timer no ocurre automaticamente con `submit` o `tick`:
