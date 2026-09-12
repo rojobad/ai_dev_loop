@@ -1,4 +1,4 @@
-# Phase 20.1.1 — Retryable Codex Reviewer Failures
+# Phase 20.1.1 — Retryable Codex Reviewer Failures And Attempt Timeout Reconciliation
 
 ## Goal
 
@@ -26,12 +26,33 @@ Codex then exited nonzero after emitting message-only usage-limit events and no
 review result. The implementation must support this shape through hermetic
 fixtures. Automated tests must not read or mutate the real run.
 
+The recovery execution for this plan starts in the clean worktree
+`/home/rojobad/Projects/ai_dev_loop-reviewer-retry-v2`. The aborted source
+worktree `/home/rojobad/Projects/ai_dev_loop-reviewer-retry` contains the
+incomplete implementation, the first reviewer findings, and a partial Cursor
+correction. Treat that source as read-only recovery material: reconstruct the
+complete patch in the clean worktree, verify every recovered change against this
+plan and the findings, and do not assume the partial correction is complete or
+correct. The new run must produce and stage the complete implementation for a
+fresh independent review.
+
+The aborted recovery attempt also exposed a deterministic reconciliation bug.
+The owned attempt runner reserves exit code `124` for an internally enforced
+agent timeout and writes a result envelope with `termination_class: timeout`,
+while systemd reports the wrapper as `Result=exit-code`, `ExecMainCode=exited`,
+and `ExecMainStatus=124`. The backend currently maps that authoritative
+observation to `nonzero_exit`, causing otherwise matching completion evidence to
+become permanently `uncertain`. Phase 20.1.1 must make those two representations
+agree without weakening ownership, artifact, or process-termination checks.
+
 ## Non-Goals
 
 - Do not infer quota from arbitrary prose, generic exit codes, `last_error`, or
   missing review output alone.
 - Do not automatically retry generic reviewer failures. Only a confirmed or
   capacity-inferred quota wait resumes automatically after capacity returns.
+- Do not add generic automatic Cursor retries or reinterpret arbitrary positive
+  exit codes as timeouts.
 - Do not retry Cursor, create a replacement Cursor chat, bootstrap a second
   reviewer, use `--last`, change reviewer model/reasoning, or rewrite findings.
 - Do not make identity ambiguity, artifact corruption, digest mismatch,
@@ -62,6 +83,9 @@ fixtures. Automated tests must not read or mutate the real run.
   successor; do not transition the terminal source back to a nonterminal state.
 - Update current CLI/troubleshooting/observability documentation and write a
   Phase 20.1.1 findings artifact.
+- Reconcile the attempt-runner's reserved timeout exit `124` with systemd's
+  `Result=exit-code` observation so a verified timeout reaches the ordinary
+  typed timeout failure path instead of `attempt_uncertain`.
 
 ## Out of Scope
 
@@ -71,6 +95,8 @@ fixtures. Automated tests must not read or mutate the real run.
   artifacts for its blocked run.
 - Generic retry commands for Cursor, Git admission, staging, capacity-probe
   protocol corruption, sequence checkpoint commits, PR review, or GitHub.
+- New PID-based ownership, PID-only kill commands, changes to systemd timer
+  installation, or broader process-status projection work.
 - Changing the existing structured `usage_limit_exceeded` classifier into fuzzy
   message matching.
 - Automatically abandoning or deleting a retryable checkpoint.
@@ -95,6 +121,10 @@ Before editing, read:
 - Scheduler domain state/events/reducer/common/codex contracts, SQLite store and
   migrations, protected artifact/path helpers, status/controller projections,
   and schema tests.
+- `application/systemd_backend.py`, `application/systemd_show.py`,
+  `application/attempt_envelope.py`, `process.py`, abort reconciliation, and the
+  attempt-executor/systemd observation tests for PID/PGID, cgroup ownership,
+  timeout, and result-envelope validation.
 - The fake Codex/Cursor fixtures and Phase 17.5/17.6/18/19 scheduler tests,
   including process failures, capacity continuation, idempotent effects,
   repository reservations, abort precedence, and privacy assertions.
@@ -114,6 +144,8 @@ Before editing, read:
 - Use only fake agents, temporary repositories, temporary XDG/config homes,
   injected clocks/IDs, and injected probe/process ports in tests.
 - Leave implementation changes unstaged and uncommitted for independent review.
+- Read the aborted source worktree and its Phase 20.1.1 findings only as recovery
+  input. Never write, stage, commit, reset, clean, or otherwise mutate it.
 
 ## Architecture Guardrails
 
@@ -225,33 +257,60 @@ Before editing, read:
 - Treat agent output and account telemetry as untrusted/sensitive. Persist raw
   diagnostics only in protected artifacts with user-only permissions.
 
+### Attempt timeout and process ownership
+
+- Keep the systemd attempt unit derived from the exact attempt identity as the
+  durable process authority. PID/PGID metadata remains diagnostic and abort
+  control evidence, never a substitute for unit ownership validation.
+- Preserve the two bounded termination layers: the streaming runner terminates
+  and reaps the complete Cursor/Codex process group, while the owned systemd
+  cgroup remains the outer runtime and manual-abort boundary.
+- Treat `Result=exit-code`, an ordinary exited main process, and
+  `ExecMainStatus=124` as `TerminationClass.TIMEOUT` only because the owned
+  `ai_dev_loop` attempt-runner contract reserves `124` for timeout. Preserve
+  existing handling for systemd-native timeout, signals, success, other positive
+  exits, unavailable observation, and identity mismatch.
+- Completion ingestion must still require exact attempt/unit identity, result
+  envelope paths and hashes, stdout/stderr hashes, exit-code equality, and
+  termination-class equality. Do not relax validation or repair artifacts.
+- A verified timeout may follow the existing bounded failure/retry policy. An
+  unverified or inconsistent result remains fail-closed and must never be
+  relaunched merely because a PID disappeared.
+
 ## Implementation Plan
 
-1. Characterize the real message-only limit failure with a hermetic Codex JSONL
+1. Reconstruct the incomplete source-worktree implementation in the clean
+   recovery worktree, compare it with this plan and the persisted reviewer
+   findings, and complete or correct it without mutating the source worktree.
+2. Add a focused regression for the owned attempt-runner timeout observation:
+   systemd `Result=exit-code` plus exited status `124` must agree with the
+   timeout result envelope and must not become `attempt_uncertain`. Preserve all
+   non-timeout mappings and process-group/cgroup termination guarantees.
+3. Characterize the real message-only limit failure with a hermetic Codex JSONL
    fixture and prove why the strict classifier returns unknown while the
    capacity probe returns exhausted. Add regression tests before workflow edits.
-2. Refactor Codex ingestion into authenticated integrity failures versus
+4. Refactor Codex ingestion into authenticated integrity failures versus
    operational review failures. Reuse one bounded post-failure capacity probe
    only for the latter and route exhausted observations through the existing
    Phase 19 wait/resume path.
-3. Add the retryable review state, events, reducers, migration/store support,
+5. Add the retryable review state, events, reducers, migration/store support,
    schemas, status/history/controller projections, reservation retention, and
    abort behavior.
-4. Make Codex review result/report/metadata artifacts attempt-unique and update
+6. Make Codex review result/report/metadata artifacts attempt-unique and update
    readers/events to bind the exact accepted artifact while keeping historical
    fixed-path runs readable.
-5. Implement the `scheduler review retry` CLI/application service for the
+7. Implement the `scheduler review retry` CLI/application service for the
    nonterminal retryable state with read-only repository/patch verification,
    idempotent retry generations, and ordinary effect scheduling.
-6. Implement immutable-source compatibility recovery for eligible historical
+8. Implement immutable-source compatibility recovery for eligible historical
    blocked review checkpoints, including bounded artifact copying, lineage,
    reservation acquisition, idempotent successor reuse, and direct continuation
    at Codex review without Cursor replay.
-7. Add integration tests for direct quota evidence, inferred quota, false quota
+9. Add integration tests for direct quota evidence, inferred quota, false quota
    inference, available/unavailable probe results, repeated manual failures,
    same-B resume, current-run-shaped successor recovery, drift rejection,
    concurrency, abort, privacy, and regressions.
-8. Update only current behavior documentation and write
+10. Update only current behavior documentation and write
    `archive/implementation-history/findings/phase-20-1-1-reviewer-failure-recovery.md`.
 
 ## Testing Criteria
@@ -265,6 +324,12 @@ Before editing, read:
   and unbound bootstrap remain hard blocks and never probe; nonzero exit,
   timeout, truncation, missing result, invalid JSON, and schema-invalid review
   with a bound B preserve retryable checkpoints.
+- **Timeout reconciliation tests:** the owned runner's `124` envelope agrees
+  with systemd `Result=exit-code`/exited/`124`; systemd-native timeout remains a
+  timeout; other positive exits remain `nonzero_exit`; signal kills remain
+  killed; matching evidence is ingested once; mismatched hashes, identities,
+  paths, exit codes, or termination classes remain uncertain; timeout cleanup
+  leaves no live process group or cgroup task.
 - **State/schema/store tests:** new state/events/lineage validate in Pydantic and
   JSON Schema; migration preserves v5 data; state-kind queries/tick eligibility
   work; CAS/uniqueness prevent duplicate retry generations, effects, successors,
@@ -301,6 +366,8 @@ At minimum run:
 
 ```bash
 TMPDIR=/tmp TMP=/tmp TEMP=/tmp uv run python -m pytest -q \
+  tests/unit/scheduler/test_systemd_backend.py \
+  tests/unit/scheduler/test_attempt_executor.py \
   tests/unit/test_response_schema.py \
   tests/unit/scheduler/test_phase19_codex_capacity.py \
   tests/unit/scheduler/test_phase20_1_reviewer_retry.py \
@@ -332,6 +399,12 @@ index merely because paths/status look similar. Exact protected hashes, reviewer
 identity, repository identity, attempt evidence, and transactional reservation
 ownership are mandatory. If any fact is unavailable, preserve the source and
 require a fresh scheduler run or independent manual review.
+
+The recovery source ended without a Cursor completion signal. Its files are
+useful evidence, not an accepted checkpoint. The clean recovery run must recreate
+the full patch, complete all validation, and obtain a fresh structured Codex
+decision before any commit or integration. If the source and plan disagree,
+follow the plan and document the discrepancy in findings.
 
 This phase changes scheduler recovery and persisted state. Do not install the
 implementation globally or apply it to the real blocked run during automated
