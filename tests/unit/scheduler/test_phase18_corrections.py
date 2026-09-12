@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from tests.unit.scheduler.helpers import (
     CONTROLLER_SESSION,
@@ -11,6 +13,7 @@ from tests.unit.scheduler.helpers import (
     sample_submitted_state,
 )
 
+from ai_dev_loop.commands.controller import controller_status, render_controller_status
 from ai_dev_loop.scheduler.application.contracts import (
     DEFAULT_TIMELINE_LIMIT,
     HARD_TIMELINE_MAX,
@@ -35,6 +38,7 @@ from ai_dev_loop.scheduler.domain.state import (
     BlockedState,
     CodexWorkflowCheckpoint,
     CompletedState,
+    CompletedWithResidualRiskState,
     ControllerBinding,
     CursorWorkflowCheckpoint,
     WaitingForCursorFixState,
@@ -290,6 +294,87 @@ def test_timer_validation_rejects_whitespace_duplicate_directives() -> None:
         assert any(f"exactly one {directive}" in error for error in errors), errors
     systemd_assets.load_timer_template = original
     assert validate_packaged_assets() == []
+
+
+def test_controller_status_by_run_id_preserves_terminal_none_next_action(
+    tmp_path: Path,
+    git_repo: Path,
+) -> None:
+    store = SqliteSchedulerStore(tmp_path / "engine.sqlite3")
+    repo_root = git_repo.resolve()
+    context = sample_agent_led_submitted_context(repo_root=str(repo_root)).model_copy(
+        update={"controller": ControllerBinding(controller_session_id=None)}
+    )
+    run_id = "residual-risk-terminal"
+    submitted = sample_submitted_state(run_id=run_id, repo_root=str(repo_root)).model_copy(
+        update={"context": context}
+    )
+    now = datetime(2026, 9, 12, 12, 0, 0, tzinfo=UTC)
+    now_text = now.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    checkpoint = AdmittedRunCheckpoint(
+        authorized_at=now_text,
+        authorized_controller_session_id=None,
+        admitted_at=now_text,
+        admission_status_artifact_path="git/admission-status.txt",
+        admission_status_sha256="a" * 64,
+    )
+    terminal = CompletedWithResidualRiskState(
+        run_id=run_id,
+        version=2,
+        submitted_at=now_text,
+        updated_at=now_text,
+        idempotency_key=submitted.idempotency_key,
+        context=context,
+        checkpoint=checkpoint,
+        cursor=CursorWorkflowCheckpoint(iteration=1),
+        codex=CodexWorkflowCheckpoint(
+            review_iteration=1,
+            reviews_completed=1,
+            reviewer_session_id="019abc00-0000-0000-0000-000000000000",
+        ),
+    )
+    event = RunSubmittedEvent(
+        run_id=run_id,
+        idempotency_key=submitted.idempotency_key,
+        worktree_key=context.repository.worktree_key,
+        reused_existing=False,
+    )
+    with store.begin_immediate() as conn:
+        store.insert_submitted_run(
+            conn,
+            run_id=run_id,
+            state=submitted,
+            event_id="evt-submit",
+            event=event,
+            now=now,
+        )
+        store.compare_and_swap_state(
+            conn,
+            run_id=run_id,
+            expected_version=1,
+            new_state=terminal,
+            now=now + timedelta(seconds=1),
+        )
+
+    with patch(
+        "ai_dev_loop.scheduler.application.controller_read.default_engine_db_path",
+        return_value=store.db_path,
+    ):
+        status = controller_status(
+            repo_path=repo_root,
+            run_id=run_id,
+            include_terminal=True,
+        )
+    assert status.match_count == 1
+    assert status.run_id == run_id
+    assert status.status == "completed_with_residual_risk"
+    assert status.next_safe_action == "none"
+
+    json_payload = json.loads(render_controller_status(status, output="json"))
+    assert json_payload["next_safe_action"] == "none"
+    text_output = render_controller_status(status, output="text")
+    assert "Next safe action: none" in text_output
+    assert "Inspect scheduler artifacts for the blocked run." not in text_output
 
 
 def test_timeline_enforces_hard_max_without_full_table_scan(tmp_path: Path) -> None:

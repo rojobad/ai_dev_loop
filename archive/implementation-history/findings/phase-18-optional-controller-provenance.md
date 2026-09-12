@@ -30,7 +30,7 @@
 
 | Gate | Result |
 |------|--------|
-| `TMPDIR=/tmp TMP=/tmp TEMP=/tmp uv run python -m pytest -q` | **618 passed**, 3 warnings (pre-existing pydantic serializer warnings in codex runner tests) |
+| `TMPDIR=/tmp TMP=/tmp TEMP=/tmp uv run python -m pytest -q` | **619 passed**, 3 warnings (pre-existing pydantic serializer warnings in codex runner tests) |
 | `uv run ruff format --check .` | **pass** |
 | `uv run ruff check .` | **pass** |
 | `uv run mypy src` | **pass** (97 source files) |
@@ -42,7 +42,7 @@ Focused Phase 18 regressions:
 
 - `tests/integration/test_phase18_optional_controller_provenance.py` (11 tests)
 - `tests/unit/scheduler/test_phase18_timeline_and_provenance.py` (4 tests)
-- `tests/unit/scheduler/test_phase18_corrections.py` (7 tests)
+- `tests/unit/scheduler/test_phase18_corrections.py` (8 tests)
 - `tests/unit/test_phase18_doc_examples.py` (9 tests)
 - Updated scheduler start/submit/controller/timer tests across Phase 17 suites
 
@@ -62,6 +62,12 @@ Focused Phase 18 regressions:
 |---------|-----|
 | Timeline ordering mismatch | `list_attempt_timeline_rows()` uses the same chronological key for retry ordinals and page ordering: `COALESCE(launch_requested_at, created_at)`, `created_at`, `attempt_id`. `created_at` is used internally only; public projection unchanged. |
 | Timer whitespace duplicates | `_parse_directive_assignment()` splits on the first `=`, trims key/value, and detects conflicting duplicates such as `AccuracySec = 60s` alongside the packaged value. |
+
+## Codex correction turn 3 (terminal controller safe next action)
+
+| Finding | Fix |
+|---------|-----|
+| P2: exact `--run-id` controller lookup for terminal scheduler runs without `--controller-session-id` replaced scheduler `SafeNextActionKind.NONE` with generic blocked-run inspection guidance | `_controller_next_safe_action_text()` preserves `none` when the scheduler safe action has no command; blocked runs still use their inspect command. Regression: `test_controller_status_by_run_id_preserves_terminal_none_next_action` for `completed_with_residual_risk` JSON/text output. |
 
 ## Schema and read compatibility
 

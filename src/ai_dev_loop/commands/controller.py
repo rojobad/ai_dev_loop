@@ -11,6 +11,7 @@ from ai_dev_loop.integrations.codex.session_runtime import require_codex_session
 from ai_dev_loop.runners.git import discover_repository
 from ai_dev_loop.scheduler.application.contracts import (
     ControllerSchedulerCandidate,
+    SafeNextAction,
     SafeNextActionKind,
     scheduler_abort_safe_next_action,
 )
@@ -228,6 +229,14 @@ def _ambiguous_controller_result(
     )
 
 
+def _controller_next_safe_action_text(safe_action: SafeNextAction) -> str:
+    if safe_action.command:
+        return safe_action.command
+    if safe_action.kind is SafeNextActionKind.NONE:
+        return safe_action.kind.value
+    return "Inspect scheduler artifacts for the blocked run."
+
+
 def _build_scheduler_result(
     *,
     candidate: ControllerSchedulerCandidate,
@@ -239,9 +248,7 @@ def _build_scheduler_result(
     if candidate.capacity_holder_run_id is not None:
         run_id = candidate.capacity_holder_run_id
         capacity_prefix = run_id[:8] if len(run_id) > 8 else run_id
-    next_action = candidate.safe_next_action.command or (
-        "Inspect scheduler artifacts for the blocked run."
-    )
+    next_action = _controller_next_safe_action_text(candidate.safe_next_action)
     abort_control: dict[str, object] | None = None
     if candidate.state_kind in SCHEDULER_ABORTABLE_STATE_KINDS:
         abort_hint = scheduler_abort_safe_next_action(candidate.run_id)
