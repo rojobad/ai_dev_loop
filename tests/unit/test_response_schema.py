@@ -11,6 +11,7 @@ from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.paths import schema_path
 from ai_dev_loop.response_schema import (
     events_indicate_adjudication_schema_rejection,
+    events_indicate_usage_limit_exceeded,
     find_incompatible_response_format_keywords,
     validate_codex_response_schema,
 )
@@ -113,6 +114,20 @@ def test_turn_failed_wrapper_with_serialized_envelope(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert events_indicate_adjudication_schema_rejection(events) is True
+
+
+def test_events_indicate_usage_limit_exceeded(tmp_path: Path) -> None:
+    events = tmp_path / "events.jsonl"
+    events.write_text(
+        json.dumps(
+            _codex_error_wrapper(
+                _api_envelope(code="usage_limit_exceeded", message="quota exceeded")
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    assert events_indicate_usage_limit_exceeded(events) is True
 
 
 def test_events_without_schema_rejection_are_false(tmp_path: Path) -> None:

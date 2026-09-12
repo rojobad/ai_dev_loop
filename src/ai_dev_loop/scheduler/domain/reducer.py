@@ -10,9 +10,11 @@ from ai_dev_loop.scheduler.domain.events import (
     AttemptUncertainEvent,
     AwaitingCodexReviewEnteredEvent,
     CodexBootstrapUncertainEvent,
+    CodexCapacityAvailableEvent,
     CodexReviewBlockedEvent,
     CodexReviewCompletedEvent,
     CodexReviewerBoundEvent,
+    CodexUsageCapacityDetectedEvent,
     CursorChatBlockedEvent,
     CursorChatCreatedEvent,
     CursorTurnBlockedEvent,
@@ -51,6 +53,7 @@ from ai_dev_loop.scheduler.domain.state import (
     MaxIterationsReachedState,
     PreflightCompleteState,
     SubmittedState,
+    WaitingCodexCapacityState,
     WaitingForCursorFixState,
     WaitingUsageLimitState,
 )
@@ -456,14 +459,71 @@ def apply_codex_bootstrap_uncertain(
     )
 
 
-def apply_codex_review_blocked(
+def apply_codex_usage_capacity_detected(
     state: AwaitingCodexReviewState,
+    event: CodexUsageCapacityDetectedEvent,
+    *,
+    now_text: str,
+) -> WaitingCodexCapacityState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    if not state.codex.reviewer_session_id:
+        raise ValueError("codex usage capacity wait requires bound reviewer identity")
+    codex = state.codex.model_copy(
+        update={
+            "review_iteration": event.review_iteration,
+            "codex_capacity_wait_started_at": now_text,
+        }
+    )
+    return WaitingCodexCapacityState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        checkpoint=state.checkpoint,
+        cursor=state.cursor,
+        codex=codex,
+    )
+
+
+def apply_codex_capacity_available(
+    state: WaitingCodexCapacityState,
+    event: CodexCapacityAvailableEvent,
+    *,
+    now_text: str,
+) -> AwaitingCodexReviewState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    codex = state.codex.model_copy(
+        update={
+            "review_iteration": event.review_iteration,
+            "codex_capacity_wait_started_at": None,
+        }
+    )
+    return AwaitingCodexReviewState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        checkpoint=state.checkpoint,
+        cursor=state.cursor,
+        codex=codex,
+    )
+
+
+def apply_codex_review_blocked(
+    state: AwaitingCodexReviewState | WaitingCodexCapacityState,
     event: CodexReviewBlockedEvent,
     *,
     now_text: str,
 ) -> BlockedState:
     if event.run_id != state.run_id:
         raise ValueError("event run_id disagrees with state")
+    checkpoint = state.checkpoint
     return BlockedState(
         run_id=state.run_id,
         version=state.version + 1,
@@ -474,8 +534,8 @@ def apply_codex_review_blocked(
         blocked_at=now_text,
         block_reason_kind=event.block_reason_kind,
         block_reason_summary=event.block_reason_summary,
-        authorized_at=state.checkpoint.authorized_at,
-        authorized_controller_session_id=state.checkpoint.authorized_controller_session_id,
+        authorized_at=checkpoint.authorized_at,
+        authorized_controller_session_id=checkpoint.authorized_controller_session_id,
     )
 
 
@@ -715,6 +775,7 @@ def apply_run_aborted(
         | PreflightCompleteState
         | CursorReadyState
         | WaitingUsageLimitState
+        | WaitingCodexCapacityState
         | AwaitingCodexReviewState
         | WaitingForCursorFixState
         | AbortedState
@@ -762,6 +823,7 @@ def apply_abort_requested(
         | PreflightCompleteState
         | CursorReadyState
         | WaitingUsageLimitState
+        | WaitingCodexCapacityState
         | AwaitingCodexReviewState
         | WaitingForCursorFixState
         | AbortedState
@@ -774,6 +836,7 @@ def apply_abort_requested(
     | PreflightCompleteState
     | CursorReadyState
     | WaitingUsageLimitState
+    | WaitingCodexCapacityState
     | AwaitingCodexReviewState
     | WaitingForCursorFixState
     | AbortedState
@@ -791,6 +854,7 @@ def apply_attempt_result_stale(
         | PreflightCompleteState
         | CursorReadyState
         | WaitingUsageLimitState
+        | WaitingCodexCapacityState
         | AwaitingCodexReviewState
         | WaitingForCursorFixState
         | AbortedState
@@ -801,6 +865,7 @@ def apply_attempt_result_stale(
     | PreflightCompleteState
     | CursorReadyState
     | WaitingUsageLimitState
+    | WaitingCodexCapacityState
     | AwaitingCodexReviewState
     | WaitingForCursorFixState
     | AbortedState

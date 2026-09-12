@@ -9,6 +9,12 @@ from datetime import UTC, datetime
 
 from ai_dev_loop.iterations import correction_execution_envelope_path
 from ai_dev_loop.review_result import CodexReviewResult, completion_status_for_review
+from ai_dev_loop.runners.codex_failure import is_codex_usage_limit_recovery_eligible
+from ai_dev_loop.scheduler.application.codex_capacity_probe import (
+    CodexAppServerCapacityProbe,
+    CodexCapacityProbePort,
+    CodexCapacityStatus,
+)
 from ai_dev_loop.scheduler.application.codex_evidence import (
     CodexEvidenceError,
     load_authenticated_codex_outcome,
@@ -27,9 +33,11 @@ from ai_dev_loop.scheduler.domain.codex_contract import (
 )
 from ai_dev_loop.scheduler.domain.events import (
     CodexBootstrapUncertainEvent,
+    CodexCapacityAvailableEvent,
     CodexReviewBlockedEvent,
     CodexReviewerBoundEvent,
     CodexReviewScheduledEvent,
+    CodexUsageCapacityDetectedEvent,
     MaxIterationsReachedEvent,
     RunCompletedEvent,
     RunCompletedWithResidualRiskEvent,
@@ -37,14 +45,20 @@ from ai_dev_loop.scheduler.domain.events import (
 )
 from ai_dev_loop.scheduler.domain.reducer import (
     apply_codex_bootstrap_uncertain,
+    apply_codex_capacity_available,
     apply_codex_review_blocked,
     apply_codex_reviewer_bound,
+    apply_codex_usage_capacity_detected,
     apply_max_iterations_reached,
     apply_run_completed,
     apply_run_completed_with_residual_risk,
     apply_waiting_for_cursor_fix_entered,
 )
-from ai_dev_loop.scheduler.domain.state import AwaitingCodexReviewState, BlockedState
+from ai_dev_loop.scheduler.domain.state import (
+    AwaitingCodexReviewState,
+    BlockedState,
+    WaitingCodexCapacityState,
+)
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import (
     ProtectedArtifactError,
     ProtectedArtifactStore,
@@ -62,12 +76,14 @@ class CodexWorkflowService:
         now_factory: Callable[[], datetime] | None = None,
         event_id_factory: Callable[[], str] | None = None,
         dispatch_id_factory: Callable[[], str] | None = None,
+        capacity_probe: CodexCapacityProbePort | None = None,
     ) -> None:
         self.store = store
         self.artifacts = artifacts
         self._now_factory = now_factory or (lambda: utc_now())
         self._event_id_factory = event_id_factory or (lambda: f"evt-{secrets.token_hex(16)}")
         self._dispatch_id_factory = dispatch_id_factory or (lambda: f"fx-{secrets.token_hex(16)}")
+        self._capacity_probe = capacity_probe or CodexAppServerCapacityProbe()
 
     def process_run(
         self,
@@ -76,6 +92,13 @@ class CodexWorkflowService:
         run_id: str,
     ) -> list[TickRunReceipt]:
         receipts: list[TickRunReceipt] = []
+        capacity = self._maybe_probe_codex_capacity(
+            tick_owner_id,
+            tick_lease_generation,
+            run_id,
+        )
+        if capacity is not None:
+            receipts.append(capacity)
         scheduled = self._maybe_schedule_codex_review_effect(
             tick_owner_id,
             tick_lease_generation,
@@ -91,6 +114,81 @@ class CodexWorkflowService:
         if ingested is not None:
             receipts.append(ingested)
         return receipts
+
+    def _maybe_probe_codex_capacity(
+        self,
+        tick_owner_id: str,
+        tick_lease_generation: int,
+        run_id: str,
+    ) -> TickRunReceipt | None:
+        now = self._now_factory()
+        with self.store.begin_read() as conn:
+            if not tick_lease_is_active(
+                self.store,
+                conn,
+                owner_id=tick_owner_id,
+                generation=tick_lease_generation,
+                now=now,
+            ):
+                return None
+            if self.store.get_nonterminal_attempt_for_run(conn, run_id) is not None:
+                return None
+            state, version, _ = self.store.load_validated_snapshot(conn, run_id)
+            if not isinstance(state, WaitingCodexCapacityState):
+                return None
+            review_iteration = state.codex.review_iteration
+            codex_command = state.context.codex.command
+
+        observation = self._capacity_probe.probe(codex_command)
+        if observation.status == CodexCapacityStatus.EXHAUSTED:
+            return TickRunReceipt(run_id=run_id, action="codex_capacity_exhausted")
+        if observation.status == CodexCapacityStatus.UNAVAILABLE:
+            return self._block_capacity_probe(
+                run_id,
+                tick_owner_id=tick_owner_id,
+                tick_lease_generation=tick_lease_generation,
+                reason_kind="codex_capacity_probe_unavailable",
+                summary="Codex capacity probe is unavailable or unsupported",
+            )
+
+        event = CodexCapacityAvailableEvent(
+            run_id=run_id,
+            review_iteration=review_iteration,
+        )
+        with self.store.begin_immediate() as conn:
+            commit_now = self._now_factory()
+            now_text = commit_now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            if not tick_lease_is_active(
+                self.store,
+                conn,
+                owner_id=tick_owner_id,
+                generation=tick_lease_generation,
+                now=commit_now,
+            ):
+                return None
+            state, version, _ = self.store.load_validated_snapshot(conn, run_id)
+            if not isinstance(state, WaitingCodexCapacityState):
+                return TickRunReceipt(run_id=run_id, action="codex_capacity_state_changed")
+            new_state = apply_codex_capacity_available(state, event, now_text=now_text)
+            event_id = self._event_id_factory()
+            sequence = self.store.next_event_sequence(conn, run_id)
+            self.store.append_event(
+                conn,
+                event_id=event_id,
+                run_id=run_id,
+                sequence=sequence,
+                event=event,
+                now=commit_now,
+            )
+            if not self.store.compare_and_swap_state(
+                conn,
+                run_id=run_id,
+                expected_version=version,
+                new_state=new_state,
+                now=commit_now,
+            ):
+                return TickRunReceipt(run_id=run_id, action="codex_capacity_cas_lost")
+        return TickRunReceipt(run_id=run_id, action="codex_capacity_available")
 
     def _maybe_schedule_codex_review_effect(
         self,
@@ -110,6 +208,9 @@ class CodexWorkflowService:
                 return None
             if self.store.get_nonterminal_attempt_for_run(conn, run_id) is not None:
                 return None
+            completed = self.store.get_latest_completed_codex_attempt(conn, run_id)
+            if completed is not None and int(completed["ingested"]) == 0:
+                return None
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
             if not isinstance(state, AwaitingCodexReviewState):
                 return None
@@ -123,23 +224,23 @@ class CodexWorkflowService:
             if codex_effects:
                 return None
             review_iteration = state.cursor.iteration
-            existing = conn.execute(
-                """
-                SELECT 1 FROM scheduler_effects
-                WHERE run_id = ?
-                  AND effect_kind IN (?, ?)
-                  AND json_extract(effect_payload, '$.review_iteration') = ?
-                LIMIT 1
-                """,
-                (
-                    run_id,
-                    BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND,
-                    RESUME_CODEX_REVIEW_EFFECT_KIND,
-                    review_iteration,
-                ),
-            ).fetchone()
-            if existing is not None:
-                return None
+            if not state.codex.reviewer_session_id:
+                existing = conn.execute(
+                    """
+                    SELECT 1 FROM scheduler_effects
+                    WHERE run_id = ?
+                      AND effect_kind = ?
+                      AND json_extract(effect_payload, '$.review_iteration') = ?
+                    LIMIT 1
+                    """,
+                    (
+                        run_id,
+                        BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND,
+                        review_iteration,
+                    ),
+                ).fetchone()
+                if existing is not None:
+                    return None
 
         with self.store.begin_immediate() as conn:
             commit_now = self._now_factory()
@@ -295,6 +396,13 @@ class CodexWorkflowService:
                 attempt_id=attempt_id,
                 reason_kind=failure_kind or "codex_attempt_failed",
                 summary=stderr_summary or "codex attempt failed before review outcome",
+            )
+
+        if is_codex_usage_limit_recovery_eligible(outcome):
+            return self._handle_codex_usage_capacity(
+                run_id,
+                attempt_id=attempt_id,
+                outcome=outcome,
             )
 
         dispatch_id = str(attempt["dispatch_id"])  # type: ignore[index]
@@ -485,6 +593,109 @@ class CodexWorkflowService:
             ):
                 return TickRunReceipt(run_id=run_id, action="codex_bind_cas_lost")
         return bootstrap_session_id
+
+    def _handle_codex_usage_capacity(
+        self,
+        run_id: str,
+        *,
+        attempt_id: str,
+        outcome: dict[str, object],
+    ) -> TickRunReceipt:
+        dispatch_id = str(outcome.get("dispatch_id", ""))
+        with self.store.begin_read() as conn:
+            state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            if not isinstance(state, AwaitingCodexReviewState):
+                return TickRunReceipt(run_id=run_id, action="codex_usage_state_changed")
+            dispatch = self.store.get_effect_by_dispatch_id(conn, dispatch_id)
+            if dispatch is None:
+                return TickRunReceipt(run_id=run_id, action="codex_usage_dispatch_missing")
+            payload = dispatch["effect_payload"]
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            if not isinstance(payload, dict):
+                return self._block_review(
+                    run_id,
+                    attempt_id=attempt_id,
+                    reason_kind="codex_dispatch_payload_invalid",
+                    summary="codex effect payload is not a JSON object",
+                )
+            review_iteration = int(payload.get("review_iteration", state.cursor.iteration))
+            effect_kind = str(outcome.get("effect_kind", ""))
+
+        bound_session = state.codex.reviewer_session_id
+        bootstrap_session_id = str(outcome.get("bootstrap_session_id", "")).strip()
+        if (
+            effect_kind == BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND
+            and bootstrap_session_id
+            and not bound_session
+        ):
+            bound = self._persist_reviewer_binding(
+                run_id,
+                state,
+                bootstrap_session_id=bootstrap_session_id,
+                outcome=outcome,
+            )
+            if isinstance(bound, TickRunReceipt):
+                return bound
+            bound_session = bound
+        if not bound_session:
+            uncertainty = str(outcome.get("bootstrap_uncertainty_reason", "")).strip()
+            if uncertainty:
+                return self._handle_bootstrap_uncertainty(
+                    run_id,
+                    attempt_id=attempt_id,
+                    uncertainty_reason=uncertainty,
+                    outcome=outcome,
+                )
+            return self._handle_bootstrap_uncertainty(
+                run_id,
+                attempt_id=attempt_id,
+                uncertainty_reason="missing_identity",
+                outcome=outcome,
+            )
+
+        now = self._now_factory()
+        now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        event = CodexUsageCapacityDetectedEvent(
+            run_id=run_id,
+            review_iteration=review_iteration,
+        )
+        with self.store.begin_immediate() as conn:
+            current_state, version, _ = self.store.load_validated_snapshot(conn, run_id)
+            if not isinstance(current_state, AwaitingCodexReviewState):
+                return TickRunReceipt(run_id=run_id, action="codex_usage_state_changed")
+            if not current_state.codex.reviewer_session_id:
+                return self._block_review(
+                    run_id,
+                    attempt_id=attempt_id,
+                    reason_kind="codex_bootstrap_uncertain",
+                    summary="Codex usage limit before reviewer B was durably bound",
+                )
+            new_state = apply_codex_usage_capacity_detected(
+                current_state,
+                event,
+                now_text=now_text,
+            )
+            event_id = self._event_id_factory()
+            sequence = self.store.next_event_sequence(conn, run_id)
+            self.store.append_event(
+                conn,
+                event_id=event_id,
+                run_id=run_id,
+                sequence=sequence,
+                event=event,
+                now=now,
+            )
+            if not self.store.compare_and_swap_state(
+                conn,
+                run_id=run_id,
+                expected_version=version,
+                new_state=new_state,
+                now=now,
+            ):
+                return TickRunReceipt(run_id=run_id, action="codex_usage_cas_lost")
+            self.store.mark_attempt_ingested(conn, attempt_id=attempt_id, now=now)
+        return TickRunReceipt(run_id=run_id, action="waiting_codex_capacity")
 
     def _handle_bootstrap_uncertainty(
         self,
@@ -712,6 +923,40 @@ class CodexWorkflowService:
             reason_kind=reason_kind,
             summary=summary,
         )
+
+    def _block_capacity_probe(
+        self,
+        run_id: str,
+        *,
+        tick_owner_id: str,
+        tick_lease_generation: int,
+        reason_kind: str,
+        summary: str,
+    ) -> TickRunReceipt | None:
+        now = self._now_factory()
+        with self.store.begin_immediate() as conn:
+            if not tick_lease_is_active(
+                self.store,
+                conn,
+                owner_id=tick_owner_id,
+                generation=tick_lease_generation,
+                now=now,
+            ):
+                return None
+            state, version, _ = self.store.load_validated_snapshot(conn, run_id)
+            if not isinstance(state, WaitingCodexCapacityState):
+                return TickRunReceipt(run_id=run_id, action="codex_probe_block_state_changed")
+            event = CodexReviewBlockedEvent(
+                run_id=run_id,
+                block_reason_kind=reason_kind,
+                block_reason_summary=summary,
+            )
+            now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            new_state = apply_codex_review_blocked(state, event, now_text=now_text)
+            self._append_block(
+                conn, run_id=run_id, event=event, new_state=new_state, version=version, now=now
+            )
+        return TickRunReceipt(run_id=run_id, action="blocked", detail=reason_kind)
 
     def _block_review(
         self,
