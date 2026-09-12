@@ -296,6 +296,7 @@ class CodexWorkflowCheckpoint(DomainModel):
     latest_correction_envelope_sha256: Sha256Hex | None = None
     latest_review_result_path: NonEmptyStr | None = None
     latest_review_result_sha256: Sha256Hex | None = None
+    codex_capacity_wait_started_at: NonEmptyStr | None = None
 
     @field_validator("review_iteration", "reviews_completed")
     @classmethod
@@ -397,6 +398,31 @@ class WaitingUsageLimitState(SchedulerRunBase):
             raise ValueError("waiting_usage_limit requires usage_limit fingerprint")
         if not self.cursor.original_prompt_path:
             raise ValueError("waiting_usage_limit requires original prompt binding")
+        return self
+
+
+class WaitingCodexCapacityState(SchedulerRunBase):
+    """Run waiting for Codex account capacity before resuming the bound reviewer."""
+
+    kind: Literal["waiting_codex_capacity"] = "waiting_codex_capacity"
+    schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
+    checkpoint: AdmittedRunCheckpoint
+    cursor: CursorWorkflowCheckpoint
+    codex: CodexWorkflowCheckpoint
+
+    @field_validator("schema_version")
+    @classmethod
+    def schema_version_is_four(cls, value: int) -> int:
+        return _schema_version_is_four(value)
+
+    @model_validator(mode="after")
+    def capacity_wait_fields_required(self) -> WaitingCodexCapacityState:
+        if not self.codex.reviewer_session_id:
+            raise ValueError("waiting_codex_capacity requires bound reviewer identity")
+        if not self.cursor.staged_patch_path or not self.cursor.staged_patch_sha256:
+            raise ValueError("waiting_codex_capacity requires staged patch artifacts")
+        if not self.codex.codex_capacity_wait_started_at:
+            raise ValueError("waiting_codex_capacity requires capacity wait timestamp")
         return self
 
 
@@ -547,6 +573,7 @@ SchedulerState = Annotated[
     | Annotated[PreflightCompleteState, Tag("preflight_complete")]
     | Annotated[CursorReadyState, Tag("cursor_ready")]
     | Annotated[WaitingUsageLimitState, Tag("waiting_usage_limit")]
+    | Annotated[WaitingCodexCapacityState, Tag("waiting_codex_capacity")]
     | Annotated[AwaitingCodexReviewState, Tag("awaiting_codex_review")]
     | Annotated[WaitingForCursorFixState, Tag("waiting_for_cursor_fix")]
     | Annotated[CompletedState, Tag("completed")]
@@ -575,6 +602,7 @@ SCHEDULER_ABORTABLE_STATE_KINDS = frozenset(
         "preflight_complete",
         "cursor_ready",
         "waiting_usage_limit",
+        "waiting_codex_capacity",
         "awaiting_codex_review",
         "waiting_for_cursor_fix",
     }
@@ -598,6 +626,7 @@ def parse_scheduler_state(
     | PreflightCompleteState
     | CursorReadyState
     | WaitingUsageLimitState
+    | WaitingCodexCapacityState
     | AwaitingCodexReviewState
     | WaitingForCursorFixState
     | CompletedState
@@ -615,6 +644,7 @@ def parse_scheduler_state(
             PreflightCompleteState,
             CursorReadyState,
             WaitingUsageLimitState,
+            WaitingCodexCapacityState,
             AwaitingCodexReviewState,
             WaitingForCursorFixState,
             CompletedState,

@@ -362,6 +362,41 @@ Accion segura:
 3. reutiliza exactamente ese UUID si necesitas repetir el comando sin duplicar;
 4. autoriza el run nuevo con `scheduler start` cuando quede `queued`.
 
+## Codex alcanzo el limite de capacidad de la cuenta
+
+Sintoma:
+
+- `scheduler status` muestra `waiting_codex_capacity` sin `cursor_wait_until`;
+- `scheduler history` registra `codex_usage_capacity_detected`;
+- la accion segura es `ai_dev_loop scheduler tick` (el scheduler observa capacidad
+  con una sonda acotada de `codex app-server`, no programa un reloj de reset).
+
+Accion segura:
+
+```bash
+ai_dev_loop scheduler status <run-id>
+ai_dev_loop scheduler history <run-id>
+ai_dev_loop scheduler tick
+```
+
+El scheduler conserva el reviewer B exacto, la reserva del worktree y el patch
+staged. Puedes aplicar un reset manual de Codex o cambiar la cuenta WSL activa
+entre ticks; el siguiente tick lee la capacidad del CLI configurado y reanuda
+`codex exec resume` con el mismo session ID cuando hay cupo.
+
+No uses `codex resume --last`. Para inspeccion manual en WSL, deja `CODEX_HOME`
+sin definir o apuntando al home nativo (`~/.codex`), usa `codex resume --all` para
+quitar el filtro por repositorio y `--include-non-interactive` para ver sesiones
+creadas por el scheduler.
+
+Si `CODEX_HOME` o `CODEX_SQLITE_HOME` heredan una ruta DrvFS bajo `/mnt/*` desde
+Codex Desktop, el scheduler omite esas variables solo en subprocesos Codex para que
+review y sonda usen el home WSL nativo. La correccion interactiva del shell del
+usuario sigue siendo manual.
+
+Si la sonda no esta disponible, el run pasa a `blocked` con
+`codex_capacity_probe_unavailable`; no hay reintento automatico ciego.
+
 ## Cursor alcanzo el limite de uso del modelo
 
 Sintoma:
@@ -435,6 +470,8 @@ systemctl --user status ai-dev-loop-scheduler-tick.timer   # manual; no auto-ena
   artefactos protegidos, no reintentar automaticamente.
 - `waiting_usage_limit` programa `retry_due`; espera `cursor_wait_until` o ejecuta
   `scheduler tick` tras ese instante (solo retry verificado de usage-limit).
+- `waiting_codex_capacity` no programa reset; ejecuta `scheduler tick` para que la
+  sonda interna observe capacidad Codex y reanude el reviewer B cuando haya cupo.
 - El timer empaquetado es un mecanismo periódico de progreso eventual, no un
   reloj de tiempo real: aunque el asset solicita intervalos de 30 segundos,
   systemd puede agrupar o retrasar activaciones. Funciona cuando la distribución

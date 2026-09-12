@@ -35,6 +35,8 @@ CODEX_BOOTSTRAP_UNCERTAIN_EVENT_KIND = "codex_bootstrap_uncertain"
 CODEX_REVIEW_SCHEDULED_EVENT_KIND = "codex_review_scheduled"
 CODEX_REVIEW_COMPLETED_EVENT_KIND = "codex_review_completed"
 CODEX_REVIEW_BLOCKED_EVENT_KIND = "codex_review_blocked"
+CODEX_USAGE_CAPACITY_DETECTED_EVENT_KIND = "codex_usage_capacity_detected"
+CODEX_CAPACITY_AVAILABLE_EVENT_KIND = "codex_capacity_available"
 WAITING_FOR_CURSOR_FIX_EVENT_KIND = "waiting_for_cursor_fix_entered"
 RUN_COMPLETED_EVENT_KIND = "run_completed"
 RUN_COMPLETED_WITH_RESIDUAL_RISK_EVENT_KIND = "run_completed_with_residual_risk"
@@ -413,6 +415,32 @@ class CodexReviewBlockedEvent(DomainModel):
         return value
 
 
+class CodexUsageCapacityDetectedEvent(DomainModel):
+    kind: str = Field(default=CODEX_USAGE_CAPACITY_DETECTED_EVENT_KIND)
+    run_id: str
+    review_iteration: int
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_codex_usage_capacity_detected(cls, value: str) -> str:
+        if value != CODEX_USAGE_CAPACITY_DETECTED_EVENT_KIND:
+            raise ValueError("kind must be codex_usage_capacity_detected")
+        return value
+
+
+class CodexCapacityAvailableEvent(DomainModel):
+    kind: str = Field(default=CODEX_CAPACITY_AVAILABLE_EVENT_KIND)
+    run_id: str
+    review_iteration: int
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_codex_capacity_available(cls, value: str) -> str:
+        if value != CODEX_CAPACITY_AVAILABLE_EVENT_KIND:
+            raise ValueError("kind must be codex_capacity_available")
+        return value
+
+
 class WaitingForCursorFixEnteredEvent(DomainModel):
     kind: str = Field(default=WAITING_FOR_CURSOR_FIX_EVENT_KIND)
     run_id: str
@@ -548,6 +576,8 @@ SchedulerEvent = Annotated[
     | Annotated[CodexReviewScheduledEvent, Tag(CODEX_REVIEW_SCHEDULED_EVENT_KIND)]
     | Annotated[CodexReviewCompletedEvent, Tag(CODEX_REVIEW_COMPLETED_EVENT_KIND)]
     | Annotated[CodexReviewBlockedEvent, Tag(CODEX_REVIEW_BLOCKED_EVENT_KIND)]
+    | Annotated[CodexUsageCapacityDetectedEvent, Tag(CODEX_USAGE_CAPACITY_DETECTED_EVENT_KIND)]
+    | Annotated[CodexCapacityAvailableEvent, Tag(CODEX_CAPACITY_AVAILABLE_EVENT_KIND)]
     | Annotated[WaitingForCursorFixEnteredEvent, Tag(WAITING_FOR_CURSOR_FIX_EVENT_KIND)]
     | Annotated[RunCompletedEvent, Tag(RUN_COMPLETED_EVENT_KIND)]
     | Annotated[RunCompletedWithResidualRiskEvent, Tag(RUN_COMPLETED_WITH_RESIDUAL_RISK_EVENT_KIND)]

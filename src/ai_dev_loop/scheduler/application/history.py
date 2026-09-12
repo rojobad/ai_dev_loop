@@ -95,6 +95,9 @@ def _safe_detail_for_event(event_kind: str, payload_text: str) -> str:
     if event_kind == "cursor_usage_limit_detected":
         wait_until = payload.get("wait_until")
         return f"{event_kind}: wait_until={wait_until}"
+    if event_kind in {"codex_usage_capacity_detected", "codex_capacity_available"}:
+        iteration = payload.get("review_iteration")
+        return f"{event_kind}: review_iteration={iteration}"
     if event_kind == "attempt_completed":
         return (
             f"{event_kind}: termination={payload.get('termination_class')} "

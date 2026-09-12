@@ -225,6 +225,16 @@ def awaiting_codex_review_safe_next_action() -> SafeNextAction:
     )
 
 
+def waiting_codex_capacity_safe_next_action() -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.SCHEDULER_TICK,
+        command=(
+            "ai_dev_loop scheduler tick "
+            "(waiting for Codex account capacity; no reset timer is scheduled)."
+        ),
+    )
+
+
 def waiting_for_cursor_fix_safe_next_action() -> SafeNextAction:
     return SafeNextAction(
         kind=SafeNextActionKind.SCHEDULER_TICK,
@@ -319,6 +329,8 @@ def safe_next_action_for_state_kind(
         if cursor_wait_until:
             return waiting_usage_limit_safe_next_action(cursor_wait_until)
         return active_cursor_safe_next_action()
+    if state_kind == "waiting_codex_capacity":
+        return waiting_codex_capacity_safe_next_action()
     if state_kind == "awaiting_codex_review":
         return awaiting_codex_review_safe_next_action()
     if state_kind == "waiting_for_cursor_fix":

@@ -84,6 +84,7 @@ NON_TERMINAL_STATE_KINDS = frozenset(
         "preflight_complete",
         "cursor_ready",
         "waiting_usage_limit",
+        "waiting_codex_capacity",
         "awaiting_codex_review",
         "waiting_for_cursor_fix",
         "blocked",
@@ -97,6 +98,7 @@ TICK_ELIGIBLE_STATE_KINDS = frozenset(
         "preflight_complete",
         "cursor_ready",
         "waiting_usage_limit",
+        "waiting_codex_capacity",
         "awaiting_codex_review",
         "waiting_for_cursor_fix",
     }

@@ -22,6 +22,11 @@ from ai_dev_loop.runners.codex import (
     ensure_codex_review_artifact_dirs,
     redact_codex_args,
 )
+from ai_dev_loop.runners.codex_failure import (
+    FAILURE_CODE_CODEX_USAGE_LIMIT,
+    classify_codex_review_events_path,
+    is_codex_usage_limit_recovery_eligible,
+)
 from ai_dev_loop.scheduler.application.attempt_backend import TerminationClass
 from ai_dev_loop.scheduler.application.attempt_envelope import (
     build_result_envelope,
@@ -37,6 +42,7 @@ from ai_dev_loop.scheduler.application.codex_argv import (
 from ai_dev_loop.scheduler.application.codex_evidence import (
     authenticate_pinned_codex_invocation_evidence,
 )
+from ai_dev_loop.scheduler.application.codex_subprocess_env import sanitize_codex_subprocess_env
 from ai_dev_loop.scheduler.domain.codex_contract import (
     BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND,
     CODEX_ATTEMPT_EFFECT_KINDS,
@@ -325,6 +331,7 @@ def _run_codex_review(
         stdout_path=events_path,
         stderr_path=stderr_path,
         sensitive=True,
+        env=sanitize_codex_subprocess_env(),
         max_stdout_bytes=MAX_CODEX_CAPTURE_STDOUT_BYTES,
         max_stderr_bytes=MAX_CODEX_CAPTURE_STDERR_BYTES,
         drain_after_limit=True,
@@ -418,6 +425,11 @@ def _run_codex_review(
         outcome["fix_prompt_sha256"] = sha256_bytes(review_result.cursor_fix_prompt.encode("utf-8"))
         outcome["execution_envelope_path"] = correction_execution_envelope_path(review_iteration)
         outcome["execution_envelope_sha256"] = envelope_sha
+    usage_limit = classify_codex_review_events_path(events_path)
+    if usage_limit.is_usage_limit:
+        outcome["failure_code"] = FAILURE_CODE_CODEX_USAGE_LIMIT
+        if not is_codex_usage_limit_recovery_eligible(outcome):
+            outcome.pop("failure_code", None)
     return outcome
 
 

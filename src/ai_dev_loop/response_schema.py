@@ -62,6 +62,42 @@ def validate_codex_response_schema(schema_file: Path, *, schema_name: str | None
     )
 
 
+def events_text_indicates_usage_limit_exceeded(text: str) -> bool:
+    """Return True when one recognized API error object has code ``usage_limit_exceeded``.
+
+    Supports the Codex exec ``--json`` transport where a recognized wrapper may store a
+    JSON-serialized API error envelope in ``message``. Does not infer from prose, exit
+    status, ``rate_limit_exceeded``, stderr, or tokens split across lines.
+    """
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        for error in _recognized_api_error_objects(payload):
+            if error.get("code") == "usage_limit_exceeded":
+                return True
+    return False
+
+
+def events_indicate_usage_limit_exceeded(events_path: Path) -> bool:
+    """File-based helper for Codex review JSONL usage-limit classification."""
+
+    if not events_path.is_file():
+        return False
+    try:
+        text = events_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return events_text_indicates_usage_limit_exceeded(text)
+
+
 def events_indicate_adjudication_schema_rejection(events_path: Path) -> bool:
     """Return True only when one structured API error object carries both facts.
 
