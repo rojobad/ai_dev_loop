@@ -43,12 +43,15 @@ submit desde la sesion controller A.
 ## 3. Congelar y autorizar el run
 
 ```bash
-ai_dev_loop scheduler submit ... --controller-session-id ... \
+ai_dev_loop scheduler submit ... \
   --codex-review-model ... --codex-review-reasoning-effort ... \
   --output json < prompt.txt
 
-ai_dev_loop scheduler start <run-id> --controller-session-id ...
+ai_dev_loop scheduler start <run-id>
 ```
+
+Opcionalmente añade `--controller-session-id` al submit para proveniencia A y
+descubrimiento con `controller status`.
 
 ## 4. Ejecutar ticks
 
@@ -56,13 +59,15 @@ ai_dev_loop scheduler start <run-id> --controller-session-id ...
 ai_dev_loop scheduler tick
 ```
 
-O instala y habilita el timer systemd solo tras aceptacion manual independiente.
+O configura el [timer systemd en WSL](../operacion/timer-systemd-wsl.md) solo
+tras aceptacion manual independiente. El runbook incluye los requisitos de
+systemd, `linger`, verificación y límites del ciclo de vida de WSL.
 
 ## 5. Observar y cerrar
 
 ```bash
 ai_dev_loop scheduler status <run-id>
-ai_dev_loop controller status --controller-session-id ... --repo-path ...
+ai_dev_loop controller status --repo-path ... --run-id <run-id>
 ai_dev_loop scheduler abort <run-id>   # si hace falta cancelar
 ```
 

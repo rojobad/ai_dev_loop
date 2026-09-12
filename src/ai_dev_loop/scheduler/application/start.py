@@ -7,13 +7,11 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ai_dev_loop.integrations.codex.session_runtime import require_codex_session_id
 from ai_dev_loop.scheduler.application.contracts import (
     SchedulerEngineError,
     SchedulerEngineErrorKind,
     StartResult,
     authorized_safe_next_action,
-    queued_safe_next_action,
 )
 from ai_dev_loop.scheduler.domain.events import RunAuthorizedEvent
 from ai_dev_loop.scheduler.domain.reducer import apply_run_authorized
@@ -35,22 +33,11 @@ class StartService:
         self._now_factory = now_factory or (lambda: utc_now())
         self._event_id_factory = event_id_factory or (lambda: f"evt-{secrets.token_hex(16)}")
 
-    def start(self, run_id: str, controller_session_id: str) -> StartResult:
-        controller_id = require_codex_session_id(controller_session_id)
+    def start(self, run_id: str) -> StartResult:
         now = self._now_factory()
 
         with self.store.begin_immediate() as conn:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
-            if state.context.controller.controller_session_id != controller_id:
-                return StartResult(
-                    run_id=run_id,
-                    state_kind=state.kind,
-                    changed=False,
-                    idempotent_replay=False,
-                    safe_next_action=queued_safe_next_action(run_id)
-                    if state.kind == "queued"
-                    else authorized_safe_next_action(),
-                )
             reservation = self.store.get_reservation_for_run(conn, run_id)
             if reservation is None:
                 raise SchedulerEngineError(
@@ -78,7 +65,7 @@ class StartService:
 
             event = RunAuthorizedEvent(
                 run_id=run_id,
-                controller_session_id=controller_id,
+                controller_session_id=state.context.controller.controller_session_id,
                 idempotent_replay=False,
             )
             now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -117,7 +104,5 @@ def default_start_service(*, db_path: Path | None = None) -> StartService:
     return StartService(SqliteSchedulerStore(db_path or default_engine_db_path()))
 
 
-def start_run(
-    run_id: str, controller_session_id: str, *, db_path: Path | None = None
-) -> StartResult:
-    return default_start_service(db_path=db_path).start(run_id, controller_session_id)
+def start_run(run_id: str, *, db_path: Path | None = None) -> StartResult:
+    return default_start_service(db_path=db_path).start(run_id)

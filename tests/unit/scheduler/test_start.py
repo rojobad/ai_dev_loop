@@ -43,7 +43,7 @@ def test_start_authorizes_queued_run(tmp_path: Path) -> None:
     store = SqliteSchedulerStore(tmp_path / "engine.sqlite3")
     _insert_queued_run(store)
     service = StartService(store, now_factory=lambda: datetime(2026, 9, 4, 12, 1, tzinfo=UTC))
-    result = service.start("fixture-run", CONTROLLER_SESSION)
+    result = service.start("fixture-run")
     assert result.changed is True
     assert result.state_kind == "authorized"
     assert result.safe_next_action.command == "ai_dev_loop scheduler tick"
@@ -52,31 +52,15 @@ def test_start_authorizes_queued_run(tmp_path: Path) -> None:
         assert state.kind == "authorized"
 
 
-def test_start_is_idempotent_for_same_controller(tmp_path: Path) -> None:
+def test_start_is_idempotent(tmp_path: Path) -> None:
     store = SqliteSchedulerStore(tmp_path / "engine.sqlite3")
     _insert_queued_run(store)
     service = StartService(store, now_factory=lambda: datetime(2026, 9, 4, 12, 1, tzinfo=UTC))
-    first = service.start("fixture-run", CONTROLLER_SESSION)
-    second = service.start("fixture-run", CONTROLLER_SESSION)
+    first = service.start("fixture-run")
+    second = service.start("fixture-run")
     assert first.changed is True
     assert second.changed is False
     assert second.idempotent_replay is True
-
-
-def test_start_mismatch_controller_is_noop(tmp_path: Path) -> None:
-    store = SqliteSchedulerStore(tmp_path / "engine.sqlite3")
-    _insert_queued_run(store)
-    service = StartService(store)
-    result = service.start("fixture-run", "22222222-2222-2222-2222-222222222222")
-    assert result.changed is False
-    with store.begin_read() as conn:
-        state, _, _ = store.load_validated_snapshot(conn, "fixture-run")
-        assert state.kind == "queued"
-        count = conn.execute(
-            "SELECT COUNT(*) FROM scheduler_events WHERE run_id = ?",
-            ("fixture-run",),
-        ).fetchone()[0]
-        assert int(count) == 1
 
 
 def test_submit_created_reservation_required_at_start(tmp_path: Path) -> None:
@@ -105,7 +89,7 @@ def test_submit_created_reservation_required_at_start(tmp_path: Path) -> None:
         )
     service = StartService(store)
     with pytest.raises(Exception, match="reservation"):
-        service.start("fixture-run", CONTROLLER_SESSION)
+        service.start("fixture-run")
 
 
 def test_submit_time_reservation_conflict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

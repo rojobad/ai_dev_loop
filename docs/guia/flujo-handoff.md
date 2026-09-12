@@ -11,7 +11,7 @@ crea un unico reviewer B en el primer review y reanuda solo esa identidad despue
 3. Discute y aprueba el cambio.
 4. Genera un plan Markdown y un prompt separado para Cursor.
 5. Usa el skill global `ai-dev-loop-handoff`.
-6. Desde A, ejecuta `ai_dev_loop scheduler submit` con `--controller-session-id`, `--codex-review-model` y `--codex-review-reasoning-effort` (sin `--codex-session-id`).
+6. Desde A, ejecuta `ai_dev_loop scheduler submit` con `--codex-review-model` y `--codex-review-reasoning-effort` (sin `--codex-session-id`). `--controller-session-id` es opcional para proveniencia y lookup controller.
 7. Desde A, autoriza el run con `ai_dev_loop scheduler start <run-id>`.
 8. Ejecuta `ai_dev_loop scheduler tick` manualmente o habilita el timer systemd empaquetado (accion separada y explicita).
 9. El scheduler crea B en el primer review, captura su session ID y lo reutiliza en reviews posteriores.
@@ -50,11 +50,10 @@ ai_dev_loop scheduler submit \
   --repo-path /path/al/repo \
   --plan-path docs/plans/mi-plan.md \
   --prompt-source-path docs/plans/prompt_mi-plan.txt \
-  --controller-session-id "<exact-controller-session-id>" \
   --codex-review-model "<exact-review-model>" \
   --codex-review-reasoning-effort "<exact-reasoning-effort>" \
+  --controller-session-id "<exact-controller-session-id>" \
   --output json < docs/plans/prompt_mi-plan.txt
 ```
 
-La siguiente accion segura es `ai_dev_loop scheduler start <run-id>` con el mismo
-controller session ID.
+La siguiente accion segura es `ai_dev_loop scheduler start <run-id>`.

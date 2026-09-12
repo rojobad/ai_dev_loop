@@ -55,6 +55,8 @@ Para una instalacion nueva, sigue:
 3. [Configuracion del repositorio](guia/configuracion-repositorio.md)
 4. [Flujo de handoff](guia/flujo-handoff.md)
 5. [Ejecutar runs con el scheduler](operacion/prepare-start-resume-abort.md)
+6. [Timer del scheduler en WSL](operacion/timer-systemd-wsl.md), si deseas
+   progreso automático entre ticks manuales
 
 Para depurar un problema existente, empieza por [Estado, logs e inspeccion](operacion/observabilidad.md) y [Troubleshooting](operacion/troubleshooting.md).
 

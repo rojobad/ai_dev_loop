@@ -218,7 +218,7 @@ def test_usage_limit_drift_blocks_durably(
         str(fake_clis["agent_log"].parent / "drift-block-counter.txt"),
     )
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     now = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
     store = SqliteSchedulerStore(scheduler_paths["db_path"])
     artifacts = ProtectedArtifactStore(scheduler_paths["artifact_root"])
@@ -485,7 +485,7 @@ def test_runner_rejects_evidence_tampered_after_backend_dispatch(
         str(fake_clis["agent_log"].parent / "tamper-runner-counter.txt"),
     )
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     now = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
     store = SqliteSchedulerStore(scheduler_paths["db_path"])
     artifacts = ProtectedArtifactStore(scheduler_paths["artifact_root"])
@@ -543,7 +543,7 @@ def test_fingerprint_drift_between_schedule_and_launch_blocks(
         str(fake_clis["agent_log"].parent / "schedule-launch-drift-counter.txt"),
     )
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     now = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
     store = SqliteSchedulerStore(scheduler_paths["db_path"])
     artifacts = ProtectedArtifactStore(scheduler_paths["artifact_root"])
@@ -604,7 +604,7 @@ def test_preflight_lease_expiry_during_probe_skips_successor_effect(
     scheduler_paths: dict[str, Path],
 ) -> None:
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     base = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
     store = SqliteSchedulerStore(scheduler_paths["db_path"])
     artifacts = ProtectedArtifactStore(scheduler_paths["artifact_root"])
@@ -689,7 +689,7 @@ def test_preflight_protected_artifact_error_blocks_durably(
     scheduler_paths: dict[str, Path],
 ) -> None:
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     store = SqliteSchedulerStore(scheduler_paths["db_path"])
     artifacts = ProtectedArtifactStore(scheduler_paths["artifact_root"])
     tick = TickService(
@@ -725,7 +725,7 @@ def test_scheduler_status_projects_wait_until_and_block_reason(
         str(fake_clis["agent_log"].parent / "status-projection-counter.txt"),
     )
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     now = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
     store = SqliteSchedulerStore(scheduler_paths["db_path"])
     artifacts = ProtectedArtifactStore(scheduler_paths["artifact_root"])
@@ -861,7 +861,7 @@ def test_head_drift_while_waiting_blocks_without_continuation(
         str(fake_clis["agent_log"].parent / "head-drift-wait-counter.txt"),
     )
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     now = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
     store = SqliteSchedulerStore(scheduler_paths["db_path"])
     artifacts = ProtectedArtifactStore(scheduler_paths["artifact_root"])
@@ -927,7 +927,7 @@ def test_usage_limit_ingest_blocks_on_head_drift_after_deferred_tick(
         str(fake_clis["agent_log"].parent / "head-drift-ingest-counter.txt"),
     )
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     now = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
     store = SqliteSchedulerStore(scheduler_paths["db_path"])
     artifacts = ProtectedArtifactStore(scheduler_paths["artifact_root"])

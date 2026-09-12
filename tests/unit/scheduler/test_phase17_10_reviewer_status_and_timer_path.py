@@ -139,7 +139,7 @@ def test_status_list_and_controller_show_bound_fresh_reviewer_prefix(
     queued_status = scheduler_status(run_id, db_path=scheduler_paths["db_path"])
     assert queued_status.summary.reviewer_session_id_prefix is None
 
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     store = SqliteSchedulerStore(scheduler_paths["db_path"])
     artifacts = ProtectedArtifactStore(scheduler_paths["artifact_root"])
     tick = TickService(

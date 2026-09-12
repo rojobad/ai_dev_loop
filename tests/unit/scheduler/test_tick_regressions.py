@@ -303,8 +303,7 @@ def test_admission_git_failure_does_not_skip_other_runs(tmp_path: Path) -> None:
                 now=now,
             )
         StartService(store, now_factory=lambda: datetime(2026, 9, 4, 12, 1, tzinfo=UTC)).start(
-            run_id,
-            CONTROLLER_SESSION,
+            run_id
         )
 
     insert_run("run-a", repo_a, "aaaaaaaa")
@@ -363,8 +362,7 @@ def test_admission_artifact_boundary_access_failure_blocks_and_continues_tick(
                 now=now,
             )
         StartService(store, now_factory=lambda: datetime(2026, 9, 4, 12, 1, tzinfo=UTC)).start(
-            run_id,
-            CONTROLLER_SESSION,
+            run_id
         )
 
     insert_run("run-a", repo_a, "aaaaaaaa")
@@ -621,8 +619,7 @@ def test_controller_status_rejects_corrupt_scheduler_snapshot(
             now=now,
         )
     StartService(store, now_factory=lambda: datetime(2026, 9, 4, 12, 1, tzinfo=UTC)).start(
-        state.run_id,
-        CONTROLLER_SESSION,
+        state.run_id
     )
     with store.begin_immediate() as conn:
         conn.execute(
@@ -670,8 +667,7 @@ def test_controller_lookup_read_failure_on_tampered_controller_identity(
             now=now,
         )
     StartService(store, now_factory=lambda: datetime(2026, 9, 4, 12, 1, tzinfo=UTC)).start(
-        state.run_id,
-        CONTROLLER_SESSION,
+        state.run_id
     )
     with store.begin_immediate() as conn:
         row = store.get_run_row(conn, state.run_id)

@@ -60,7 +60,7 @@ def test_restart_after_active_attempt_aborts_without_relaunch(
 ) -> None:
     monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     backend = FakeAgentProcessBackend(
         default_scenario=FakeAttemptScenario(active_ticks=5, exit_code=0)
     )
@@ -97,7 +97,7 @@ def test_restart_after_completed_attempt_does_not_duplicate_launch(
 ) -> None:
     monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     backend = FakeAgentProcessBackend(
         default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
     )

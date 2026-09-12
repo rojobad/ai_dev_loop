@@ -561,6 +561,91 @@ class SqliteSchedulerStore:
         ).fetchone()
         return cast(sqlite3.Row | None, row)
 
+    def find_existing_submission(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        context: object,
+        resubmission_id: str | None,
+    ) -> sqlite3.Row | None:
+        from ai_dev_loop.scheduler.application.submission import (
+            submission_idempotency_key_candidates,
+        )
+        from ai_dev_loop.scheduler.domain.state import (
+            SubmittedRunContext,
+            submission_identity_payload,
+        )
+
+        if not isinstance(context, SubmittedRunContext):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.INTERNAL,
+                "submission context has unexpected type",
+            )
+        for key in submission_idempotency_key_candidates(
+            context,
+            resubmission_id=resubmission_id,
+        ):
+            existing = self.get_run_by_idempotency_key(conn, key)
+            if existing is not None:
+                return existing
+        return self.find_run_by_matching_submission_identity(
+            conn,
+            worktree_key=context.repository.worktree_key,
+            identity=submission_identity_payload(context),
+            resubmission_id=resubmission_id,
+        )
+
+    def find_run_by_matching_submission_identity(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        worktree_key: str,
+        identity: dict[str, object],
+        resubmission_id: str | None,
+    ) -> sqlite3.Row | None:
+        from ai_dev_loop.scheduler.application.submission import (
+            submission_idempotency_key_candidates,
+        )
+        from ai_dev_loop.scheduler.domain.state import submission_identity_payload
+
+        rows = conn.execute(
+            """
+            SELECT run_id FROM scheduler_runs
+            WHERE worktree_key = ?
+            ORDER BY created_at ASC, run_id ASC
+            """,
+            (worktree_key,),
+        ).fetchall()
+        for row in rows:
+            run_id = str(row[0])
+            state, _, _ = self.load_validated_snapshot(conn, run_id)
+            if submission_identity_payload(state.context) != identity:
+                continue
+            stored_keys = submission_idempotency_key_candidates(
+                state.context,
+                resubmission_id=resubmission_id,
+            )
+            if state.idempotency_key in stored_keys:
+                existing = self.get_run_by_idempotency_key(conn, state.idempotency_key)
+                if existing is not None:
+                    return existing
+        return None
+
+    def count_review_completion_events(self, conn: sqlite3.Connection, run_id: str) -> int:
+        from ai_dev_loop.scheduler.application.contracts import REVIEW_COMPLETION_EVENT_KINDS
+
+        placeholders = ",".join("?" * len(REVIEW_COMPLETION_EVENT_KINDS))
+        row = conn.execute(
+            f"""
+            SELECT COUNT(*) FROM scheduler_events
+            WHERE run_id = ? AND event_kind IN ({placeholders})
+            """,
+            (run_id, *REVIEW_COMPLETION_EVENT_KINDS),
+        ).fetchone()
+        if row is None:
+            return 0
+        return int(row[0])
+
     def get_worktree_reservation(
         self, conn: sqlite3.Connection, worktree_key: str
     ) -> sqlite3.Row | None:
@@ -2352,4 +2437,41 @@ class SqliteSchedulerStore:
             """,
             (run_id, *NON_TERMINAL_ATTEMPT_STATUSES),
         ).fetchall()
+        return [cast(sqlite3.Row, row) for row in rows]
+
+    def list_attempt_timeline_rows(
+        self,
+        conn: sqlite3.Connection,
+        run_id: str,
+        *,
+        limit: int | None = None,
+        newest_first: bool = False,
+    ) -> list[sqlite3.Row]:
+        order = "DESC" if newest_first else "ASC"
+        query = f"""
+            SELECT attempt_id, iteration, component, status,
+                   launch_requested_at, completed_at, phase_attempt
+            FROM (
+                SELECT attempt_id, iteration, component, status,
+                       launch_requested_at, completed_at, created_at,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY iteration, component
+                           ORDER BY
+                               COALESCE(launch_requested_at, created_at) ASC,
+                               created_at ASC,
+                               attempt_id ASC
+                       ) AS phase_attempt
+                FROM scheduler_attempts
+                WHERE run_id = ?
+            )
+            ORDER BY
+                COALESCE(launch_requested_at, created_at) {order},
+                created_at {order},
+                attempt_id {order}
+        """
+        params: list[object] = [run_id]
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        rows = conn.execute(query, tuple(params)).fetchall()
         return [cast(sqlite3.Row, row) for row in rows]

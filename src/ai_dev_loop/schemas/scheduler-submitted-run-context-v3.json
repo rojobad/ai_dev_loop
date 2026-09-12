@@ -149,7 +149,12 @@
       "additionalProperties": false,
       "required": ["controller_session_id"],
       "properties": {
-        "controller_session_id": { "$ref": "#/$defs/uuid_session" }
+        "controller_session_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/uuid_session" },
+            { "type": "null" }
+          ]
+        }
       }
     }
   }

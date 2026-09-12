@@ -117,7 +117,7 @@ def test_admit_and_preflight_without_legacy_fake_agent(
     scheduler_paths: dict[str, Path],
 ) -> None:
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     store = SqliteSchedulerStore(scheduler_paths["db_path"])
     artifacts = ProtectedArtifactStore(scheduler_paths["artifact_root"])
     tick = TickService(
@@ -153,7 +153,7 @@ def test_create_chat_effect_pending_after_preflight(
     scheduler_paths: dict[str, Path],
 ) -> None:
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     store = SqliteSchedulerStore(scheduler_paths["db_path"])
     artifacts = ProtectedArtifactStore(scheduler_paths["artifact_root"])
     tick = TickService(
@@ -192,7 +192,7 @@ def test_create_chat_execution_failure_is_not_reported_as_an_invalid_chat_id(
     del fake_clis
     monkeypatch.setenv("FAKE_AGENT_CREATE_CHAT_MODE", "fail")
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     tick = _tick_service(
         git_repo,
         scheduler_paths,
@@ -225,7 +225,7 @@ def test_released_worktree_reservation_allows_a_fresh_submit(
     del fake_clis
     monkeypatch.setenv("FAKE_AGENT_CREATE_CHAT_MODE", "fail")
     blocked_run_id = _submit(git_repo, scheduler_paths)
-    start_run(blocked_run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(blocked_run_id, db_path=scheduler_paths["db_path"])
     tick = _tick_service(
         git_repo,
         scheduler_paths,
@@ -262,7 +262,7 @@ def test_happy_path_reaches_awaiting_codex_review(
 ) -> None:
     monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     now = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
     backend = FakeAgentProcessBackend(
         default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
@@ -293,7 +293,7 @@ def test_cursor_uses_the_command_frozen_before_detached_path_changes(
     monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
     run_id = _submit(git_repo, scheduler_paths)
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     tick = _tick_service(
         git_repo,
         scheduler_paths,
@@ -324,7 +324,7 @@ def test_usage_limit_waits_for_structured_retry_before_continuation(
         str(fake_clis["agent_log"].parent / "usage-limit-retry-counter.txt"),
     )
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     now = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
     backend = FakeAgentProcessBackend(
         default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
@@ -375,7 +375,7 @@ def test_usage_limit_missing_retry_uses_five_hour_fallback(
         str(fake_clis["agent_log"].parent / "usage-limit-fallback-counter.txt"),
     )
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     now = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
     tick = _tick_service(
         git_repo,
@@ -405,7 +405,7 @@ def test_unclassified_cursor_failure_blocks(
         str(fake_clis["agent_log"].parent / "unclassified-counter.txt"),
     )
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     now = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
     tick = _tick_service(
         git_repo,

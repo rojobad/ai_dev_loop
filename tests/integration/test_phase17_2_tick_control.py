@@ -50,7 +50,7 @@ def test_submit_start_tick_controller_status_flow(
     scheduler_paths: dict[str, Path],
 ) -> None:
     run_id = _submit(git_repo, scheduler_paths)
-    start = start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start = start_run(run_id, db_path=scheduler_paths["db_path"])
     assert start.state_kind == "authorized"
 
     store = SqliteSchedulerStore(scheduler_paths["db_path"])
@@ -86,7 +86,7 @@ def test_controller_status_wrong_controller_read_only_failure(
     scheduler_paths: dict[str, Path],
 ) -> None:
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     status = controller_status(
         controller_session_id="22222222-2222-2222-2222-222222222222",
         repo_path=git_repo,

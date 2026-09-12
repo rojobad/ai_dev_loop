@@ -102,7 +102,6 @@ ai_dev_loop scheduler submit \
   --repo-path /path/al/repo \
   --plan-path docs/plans/mi-plan.md \
   --prompt-source-path docs/plans/prompt_mi-plan.txt \
-  --controller-session-id "<session-id-exacto>" \
   --codex-review-model "<review-model>" \
   --codex-review-reasoning-effort high \
   --output json < docs/plans/prompt_mi-plan.txt
@@ -111,12 +110,15 @@ ai_dev_loop scheduler submit \
 ## 5. Autoriza y ejecuta el loop
 
 ```bash
-ai_dev_loop scheduler start <run-id> --controller-session-id "<session-id-exacto>"
+ai_dev_loop scheduler start <run-id>
 ai_dev_loop scheduler tick
 ```
 
-Durante desarrollo invoca `scheduler tick` manualmente. Para progreso eventual con WSL
-activo, instala y habilita el timer solo tras aceptacion manual independiente:
+Durante desarrollo invoca `scheduler tick` manualmente. Para progreso eventual,
+configura el timer solo tras aceptacion manual independiente. La guía
+[Timer del scheduler en WSL](../operacion/timer-systemd-wsl.md) cubre systemd,
+`linger`, instalación persistente, verificación y recuperación. Los comandos
+de producto son:
 
 ```bash
 ai_dev_loop scheduler timer validate
@@ -138,8 +140,8 @@ ai_dev_loop scheduler status <run-id>
 ai_dev_loop scheduler list
 ai_dev_loop scheduler history <run-id>
 ai_dev_loop controller status \
-  --controller-session-id "<session-id-exacto>" \
-  --repo-path /path/al/repo
+  --repo-path /path/al/repo \
+  --run-id <run-id>
 ```
 
 Los cambios finales quedan staged en el repositorio objetivo. `ai_dev_loop` no hace commit.

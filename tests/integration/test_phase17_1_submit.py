@@ -139,8 +139,8 @@ def test_submit_is_side_effect_free(
     assert scheduler_paths["db_path"].exists()
     assert (scheduler_paths["artifact_root"] / "runs").exists()
     assert result.state_kind == "queued"
-    assert "scheduler start" in result.safe_next_action.command
-    assert "--controller-session-id" in result.safe_next_action.command
+    assert result.safe_next_action.command == f"ai_dev_loop scheduler start {result.run_id}"
+    assert "--controller-session-id" not in result.safe_next_action.command
 
 
 def test_identical_submit_reuses_run(
@@ -392,7 +392,6 @@ def test_explicit_resubmission_after_abort_creates_distinct_queued_run(
 
     start = start_run(
         fresh.run_id,
-        CONTROLLER_SESSION,
         db_path=scheduler_paths["db_path"],
     )
     assert start.state_kind == "authorized"

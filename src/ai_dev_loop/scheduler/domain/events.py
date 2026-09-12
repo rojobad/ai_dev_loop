@@ -62,7 +62,7 @@ class RunSubmittedEvent(DomainModel):
 class RunAuthorizedEvent(DomainModel):
     kind: str = Field(default=AUTHORIZED_EVENT_KIND)
     run_id: str
-    controller_session_id: UuidSessionId
+    controller_session_id: UuidSessionId | None = None
     idempotent_replay: bool
 
     @field_validator("kind")

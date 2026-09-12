@@ -69,8 +69,9 @@ ai_dev_loop scheduler submit \
 ai_dev_loop scheduler start <run-id> --controller-session-id "<exact-controller-session-id>"
 ```
 
-5. Install and enable the packaged scheduler timer while WSL is active, or run
-   `ai_dev_loop scheduler tick` manually during development.
+5. Run `ai_dev_loop scheduler tick` manually during development, or follow the
+   [WSL scheduler-timer runbook](docs/operacion/timer-systemd-wsl.md) to install,
+   enable, verify, and persist the packaged user-systemd timer.
 6. Observe progress with `ai_dev_loop controller status`, `scheduler status`,
    `scheduler list`, and `scheduler history`.
 7. Stop safely with `ai_dev_loop scheduler abort <run-id>` when needed.

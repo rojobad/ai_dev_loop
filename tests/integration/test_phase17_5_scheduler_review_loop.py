@@ -118,7 +118,7 @@ def test_no_findings_completes_with_fresh_bootstrap_and_resume_argv(
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "no_findings")
     run_id = _submit(git_repo, scheduler_paths)
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     backend = FakeAgentProcessBackend(
         default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
     )
@@ -150,7 +150,7 @@ def test_findings_then_correction_then_no_findings(
     monkeypatch.setenv("FAKE_CODEX_REVIEW_SEQUENCE", "findings,no_findings")
     monkeypatch.delenv("FAKE_CODEX_REVIEW_MODE", raising=False)
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     backend = FakeAgentProcessBackend(
         default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
     )
@@ -182,7 +182,7 @@ def test_max_iterations_reached_without_extra_cursor(
     monkeypatch.setenv("FAKE_CODEX_REVIEW_SEQUENCE", "findings,findings,findings")
     monkeypatch.delenv("FAKE_CODEX_REVIEW_MODE", raising=False)
     run_id = _submit(git_repo, scheduler_paths, max_reviews=2)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     backend = FakeAgentProcessBackend(
         default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
     )
@@ -211,7 +211,7 @@ def test_active_codex_attempt_tick_exits_without_wait(
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "sleep")
     monkeypatch.setenv("FAKE_CODEX_SLEEP_SECONDS", "30")
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     backend = FakeAgentProcessBackend(
         default_scenario=FakeAttemptScenario(active_ticks=2, exit_code=0)
     )

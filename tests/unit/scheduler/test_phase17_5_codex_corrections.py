@@ -410,7 +410,7 @@ def test_envelope_replacement_after_waiting_for_cursor_fix_blocks(
     monkeypatch.setenv("FAKE_CODEX_REVIEW_SEQUENCE", "findings,no_findings")
     monkeypatch.delenv("FAKE_CODEX_REVIEW_MODE", raising=False)
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     tick = _tick_service(
         git_repo,
         scheduler_paths,
@@ -450,7 +450,7 @@ def test_staged_index_drift_prevents_correction_launch(
     monkeypatch.setenv("FAKE_CODEX_REVIEW_SEQUENCE", "findings,no_findings")
     monkeypatch.delenv("FAKE_CODEX_REVIEW_MODE", raising=False)
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     backend = FakeAgentProcessBackend(
         default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
     )
@@ -492,7 +492,7 @@ def test_usage_limit_during_correction_preserves_chat_and_reviewer(
     )
     monkeypatch.delenv("FAKE_CODEX_REVIEW_MODE", raising=False)
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     tick = _tick_service(
         git_repo,
         scheduler_paths,
@@ -553,7 +553,7 @@ def test_reviewer_binding_artifact_written_before_db_bind_retries_safely(
     monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "no_findings")
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     tick = _tick_service(
         git_repo,
         scheduler_paths,
@@ -628,7 +628,7 @@ def test_second_findings_cycle_after_correction_usage_limit_completes(
     )
     monkeypatch.delenv("FAKE_CODEX_REVIEW_MODE", raising=False)
     run_id = _submit(git_repo, scheduler_paths, max_reviews=3)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     tick = _tick_service(
         git_repo,
         scheduler_paths,
@@ -689,7 +689,7 @@ def test_invalid_review_json_blocks_without_sensitive_payload(
     monkeypatch.setenv("FAKE_CODEX_REVIEW_SEQUENCE", "findings,invalid_json")
     monkeypatch.delenv("FAKE_CODEX_REVIEW_MODE", raising=False)
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     tick = _tick_service(
         git_repo,
         scheduler_paths,
@@ -727,7 +727,7 @@ def test_launch_request_uses_frozen_ninety_minute_cursor_timeout(
 ) -> None:
     monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     backend = FakeAgentProcessBackend(
         default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
     )
@@ -760,7 +760,7 @@ def test_launch_request_uses_frozen_ninety_minute_codex_timeout(
     monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "no_findings")
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     backend = FakeAgentProcessBackend(
         default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
     )
@@ -791,7 +791,7 @@ def test_large_jsonl_truncation_still_completes_valid_review(
     monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "large_jsonl")
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     backend = FakeAgentProcessBackend(
         default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
     )
@@ -829,7 +829,7 @@ def test_large_jsonl_without_valid_result_blocks_with_truncated_reason(
     monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "large_jsonl_no_result")
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     backend = FakeAgentProcessBackend(
         default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
     )
@@ -866,7 +866,7 @@ def _awaiting_codex_review_workflow(
     monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "no_findings")
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     tick = _tick_service(
         git_repo,
         scheduler_paths,

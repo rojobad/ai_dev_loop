@@ -52,7 +52,7 @@ def test_status_history_and_controller_remain_redacted(
     scheduler_paths: dict[str, Path],
 ) -> None:
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     store = SqliteSchedulerStore(scheduler_paths["db_path"])
     now = datetime(2026, 9, 9, 12, 0, tzinfo=UTC)
     unit_identity = "ai-dev-loop-attempt-" + ("d" * 32)

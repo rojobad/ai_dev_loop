@@ -7,7 +7,7 @@ import inspect
 from datetime import UTC, datetime
 from pathlib import Path
 
-from tests.unit.scheduler.helpers import CONTROLLER_SESSION, sample_submitted_state
+from tests.unit.scheduler.helpers import sample_submitted_state
 
 from ai_dev_loop.runners.git import discover_repository
 from ai_dev_loop.scheduler.application.fake_attempt_backend import (
@@ -177,8 +177,7 @@ def _bootstrap_run(
             now=now,
         )
     StartService(store, now_factory=lambda: datetime(2026, 9, 4, 12, 1, tzinfo=UTC)).start(
-        state.run_id,
-        CONTROLLER_SESSION,
+        state.run_id
     )
     _insert_fake_agent_effect(store, state.run_id)
     return store, artifacts, state.run_id

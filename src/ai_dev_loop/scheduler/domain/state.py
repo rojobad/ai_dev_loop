@@ -116,7 +116,7 @@ class WorkflowLimits(DomainModel):
 
 
 class ControllerBinding(DomainModel):
-    controller_session_id: UuidSessionId
+    controller_session_id: UuidSessionId | None = None
 
 
 class SubmittedRunContext(DomainModel):
@@ -223,7 +223,7 @@ class AuthorizedState(SchedulerRunBase):
     kind: Literal["authorized"] = "authorized"
     schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION)
     authorized_at: NonEmptyStr
-    authorized_controller_session_id: UuidSessionId
+    authorized_controller_session_id: UuidSessionId | None = None
 
     @field_validator("schema_version")
     @classmethod
@@ -239,7 +239,7 @@ class AdmittedState(SchedulerRunBase):
     kind: Literal["admitted"] = "admitted"
     schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION)
     authorized_at: NonEmptyStr
-    authorized_controller_session_id: UuidSessionId
+    authorized_controller_session_id: UuidSessionId | None = None
     admitted_at: NonEmptyStr
     admission_status_artifact_path: NonEmptyStr
     admission_status_sha256: Sha256Hex
@@ -275,7 +275,7 @@ class AdmittedRunCheckpoint(DomainModel):
     """Shared admission checkpoint fields for active scheduler runs."""
 
     authorized_at: NonEmptyStr
-    authorized_controller_session_id: UuidSessionId
+    authorized_controller_session_id: UuidSessionId | None = None
     admitted_at: NonEmptyStr
     admission_status_artifact_path: NonEmptyStr
     admission_status_sha256: Sha256Hex
@@ -630,5 +630,17 @@ def parse_scheduler_state(
 
 def submission_identity_payload(context: SubmittedRunContext) -> dict[str, object]:
     """Canonical identity fields for idempotency (excludes run_id and timestamps)."""
+
+    payload = context.model_dump(mode="json")
+    controller = payload.get("controller")
+    if isinstance(controller, dict):
+        controller_payload = dict(controller)
+        controller_payload.pop("controller_session_id", None)
+        payload["controller"] = controller_payload
+    return payload
+
+
+def legacy_submission_identity_payload(context: SubmittedRunContext) -> dict[str, object]:
+    """Historical idempotency identity including optional controller provenance."""
 
     return context.model_dump(mode="json")

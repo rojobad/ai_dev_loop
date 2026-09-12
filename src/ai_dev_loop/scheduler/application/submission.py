@@ -61,6 +61,7 @@ from ai_dev_loop.scheduler.domain.state import (
     SubmittedRunContext,
     SubmittedState,
     WorkflowLimits,
+    legacy_submission_identity_payload,
     submission_identity_payload,
 )
 from ai_dev_loop.scheduler.infrastructure.paths import (
@@ -147,6 +148,32 @@ def _submission_idempotency_key(
     if resubmission_id is not None:
         payload["resubmission_sha256"] = sha256_text(resubmission_id)
     return canonical_json_sha256(payload)
+
+
+def _legacy_submission_idempotency_key(
+    context: SubmittedRunContext,
+    *,
+    resubmission_id: str | None = None,
+) -> str:
+    payload: dict[str, object] = {"identity": legacy_submission_identity_payload(context)}
+    if resubmission_id is not None:
+        payload["resubmission_sha256"] = sha256_text(resubmission_id)
+    return canonical_json_sha256(payload)
+
+
+def submission_idempotency_key_candidates(
+    context: SubmittedRunContext,
+    *,
+    resubmission_id: str | None = None,
+) -> list[str]:
+    """Ordered idempotency keys for current and historical controller-bearing submits."""
+
+    keys = [_submission_idempotency_key(context, resubmission_id=resubmission_id)]
+    if context.controller.controller_session_id is not None:
+        legacy_key = _legacy_submission_idempotency_key(context, resubmission_id=resubmission_id)
+        if legacy_key not in keys:
+            keys.append(legacy_key)
+    return keys
 
 
 def _read_stdin_prompt() -> str:
@@ -272,7 +299,7 @@ def _build_agent_led_context(
     plan_path: Path,
     prompt_source_path: Path,
     effective: ProjectConfig,
-    controller_session_id: str,
+    controller_session_id: str | None,
     review_model: str,
     review_reasoning_effort: str,
     artifact_hashes: dict[str, str],
@@ -335,7 +362,7 @@ def _build_fresh_context(
     plan_path: Path,
     prompt_source_path: Path,
     effective: ProjectConfig,
-    controller_session_id: str,
+    controller_session_id: str | None,
     review_model: str,
     review_reasoning_effort: str,
     artifact_hashes: dict[str, str],
@@ -405,7 +432,7 @@ def _build_context(
     prompt_source_path: Path,
     effective: ProjectConfig,
     session_id: str,
-    controller_session_id: str,
+    controller_session_id: str | None,
     review_runtime: EffectiveReviewRuntime,
     artifact_hashes: dict[str, str],
 ) -> SubmittedRunContext:
@@ -547,11 +574,6 @@ class SubmissionService:
 
     def submit(self, options: SubmitOptions) -> SubmitResult:
         prompt_text = _read_stdin_prompt()
-        if options.controller_session_id is None:
-            raise ValidationError(
-                "controller session id is required for scheduler A/B submit "
-                "(--controller-session-id)"
-            )
         repo_candidate = options.repo_path or Path.cwd()
         repo_target = self.repository_discoverer(repo_candidate)
         effective, source_repo_config, _repo_config_path = resolve_effective_config(
@@ -561,7 +583,11 @@ class SubmissionService:
         )
         effective = _freeze_execution_commands(effective)
         plan_path, prompt_source_path = _resolve_inputs(options, repo_target)
-        controller_session_id = require_codex_session_id(options.controller_session_id)
+        controller_session_id = (
+            require_codex_session_id(options.controller_session_id)
+            if options.controller_session_id is not None
+            else None
+        )
         resubmission_id = (
             require_resubmission_id(options.resubmission_id)
             if options.resubmission_id is not None
@@ -618,7 +644,11 @@ class SubmissionService:
         now = self._now_factory()
 
         with self.store.begin_immediate() as conn:
-            existing = self.store.get_run_by_idempotency_key(conn, idempotency_key)
+            existing = self.store.find_existing_submission(
+                conn,
+                context=context,
+                resubmission_id=resubmission_id,
+            )
             if existing is not None:
                 state, _, _ = self.store.load_validated_snapshot(conn, str(existing["run_id"]))
                 return _result_from_state(self.store, conn, state, reused_existing=True)
