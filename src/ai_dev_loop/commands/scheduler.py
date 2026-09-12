@@ -10,6 +10,8 @@ from ai_dev_loop.scheduler.application.contracts import (
     HistoryResult,
     SchedulerRunSummary,
     SchedulerStatusResult,
+    SequencePrepareResult,
+    SequenceStatusResult,
     StartResult,
     SubmitResult,
     TickReceipt,
@@ -17,6 +19,11 @@ from ai_dev_loop.scheduler.application.contracts import (
 )
 from ai_dev_loop.scheduler.application.cutover_cleanup import CutoverCleanupResult
 from ai_dev_loop.scheduler.application.history import scheduler_history
+from ai_dev_loop.scheduler.application.sequence_prepare import (
+    SequencePrepareOptions,
+    prepare_sequence,
+)
+from ai_dev_loop.scheduler.application.sequence_status import scheduler_sequence_status
 from ai_dev_loop.scheduler.application.start import start_run
 from ai_dev_loop.scheduler.application.status import scheduler_list, scheduler_status
 from ai_dev_loop.scheduler.application.submission import SubmitOptions, submit_run
@@ -355,6 +362,72 @@ def render_timer_disable_output(result: TimerDisableResult, *, output: str) -> s
     return "\n".join(lines) + "\n"
 
 
+def render_sequence_prepare_output(result: SequencePrepareResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "sequence_id": result.sequence_id,
+            "name": result.name,
+            "state_kind": result.state_kind,
+            "entry_count": result.entry_count,
+            "reused_existing": result.reused_existing,
+            "safe_next_action": result.safe_next_action.model_dump(mode="json"),
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    if result.reused_existing:
+        header = f"Scheduler sequence {result.sequence_id} (reused existing sequence)"
+    else:
+        header = f"Prepared scheduler sequence {result.sequence_id}"
+    lines = [
+        header,
+        f"Name: {result.name}",
+        f"State: {result.state_kind}",
+        f"Entries: {result.entry_count}",
+        "Sequence prepare freezes definitions only; it does not reserve the repository or invoke Git.",
+        f"Next action: {result.safe_next_action.command}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def render_sequence_status_output(result: SequenceStatusResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "sequence_id": result.sequence_id,
+            "name": result.name,
+            "state_kind": result.state_kind,
+            "project": result.project_name,
+            "repository_root": result.repository_root,
+            "entry_count": result.entry_count,
+            "current_ordinal": result.current_ordinal,
+            "prepared_at": result.prepared_at,
+            "updated_at": result.updated_at,
+            "idempotency_key_prefix": result.idempotency_key_prefix,
+            "entries": [entry.model_dump(mode="json") for entry in result.entries],
+            "safe_next_action": result.safe_next_action.model_dump(mode="json"),
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    lines = [
+        f"Sequence: {result.sequence_id}",
+        f"Name: {result.name}",
+        f"State: {result.state_kind}",
+        f"Project: {result.project_name}",
+        f"Repository: {result.repository_root}",
+        f"Entries: {result.entry_count}",
+        f"Prepared: {result.prepared_at}",
+        f"Updated: {result.updated_at}",
+        f"Idempotency key prefix: {result.idempotency_key_prefix}",
+    ]
+    for entry in result.entries:
+        commit_note = " (checkpoint commit message frozen)" if entry.commit_message_present else ""
+        lines.append(
+            f"- Phase {entry.ordinal:02d}: {entry.phase_name} "
+            f"(planned run prefix {entry.planned_run_id_prefix}){commit_note}"
+        )
+    lines.append(f"Next action: {result.safe_next_action.command}")
+    return "\n".join(lines) + "\n"
+
+
 def render_timer_validate_output(errors: list[str], *, output: str) -> str:
     if output == "json":
         payload = {
@@ -371,11 +444,16 @@ def render_timer_validate_output(errors: list[str], *, output: str) -> str:
 
 
 __all__ = [
+    "SequencePrepareOptions",
     "SubmitOptions",
+    "prepare_sequence",
     "render_cutover_cleanup_output",
     "render_scheduler_abort_output",
     "render_scheduler_history_output",
     "render_scheduler_timeline_output",
+    "render_sequence_prepare_output",
+    "render_sequence_status_output",
+    "scheduler_sequence_status",
     "scheduler_timeline",
     "render_list_output",
     "render_start_output",

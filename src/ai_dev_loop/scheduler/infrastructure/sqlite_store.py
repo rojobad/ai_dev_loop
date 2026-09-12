@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from importlib import resources
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from ai_dev_loop.scheduler.application.contracts import (
     ReservationStatus,
@@ -35,11 +35,17 @@ from ai_dev_loop.scheduler.domain.state import (
     SubmittedState,
 )
 
-SCHEMA_VERSION = 4
+if TYPE_CHECKING:
+    from ai_dev_loop.scheduler.domain.sequence import PreparedSequenceState
+
+SCHEMA_VERSION = 5
+SEQUENCE_SCHEMA_VERSION = 5
+MIN_READONLY_SCHEMA_VERSION = 4
 MIGRATION_V1_NAME = "0001_initial"
 MIGRATION_V2_NAME = "0002_tick_control"
 MIGRATION_V3_NAME = "0003_attempt_executor"
 MIGRATION_V4_NAME = "0004_cursor_workflow"
+MIGRATION_V5_NAME = "0005_sequence_definitions"
 REQUIRED_TABLES = frozenset(
     {
         "scheduler_schema_migrations",
@@ -53,6 +59,8 @@ REQUIRED_TABLES = frozenset(
         "scheduler_repository_reservations",
         "scheduler_capacity",
         "scheduler_run_tick_claims",
+        "scheduler_sequences",
+        "scheduler_sequence_entries",
     }
 )
 REQUIRED_INDEXES = frozenset(
@@ -74,8 +82,18 @@ REQUIRED_INDEXES = frozenset(
         "idx_scheduler_run_tick_claims_active_admission",
         "idx_scheduler_run_tick_claims_run",
         "idx_scheduler_runs_controller_repo",
+        "idx_scheduler_sequences_worktree",
+        "idx_scheduler_sequence_entries_sequence",
     }
 )
+REQUIRED_TABLES_V4 = REQUIRED_TABLES - {
+    "scheduler_sequences",
+    "scheduler_sequence_entries",
+}
+REQUIRED_INDEXES_V4 = REQUIRED_INDEXES - {
+    "idx_scheduler_sequences_worktree",
+    "idx_scheduler_sequence_entries_sequence",
+}
 NON_TERMINAL_STATE_KINDS = frozenset(
     {
         "queued",
@@ -146,6 +164,10 @@ def _migration_v4_sql() -> str:
     return _migration_sql("0004_cursor_workflow.sql")
 
 
+def _migration_v5_sql() -> str:
+    return _migration_sql("0005_sequence_definitions.sql")
+
+
 def _split_sql_statements(sql: str) -> list[str]:
     statements: list[str] = []
     for chunk in sql.split(";"):
@@ -170,6 +192,8 @@ def migration_checksum(version: int) -> str:
         return hashlib.sha256(_migration_v3_sql().encode("utf-8")).hexdigest()
     if version == 4:
         return hashlib.sha256(_migration_v4_sql().encode("utf-8")).hexdigest()
+    if version == 5:
+        return hashlib.sha256(_migration_v5_sql().encode("utf-8")).hexdigest()
     raise ValueError(f"unsupported migration version {version}")
 
 
@@ -241,7 +265,17 @@ class SqliteSchedulerStore:
                     SchedulerEngineErrorKind.NOT_FOUND,
                     "scheduler database not initialized",
                 )
-            store._verify_current_schema(conn)
+            if version > SCHEMA_VERSION:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.SCHEMA,
+                    f"database user_version {version} is newer than supported {SCHEMA_VERSION}",
+                )
+            if version < MIN_READONLY_SCHEMA_VERSION:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.SCHEMA,
+                    f"unsupported schema version {version}",
+                )
+            store._verify_current_schema(conn, expected_version=version)
         return store
 
     def bootstrap(self) -> None:
@@ -259,20 +293,28 @@ class SqliteSchedulerStore:
                 self._migrate_v1_to_v2(conn)
                 self._migrate_v2_to_v3(conn)
                 self._migrate_v3_to_v4(conn)
+                self._migrate_v4_to_v5(conn)
             elif version == 1:
                 self._verify_migration_checksum(conn, 1)
                 self._migrate_v1_to_v2(conn)
                 self._migrate_v2_to_v3(conn)
                 self._migrate_v3_to_v4(conn)
+                self._migrate_v4_to_v5(conn)
             elif version == 2:
                 self._verify_migration_checksum(conn, 1)
                 self._verify_migration_checksum(conn, 2)
                 self._migrate_v2_to_v3(conn)
                 self._migrate_v3_to_v4(conn)
+                self._migrate_v4_to_v5(conn)
             elif version == 3:
                 for migration_version in (1, 2, 3):
                     self._verify_migration_checksum(conn, migration_version)
                 self._migrate_v3_to_v4(conn)
+                self._migrate_v4_to_v5(conn)
+            elif version == 4:
+                for migration_version in (1, 2, 3, 4):
+                    self._verify_migration_checksum(conn, migration_version)
+                self._migrate_v4_to_v5(conn)
             else:
                 self._verify_current_schema(conn)
             self._apply_database_permissions(self.db_path)
@@ -400,6 +442,32 @@ class SqliteSchedulerStore:
             raise
         self._apply_database_permissions(self.db_path)
 
+    def _migrate_v4_to_v5(self, conn: sqlite3.Connection) -> None:
+        if self._user_version(conn) >= 5:
+            self._verify_current_schema(conn)
+            return
+        for migration_version in (1, 2, 3, 4):
+            self._verify_migration_checksum(conn, migration_version)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for statement in _split_sql_statements(_migration_v5_sql()):
+                self._fault_maybe_raise_migration(statement)
+                conn.execute(statement)
+            applied_at = encode_utc_instant(datetime.now(tz=UTC))
+            conn.execute(
+                """
+                INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (5, MIGRATION_V5_NAME, migration_checksum(5), applied_at),
+            )
+            conn.execute("PRAGMA user_version = 5")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        self._apply_database_permissions(self.db_path)
+
     def _fault_maybe_raise_migration(self, statement: str) -> None:
         hook = self._migration_fault_hook
         if hook is not None:
@@ -421,28 +489,42 @@ class SqliteSchedulerStore:
                 "migration checksum drift detected",
             )
 
-    def _verify_current_schema(self, conn: sqlite3.Connection) -> None:
+    def _verify_current_schema(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        expected_version: int | None = None,
+    ) -> None:
         version = self._user_version(conn)
-        if version != SCHEMA_VERSION:
+        target = SCHEMA_VERSION if expected_version is None else expected_version
+        if version != target:
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.SCHEMA,
                 f"unsupported schema version {version}",
             )
-        for migration_version in (1, 2, 3, 4):
+        for migration_version in range(1, target + 1):
             self._verify_migration_checksum(conn, migration_version)
-        tables = self._table_names(conn)
-        missing = REQUIRED_TABLES - tables
+        tables = REQUIRED_TABLES if target >= SEQUENCE_SCHEMA_VERSION else REQUIRED_TABLES_V4
+        missing = tables - self._table_names(conn)
         if missing:
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.SCHEMA,
                 f"corrupt schema missing tables: {sorted(missing)}",
             )
-        indexes = self._index_names(conn)
-        missing_idx = REQUIRED_INDEXES - indexes
+        indexes = REQUIRED_INDEXES if target >= SEQUENCE_SCHEMA_VERSION else REQUIRED_INDEXES_V4
+        missing_idx = indexes - self._index_names(conn)
         if missing_idx:
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.SCHEMA,
                 f"corrupt schema missing indexes: {sorted(missing_idx)}",
+            )
+
+    def require_sequence_schema(self, conn: sqlite3.Connection) -> None:
+        version = self._user_version(conn)
+        if version < SEQUENCE_SCHEMA_VERSION:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.SCHEMA,
+                "prepared sequences require scheduler schema version 5",
             )
 
     @contextmanager
@@ -2477,3 +2559,398 @@ class SqliteSchedulerStore:
             params.append(limit)
         rows = conn.execute(query, tuple(params)).fetchall()
         return [cast(sqlite3.Row, row) for row in rows]
+
+    @staticmethod
+    def dump_sequence_state(state: object) -> tuple[str, str, str]:
+        from ai_dev_loop.scheduler.domain.sequence import (
+            PREPARED_SEQUENCE_STATE_ADAPTER,
+            PREPARED_SEQUENCE_STATE_KIND,
+            PreparedSequenceState,
+        )
+
+        if not isinstance(state, PreparedSequenceState):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.INTERNAL,
+                "sequence state has unexpected type",
+            )
+        validated = PREPARED_SEQUENCE_STATE_ADAPTER.validate_python(state.model_dump(mode="json"))
+        text = PREPARED_SEQUENCE_STATE_ADAPTER.dump_json(validated).decode("utf-8")
+        return PREPARED_SEQUENCE_STATE_KIND, text, payload_sha256(text)
+
+    @staticmethod
+    def dump_sequence_entry(entry: object) -> tuple[str, str]:
+        from ai_dev_loop.scheduler.domain.sequence import (
+            FROZEN_SEQUENCE_ENTRY_ADAPTER,
+            FrozenSequenceEntry,
+        )
+
+        if not isinstance(entry, FrozenSequenceEntry):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.INTERNAL,
+                "sequence entry has unexpected type",
+            )
+        validated = FROZEN_SEQUENCE_ENTRY_ADAPTER.validate_python(entry.model_dump(mode="json"))
+        text = FROZEN_SEQUENCE_ENTRY_ADAPTER.dump_json(validated).decode("utf-8")
+        return text, payload_sha256(text)
+
+    @staticmethod
+    def load_sequence_state(payload: str) -> PreparedSequenceState:
+        from ai_dev_loop.scheduler.domain.sequence import (
+            PREPARED_SEQUENCE_STATE_ADAPTER,
+            PreparedSequenceState,
+        )
+
+        state = PREPARED_SEQUENCE_STATE_ADAPTER.validate_json(payload)
+        if not isinstance(state, PreparedSequenceState):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence payload has unexpected type",
+            )
+        return state
+
+    def get_sequence_by_idempotency_key(
+        self,
+        conn: sqlite3.Connection,
+        idempotency_key: str,
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            "SELECT * FROM scheduler_sequences WHERE idempotency_key = ?",
+            (idempotency_key,),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def find_existing_prepared_sequence(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        definition: object,
+        resubmission_id: str | None,
+    ) -> sqlite3.Row | None:
+        from ai_dev_loop.scheduler.application.sequence_prepare import _sequence_idempotency_key
+        from ai_dev_loop.scheduler.domain.sequence import (
+            PreparedSequenceDefinition,
+            sequence_identity_payload,
+        )
+
+        if not isinstance(definition, PreparedSequenceDefinition):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.INTERNAL,
+                "sequence definition has unexpected type",
+            )
+        key = _sequence_idempotency_key(definition, resubmission_id=resubmission_id)
+        existing = self.get_sequence_by_idempotency_key(conn, key)
+        if existing is not None:
+            return existing
+        return self.find_sequence_by_matching_identity(
+            conn,
+            worktree_key=definition.repository.worktree_key,
+            identity=sequence_identity_payload(definition),
+            resubmission_id=resubmission_id,
+        )
+
+    def find_sequence_by_matching_identity(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        worktree_key: str,
+        identity: dict[str, object],
+        resubmission_id: str | None,
+    ) -> sqlite3.Row | None:
+        from ai_dev_loop.scheduler.application.sequence_prepare import _sequence_idempotency_key
+        from ai_dev_loop.scheduler.domain.sequence import (
+            sequence_identity_payload,
+        )
+
+        rows = conn.execute(
+            """
+            SELECT sequence_id FROM scheduler_sequences
+            WHERE worktree_key = ?
+            ORDER BY prepared_at ASC, sequence_id ASC
+            """,
+            (worktree_key,),
+        ).fetchall()
+        for row in rows:
+            sequence_id = str(row[0])
+            state = self.load_validated_sequence_state(conn, sequence_id)
+            if sequence_identity_payload(state.definition) != identity:
+                continue
+            stored_key = _sequence_idempotency_key(
+                state.definition,
+                resubmission_id=resubmission_id,
+            )
+            if state.idempotency_key == stored_key:
+                existing = self.get_sequence_by_idempotency_key(conn, state.idempotency_key)
+                if existing is not None:
+                    return existing
+        return None
+
+    def get_sequence_row(self, conn: sqlite3.Connection, sequence_id: str) -> sqlite3.Row:
+        row = conn.execute(
+            "SELECT * FROM scheduler_sequences WHERE sequence_id = ?",
+            (sequence_id,),
+        ).fetchone()
+        if row is None:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.NOT_FOUND,
+                f"prepared sequence not found: {sequence_id}",
+            )
+        return cast(sqlite3.Row, row)
+
+    def load_validated_sequence_state(
+        self,
+        conn: sqlite3.Connection,
+        sequence_id: str,
+    ) -> PreparedSequenceState:
+        from ai_dev_loop.scheduler.domain.common import worktree_key
+        from ai_dev_loop.scheduler.domain.sequence import (
+            FROZEN_SEQUENCE_ENTRY_ADAPTER,
+            PREPARED_SEQUENCE_STATE_KIND,
+            PreparedSequenceState,
+        )
+
+        row = self.get_sequence_row(conn, sequence_id)
+        state = self.load_sequence_state(row["payload"])
+        if not isinstance(state, PreparedSequenceState):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence payload has unexpected type",
+            )
+        if payload_sha256(row["payload"]) != row["payload_sha256"]:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence payload hash mismatch",
+            )
+        if str(row["state_kind"]) != PREPARED_SEQUENCE_STATE_KIND:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence state_kind mismatch",
+            )
+        if state.sequence_id != sequence_id:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence_id disagrees with primary key",
+            )
+        if state.definition.sequence_id != sequence_id:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "definition.sequence_id disagrees with primary key",
+            )
+        if int(row["version"]) != state.version:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence version mismatch",
+            )
+        if str(row["name"]) != state.definition.name:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence name mismatch",
+            )
+        if str(row["project_name"]) != state.definition.project_name:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence project_name mismatch",
+            )
+        if str(row["idempotency_key"]) != state.idempotency_key:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence idempotency_key mismatch",
+            )
+        if int(row["entry_count"]) != len(state.definition.entries):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence entry_count mismatch",
+            )
+        payload_root = str(state.definition.repository.root)
+        if str(row["repository_root"]) != payload_root:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "repository root disagrees with indexed repository_root",
+            )
+        if worktree_key(payload_root) != str(row["worktree_key"]):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "repository identity disagrees with indexed worktree key",
+            )
+        entry_rows = conn.execute(
+            """
+            SELECT ordinal, phase_name, planned_run_id, payload, payload_sha256
+            FROM scheduler_sequence_entries
+            WHERE sequence_id = ?
+            ORDER BY ordinal ASC
+            """,
+            (sequence_id,),
+        ).fetchall()
+        if len(entry_rows) != len(state.definition.entries):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence entry count mismatch",
+            )
+        for index, entry_row in enumerate(entry_rows):
+            entry = state.definition.entries[index]
+            if int(entry_row["ordinal"]) != entry.ordinal:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CORRUPTION,
+                    "sequence entry ordinal mismatch",
+                )
+            if str(entry_row["phase_name"]) != entry.phase_name:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CORRUPTION,
+                    "sequence entry phase_name mismatch",
+                )
+            if str(entry_row["planned_run_id"]) != entry.planned_run_id:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CORRUPTION,
+                    "sequence entry planned_run_id mismatch",
+                )
+            entry_payload = str(entry_row["payload"])
+            if payload_sha256(entry_payload) != str(entry_row["payload_sha256"]):
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CORRUPTION,
+                    "sequence entry payload hash mismatch",
+                )
+            try:
+                parsed_entry = FROZEN_SEQUENCE_ENTRY_ADAPTER.validate_json(entry_payload)
+            except Exception as exc:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CORRUPTION,
+                    "sequence entry payload failed validation",
+                ) from exc
+            if parsed_entry != entry:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CORRUPTION,
+                    "sequence entry payload disagrees with aggregate state",
+                )
+        return state
+
+    def insert_prepared_sequence(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        state: object,
+        now: datetime,
+    ) -> None:
+        from ai_dev_loop.scheduler.domain.sequence import PreparedSequenceState
+
+        if not isinstance(state, PreparedSequenceState):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "insert accepts only PreparedSequenceState",
+            )
+        kind, payload, digest = self.dump_sequence_state(state)
+        definition = state.definition
+        now_text = encode_utc_instant(now)
+        try:
+            conn.execute(
+                """
+                INSERT INTO scheduler_sequences(
+                    sequence_id, name, state_kind, project_name, repository_root,
+                    worktree_key, entry_count, idempotency_key, version,
+                    prepared_at, updated_at, payload, payload_sha256
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    state.sequence_id,
+                    definition.name,
+                    kind,
+                    definition.project_name,
+                    definition.repository.root,
+                    definition.repository.worktree_key,
+                    len(definition.entries),
+                    state.idempotency_key,
+                    state.version,
+                    state.prepared_at,
+                    now_text,
+                    payload,
+                    digest,
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "prepared sequence identity already exists",
+            ) from exc
+        for entry in definition.entries:
+            entry_payload, entry_digest = self.dump_sequence_entry(entry)
+            conn.execute(
+                """
+                INSERT INTO scheduler_sequence_entries(
+                    sequence_id, ordinal, phase_name, planned_run_id,
+                    payload, payload_sha256
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    state.sequence_id,
+                    entry.ordinal,
+                    entry.phase_name,
+                    entry.planned_run_id,
+                    entry_payload,
+                    entry_digest,
+                ),
+            )
+
+    def compare_and_swap_sequence_state(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        sequence_id: str,
+        expected_version: int,
+        new_state: object,
+        now: datetime,
+    ) -> bool:
+        from ai_dev_loop.scheduler.domain.sequence import PreparedSequenceState
+
+        if not isinstance(new_state, PreparedSequenceState):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "compare_and_swap accepts only PreparedSequenceState",
+            )
+        if new_state.sequence_id != sequence_id:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "replacement sequence_id disagrees with target",
+            )
+        current_row = self.get_sequence_row(conn, sequence_id)
+        current_version = int(current_row["version"])
+        if current_version != expected_version:
+            return False
+        if new_state.version != expected_version + 1:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "replacement version must equal expected_version + 1",
+            )
+        current_state = self.load_validated_sequence_state(conn, sequence_id)
+        if new_state.prepared_at != current_state.prepared_at:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "prepared_at is immutable",
+            )
+        if new_state.idempotency_key != current_state.idempotency_key:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "idempotency_key is immutable",
+            )
+        if new_state.definition != current_state.definition:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "sequence definition is immutable",
+            )
+        kind, payload, digest = self.dump_sequence_state(new_state)
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            UPDATE scheduler_sequences
+            SET state_kind = ?, payload = ?, payload_sha256 = ?,
+                version = ?, updated_at = ?
+            WHERE sequence_id = ? AND version = ?
+            """,
+            (
+                kind,
+                payload,
+                digest,
+                new_state.version,
+                now_text,
+                sequence_id,
+                expected_version,
+            ),
+        )
+        return cursor.rowcount == 1

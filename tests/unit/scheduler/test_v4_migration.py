@@ -73,7 +73,7 @@ def test_v4_migration_preserves_v3_rows(tmp_path: Path) -> None:
     db = _pause_v3_database(tmp_path)
     before = _populate_v3_fixture(db)
     store = SqliteSchedulerStore(db)
-    assert _user_version(db) == SCHEMA_VERSION == 4
+    assert _user_version(db) == SCHEMA_VERSION == 5
     with store.begin_read() as conn:
         assert conn.execute("SELECT COUNT(*) FROM scheduler_runs").fetchone()[0] == before["runs"]
         assert (

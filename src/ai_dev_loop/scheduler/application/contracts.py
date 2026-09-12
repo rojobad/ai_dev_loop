@@ -450,3 +450,44 @@ def summary_from_context(
         cursor_wait_until=cursor_wait_until,
         block_reason_kind=block_reason_kind,
     )
+
+
+class SequenceEntrySummary(AppModel):
+    ordinal: int
+    phase_name: str
+    planned_run_id_prefix: str
+    commit_message_present: bool
+
+
+class SequencePrepareResult(AppModel):
+    sequence_id: str
+    name: str
+    state_kind: str
+    entry_count: int
+    reused_existing: bool
+    safe_next_action: SafeNextAction
+
+
+class SequenceStatusResult(AppModel):
+    sequence_id: str
+    name: str
+    state_kind: str
+    project_name: str
+    repository_root: str
+    entry_count: int
+    current_ordinal: int | None
+    prepared_at: str
+    updated_at: str
+    idempotency_key_prefix: str
+    entries: tuple[SequenceEntrySummary, ...]
+    safe_next_action: SafeNextAction
+
+
+def prepared_sequence_safe_next_action() -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.INSPECT_BLOCKED,
+        command=(
+            "scheduler sequence start is not implemented until Phase 20.2; "
+            "inspect with ai_dev_loop scheduler sequence status <sequence-id>"
+        ),
+    )

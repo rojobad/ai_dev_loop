@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/scheduler-prepared-sequence-v1.json",
+  "title": "PreparedSequenceState",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "sequence_id",
+    "version",
+    "prepared_at",
+    "updated_at",
+    "idempotency_key",
+    "definition"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "sequence_id": { "type": "string", "minLength": 1 },
+    "version": { "type": "integer", "minimum": 1 },
+    "prepared_at": { "type": "string", "minLength": 1 },
+    "updated_at": { "type": "string", "minLength": 1 },
+    "idempotency_key": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "definition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "sequence_id",
+        "name",
+        "project_name",
+        "repository",
+        "manifest_original_artifact_path",
+        "manifest_original_sha256",
+        "manifest_resolved_artifact_path",
+        "manifest_resolved_sha256",
+        "controller",
+        "entries"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "sequence_id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "project_name": { "type": "string", "minLength": 1 },
+        "repository": { "$ref": "scheduler-submitted-run-context-v3.json#/$defs/repository_target_binding" },
+        "manifest_original_artifact_path": { "type": "string", "minLength": 1 },
+        "manifest_original_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "manifest_resolved_artifact_path": { "type": "string", "minLength": 1 },
+        "manifest_resolved_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "controller": { "$ref": "scheduler-submitted-run-context-v3.json#/$defs/controller_binding" },
+        "entries": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 32,
+          "items": { "$ref": "scheduler-frozen-sequence-entry-v1.json" }
+        }
+      }
+    }
+  }
+}

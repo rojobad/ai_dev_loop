@@ -65,6 +65,28 @@ ai_dev_loop scheduler submit \
   --output json < docs/plans/prompt_mi-plan.txt
 ```
 
+## `scheduler sequence prepare` / `sequence status`
+
+```bash
+ai_dev_loop scheduler sequence prepare --manifest /path/to/sequence.yaml [OPTIONS]
+ai_dev_loop scheduler sequence status <sequence-id> [--output text|json]
+```
+
+Phase 20.1 congela una definicion lineal inmutable de 2 a 32 fases sin reservar el
+repositorio, sin invocar Git y sin crear filas en `scheduler_runs`. Cada fase congela
+plan, prompt, configuracion efectiva, rutas ejecutables, limites de workflow, modelo y
+reasoning de review, y (para fases no finales) el mensaje de commit intermedio. Los
+artefactos viven bajo `$XDG_STATE_HOME/ai_dev_loop/artifacts/sequences/`.
+
+`scheduler sequence start` existe solo como placeholder discoverable y termina con
+error hasta Phase 20.2. La accion segura tras `prepare` es
+`scheduler sequence status <sequence-id>`.
+
+Opciones de repositorio, `--config-path`, `--controller-session-id`, `--resubmission-id`
+y overrides globales siguen el contrato de `scheduler submit`. Cada fase del manifest
+debe declarar `codex.review_model` y `codex.review_reasoning_effort`; la fase final no
+puede incluir `commit_message`.
+
 ## `scheduler start` / `tick` / `status` / `list` / `abort` / `history` / `timeline`
 
 ```bash
