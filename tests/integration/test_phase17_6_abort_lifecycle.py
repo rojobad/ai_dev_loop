@@ -84,7 +84,7 @@ def test_abort_before_launch_is_durable_first(
     scheduler_paths: dict[str, Path],
 ) -> None:
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     backend = FakeAgentProcessBackend()
     result = scheduler_abort_run(run_id, db_path=scheduler_paths["db_path"], backend=backend)
     assert result.abort_persisted is True
@@ -104,7 +104,7 @@ def test_abort_during_active_cursor_attempt_and_late_result_fenced(
 ) -> None:
     monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     backend = FakeAgentProcessBackend(
         default_scenario=FakeAttemptScenario(
             active_ticks=5,
@@ -144,7 +144,7 @@ def test_controller_status_works_during_active_scheduler_attempt(
 ) -> None:
     monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
     run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, CONTROLLER_SESSION, db_path=scheduler_paths["db_path"])
+    start_run(run_id, db_path=scheduler_paths["db_path"])
     backend = FakeAgentProcessBackend(
         default_scenario=FakeAttemptScenario(active_ticks=5, exit_code=0)
     )

@@ -32,7 +32,7 @@ Opciones principales:
 --repo-path PATH
 --plan-path PATH
 --prompt-source-path TEXT
---controller-session-id TEXT   (obligatorio)
+--controller-session-id TEXT   (opcional; proveniencia A)
 --codex-review-model TEXT      (obligatorio)
 --codex-review-reasoning-effort TEXT (obligatorio)
 --cursor-command TEXT
@@ -60,27 +60,37 @@ ai_dev_loop scheduler submit \
   --repo-path /path/al/repo \
   --plan-path docs/plans/mi-plan.md \
   --prompt-source-path docs/plans/prompt_mi-plan.txt \
-  --controller-session-id "<exact-controller-session-id>" \
   --codex-review-model "<review-model>" \
   --codex-review-reasoning-effort high \
   --output json < docs/plans/prompt_mi-plan.txt
 ```
 
-## `scheduler start` / `tick` / `status` / `list` / `abort` / `history`
+## `scheduler start` / `tick` / `status` / `list` / `abort` / `history` / `timeline`
 
 ```bash
-ai_dev_loop scheduler start <run-id> --controller-session-id TEXT
+ai_dev_loop scheduler start <run-id>
 ai_dev_loop scheduler tick
 ai_dev_loop scheduler status <run-id> [--output text|json]
 ai_dev_loop scheduler list [--output text|json]
 ai_dev_loop scheduler abort <run-id> [--output text|json]
 ai_dev_loop scheduler history <run-id> [--limit N] [--order oldest|newest] [--output text|json]
+ai_dev_loop scheduler timeline <run-id> [--limit N] [--order oldest|newest] [--output text|json]
 ```
 
 `scheduler abort` persiste primero la cancelacion durable, invalida effects/timers/claims
 pendientes y no borra artefactos ni cambios staged del repositorio objetivo.
 
 `scheduler history` devuelve eventos acotados y redactados.
+
+`scheduler status` y `scheduler list` exponen `review_iterations_completed` y
+`max_review_iterations` segun el presupuesto de reviews del run.
+
+`scheduler timeline` devuelve una tabla acotada de intentos Cursor/Codex por
+iteracion: fase, ordinal de reintento, estado seguro, marcas de tiempo durables
+y `observed_duration_seconds` solo cuando existen `launch_requested_at` y
+`completed_at`. No incluye cola, preflight, IDs internos, artefactos ni salidas
+raw. Limite por defecto 50; maximo duro 200. Valores mayores se truncan y
+`truncated` indica overflow.
 
 ## `scheduler cutover cleanup`
 
@@ -119,15 +129,16 @@ verificación y deshabilitación) se documenta en
 
 ```bash
 ai_dev_loop controller status \
-  --controller-session-id TEXT \
   --repo-path PATH \
-  [--run-id TEXT] \
+  (--run-id TEXT | --controller-session-id TEXT) \
   [--include-terminal] \
   [--output text|json]
 ```
 
-Lookup read-only por controller session ID y repositorio. Ante ambiguedad (0 o N matches)
-no elige por timestamp; usa `--run-id` para desambiguar.
+Lookup read-only. Con `--run-id` y `--repo-path` basta; no requiere A. Con
+`--controller-session-id` se conserva el descubrimiento legacy por proveniencia A.
+Sin ninguno de los dos selectores, falla con un error de validacion. Ante
+ambiguedad (0 o N matches legacy) no elige por timestamp; usa `--run-id`.
 
 ## `doctor`
 

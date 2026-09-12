@@ -12,8 +12,9 @@ Version soportada:
 version: 1
 ```
 
-El flujo soportado usa `scheduler submit` con `--controller-session-id`,
-`--codex-review-model` y `--codex-review-reasoning-effort` obligatorios en CLI.
+El flujo soportado usa `scheduler submit` con `--codex-review-model` y
+`--codex-review-reasoning-effort` obligatorios en CLI. `--controller-session-id`
+es opcional para proveniencia y lookup controller A.
 Esos valores se congelan en el ledger central; no se capturan de la sesion Codex
 durante submit ni se infieren de `config.toml` o defaults de Codex CLI.
 

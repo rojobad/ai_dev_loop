@@ -6,13 +6,14 @@ Phase 17.7 retiro los comandos legacy (`prepare`, `start`, `resume`, `recover`, 
 
 ```bash
 ai_dev_loop scheduler submit
-ai_dev_loop scheduler start <run-id> --controller-session-id <exact-controller-session-id>
+ai_dev_loop scheduler start <run-id>
 ai_dev_loop scheduler tick
 ai_dev_loop scheduler status <run-id>
 ai_dev_loop scheduler list
 ai_dev_loop scheduler history <run-id>
+ai_dev_loop scheduler timeline <run-id>
 ai_dev_loop scheduler abort <run-id>
-ai_dev_loop controller status --controller-session-id <exact-controller-session-id> --repo-path /path/al/repo
+ai_dev_loop controller status --repo-path /path/al/repo --run-id <run-id>
 ```
 
 ## `scheduler submit`
@@ -24,7 +25,6 @@ ai_dev_loop scheduler submit \
   --repo-path /path/al/repo \
   --plan-path docs/plans/mi-plan.md \
   --prompt-source-path docs/plans/prompt_mi-plan.txt \
-  --controller-session-id "<exact-controller-session-id>" \
   --codex-review-model "<review-model>" \
   --codex-review-reasoning-effort high \
   --output json < docs/plans/prompt_mi-plan.txt
@@ -33,20 +33,24 @@ ai_dev_loop scheduler submit \
 Requisitos:
 
 - lee el prompt exacto desde stdin;
-- `--controller-session-id`, `--codex-review-model` y `--codex-review-reasoning-effort` son obligatorios;
+- `--codex-review-model` y `--codex-review-reasoning-effort` son obligatorios;
+- `--controller-session-id` es opcional (proveniencia A para lookup/control);
 - no admite `--codex-session-id` (reviewer B se crea en el primer review);
 - congela inputs inmutables; la admision del worktree ocurre en el primer tick.
 - resuelve `cursor.command` y `codex.command` en la terminal que hace submit y
   congela sus rutas absolutas sólo en los artefactos protegidos del run; el YAML
   del repositorio permanece portable y los workers no dependen del `PATH` de systemd.
 
+Para flujos controller A, añade `--controller-session-id "<exact-controller-session-id>"`
+al submit. Los reenvios idempotentes sin A reutilizan runs historicos con la misma
+identidad congelada.
+
 ## `scheduler start`
 
-Autoriza un run `queued` desde la misma sesion controller A usada en submit:
+Autoriza un run `queued` para que el scheduler pueda ejecutar ticks:
 
 ```bash
-ai_dev_loop scheduler start <run-id> \
-  --controller-session-id "<exact-controller-session-id>"
+ai_dev_loop scheduler start <run-id>
 ```
 
 ## `scheduler tick`
@@ -63,10 +67,14 @@ ai_dev_loop scheduler tick
 ai_dev_loop scheduler status <run-id>
 ai_dev_loop scheduler list
 ai_dev_loop scheduler history <run-id>
+ai_dev_loop scheduler timeline <run-id>
 ai_dev_loop controller status \
-  --controller-session-id "<exact-controller-session-id>" \
-  --repo-path /path/al/repo
+  --repo-path /path/al/repo \
+  --run-id <run-id>
 ```
+
+`controller status` tambien admite descubrimiento legacy por `--controller-session-id`
+cuando el run registro proveniencia A en submit.
 
 ## `scheduler abort`
 
@@ -93,7 +101,6 @@ ai_dev_loop scheduler submit \
   --repo-path /path/al/repo \
   --plan-path docs/plans/mi-plan.md \
   --prompt-source-path docs/plans/prompt_mi-plan.txt \
-  --controller-session-id "<exact-controller-session-id>" \
   --codex-review-model "<review-model>" \
   --codex-review-reasoning-effort high \
   --resubmission-id "$RESUBMISSION_ID" \
@@ -146,4 +153,4 @@ Requiere aceptacion humana independiente antes de ejecutarlo contra un state roo
 
 ## Runs historicos
 
-Los runs legacy bajo `runs/` y los motores `pr-review-v2` ya no tienen comandos de ejecucion. La accion segura es un `scheduler submit` fresco con identidad controller y modelo de review explicitos. Consulta [Desinstalacion y limpieza](desinstalacion-limpieza.md) para retirar estado legacy de forma controlada.
+Los runs legacy bajo `runs/` y los motores `pr-review-v2` ya no tienen comandos de ejecucion. La accion segura es un `scheduler submit` fresco con modelo y reasoning de review explicitos. Consulta [Desinstalacion y limpieza](desinstalacion-limpieza.md) para retirar estado legacy de forma controlada.

@@ -13,6 +13,7 @@ from ai_dev_loop.scheduler.application.contracts import (
     StartResult,
     SubmitResult,
     TickReceipt,
+    TimelineResult,
 )
 from ai_dev_loop.scheduler.application.cutover_cleanup import CutoverCleanupResult
 from ai_dev_loop.scheduler.application.history import scheduler_history
@@ -20,6 +21,7 @@ from ai_dev_loop.scheduler.application.start import start_run
 from ai_dev_loop.scheduler.application.status import scheduler_list, scheduler_status
 from ai_dev_loop.scheduler.application.submission import SubmitOptions, submit_run
 from ai_dev_loop.scheduler.application.tick import run_scheduler_tick
+from ai_dev_loop.scheduler.application.timeline import scheduler_timeline
 from ai_dev_loop.scheduler.application.timer_ops import (
     TimerDisableResult,
     TimerInstallResult,
@@ -70,7 +72,12 @@ def _render_summary(summary: SchedulerRunSummary, *, output: str) -> dict[str, o
         f"State: {summary.state_kind}",
         f"Project: {summary.project_name}",
         f"Repository: {summary.repository_root}",
-        f"Controller: {summary.controller_session_id_prefix}",
+        f"Reviews completed: {summary.review_iterations_completed}/{summary.max_review_iterations}",
+        *(
+            [f"Controller: {summary.controller_session_id_prefix}"]
+            if summary.controller_session_id_prefix
+            else []
+        ),
         f"Reviewer: {summary.reviewer_session_id_prefix}",
         f"Submitted: {summary.submitted_at}",
         f"Updated: {summary.updated_at}",
@@ -186,6 +193,38 @@ def render_scheduler_abort_output(result: AbortResult, *, output: str) -> str:
         f"Termination pending: {result.termination_pending}",
         f"Next action: {result.safe_next_action.command}",
     ]
+    return "\n".join(lines) + "\n"
+
+
+def render_scheduler_timeline_output(result: TimelineResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "run_id": result.run_id,
+            "order": result.order,
+            "limit": result.limit,
+            "truncated": result.truncated,
+            "entries": [entry.model_dump(mode="json") for entry in result.entries],
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    lines = [
+        f"Scheduler timeline for run {result.run_id}",
+        f"Order: {result.order}",
+        f"Limit: {result.limit}",
+        f"Truncated: {result.truncated}",
+    ]
+    for entry in result.entries:
+        duration = (
+            f"{entry.observed_duration_seconds}s"
+            if entry.observed_duration_seconds is not None
+            else "n/a"
+        )
+        lines.append(
+            f"- iter {entry.iteration:02d} {entry.phase} "
+            f"attempt {entry.phase_attempt} {entry.status} "
+            f"launch={entry.launch_requested_at or 'n/a'} "
+            f"completed={entry.completed_at or 'n/a'} duration={duration}"
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -336,6 +375,8 @@ __all__ = [
     "render_cutover_cleanup_output",
     "render_scheduler_abort_output",
     "render_scheduler_history_output",
+    "render_scheduler_timeline_output",
+    "scheduler_timeline",
     "render_list_output",
     "render_start_output",
     "render_status_output",

@@ -11,6 +11,7 @@ from ai_dev_loop.scheduler.application.contracts import (
     SchedulerRunSummary,
     SchedulerStatusResult,
     bound_reviewer_session_id_from_state,
+    review_budget_from_state,
     scheduler_status_projection_from_state,
     summary_from_context,
 )
@@ -30,6 +31,11 @@ class SchedulerStatusService:
         state: SchedulerState,
     ) -> SchedulerRunSummary:
         projection = scheduler_status_projection_from_state(state)
+        ledger_reviews_completed = self.store.count_review_completion_events(conn, state.run_id)
+        reviews_completed, max_reviews = review_budget_from_state(
+            state,
+            ledger_reviews_completed=ledger_reviews_completed,
+        )
         return summary_from_context(
             run_id=state.run_id,
             state_kind=state.kind,
@@ -38,6 +44,8 @@ class SchedulerStatusService:
             context=state.context,
             safe_next_action=safe_next_action_for_scheduler_state(self.store, conn, state),
             bound_reviewer_session_id=bound_reviewer_session_id_from_state(state),
+            review_iterations_completed=reviews_completed,
+            max_review_iterations=max_reviews,
             cursor_wait_until=projection["cursor_wait_until"],
             block_reason_kind=projection["block_reason_kind"],
         )

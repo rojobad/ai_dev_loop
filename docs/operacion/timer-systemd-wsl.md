@@ -103,10 +103,15 @@ propiedad y contenido correctos, y el timer `enabled` y `active`. Es normal que
 `Type=oneshot` y termina al finalizar cada tick. También es normal que el
 journal informe `Visited runs: 0` cuando no hay trabajo scheduler elegible.
 
-El asset actual solicita el primer tick tras el arranque y ticks posteriores a
-intervalos de 30 segundos, pero systemd puede agrupar o retrasar activaciones.
-Trátalo como un mecanismo periódico de progreso eventual, no como un reloj de
-tiempo real ni como garantía de una ejecución exacta cada 30 segundos.
+El asset empaquetado define `OnBootSec=30`, `OnUnitActiveSec=30` y
+`AccuracySec=1s`. El `AccuracySec=1s` reduce la ventana de coalescencia por
+defecto de systemd (aprox. un minuto) a un segundo; sigue siendo una cadencia
+operativa aproximada de 30 segundos, no un reloj en tiempo real. systemd puede
+retrasar activaciones por carga, suspensión, un servicio oneshot aún en curso u
+otras condiciones del SO. Trátalo como progreso eventual, no como garantía de
+una ejecución exacta cada 30 segundos. Las unidades ya instaladas conservan su
+contenido anterior hasta que el operador ejecute `scheduler timer install` tras
+actualizar el paquete.
 
 No apagues WSL para probar el arranque si hay un intento Cursor o Codex activo.
 Primero espera a un estado sin attempt activo o aborta el run de forma explícita

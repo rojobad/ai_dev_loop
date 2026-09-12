@@ -41,7 +41,7 @@ def test_controller_status_returns_scheduler_run(
         "artifact_root": state_root / "artifacts",
     }
     scheduler_run_id = _submit(git_repo, paths)
-    start_run(scheduler_run_id, CONTROLLER_SESSION, db_path=paths["db_path"])
+    start_run(scheduler_run_id, db_path=paths["db_path"])
 
     status = controller_status(
         controller_session_id=CONTROLLER_SESSION,

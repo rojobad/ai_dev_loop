@@ -213,6 +213,16 @@ def _sample_legacy_context() -> SubmittedRunContext:
     )
 
 
+def test_submitted_context_accepts_null_controller_provenance() -> None:
+    context = _sample_agent_led_context().model_copy(
+        update={
+            "controller": ControllerBinding(controller_session_id=None),
+        }
+    )
+    payload = json.loads(SUBMITTED_CONTEXT_ADAPTER.dump_json(context))
+    assert payload["controller"]["controller_session_id"] is None
+
+
 def test_submitted_context_model_schema_alignment() -> None:
     context = _sample_agent_led_context()
     json_payload = json.loads(SUBMITTED_CONTEXT_ADAPTER.dump_json(context))

@@ -265,7 +265,7 @@ Usa:
 ```bash
 ai_dev_loop scheduler status <run-id>
 ai_dev_loop scheduler history <run-id>
-ai_dev_loop controller status --controller-session-id ... --repo-path ...
+ai_dev_loop controller status --repo-path ... --run-id <run-id>
 ```
 
 Accion: conserva diagnosticos; usa `scheduler abort` si necesitas cancelar sin

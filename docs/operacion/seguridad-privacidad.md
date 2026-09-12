@@ -90,8 +90,8 @@ Sin el ciclo GitHub, el usuario decide manualmente si commitea despues de revisa
 - la raiz canonica del worktree y su identidad de repositorio;
 - plan aprobado y prompt exacto;
 - configuracion fuente y efectiva;
-- `--controller-session-id`, `--codex-review-model` y
-  `--codex-review-reasoning-effort`;
+- `--codex-review-model` y `--codex-review-reasoning-effort`;
+- `--controller-session-id` opcional cuando el operador registra proveniencia A;
 - hashes SHA-256 de inputs inmutables.
 
 La admision one-shot de branch, HEAD y estado del worktree (`require_clean_worktree`,

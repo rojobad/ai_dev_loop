@@ -34,7 +34,7 @@ $XDG_STATE_HOME/ai_dev_loop/
 ```
 
 - `scheduler submit` congela un run `queued` sin lanzar agentes ni mutar el repo.
-- `scheduler start` autoriza el run desde la sesion controller.
+- `scheduler start` autoriza el run para ticks; la proveniencia controller A es opcional.
 - `scheduler tick` ejecuta preflight, Cursor, staging, review y correcciones segun el checkpoint.
 - `require_clean_worktree` se congela en submit y se aplica en la admision one-shot del primer tick.
 

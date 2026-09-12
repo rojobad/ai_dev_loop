@@ -45,6 +45,7 @@ from ai_dev_loop.commands.scheduler import (
     scheduler_history,
     scheduler_list,
     scheduler_status,
+    scheduler_timeline,
     submit_run,
 )
 from ai_dev_loop.commands.scheduler import (
@@ -187,7 +188,7 @@ def scheduler_submit_command(
         typer.Option(
             "--controller-session-id",
             help=(
-                "Exact controller Codex session ID (required). Requires "
+                "Optional controller Codex session ID provenance. Requires "
                 "--codex-review-model and --codex-review-reasoning-effort."
             ),
         ),
@@ -212,20 +213,14 @@ def scheduler_submit_command(
         str | None,
         typer.Option(
             "--codex-review-model",
-            help=(
-                "Frozen Codex review model. Required with --controller-session-id; "
-                "no YAML or session fallback."
-            ),
+            help=("Frozen Codex review model (required). No YAML or session fallback."),
         ),
     ] = None,
     codex_review_reasoning_effort: Annotated[
         str | None,
         typer.Option(
             "--codex-review-reasoning-effort",
-            help=(
-                "Frozen Codex review reasoning effort. Required with "
-                "--controller-session-id; no YAML or session fallback."
-            ),
+            help=("Frozen Codex review reasoning effort (required). No YAML or session fallback."),
         ),
     ] = None,
     review_skill: Annotated[
@@ -288,19 +283,12 @@ def scheduler_submit_command(
 @scheduler_app.command("start")
 def scheduler_start_command(
     run_id: Annotated[str, typer.Argument(help="Submitted scheduler run ID.")],
-    controller_session_id: Annotated[
-        str,
-        typer.Option(
-            "--controller-session-id",
-            help="Exact controller Codex session ID frozen at submit.",
-        ),
-    ],
     output: OutputOption = DEFAULT_OUTPUT,
 ) -> None:
     """Authorize a submitted scheduler run for tick reconciliation."""
 
     def run() -> None:
-        result = start_scheduler_run(run_id, controller_session_id)
+        result = start_scheduler_run(run_id)
         typer.echo(render_scheduler_start_output(result, output=output.value), nl=False)
 
     _handle(run)
@@ -356,6 +344,27 @@ def scheduler_abort_command(
     def run() -> None:
         result = scheduler_abort_run(run_id)
         typer.echo(render_scheduler_abort_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@scheduler_app.command("timeline")
+def scheduler_timeline_command(
+    run_id: Annotated[str, typer.Argument(help="Scheduler run ID.")],
+    limit: Annotated[int, typer.Option(help="Maximum attempts to return.")] = 50,
+    order: Annotated[
+        str,
+        typer.Option(help="Attempt order: oldest or newest."),
+    ] = "oldest",
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Show bounded scheduler Cursor/Codex attempt timing for one run."""
+
+    def run() -> None:
+        from ai_dev_loop.commands.scheduler import render_scheduler_timeline_output
+
+        result = scheduler_timeline(run_id, limit=limit, order=order)
+        typer.echo(render_scheduler_timeline_output(result, output=output.value), nl=False)
 
     _handle(run)
 
@@ -481,20 +490,20 @@ def scheduler_timer_disable_command(
 
 @controller_app.command("status")
 def controller_status_command(
-    controller_session_id: Annotated[
-        str,
-        typer.Option(
-            "--controller-session-id",
-            help="Exact controller Codex session ID.",
-        ),
-    ],
     repo_path: Annotated[
         Path,
         typer.Option("--repo-path", help="Target repository root."),
     ],
     run_id: Annotated[
         str | None,
-        typer.Option("--run-id", help="Optional run ID to disambiguate matches."),
+        typer.Option("--run-id", help="Exact scheduler run ID."),
+    ] = None,
+    controller_session_id: Annotated[
+        str | None,
+        typer.Option(
+            "--controller-session-id",
+            help="Legacy optional controller session ID for discovery.",
+        ),
     ] = None,
     include_terminal: Annotated[
         bool,

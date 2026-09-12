@@ -28,15 +28,33 @@ ai_dev_loop scheduler history <run-id>
 ai_dev_loop scheduler history <run-id> --limit 20 --order newest
 ```
 
-Devuelve eventos acotados y redactados (sin prompts, patches, session IDs completos ni argv).
+## Scheduler timeline
+
+```bash
+ai_dev_loop scheduler timeline <run-id>
+ai_dev_loop scheduler timeline <run-id> --limit 20 --order newest
+```
+
+Proyeccion acotada de intentos Cursor/Codex por iteracion. Cada fila incluye fase,
+ordinal de reintento, estado seguro, marcas de tiempo durables y
+`observed_duration_seconds` solo cuando existen inicio y fin observados en el
+ledger. No sustituye a `history` ni expone IDs internos, artefactos ni salidas
+raw. La cola y el preflight no aparecen como duracion de fase.
+
+Limite por defecto: 50 filas. `--limit` acepta valores positivos hasta 200; por
+encima de 200 se trunca al maximo duro. Si hay mas intentos que el limite
+efectivo, `truncated` es `true` en salida JSON.
 
 ## Controller status
 
 ```bash
 ai_dev_loop controller status \
-  --controller-session-id "<exact-controller-session-id>" \
   --repo-path /path/al/repo \
-  [--run-id <run-id>] \
+  --run-id <run-id>
+# o descubrimiento legacy:
+# ai_dev_loop controller status \
+#   --controller-session-id "<exact-controller-session-id>" \
+#   --repo-path /path/al/repo \
   [--output text|json]
 ```
 

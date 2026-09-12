@@ -68,8 +68,10 @@ class SchedulerRunSummary(AppModel):
     state_kind: str
     project_name: str
     repository_root: str
-    controller_session_id_prefix: str
+    controller_session_id_prefix: str | None
     reviewer_session_id_prefix: str | None
+    review_iterations_completed: int
+    max_review_iterations: int
     submitted_at: str
     updated_at: str
     safe_next_action: SafeNextAction
@@ -126,6 +128,15 @@ class AbortResult(AppModel):
 
 
 HARD_HISTORY_MAX = 200
+DEFAULT_TIMELINE_LIMIT = 50
+HARD_TIMELINE_MAX = 200
+
+REVIEW_COMPLETION_EVENT_KINDS = (
+    "waiting_for_cursor_fix_entered",
+    "run_completed",
+    "run_completed_with_residual_risk",
+    "max_iterations_reached",
+)
 
 
 class HistoryEntry(AppModel):
@@ -143,6 +154,24 @@ class HistoryResult(AppModel):
     entries: tuple[HistoryEntry, ...]
 
 
+class TimelineEntry(AppModel):
+    iteration: int
+    phase: str
+    phase_attempt: int
+    status: str
+    launch_requested_at: str | None
+    completed_at: str | None
+    observed_duration_seconds: float | None
+
+
+class TimelineResult(AppModel):
+    run_id: str
+    order: str
+    limit: int
+    truncated: bool
+    entries: tuple[TimelineEntry, ...]
+
+
 class ControllerSchedulerCandidate(AppModel):
     run_id: str
     state_kind: str
@@ -154,6 +183,9 @@ class ControllerSchedulerCandidate(AppModel):
     capacity_holder_run_id: str | None
     last_event_kind: str | None
     reviewer_session_id_prefix: str | None = None
+    controller_session_id_prefix: str | None = None
+    review_iterations_completed: int = 0
+    max_review_iterations: int = 0
     cursor_wait_until: str | None = None
     block_reason_kind: str | None = None
 
@@ -161,9 +193,7 @@ class ControllerSchedulerCandidate(AppModel):
 def queued_safe_next_action(run_id: str) -> SafeNextAction:
     return SafeNextAction(
         kind=SafeNextActionKind.SCHEDULER_START,
-        command=(
-            f"ai_dev_loop scheduler start {run_id} --controller-session-id <exact-controller-id>"
-        ),
+        command=f"ai_dev_loop scheduler start {run_id}",
     )
 
 
@@ -308,6 +338,26 @@ def redacted_session_prefix(session_id: str) -> str:
     return f"{session_id[:8]}…{session_id[-4:]}"
 
 
+def redacted_controller_prefix(controller_session_id: str | None) -> str | None:
+    if controller_session_id is None:
+        return None
+    return redacted_session_prefix(controller_session_id)
+
+
+def review_budget_from_state(
+    state: SchedulerState,
+    *,
+    ledger_reviews_completed: int | None = None,
+) -> tuple[int, int]:
+    max_reviews = state.context.workflow.max_review_iterations
+    codex = getattr(state, "codex", None)
+    if codex is not None:
+        return int(getattr(codex, "reviews_completed", 0) or 0), max_reviews
+    if ledger_reviews_completed is not None:
+        return ledger_reviews_completed, max_reviews
+    return 0, max_reviews
+
+
 def bound_reviewer_session_id_from_state(state: SchedulerState) -> str | None:
     codex = getattr(state, "codex", None)
     if codex is None:
@@ -350,6 +400,8 @@ def summary_from_context(
     context: SubmittedRunContext,
     safe_next_action: SafeNextAction | None = None,
     bound_reviewer_session_id: str | None = None,
+    review_iterations_completed: int | None = None,
+    max_review_iterations: int | None = None,
     cursor_wait_until: str | None = None,
     block_reason_kind: str | None = None,
 ) -> SchedulerRunSummary:
@@ -368,10 +420,18 @@ def summary_from_context(
         state_kind=state_kind,
         project_name=context.project_name,
         repository_root=context.repository.root,
-        controller_session_id_prefix=redacted_session_prefix(
+        controller_session_id_prefix=redacted_controller_prefix(
             context.controller.controller_session_id
         ),
         reviewer_session_id_prefix=reviewer_prefix,
+        review_iterations_completed=(
+            review_iterations_completed if review_iterations_completed is not None else 0
+        ),
+        max_review_iterations=(
+            max_review_iterations
+            if max_review_iterations is not None
+            else context.workflow.max_review_iterations
+        ),
         submitted_at=submitted_at,
         updated_at=updated_at,
         safe_next_action=action,
