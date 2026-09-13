@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 from tests.unit.scheduler.test_phase20_1_sequence_prepare import (
+    FIXED_RUN_IDS,
     FIXED_SEQUENCE_ID,
     _prepare_service,
     _two_phase_manifest,
     _write_manifest,
 )
 
-from ai_dev_loop.errors import UsageError
 from ai_dev_loop.paths import runs_dir
 from ai_dev_loop.scheduler.application.contracts import SchedulerEngineError
 from ai_dev_loop.scheduler.application.sequence_prepare import SequencePrepareOptions
@@ -101,9 +101,24 @@ def test_sequence_status_not_found(scheduler_paths: dict[str, Path]) -> None:
         service.get_status("missing-sequence-id")
 
 
-def test_sequence_start_placeholder_is_non_mutating() -> None:
-    with pytest.raises(UsageError, match="Phase 20.2"):
-        raise UsageError(
-            "scheduler sequence start is not implemented until Phase 20.2; "
-            "use ai_dev_loop scheduler sequence status <sequence-id> to inspect a prepared definition"
+def test_sequence_start_is_implemented(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+) -> None:
+    manifest = _write_manifest(git_repo / "sequence.yaml", _two_phase_manifest())
+    _prepare_service(
+        db_path=scheduler_paths["db_path"],
+        artifact_root=scheduler_paths["artifact_root"],
+        repo=git_repo,
+    ).prepare(
+        SequencePrepareOptions(
+            manifest_path=manifest,
+            repo_path=git_repo,
+            db_path=scheduler_paths["db_path"],
+            artifact_root=scheduler_paths["artifact_root"],
         )
+    )
+    from ai_dev_loop.scheduler.application.sequence_start import start_sequence
+
+    result = start_sequence(FIXED_SEQUENCE_ID, db_path=scheduler_paths["db_path"])
+    assert result.run_id == FIXED_RUN_IDS[0]

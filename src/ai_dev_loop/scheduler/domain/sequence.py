@@ -21,6 +21,7 @@ SEQUENCE_MANIFEST_SCHEMA_VERSION = 1
 PREPARED_SEQUENCE_SCHEMA_VERSION = 1
 FROZEN_SEQUENCE_ENTRY_SCHEMA_VERSION = 1
 PREPARED_SEQUENCE_STATE_KIND = "prepared"
+ACTIVE_SEQUENCE_STATE_KIND = "active"
 
 MIN_SEQUENCE_PHASE_COUNT = 2
 MAX_SEQUENCE_PHASE_COUNT = 32
@@ -176,6 +177,68 @@ class PreparedSequenceState(DomainModel):
         return value
 
 
+class MaterializedSequenceEntry(DomainModel):
+    ordinal: int
+    run_id: NonEmptyStr
+    entry_hash: Sha256Hex
+    materialized_at: NonEmptyStr
+
+    @field_validator("ordinal")
+    @classmethod
+    def ordinal_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("ordinal must be >= 1")
+        return value
+
+
+class ActiveSequenceState(DomainModel):
+    schema_version: Literal[1] = 1
+    sequence_id: NonEmptyStr
+    version: int
+    prepared_at: NonEmptyStr
+    updated_at: NonEmptyStr
+    started_at: NonEmptyStr
+    idempotency_key: Sha256Hex
+    definition: PreparedSequenceDefinition
+    current_ordinal: int
+    current_run_id: NonEmptyStr
+    materialized_entries: tuple[MaterializedSequenceEntry, ...] = Field(min_length=1)
+
+    @field_validator("version")
+    @classmethod
+    def version_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("version must be >= 1")
+        return value
+
+    @field_validator("current_ordinal")
+    @classmethod
+    def current_ordinal_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("current_ordinal must be >= 1")
+        return value
+
+    @model_validator(mode="after")
+    def validate_materialized_projection(self) -> ActiveSequenceState:
+        total = len(self.definition.entries)
+        if self.current_ordinal > total:
+            raise ValueError("current_ordinal exceeds sequence entry count")
+        current_entry = next(
+            (entry for entry in self.materialized_entries if entry.ordinal == self.current_ordinal),
+            None,
+        )
+        if current_entry is None:
+            raise ValueError("materialized_entries must include current_ordinal")
+        if current_entry.run_id != self.current_run_id:
+            raise ValueError("current_run_id disagrees with materialized entry")
+        ordinals = [entry.ordinal for entry in self.materialized_entries]
+        if len(set(ordinals)) != len(ordinals):
+            raise ValueError("materialized entry ordinals must be unique")
+        if any(entry.ordinal > self.current_ordinal for entry in self.materialized_entries):
+            raise ValueError("materialized_entries must not include future ordinals")
+        return self
+
+
 def sequence_identity_payload(definition: PreparedSequenceDefinition) -> dict[str, object]:
     payload = definition.model_dump(mode="json")
     payload.pop("sequence_id", None)
@@ -195,5 +258,6 @@ def sequence_identity_payload(definition: PreparedSequenceDefinition) -> dict[st
 PREPARED_SEQUENCE_STATE_ADAPTER: TypeAdapter[PreparedSequenceState] = TypeAdapter(
     PreparedSequenceState
 )
+ACTIVE_SEQUENCE_STATE_ADAPTER: TypeAdapter[ActiveSequenceState] = TypeAdapter(ActiveSequenceState)
 FROZEN_SEQUENCE_ENTRY_ADAPTER: TypeAdapter[FrozenSequenceEntry] = TypeAdapter(FrozenSequenceEntry)
 SEQUENCE_MANIFEST_ADAPTER: TypeAdapter[SequenceManifest] = TypeAdapter(SequenceManifest)

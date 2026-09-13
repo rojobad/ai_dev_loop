@@ -28,6 +28,7 @@ SCHEDULER_STATE_SCHEMA_VERSION_V4 = 4
 SUBMITTED_CONTEXT_SCHEMA_VERSION = 1
 SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH = 2
 SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED = 3
+SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE = 4
 
 
 class RepositoryTargetBinding(DomainModel):
@@ -119,6 +120,26 @@ class ControllerBinding(DomainModel):
     controller_session_id: UuidSessionId | None = None
 
 
+class SequenceRunBinding(DomainModel):
+    sequence_id: NonEmptyStr
+    ordinal: int
+    total_phases: int
+    entry_hash: Sha256Hex
+
+    @field_validator("ordinal", "total_phases")
+    @classmethod
+    def positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("must be >= 1")
+        return value
+
+    @model_validator(mode="after")
+    def ordinal_within_total(self) -> SequenceRunBinding:
+        if self.ordinal > self.total_phases:
+            raise ValueError("ordinal must be <= total_phases")
+        return self
+
+
 class SubmittedRunContext(DomainModel):
     """Frozen immutable input context for a submitted A/B scheduler run."""
 
@@ -131,6 +152,7 @@ class SubmittedRunContext(DomainModel):
     cursor: CursorBinding
     workflow: WorkflowLimits
     controller: ControllerBinding
+    sequence: SequenceRunBinding | None = None
     baseline_status_artifact_path: NonEmptyStr | None = None
     baseline_status_sha256: Sha256Hex | None = None
 
@@ -141,8 +163,9 @@ class SubmittedRunContext(DomainModel):
             SUBMITTED_CONTEXT_SCHEMA_VERSION,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
         }:
-            raise ValueError("schema_version must be 1, 2, or 3")
+            raise ValueError("schema_version must be 1, 2, 3, or 4")
         return value
 
     @model_validator(mode="after")
@@ -171,6 +194,20 @@ class SubmittedRunContext(DomainModel):
                 or self.baseline_status_sha256 is not None
             ):
                 raise ValueError("schema_version 3 must not include baseline fields")
+            if self.sequence is not None:
+                raise ValueError("schema_version 3 must not include sequence binding")
+        elif self.schema_version == SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE:
+            if not isinstance(self.codex, FreshCodexReviewerBinding):
+                raise ValueError("schema_version 4 requires FreshCodexReviewerBinding")
+            if not isinstance(self.repository, RepositoryTargetBinding):
+                raise ValueError("schema_version 4 requires RepositoryTargetBinding")
+            if (
+                self.baseline_status_artifact_path is not None
+                or self.baseline_status_sha256 is not None
+            ):
+                raise ValueError("schema_version 4 must not include baseline fields")
+            if self.sequence is None:
+                raise ValueError("schema_version 4 requires sequence binding")
         return self
 
     @model_serializer(mode="wrap")
@@ -179,9 +216,14 @@ class SubmittedRunContext(DomainModel):
         handler: Callable[[SubmittedRunContext], dict[str, object]],
     ) -> dict[str, object]:
         data = handler(self)
-        if self.schema_version == SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED:
+        if self.schema_version in {
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
+        }:
             data.pop("baseline_status_artifact_path", None)
             data.pop("baseline_status_sha256", None)
+        if self.schema_version != SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE:
+            data.pop("sequence", None)
         return data
 
 

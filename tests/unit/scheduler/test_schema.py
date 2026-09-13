@@ -15,6 +15,7 @@ from ai_dev_loop.scheduler.domain.state import (
     SUBMITTED_CONTEXT_SCHEMA_VERSION,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH,
+    SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
     SUBMITTED_STATE_ADAPTER,
     CodexRuntimeBinding,
     ControllerBinding,
@@ -24,6 +25,7 @@ from ai_dev_loop.scheduler.domain.state import (
     PlanPromptBinding,
     RepositoryBinding,
     RepositoryTargetBinding,
+    SequenceRunBinding,
     SubmittedRunContext,
     SubmittedState,
     WorkflowLimits,
@@ -238,6 +240,27 @@ def test_submitted_context_model_schema_alignment() -> None:
     legacy = json.loads(SUBMITTED_CONTEXT_ADAPTER.dump_json(_sample_legacy_context()))
     assert legacy["schema_version"] == 1
     assert legacy["controller"]["controller_session_id"] != legacy["codex"]["session_id"]
+
+
+def test_submitted_context_v4_schema_alignment() -> None:
+    context = _sample_agent_led_context().model_copy(
+        update={
+            "schema_version": SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
+            "sequence": SequenceRunBinding(
+                sequence_id="fixture-project-seq-abc",
+                ordinal=1,
+                total_phases=2,
+                entry_hash="c" * 64,
+            ),
+        }
+    )
+    json_payload = json.loads(SUBMITTED_CONTEXT_ADAPTER.dump_json(context))
+    schema = json.loads(
+        schema_path("scheduler-submitted-run-context-v4.json").read_text(encoding="utf-8")
+    )
+    jsonschema.validate(json_payload, schema)
+    assert json_payload["schema_version"] == 4
+    assert json_payload["sequence"]["ordinal"] == 1
 
 
 def test_submitted_state_model_schema_alignment() -> None:

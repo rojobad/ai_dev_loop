@@ -77,6 +77,9 @@ class SchedulerRunSummary(AppModel):
     safe_next_action: SafeNextAction
     cursor_wait_until: str | None = None
     block_reason_kind: str | None = None
+    sequence_id_prefix: str | None = None
+    sequence_ordinal: int | None = None
+    sequence_total_phases: int | None = None
 
 
 class SchedulerStatusResult(AppModel):
@@ -439,6 +442,7 @@ def summary_from_context(
         cursor_wait_until=cursor_wait_until,
         block_reason_kind=block_reason_kind,
     )
+    sequence_binding = context.sequence
     return SchedulerRunSummary(
         run_id=run_id,
         state_kind=state_kind,
@@ -461,6 +465,13 @@ def summary_from_context(
         safe_next_action=action,
         cursor_wait_until=cursor_wait_until,
         block_reason_kind=block_reason_kind,
+        sequence_id_prefix=(
+            sequence_binding.sequence_id[:8] if sequence_binding is not None else None
+        ),
+        sequence_ordinal=sequence_binding.ordinal if sequence_binding is not None else None,
+        sequence_total_phases=(
+            sequence_binding.total_phases if sequence_binding is not None else None
+        ),
     )
 
 
@@ -488,18 +499,85 @@ class SequenceStatusResult(AppModel):
     repository_root: str
     entry_count: int
     current_ordinal: int | None
+    current_run_id: str | None = None
+    current_run_state_kind: str | None = None
+    current_phase_name: str | None = None
+    residual_risk: bool | None = None
     prepared_at: str
     updated_at: str
+    started_at: str | None = None
     idempotency_key_prefix: str
     entries: tuple[SequenceEntrySummary, ...]
     safe_next_action: SafeNextAction
 
 
-def prepared_sequence_safe_next_action() -> SafeNextAction:
+class SequenceStartResult(AppModel):
+    sequence_id: str
+    run_id: str
+    sequence_state_kind: str
+    run_state_kind: str
+    current_ordinal: int
+    entry_count: int
+    current_phase_name: str
+    changed: bool
+    idempotent_replay: bool
+    safe_next_action: SafeNextAction
+
+
+def prepared_sequence_start_next_action(sequence_id: str) -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.SCHEDULER_START,
+        command=f"ai_dev_loop scheduler sequence start {sequence_id}",
+    )
+
+
+def prepared_sequence_safe_next_action(sequence_id: str) -> SafeNextAction:
+    return prepared_sequence_start_next_action(sequence_id)
+
+
+SEQUENCE_CHECKPOINT_BOUNDARY_RUN_STATE_KINDS = frozenset(
+    {
+        "completed",
+        "completed_with_residual_risk",
+    }
+)
+
+
+def sequence_exposes_checkpoint_boundary(
+    *,
+    run_state_kind: str,
+    current_ordinal: int,
+    total_phases: int,
+) -> bool:
+    return (
+        run_state_kind in SEQUENCE_CHECKPOINT_BOUNDARY_RUN_STATE_KINDS
+        and current_ordinal < total_phases
+    )
+
+
+def active_sequence_safe_next_action(
+    *,
+    sequence_id: str,
+    run_safe_action: SafeNextAction,
+) -> SafeNextAction:
+    if run_safe_action.kind is SafeNextActionKind.SCHEDULER_TICK:
+        return SafeNextAction(
+            kind=SafeNextActionKind.SCHEDULER_TICK,
+            command=(
+                f"Active sequence {sequence_id} is waiting on materialized run progress. "
+                f"{run_safe_action.command}"
+            ),
+        )
+    return run_safe_action
+
+
+def active_sequence_checkpoint_boundary_action(sequence_id: str) -> SafeNextAction:
     return SafeNextAction(
         kind=SafeNextActionKind.INSPECT_BLOCKED,
         command=(
-            "scheduler sequence start is not implemented until Phase 20.2; "
-            "inspect with ai_dev_loop scheduler sequence status <sequence-id>"
+            f"Sequence {sequence_id} completed phase 1 without automatic checkpoint commit "
+            "or later-phase materialization until Phase 20.3. Inspect the staged run result "
+            f"with ai_dev_loop scheduler sequence status {sequence_id} and ai_dev_loop "
+            "scheduler status <run-id>."
         ),
     )

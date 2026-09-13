@@ -61,7 +61,7 @@ from ai_dev_loop.commands.scheduler import (
 from ai_dev_loop.commands.scheduler import (
     start_run as start_scheduler_run,
 )
-from ai_dev_loop.errors import AiDevLoopError, UsageError
+from ai_dev_loop.errors import AiDevLoopError
 from ai_dev_loop.paths import runs_dir
 from ai_dev_loop.scheduler.application.cutover_cleanup import (
     CUTOVER_CONFIRMATION_TOKEN,
@@ -94,8 +94,8 @@ cutover_app = typer.Typer(
 timer_app = typer.Typer(help="Packaged systemd timer asset helpers (no auto-enable).")
 sequence_app = typer.Typer(
     help=(
-        "Prepare and inspect immutable scheduler sequence definitions. "
-        "Phase 20.1 freezes definitions only; sequence start remains unimplemented."
+        "Prepare, start, and inspect immutable scheduler sequence definitions. "
+        "Phase 20.2 materializes only the first phase run after explicit sequence start."
     ),
 )
 integrations_app = typer.Typer(help="Global Codex integration commands.")
@@ -529,14 +529,18 @@ def scheduler_sequence_status_command(
 @sequence_app.command("start")
 def scheduler_sequence_start_command(
     sequence_id: Annotated[str, typer.Argument(help="Prepared scheduler sequence ID.")],
+    output: OutputOption = DEFAULT_OUTPUT,
 ) -> None:
-    """Placeholder until Phase 20.2 lazy first-phase materialization."""
+    """Authorize a prepared sequence and materialize its first scheduler run."""
 
-    del sequence_id
-    raise UsageError(
-        "scheduler sequence start is not implemented until Phase 20.2; "
-        "use ai_dev_loop scheduler sequence status <sequence-id> to inspect a prepared definition"
-    )
+    def run() -> None:
+        from ai_dev_loop.commands.scheduler import render_sequence_start_output
+        from ai_dev_loop.scheduler.application.sequence_start import start_sequence
+
+        result = start_sequence(sequence_id)
+        typer.echo(render_sequence_start_output(result, output=output.value), nl=False)
+
+    _handle(run)
 
 
 @cutover_app.command("cleanup")

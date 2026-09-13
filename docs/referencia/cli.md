@@ -78,9 +78,15 @@ plan, prompt, configuracion efectiva, rutas ejecutables, limites de workflow, mo
 reasoning de review, y (para fases no finales) el mensaje de commit intermedio. Los
 artefactos viven bajo `$XDG_STATE_HOME/ai_dev_loop/artifacts/sequences/`.
 
-`scheduler sequence start` existe solo como placeholder discoverable y termina con
-error hasta Phase 20.2. La accion segura tras `prepare` es
-`scheduler sequence status <sequence-id>`.
+`scheduler sequence start <sequence-id>` es la autorizacion explicita de la secuencia
+congelada. Materializa solo la fase 1 como un run normal de scheduler con el
+`planned_run_id` preasignado, reclama la reserva del repositorio, inserta los eventos
+`run_submitted` y `run_authorized`, y deja el run en `authorized` para que el tick
+existente haga la admision Git. El comando no invoca Git, Cursor, Codex ni systemd.
+
+Phase 20.2 no crea commits de checkpoint ni materializa fases posteriores. Tras
+`prepare`, la accion segura es `scheduler sequence start <sequence-id>`; tras un start
+exitoso, `scheduler tick` y `scheduler sequence status <sequence-id>`.
 
 Opciones de repositorio, `--config-path`, `--controller-session-id`, `--resubmission-id`
 y overrides globales siguen el contrato de `scheduler submit`. Cada fase del manifest

@@ -24,6 +24,7 @@ from ai_dev_loop.runners.git import relative_repo_path, resolve_repo_relative_pa
 from ai_dev_loop.scheduler.application.contracts import (
     SequencePrepareResult,
     prepared_sequence_safe_next_action,
+    prepared_sequence_start_next_action,
 )
 from ai_dev_loop.scheduler.application.submission import (
     _freeze_execution_commands,
@@ -31,10 +32,12 @@ from ai_dev_loop.scheduler.application.submission import (
 )
 from ai_dev_loop.scheduler.domain.common import canonical_json_sha256, worktree_key
 from ai_dev_loop.scheduler.domain.sequence import (
+    ACTIVE_SEQUENCE_STATE_KIND,
     FROZEN_SEQUENCE_ENTRY_SCHEMA_VERSION,
     MAX_MANIFEST_BYTES,
     PREPARED_SEQUENCE_SCHEMA_VERSION,
     PREPARED_SEQUENCE_STATE_KIND,
+    ActiveSequenceState,
     FrozenSequenceEntry,
     PreparedSequenceDefinition,
     PreparedSequenceState,
@@ -309,7 +312,10 @@ class SequencePrepareService:
         if self._prepare_step_hook is not None:
             self._prepare_step_hook(step)
 
-    def _verify_reused_sequence(self, state: PreparedSequenceState) -> None:
+    def _verify_reused_sequence(
+        self,
+        state: PreparedSequenceState | ActiveSequenceState,
+    ) -> None:
         try:
             self.artifacts.verify_prepared_sequence_artifacts(
                 state.sequence_id,
@@ -320,15 +326,29 @@ class SequencePrepareService:
                 "prepared sequence artifacts failed integrity verification"
             ) from exc
 
-    def _reuse_existing_result(self, state: PreparedSequenceState) -> SequencePrepareResult:
+    def _reuse_existing_result(
+        self,
+        state: PreparedSequenceState | ActiveSequenceState,
+    ) -> SequencePrepareResult:
+        from ai_dev_loop.scheduler.domain.sequence import ActiveSequenceState
+
         self._verify_reused_sequence(state)
+        if isinstance(state, ActiveSequenceState):
+            return SequencePrepareResult(
+                sequence_id=state.sequence_id,
+                name=state.definition.name,
+                state_kind=ACTIVE_SEQUENCE_STATE_KIND,
+                entry_count=len(state.definition.entries),
+                reused_existing=True,
+                safe_next_action=prepared_sequence_start_next_action(state.sequence_id),
+            )
         return SequencePrepareResult(
             sequence_id=state.sequence_id,
             name=state.definition.name,
             state_kind=PREPARED_SEQUENCE_STATE_KIND,
             entry_count=len(state.definition.entries),
             reused_existing=True,
-            safe_next_action=prepared_sequence_safe_next_action(),
+            safe_next_action=prepared_sequence_safe_next_action(state.sequence_id),
         )
 
     def prepare(self, options: SequencePrepareOptions) -> SequencePrepareResult:
@@ -599,7 +619,7 @@ class SequencePrepareService:
                 state_kind=PREPARED_SEQUENCE_STATE_KIND,
                 entry_count=len(assigned_entries),
                 reused_existing=False,
-                safe_next_action=prepared_sequence_safe_next_action(),
+                safe_next_action=prepared_sequence_safe_next_action(state.sequence_id),
             )
 
     def _write_sequence_artifacts(

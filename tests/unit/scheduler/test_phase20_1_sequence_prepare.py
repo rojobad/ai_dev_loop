@@ -32,8 +32,8 @@ RESUBMISSION_ID = "22222222-2222-2222-2222-222222222222"
 FIXED_NOW = datetime(2026, 9, 12, 12, 0, 0, tzinfo=UTC)
 FIXED_SEQUENCE_ID = "fixture-project-seq-20260912T120000Z-abc123"
 FIXED_RUN_IDS = (
+    "fixture-project-20260912T120000Z-run000",
     "fixture-project-20260912T120000Z-run001",
-    "fixture-project-20260912T120000Z-run002",
 )
 
 
@@ -242,7 +242,9 @@ def test_prepare_freezes_sequence_without_scheduler_runs(
     )
     assert result.sequence_id == FIXED_SEQUENCE_ID
     assert result.reused_existing is False
-    assert "Phase 20.2" in (result.safe_next_action.command or "")
+    assert f"scheduler sequence start {result.sequence_id}" in (
+        result.safe_next_action.command or ""
+    )
     with SqliteSchedulerStore(scheduler_paths["db_path"]).begin_read() as conn:
         assert conn.execute("SELECT COUNT(*) FROM scheduler_runs").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM scheduler_sequences").fetchone()[0] == 1

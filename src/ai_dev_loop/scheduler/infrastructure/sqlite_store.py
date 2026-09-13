@@ -26,17 +26,20 @@ from ai_dev_loop.scheduler.domain.effects import (
 )
 from ai_dev_loop.scheduler.domain.events import (
     SCHEDULER_EVENT_ADAPTER,
+    RunAuthorizedEvent,
+    RunSubmittedEvent,
     SchedulerEvent,
     parse_scheduler_event,
 )
 from ai_dev_loop.scheduler.domain.state import (
     SCHEDULER_STATE_ADAPTER,
+    AuthorizedState,
     SchedulerState,
     SubmittedState,
 )
 
 if TYPE_CHECKING:
-    from ai_dev_loop.scheduler.domain.sequence import PreparedSequenceState
+    from ai_dev_loop.scheduler.domain.sequence import ActiveSequenceState, PreparedSequenceState
 
 SCHEMA_VERSION = 6
 SEQUENCE_SCHEMA_VERSION = 5
@@ -905,6 +908,139 @@ class SqliteSchedulerStore:
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.CONFLICT,
                 "run insert conflict",
+            ) from exc
+
+    def insert_materialized_sequence_run(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        submitted_state: SubmittedState,
+        authorized_state: AuthorizedState,
+        submitted_event_id: str,
+        submitted_event: RunSubmittedEvent,
+        authorized_event_id: str,
+        authorized_event: RunAuthorizedEvent,
+        now: datetime,
+    ) -> None:
+        from ai_dev_loop.scheduler.domain.state import AuthorizedState as AuthorizedStateModel
+
+        if submitted_state.run_id != run_id or authorized_state.run_id != run_id:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "materialized run state run_id must equal requested run_id",
+            )
+        if not isinstance(authorized_state, AuthorizedStateModel):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "materialized run must end in authorized state",
+            )
+        if authorized_state.kind != "authorized":
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "materialized run must end in authorized state",
+            )
+        queued_kind, queued_payload, queued_digest = self.dump_state(submitted_state)
+        if queued_kind != "queued":
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "materialized run requires queued submitted state",
+            )
+        authorized_kind, authorized_payload, authorized_digest = self.dump_state(authorized_state)
+        if authorized_kind != "authorized":
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "materialized run requires authorized final state",
+            )
+        now_text = encode_utc_instant(now)
+        worktree_key_value = authorized_state.context.repository.worktree_key
+        try:
+            conn.execute(
+                """
+                INSERT INTO scheduler_runs(
+                    run_id, state_kind, state_payload, state_payload_sha256,
+                    version, idempotency_key, worktree_key, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    authorized_kind,
+                    authorized_payload,
+                    authorized_digest,
+                    authorized_state.version,
+                    authorized_state.idempotency_key,
+                    worktree_key_value,
+                    now_text,
+                    now_text,
+                ),
+            )
+            submitted_kind, submitted_payload, submitted_digest = self.dump_event(submitted_event)
+            conn.execute(
+                """
+                INSERT INTO scheduler_events(
+                    event_id, run_id, sequence, event_kind,
+                    event_payload, event_payload_sha256, created_at
+                ) VALUES (?, ?, 1, ?, ?, ?, ?)
+                """,
+                (
+                    submitted_event_id,
+                    run_id,
+                    submitted_kind,
+                    submitted_payload,
+                    submitted_digest,
+                    now_text,
+                ),
+            )
+            authorized_event_kind, authorized_event_payload, authorized_event_digest = (
+                self.dump_event(authorized_event)
+            )
+            conn.execute(
+                """
+                INSERT INTO scheduler_events(
+                    event_id, run_id, sequence, event_kind,
+                    event_payload, event_payload_sha256, created_at
+                ) VALUES (?, ?, 2, ?, ?, ?, ?)
+                """,
+                (
+                    authorized_event_id,
+                    run_id,
+                    authorized_event_kind,
+                    authorized_event_payload,
+                    authorized_event_digest,
+                    now_text,
+                ),
+            )
+            reservation = conn.execute(
+                """
+                INSERT INTO scheduler_repository_reservations(
+                    worktree_key, run_id, repository_root, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(worktree_key) DO UPDATE SET
+                    run_id = excluded.run_id,
+                    repository_root = excluded.repository_root,
+                    status = excluded.status,
+                    created_at = excluded.created_at,
+                    updated_at = excluded.updated_at
+                WHERE scheduler_repository_reservations.status = 'released'
+                """,
+                (
+                    worktree_key_value,
+                    run_id,
+                    authorized_state.context.repository.root,
+                    ReservationStatus.ACTIVE.value,
+                    now_text,
+                    now_text,
+                ),
+            )
+            if reservation.rowcount != 1:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CONFLICT,
+                    "repository worktree reservation could not be claimed",
+                )
+        except sqlite3.IntegrityError as exc:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "materialized sequence run insert conflict",
             ) from exc
 
     def get_run_row(self, conn: sqlite3.Connection, run_id: str) -> sqlite3.Row:
@@ -2681,19 +2817,30 @@ class SqliteSchedulerStore:
     @staticmethod
     def dump_sequence_state(state: object) -> tuple[str, str, str]:
         from ai_dev_loop.scheduler.domain.sequence import (
+            ACTIVE_SEQUENCE_STATE_ADAPTER,
+            ACTIVE_SEQUENCE_STATE_KIND,
             PREPARED_SEQUENCE_STATE_ADAPTER,
             PREPARED_SEQUENCE_STATE_KIND,
+            ActiveSequenceState,
             PreparedSequenceState,
         )
 
-        if not isinstance(state, PreparedSequenceState):
-            raise SchedulerEngineError(
-                SchedulerEngineErrorKind.INTERNAL,
-                "sequence state has unexpected type",
+        if isinstance(state, PreparedSequenceState):
+            validated = PREPARED_SEQUENCE_STATE_ADAPTER.validate_python(
+                state.model_dump(mode="json")
             )
-        validated = PREPARED_SEQUENCE_STATE_ADAPTER.validate_python(state.model_dump(mode="json"))
-        text = PREPARED_SEQUENCE_STATE_ADAPTER.dump_json(validated).decode("utf-8")
-        return PREPARED_SEQUENCE_STATE_KIND, text, payload_sha256(text)
+            text = PREPARED_SEQUENCE_STATE_ADAPTER.dump_json(validated).decode("utf-8")
+            return PREPARED_SEQUENCE_STATE_KIND, text, payload_sha256(text)
+        if isinstance(state, ActiveSequenceState):
+            active_validated = ACTIVE_SEQUENCE_STATE_ADAPTER.validate_python(
+                state.model_dump(mode="json")
+            )
+            text = ACTIVE_SEQUENCE_STATE_ADAPTER.dump_json(active_validated).decode("utf-8")
+            return ACTIVE_SEQUENCE_STATE_KIND, text, payload_sha256(text)
+        raise SchedulerEngineError(
+            SchedulerEngineErrorKind.INTERNAL,
+            "sequence state has unexpected type",
+        )
 
     @staticmethod
     def dump_sequence_entry(entry: object) -> tuple[str, str]:
@@ -2712,19 +2859,27 @@ class SqliteSchedulerStore:
         return text, payload_sha256(text)
 
     @staticmethod
-    def load_sequence_state(payload: str) -> PreparedSequenceState:
+    def load_sequence_state(payload: str) -> PreparedSequenceState | ActiveSequenceState:
         from ai_dev_loop.scheduler.domain.sequence import (
+            ACTIVE_SEQUENCE_STATE_ADAPTER,
             PREPARED_SEQUENCE_STATE_ADAPTER,
+            ActiveSequenceState,
             PreparedSequenceState,
         )
 
-        state = PREPARED_SEQUENCE_STATE_ADAPTER.validate_json(payload)
-        if not isinstance(state, PreparedSequenceState):
-            raise SchedulerEngineError(
-                SchedulerEngineErrorKind.CORRUPTION,
-                "sequence payload has unexpected type",
-            )
-        return state
+        try:
+            prepared_state = PREPARED_SEQUENCE_STATE_ADAPTER.validate_json(payload)
+            if isinstance(prepared_state, PreparedSequenceState):
+                return prepared_state
+        except Exception:
+            pass
+        active_state = ACTIVE_SEQUENCE_STATE_ADAPTER.validate_json(payload)
+        if isinstance(active_state, ActiveSequenceState):
+            return active_state
+        raise SchedulerEngineError(
+            SchedulerEngineErrorKind.CORRUPTION,
+            "sequence payload has unexpected type",
+        )
 
     def get_sequence_by_idempotency_key(
         self,
@@ -2818,30 +2973,40 @@ class SqliteSchedulerStore:
         self,
         conn: sqlite3.Connection,
         sequence_id: str,
-    ) -> PreparedSequenceState:
+    ) -> PreparedSequenceState | ActiveSequenceState:
         from ai_dev_loop.scheduler.domain.common import worktree_key
         from ai_dev_loop.scheduler.domain.sequence import (
+            ACTIVE_SEQUENCE_STATE_KIND,
             FROZEN_SEQUENCE_ENTRY_ADAPTER,
             PREPARED_SEQUENCE_STATE_KIND,
+            ActiveSequenceState,
             PreparedSequenceState,
         )
 
         row = self.get_sequence_row(conn, sequence_id)
         state = self.load_sequence_state(row["payload"])
-        if not isinstance(state, PreparedSequenceState):
+        row_kind = str(row["state_kind"])
+        if row_kind not in {PREPARED_SEQUENCE_STATE_KIND, ACTIVE_SEQUENCE_STATE_KIND}:
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.CORRUPTION,
-                "sequence payload has unexpected type",
+                "sequence state_kind is unsupported",
+            )
+        if row_kind == PREPARED_SEQUENCE_STATE_KIND and not isinstance(
+            state, PreparedSequenceState
+        ):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence state_kind mismatch",
+            )
+        if row_kind == ACTIVE_SEQUENCE_STATE_KIND and not isinstance(state, ActiveSequenceState):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence state_kind mismatch",
             )
         if payload_sha256(row["payload"]) != row["payload_sha256"]:
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.CORRUPTION,
                 "sequence payload hash mismatch",
-            )
-        if str(row["state_kind"]) != PREPARED_SEQUENCE_STATE_KIND:
-            raise SchedulerEngineError(
-                SchedulerEngineErrorKind.CORRUPTION,
-                "sequence state_kind mismatch",
             )
         if state.sequence_id != sequence_id:
             raise SchedulerEngineError(
@@ -2944,7 +3109,7 @@ class SqliteSchedulerStore:
         self,
         conn: sqlite3.Connection,
         *,
-        state: object,
+        state: PreparedSequenceState,
         now: datetime,
     ) -> None:
         from ai_dev_loop.scheduler.domain.sequence import PreparedSequenceState
@@ -3012,15 +3177,18 @@ class SqliteSchedulerStore:
         *,
         sequence_id: str,
         expected_version: int,
-        new_state: object,
+        new_state: PreparedSequenceState | ActiveSequenceState,
         now: datetime,
     ) -> bool:
-        from ai_dev_loop.scheduler.domain.sequence import PreparedSequenceState
+        from ai_dev_loop.scheduler.domain.sequence import (
+            ActiveSequenceState,
+            PreparedSequenceState,
+        )
 
-        if not isinstance(new_state, PreparedSequenceState):
+        if not isinstance(new_state, (PreparedSequenceState, ActiveSequenceState)):
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.VALIDATION,
-                "compare_and_swap accepts only PreparedSequenceState",
+                "compare_and_swap accepts only PreparedSequenceState or ActiveSequenceState",
             )
         if new_state.sequence_id != sequence_id:
             raise SchedulerEngineError(

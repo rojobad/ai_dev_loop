@@ -149,6 +149,145 @@ def test_secures_existing_sequence_root_permissions(tmp_path: Path) -> None:
     assert stat.S_IMODE(root.stat().st_mode) == DIR_MODE
 
 
+def test_write_text_or_verify_accepts_concurrent_identical_publish(tmp_path: Path) -> None:
+    import threading
+
+    store = ProtectedArtifactStore(tmp_path / "artifacts")
+    barrier = threading.Barrier(2)
+    results: list[object] = []
+    errors: list[Exception] = []
+    original_write_bytes = store.write_bytes
+
+    def coordinated_write_bytes(
+        run_id: str,
+        relative_path: str,
+        content: bytes,
+        *,
+        max_bytes: int,
+    ):
+        if relative_path == "plan/plan.md":
+            barrier.wait(timeout=5)
+        return original_write_bytes(run_id, relative_path, content, max_bytes=max_bytes)
+
+    store.write_bytes = coordinated_write_bytes  # type: ignore[method-assign]
+
+    def worker() -> None:
+        try:
+            results.append(
+                store.write_text_or_verify(
+                    "run-1",
+                    "plan/plan.md",
+                    "same plan bytes\n",
+                    max_bytes=1024,
+                )
+            )
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+    assert not errors
+    assert len(results) == 2
+    assert results[0].sha256 == results[1].sha256
+
+
+def test_reject_unexpected_run_artifacts_blocks_abandoned_temp_files(tmp_path: Path) -> None:
+    store = ProtectedArtifactStore(tmp_path / "artifacts")
+    root = run_artifact_root(tmp_path / "artifacts", "run-1")
+    (root / "plan").mkdir(parents=True)
+    abandoned = root / "plan" / ".tmp-abandoned.part"
+    abandoned.write_text("stale", encoding="utf-8")
+    with pytest.raises(ProtectedArtifactError, match="unexpected run artifacts"):
+        store.reject_unexpected_run_artifacts("run-1", allowed_relative_paths=frozenset())
+    assert abandoned.exists()
+
+
+def test_reject_unexpected_run_artifacts_blocks_unrelated_temp_files(tmp_path: Path) -> None:
+    store = ProtectedArtifactStore(tmp_path / "artifacts")
+    root = run_artifact_root(tmp_path / "artifacts", "run-1")
+    root.mkdir(parents=True)
+    unrelated = root / ".tmp-unrelated.part"
+    unrelated.write_text("leftover", encoding="utf-8")
+    with pytest.raises(ProtectedArtifactError, match="unexpected run artifacts"):
+        store.reject_unexpected_run_artifacts("run-1", allowed_relative_paths=frozenset())
+    assert unrelated.exists()
+
+
+def test_materialization_section_blocks_concurrent_nonblocking_acquire(tmp_path: Path) -> None:
+    import threading
+
+    store = ProtectedArtifactStore(tmp_path / "artifacts")
+    first_holding = threading.Event()
+    release_first = threading.Event()
+    second_error: list[Exception] = []
+
+    def first_worker() -> None:
+        with store.materialization_section("run-1", blocking=True):
+            first_holding.set()
+            release_first.wait()
+
+    def second_worker() -> None:
+        try:
+            with store.materialization_section("run-1", blocking=False):
+                raise AssertionError("second materialization section should not open")
+        except ProtectedArtifactError as exc:
+            second_error.append(exc)
+
+    first_thread = threading.Thread(target=first_worker)
+    first_thread.start()
+    assert first_holding.wait()
+    second_thread = threading.Thread(target=second_worker)
+    second_thread.start()
+    second_thread.join()
+    assert second_error
+    assert "already in progress" in str(second_error[0])
+    release_first.set()
+    first_thread.join()
+
+
+def test_materialization_section_allows_next_owner_after_release(tmp_path: Path) -> None:
+    import threading
+
+    store = ProtectedArtifactStore(tmp_path / "artifacts")
+    release_first = threading.Event()
+    second_acquired = threading.Event()
+
+    def first_worker() -> None:
+        with store.materialization_section("run-1", blocking=True):
+            release_first.wait()
+
+    def second_worker() -> None:
+        with store.materialization_section("run-1", blocking=True):
+            second_acquired.set()
+
+    first_thread = threading.Thread(target=first_worker)
+    first_thread.start()
+    second_thread = threading.Thread(target=second_worker)
+    second_thread.start()
+    release_first.set()
+    first_thread.join()
+    assert second_acquired.wait()
+    second_thread.join()
+
+
+def test_list_run_relative_files_reports_unexpected_paths(tmp_path: Path) -> None:
+    store = ProtectedArtifactStore(tmp_path / "artifacts")
+    store.write_text("run-1", "plan/plan.md", "plan", max_bytes=1024)
+    root = run_artifact_root(tmp_path / "artifacts", "run-1")
+    (root / "cursor").mkdir()
+    (root / "cursor" / "chat.json").write_text("{}", encoding="utf-8")
+    files = store.list_run_relative_files("run-1")
+    assert "cursor/chat.json" in files
+    with pytest.raises(ProtectedArtifactError, match="unexpected run artifacts"):
+        store.reject_unexpected_run_artifacts(
+            "run-1",
+            allowed_relative_paths=frozenset({"plan/plan.md"}),
+        )
+
+
 def test_write_or_verify_rejects_unsafe_existing_permissions(tmp_path: Path) -> None:
     if os.name == "nt":
         pytest.skip("chmod not meaningful on Windows")

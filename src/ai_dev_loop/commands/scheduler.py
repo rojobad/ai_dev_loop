@@ -11,6 +11,7 @@ from ai_dev_loop.scheduler.application.contracts import (
     SchedulerRunSummary,
     SchedulerStatusResult,
     SequencePrepareResult,
+    SequenceStartResult,
     SequenceStatusResult,
     StartResult,
     SubmitResult,
@@ -90,6 +91,12 @@ def _render_summary(summary: SchedulerRunSummary, *, output: str) -> dict[str, o
         f"Submitted: {summary.submitted_at}",
         f"Updated: {summary.updated_at}",
     ]
+    if summary.sequence_id_prefix is not None:
+        lines.append(
+            "Sequence: "
+            f"{summary.sequence_id_prefix} "
+            f"phase {summary.sequence_ordinal}/{summary.sequence_total_phases}"
+        )
     if summary.cursor_wait_until:
         lines.append(f"Cursor wait until: {summary.cursor_wait_until}")
     if summary.block_reason_kind:
@@ -401,8 +408,13 @@ def render_sequence_status_output(result: SequenceStatusResult, *, output: str) 
             "repository_root": result.repository_root,
             "entry_count": result.entry_count,
             "current_ordinal": result.current_ordinal,
+            "current_run_id": result.current_run_id,
+            "current_run_state_kind": result.current_run_state_kind,
+            "current_phase_name": result.current_phase_name,
+            "residual_risk": result.residual_risk,
             "prepared_at": result.prepared_at,
             "updated_at": result.updated_at,
+            "started_at": result.started_at,
             "idempotency_key_prefix": result.idempotency_key_prefix,
             "entries": [entry.model_dump(mode="json") for entry in result.entries],
             "safe_next_action": result.safe_next_action.model_dump(mode="json"),
@@ -415,10 +427,26 @@ def render_sequence_status_output(result: SequenceStatusResult, *, output: str) 
         f"Project: {result.project_name}",
         f"Repository: {result.repository_root}",
         f"Entries: {result.entry_count}",
-        f"Prepared: {result.prepared_at}",
-        f"Updated: {result.updated_at}",
-        f"Idempotency key prefix: {result.idempotency_key_prefix}",
     ]
+    if result.current_ordinal is not None:
+        lines.append(f"Current phase: {result.current_ordinal:02d}/{result.entry_count}")
+    if result.current_phase_name is not None:
+        lines.append(f"Current phase name: {result.current_phase_name}")
+    if result.current_run_id is not None:
+        lines.append(f"Materialized run: {result.current_run_id}")
+    if result.current_run_state_kind is not None:
+        lines.append(f"Materialized run state: {result.current_run_state_kind}")
+    if result.residual_risk is not None:
+        lines.append(f"Residual risk: {result.residual_risk}")
+    lines.extend(
+        [
+            f"Prepared: {result.prepared_at}",
+            f"Updated: {result.updated_at}",
+        ]
+    )
+    if result.started_at is not None:
+        lines.append(f"Started: {result.started_at}")
+    lines.append(f"Idempotency key prefix: {result.idempotency_key_prefix}")
     for entry in result.entries:
         commit_note = " (checkpoint commit message frozen)" if entry.commit_message_present else ""
         lines.append(
@@ -456,6 +484,39 @@ def render_review_retry_output(result: ReviewRetryResult, *, output: str) -> str
     return "\n".join(lines) + "\n"
 
 
+def render_sequence_start_output(result: SequenceStartResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "sequence_id": result.sequence_id,
+            "run_id": result.run_id,
+            "sequence_state_kind": result.sequence_state_kind,
+            "run_state_kind": result.run_state_kind,
+            "current_ordinal": result.current_ordinal,
+            "entry_count": result.entry_count,
+            "current_phase_name": result.current_phase_name,
+            "changed": result.changed,
+            "idempotent_replay": result.idempotent_replay,
+            "safe_next_action": result.safe_next_action.model_dump(mode="json"),
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    header = (
+        f"Started scheduler sequence {result.sequence_id} (reused existing authorization)"
+        if result.idempotent_replay
+        else f"Started scheduler sequence {result.sequence_id}"
+    )
+    lines = [
+        header,
+        f"Materialized run: {result.run_id}",
+        f"Phase: {result.current_ordinal:02d}/{result.entry_count} ({result.current_phase_name})",
+        f"Run state: {result.run_state_kind}",
+        "Sequence start authorizes the frozen sequence and materializes only phase 1.",
+        "Phase 20.2 does not commit checkpoints or materialize later phases.",
+        f"Next action: {result.safe_next_action.command}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def render_timer_validate_output(errors: list[str], *, output: str) -> str:
     if output == "json":
         payload = {
@@ -480,6 +541,7 @@ __all__ = [
     "render_scheduler_history_output",
     "render_scheduler_timeline_output",
     "render_sequence_prepare_output",
+    "render_sequence_start_output",
     "render_sequence_status_output",
     "scheduler_sequence_status",
     "scheduler_timeline",
