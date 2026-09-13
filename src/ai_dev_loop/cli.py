@@ -33,6 +33,7 @@ from ai_dev_loop.commands.scheduler import (
     prepare_sequence,
     render_cutover_cleanup_output,
     render_list_output,
+    render_review_retry_output,
     render_scheduler_abort_output,
     render_scheduler_history_output,
     render_sequence_prepare_output,
@@ -48,6 +49,7 @@ from ai_dev_loop.commands.scheduler import (
     scheduler_abort_run,
     scheduler_history,
     scheduler_list,
+    scheduler_review_retry,
     scheduler_sequence_status,
     scheduler_status,
     scheduler_timeline,
@@ -102,6 +104,8 @@ integrations_app.add_typer(sessions_app, name="sessions")
 scheduler_app.add_typer(cutover_app, name="cutover")
 scheduler_app.add_typer(timer_app, name="timer")
 scheduler_app.add_typer(sequence_app, name="sequence")
+review_app = typer.Typer(help="Codex review retry and blocked-run recovery.")
+scheduler_app.add_typer(review_app, name="review")
 app.add_typer(config_app, name="config")
 app.add_typer(controller_app, name="controller")
 app.add_typer(scheduler_app, name="scheduler")
@@ -342,6 +346,20 @@ def scheduler_list_command(
     def run() -> None:
         summaries = scheduler_list()
         typer.echo(render_list_output(summaries, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@review_app.command("retry")
+def scheduler_review_retry_command(
+    run_id: Annotated[str, typer.Argument(help="Scheduler run ID or blocked source run ID.")],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Authorize a Codex review retry or create a blocked-run recovery successor."""
+
+    def run() -> None:
+        result = scheduler_review_retry(run_id)
+        typer.echo(render_review_retry_output(result, output=output.value), nl=False)
 
     _handle(run)
 

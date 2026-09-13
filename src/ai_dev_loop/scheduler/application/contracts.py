@@ -225,6 +225,16 @@ def awaiting_codex_review_safe_next_action() -> SafeNextAction:
     )
 
 
+def waiting_codex_review_retry_safe_next_action(run_id: str) -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.SCHEDULER_TICK,
+        command=(
+            f"ai_dev_loop scheduler review retry {run_id} "
+            "(authorize Codex review retry; tick launches the attempt)."
+        ),
+    )
+
+
 def waiting_codex_capacity_safe_next_action() -> SafeNextAction:
     return SafeNextAction(
         kind=SafeNextActionKind.SCHEDULER_TICK,
@@ -331,6 +341,8 @@ def safe_next_action_for_state_kind(
         return active_cursor_safe_next_action()
     if state_kind == "waiting_codex_capacity":
         return waiting_codex_capacity_safe_next_action()
+    if state_kind == "waiting_codex_review_retry":
+        return waiting_codex_review_retry_safe_next_action(run_id)
     if state_kind == "awaiting_codex_review":
         return awaiting_codex_review_safe_next_action()
     if state_kind == "waiting_for_cursor_fix":

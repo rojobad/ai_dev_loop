@@ -19,6 +19,7 @@ from ai_dev_loop.scheduler.application.contracts import (
 )
 from ai_dev_loop.scheduler.application.cutover_cleanup import CutoverCleanupResult
 from ai_dev_loop.scheduler.application.history import scheduler_history
+from ai_dev_loop.scheduler.application.review_retry import ReviewRetryResult, scheduler_review_retry
 from ai_dev_loop.scheduler.application.sequence_prepare import (
     SequencePrepareOptions,
     prepare_sequence,
@@ -428,6 +429,33 @@ def render_sequence_status_output(result: SequenceStatusResult, *, output: str) 
     return "\n".join(lines) + "\n"
 
 
+def render_review_retry_output(result: ReviewRetryResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "run_id": result.run_id,
+            "source_run_id": result.source_run_id,
+            "state_kind": result.state_kind,
+            "changed": result.changed,
+            "idempotent_replay": result.idempotent_replay,
+            "recovery_successor": result.recovery_successor,
+            "safe_next_action": result.safe_next_action.model_dump(mode="json"),
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    lines = [
+        f"Review retry run: {result.run_id}",
+        f"State: {result.state_kind}",
+        f"Changed: {result.changed}",
+        f"Idempotent replay: {result.idempotent_replay}",
+    ]
+    if result.source_run_id:
+        lines.append(f"Source run: {result.source_run_id}")
+    if result.recovery_successor:
+        lines.append("Recovery successor: yes")
+    lines.append(f"Next action: {result.safe_next_action.command}")
+    return "\n".join(lines) + "\n"
+
+
 def render_timer_validate_output(errors: list[str], *, output: str) -> str:
     if output == "json":
         payload = {
@@ -456,6 +484,7 @@ __all__ = [
     "scheduler_sequence_status",
     "scheduler_timeline",
     "render_list_output",
+    "render_review_retry_output",
     "render_start_output",
     "render_status_output",
     "render_submit_output",
@@ -468,6 +497,7 @@ __all__ = [
     "scheduler_abort_run",
     "scheduler_history",
     "scheduler_list",
+    "scheduler_review_retry",
     "scheduler_status",
     "start_run",
     "submit_run",

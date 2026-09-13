@@ -568,6 +568,10 @@ class AttemptService:
             raise ValidationError("resume codex review requires bound reviewer identity")
         if effect_kind == BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND and state.codex.reviewer_session_id:
             raise ValidationError("bootstrap codex review cannot run with bound reviewer identity")
+        generation = state.codex.review_retry_generation
+        scheduled = state.codex.review_retry_scheduled_generation
+        if generation > 0 and scheduled == generation:
+            binding["operational_review_retry"] = True
         return binding
 
     def _cursor_binding(

@@ -14,6 +14,8 @@ from ai_dev_loop.scheduler.domain.events import (
     CodexReviewBlockedEvent,
     CodexReviewCompletedEvent,
     CodexReviewerBoundEvent,
+    CodexReviewRetryableFailureEvent,
+    CodexReviewRetryRequestedEvent,
     CodexUsageCapacityDetectedEvent,
     CursorChatBlockedEvent,
     CursorChatCreatedEvent,
@@ -54,6 +56,7 @@ from ai_dev_loop.scheduler.domain.state import (
     PreflightCompleteState,
     SubmittedState,
     WaitingCodexCapacityState,
+    WaitingCodexReviewRetryState,
     WaitingForCursorFixState,
     WaitingUsageLimitState,
 )
@@ -473,6 +476,8 @@ def apply_codex_usage_capacity_detected(
         update={
             "review_iteration": event.review_iteration,
             "codex_capacity_wait_started_at": now_text,
+            "capacity_evidence_source": event.evidence_source,
+            "inferred_operational_failure_kind": event.operational_failure_kind,
         }
     )
     return WaitingCodexCapacityState(
@@ -485,6 +490,71 @@ def apply_codex_usage_capacity_detected(
         checkpoint=state.checkpoint,
         cursor=state.cursor,
         codex=codex,
+    )
+
+
+def apply_codex_review_retryable_failure(
+    state: AwaitingCodexReviewState,
+    event: CodexReviewRetryableFailureEvent,
+    *,
+    now_text: str,
+) -> WaitingCodexReviewRetryState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    if not state.codex.reviewer_session_id:
+        raise ValueError("retryable review failure requires bound reviewer identity")
+    codex = state.codex.model_copy(
+        update={
+            "review_iteration": event.review_iteration,
+            "review_retry_failure_kind": event.failure_kind,
+            "review_retry_generation": event.retry_generation,
+            "review_retry_scheduled_generation": None,
+            "last_failed_attempt_id": event.attempt_id,
+            "inferred_operational_failure_kind": None,
+            "capacity_evidence_source": None,
+            "codex_capacity_wait_started_at": None,
+        }
+    )
+    return WaitingCodexReviewRetryState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        checkpoint=state.checkpoint,
+        cursor=state.cursor,
+        codex=codex,
+        recovery=state.recovery,
+    )
+
+
+def apply_codex_review_retry_requested(
+    state: WaitingCodexReviewRetryState,
+    event: CodexReviewRetryRequestedEvent,
+    *,
+    now_text: str,
+) -> AwaitingCodexReviewState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    if event.retry_generation != state.codex.review_retry_generation:
+        raise ValueError("retry generation mismatch")
+    codex = state.codex.model_copy(
+        update={
+            "review_retry_scheduled_generation": event.retry_generation,
+        }
+    )
+    return AwaitingCodexReviewState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        checkpoint=state.checkpoint,
+        cursor=state.cursor,
+        codex=codex,
+        recovery=state.recovery,
     )
 
 
@@ -512,6 +582,7 @@ def apply_codex_capacity_available(
         checkpoint=state.checkpoint,
         cursor=state.cursor,
         codex=codex,
+        recovery=getattr(state, "recovery", None),
     )
 
 
@@ -777,6 +848,7 @@ def apply_run_aborted(
         | WaitingUsageLimitState
         | WaitingCodexCapacityState
         | AwaitingCodexReviewState
+        | WaitingCodexReviewRetryState
         | WaitingForCursorFixState
         | AbortedState
     ),

@@ -362,6 +362,28 @@ def test_systemctl_show_parsing_matrix() -> None:
     assert parsed.lifecycle_state == UnitLifecycleState.FAILED
     assert parsed.termination_class == TerminationClass.TIMEOUT
 
+    owned_runner_timeout = parse_systemctl_show(
+        "Id=unit.service\nActiveState=active\nSubState=exited\nResult=exit-code\n"
+        "ExecMainStatus=124\nExecMainCode=1\nLoadState=loaded\n"
+    )
+    parsed = observe_from_show(
+        show=owned_runner_timeout,
+        expected_unit_identity="unit.service",
+    )
+    assert parsed.lifecycle_state == UnitLifecycleState.FAILED
+    assert parsed.exit_code == 124
+    assert parsed.termination_class == TerminationClass.TIMEOUT
+
+    owned_runner_non_timeout_exit = parse_systemctl_show(
+        "Id=unit.service\nActiveState=failed\nResult=exit-code\n"
+        "ExecMainStatus=2\nExecMainCode=1\nLoadState=loaded\n"
+    )
+    parsed = observe_from_show(
+        show=owned_runner_non_timeout_exit,
+        expected_unit_identity="unit.service",
+    )
+    assert parsed.termination_class == TerminationClass.NONZERO_EXIT
+
     missing = parse_systemctl_show("LoadState=not-found\n")
     parsed = observe_from_show(show=missing, expected_unit_identity="unit.service")
     assert parsed.lifecycle_state == UnitLifecycleState.MISSING

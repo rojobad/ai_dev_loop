@@ -24,6 +24,10 @@ class TerminationClass(StrEnum):
     UNKNOWN = "unknown"
 
 
+# Reserved by owned attempt runners when an internal agent timeout fires.
+OWNED_ATTEMPT_RUNNER_TIMEOUT_EXIT_CODE = 124
+
+
 @dataclass(frozen=True)
 class LaunchRequest:
     attempt_id: str

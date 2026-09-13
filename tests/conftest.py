@@ -720,6 +720,28 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                         print("FAKE_CODEX_BOOTSTRAP_READY", flush=True)
                 time.sleep(float(os.environ.get("FAKE_CODEX_SLEEP_SECONDS", "5")))
                 sys.exit(0)
+            if mode == "message_only_usage_limit":
+                if "resume" not in args:
+                    bootstrap_id = os.environ.get(
+                        "FAKE_CODEX_BOOTSTRAP_SESSION_ID",
+                        "019def00-0000-0000-0000-0000000000bb",
+                    ).strip()
+                    if bootstrap_id:
+                        print(
+                            json.dumps({{"type": "thread.started", "thread_id": bootstrap_id}}),
+                            flush=True,
+                        )
+                print(json.dumps({{"type": "error", "message": "usage_limit_exceeded"}}))
+                print(
+                    json.dumps(
+                        {{
+                            "type": "turn.failed",
+                            "error": {{"message": "usage_limit_exceeded"}},
+                        }}
+                    )
+                )
+                print("codex usage limit exceeded", file=sys.stderr)
+                sys.exit(2)
             if mode == "usage_limit":
                 if "resume" not in args:
                     bootstrap_id = os.environ.get(
@@ -767,6 +789,18 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                 )
                 sys.exit(2)
             if mode == "invalid_json":
+                if "resume" not in args:
+                    bootstrap_id = os.environ.get(
+                        "FAKE_CODEX_BOOTSTRAP_SESSION_ID",
+                        "019def00-0000-0000-0000-0000000000bb",
+                    ).strip()
+                    if bootstrap_id:
+                        print(
+                            json.dumps(
+                                {{"type": "thread.started", "thread_id": bootstrap_id}}
+                            ),
+                            flush=True,
+                        )
                 if output_last_message:
                     with open(output_last_message, "w", encoding="utf-8") as handle:
                         handle.write("not-json")

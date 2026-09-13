@@ -9,7 +9,11 @@ from datetime import UTC, datetime
 
 from ai_dev_loop.iterations import correction_execution_envelope_path
 from ai_dev_loop.review_result import CodexReviewResult, completion_status_for_review
-from ai_dev_loop.runners.codex_failure import is_codex_usage_limit_recovery_eligible
+from ai_dev_loop.runners.codex_failure import (
+    FAILURE_CODE_CODEX_USAGE_LIMIT,
+    is_codex_usage_limit_recovery_eligible,
+    is_operational_review_block_kind,
+)
 from ai_dev_loop.scheduler.application.codex_capacity_probe import (
     CodexAppServerCapacityProbe,
     CodexCapacityProbePort,
@@ -17,9 +21,10 @@ from ai_dev_loop.scheduler.application.codex_capacity_probe import (
 )
 from ai_dev_loop.scheduler.application.codex_evidence import (
     CodexEvidenceError,
+    integrity_reason_kind_from_codex_evidence,
     load_authenticated_codex_outcome,
     load_validated_review_result,
-    validate_codex_review_outcome_semantics,
+    validate_codex_review_outcome_integrity,
 )
 from ai_dev_loop.scheduler.application.contracts import TickRunReceipt
 from ai_dev_loop.scheduler.application.tick_fencing import tick_lease_is_active
@@ -36,6 +41,7 @@ from ai_dev_loop.scheduler.domain.events import (
     CodexCapacityAvailableEvent,
     CodexReviewBlockedEvent,
     CodexReviewerBoundEvent,
+    CodexReviewRetryableFailureEvent,
     CodexReviewScheduledEvent,
     CodexUsageCapacityDetectedEvent,
     MaxIterationsReachedEvent,
@@ -47,6 +53,7 @@ from ai_dev_loop.scheduler.domain.reducer import (
     apply_codex_bootstrap_uncertain,
     apply_codex_capacity_available,
     apply_codex_review_blocked,
+    apply_codex_review_retryable_failure,
     apply_codex_reviewer_bound,
     apply_codex_usage_capacity_detected,
     apply_max_iterations_reached,
@@ -362,48 +369,34 @@ class CodexWorkflowService:
                 outcome=outcome,
             )
 
-        if outcome.get("timed_out"):
-            return self._block_review(
-                run_id,
-                attempt_id=attempt_id,
-                reason_kind="codex_review_timeout",
-                summary="codex review timed out before producing a valid schema result",
-            )
-
-        review_block_reason = str(outcome.get("review_block_reason", "")).strip()
-        if review_block_reason:
-            summary = (
-                "codex review output truncated before a valid schema result"
-                if review_block_reason == "codex_review_output_truncated"
-                else "codex review blocked before producing a valid schema result"
-            )
-            return self._block_review(
-                run_id,
-                attempt_id=attempt_id,
-                reason_kind=review_block_reason,
-                summary=summary,
-            )
-
-        failure_kind = str(outcome.get("failure_kind", "")).strip()
-        if failure_kind or outcome.get("parse_ok") is False:
-            stderr_rel = str(attempt["stderr_artifact_path"])  # type: ignore[index]
-            stderr_path = run_root / stderr_rel
-            stderr_summary = ""
-            if stderr_path.is_file():
-                stderr_summary = stderr_path.read_text(encoding="utf-8").strip()[:240]
-            return self._block_review(
-                run_id,
-                attempt_id=attempt_id,
-                reason_kind=failure_kind or "codex_attempt_failed",
-                summary=stderr_summary or "codex attempt failed before review outcome",
-            )
-
         if is_codex_usage_limit_recovery_eligible(outcome):
             return self._handle_codex_usage_capacity(
                 run_id,
                 attempt_id=attempt_id,
                 outcome=outcome,
             )
+
+        if str(outcome.get("failure_code", "")).strip() == FAILURE_CODE_CODEX_USAGE_LIMIT:
+            if outcome.get("timed_out"):
+                return self._block_review(
+                    run_id,
+                    attempt_id=attempt_id,
+                    reason_kind="codex_review_timeout",
+                    summary="codex review timed out before producing a valid schema result",
+                )
+            review_block_reason = str(outcome.get("review_block_reason", "")).strip()
+            if review_block_reason:
+                summary = (
+                    "codex review output truncated before a valid schema result"
+                    if review_block_reason == "codex_review_output_truncated"
+                    else "codex review blocked before producing a valid schema result"
+                )
+                return self._block_review(
+                    run_id,
+                    attempt_id=attempt_id,
+                    reason_kind=review_block_reason,
+                    summary=summary,
+                )
 
         dispatch_id = str(attempt["dispatch_id"])  # type: ignore[index]
         with self.store.begin_read() as conn:
@@ -445,33 +438,78 @@ class CodexWorkflowService:
             bound_session = bound
 
         try:
-            validate_codex_review_outcome_semantics(
+            validate_codex_review_outcome_integrity(
                 outcome,
+                run_root=run_root,
                 expected_review_iteration=review_iteration,
                 expected_effect_kind=effect_kind,
                 bound_session_id=bound_session,
             )
-            review = load_validated_review_result(run_root, outcome)
         except CodexEvidenceError as exc:
-            if outcome.get("timed_out"):
-                return self._block_review(
+            return self._block_review(
+                run_id,
+                attempt_id=attempt_id,
+                reason_kind=integrity_reason_kind_from_codex_evidence(exc),
+                summary=str(exc)[:240],
+            )
+
+        operational = self._operational_failure_from_outcome(outcome, attempt=attempt)
+        if operational is not None:
+            reason_kind, summary = operational
+            if is_operational_review_block_kind(reason_kind):
+                return self._handle_operational_review_failure(
                     run_id,
                     attempt_id=attempt_id,
-                    reason_kind="codex_review_timeout",
-                    summary="codex review timed out before producing a valid schema result",
+                    reason_kind=reason_kind,
+                    summary=summary,
+                    outcome=outcome,
                 )
+
+        result_path = str(outcome.get("review_result_path", "")).strip()
+        result_sha = str(outcome.get("review_result_sha256", "")).strip()
+        if not result_path or not result_sha:
+            return self._handle_operational_review_failure(
+                run_id,
+                attempt_id=attempt_id,
+                reason_kind="codex_review_outcome_invalid",
+                summary="codex outcome missing review result binding",
+                outcome=outcome,
+            )
+        if outcome.get("timed_out"):
+            return self._handle_operational_review_failure(
+                run_id,
+                attempt_id=attempt_id,
+                reason_kind="codex_review_timeout",
+                summary="codex review timed out before producing a valid schema result",
+                outcome=outcome,
+            )
+        returncode = outcome.get("returncode", 0)
+        if isinstance(returncode, bool) or not isinstance(returncode, int) or returncode != 0:
+            return self._handle_operational_review_failure(
+                run_id,
+                attempt_id=attempt_id,
+                reason_kind="codex_review_outcome_invalid",
+                summary="codex review exited before producing a valid schema result",
+                outcome=outcome,
+            )
+
+        try:
+            review = load_validated_review_result(run_root, outcome)
+        except CodexEvidenceError as exc:
             if output_truncated:
-                return self._block_review(
+                return self._handle_operational_review_failure(
                     run_id,
                     attempt_id=attempt_id,
                     reason_kind="codex_review_output_truncated",
                     summary="codex review output truncated before a valid schema result",
+                    outcome=outcome,
                 )
-            return self._block_review(
+            return self._handle_operational_review_failure(
                 run_id,
                 attempt_id=attempt_id,
                 reason_kind="codex_review_outcome_invalid",
                 summary=str(exc)[:240],
+                outcome=outcome,
             )
 
         return self._apply_review_decision(
@@ -659,6 +697,7 @@ class CodexWorkflowService:
         event = CodexUsageCapacityDetectedEvent(
             run_id=run_id,
             review_iteration=review_iteration,
+            evidence_source="structured_error",
         )
         with self.store.begin_immediate() as conn:
             current_state, version, _ = self.store.load_validated_snapshot(conn, run_id)
@@ -922,6 +961,209 @@ class CodexWorkflowService:
             attempt_id=attempt_id,
             reason_kind=reason_kind,
             summary=summary,
+        )
+
+    def _operational_failure_from_outcome(
+        self,
+        outcome: dict[str, object],
+        *,
+        attempt: object,
+    ) -> tuple[str, str] | None:
+        if outcome.get("timed_out"):
+            return (
+                "codex_review_timeout",
+                "codex review timed out before producing a valid schema result",
+            )
+        review_block_reason = str(outcome.get("review_block_reason", "")).strip()
+        if review_block_reason:
+            summary = (
+                "codex review output truncated before a valid schema result"
+                if review_block_reason == "codex_review_output_truncated"
+                else "codex review blocked before producing a valid schema result"
+            )
+            return review_block_reason, summary
+        failure_kind = str(outcome.get("failure_kind", "")).strip()
+        if failure_kind or outcome.get("parse_ok") is False:
+            stderr_rel = str(attempt["stderr_artifact_path"])  # type: ignore[index]
+            stderr_summary = ""
+            stderr_path = self.artifacts.run_root(str(outcome.get("run_id", ""))) / stderr_rel
+            if stderr_path.is_file():
+                stderr_summary = stderr_path.read_text(encoding="utf-8").strip()[:240]
+            return (
+                failure_kind or "codex_attempt_failed",
+                stderr_summary or "codex attempt failed before review outcome",
+            )
+        return None
+
+    def _handle_operational_review_failure(
+        self,
+        run_id: str,
+        *,
+        attempt_id: str,
+        reason_kind: str,
+        summary: str,
+        outcome: dict[str, object],
+    ) -> TickRunReceipt:
+        with self.store.begin_read() as conn:
+            state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            if not isinstance(state, AwaitingCodexReviewState):
+                return TickRunReceipt(run_id=run_id, action="codex_operational_state_changed")
+            review_iteration = state.cursor.iteration
+            bound_session = state.codex.reviewer_session_id
+            skip_probe = bool(state.codex.inferred_operational_failure_kind)
+            codex_command = state.context.codex.command
+
+        bootstrap_session_id = str(outcome.get("bootstrap_session_id", "")).strip()
+        if not bound_session and bootstrap_session_id:
+            with self.store.begin_read() as conn:
+                bind_state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+                if not isinstance(bind_state, AwaitingCodexReviewState):
+                    return TickRunReceipt(run_id=run_id, action="codex_operational_state_changed")
+            bound = self._persist_reviewer_binding(
+                run_id,
+                bind_state,
+                bootstrap_session_id=bootstrap_session_id,
+                outcome=outcome,
+            )
+            if isinstance(bound, TickRunReceipt):
+                return bound
+            bound_session = bound
+        elif not bound_session:
+            uncertainty = str(outcome.get("bootstrap_uncertainty_reason", "")).strip()
+            if uncertainty:
+                return self._handle_bootstrap_uncertainty(
+                    run_id,
+                    attempt_id=attempt_id,
+                    uncertainty_reason=uncertainty,
+                    outcome=outcome,
+                )
+            return self._handle_bootstrap_uncertainty(
+                run_id,
+                attempt_id=attempt_id,
+                uncertainty_reason="missing_identity",
+                outcome=outcome,
+            )
+
+        if skip_probe:
+            return self._enter_review_retry_wait(
+                run_id,
+                attempt_id=attempt_id,
+                review_iteration=review_iteration,
+                failure_kind=reason_kind,
+            )
+
+        observation = self._capacity_probe.probe(codex_command)
+        if observation.status == CodexCapacityStatus.EXHAUSTED:
+            return self._enter_inferred_capacity_wait(
+                run_id,
+                attempt_id=attempt_id,
+                review_iteration=review_iteration,
+                operational_failure_kind=reason_kind,
+            )
+        return self._enter_review_retry_wait(
+            run_id,
+            attempt_id=attempt_id,
+            review_iteration=review_iteration,
+            failure_kind=reason_kind,
+        )
+
+    def _enter_inferred_capacity_wait(
+        self,
+        run_id: str,
+        *,
+        attempt_id: str,
+        review_iteration: int,
+        operational_failure_kind: str,
+    ) -> TickRunReceipt:
+        now = self._now_factory()
+        now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        event = CodexUsageCapacityDetectedEvent(
+            run_id=run_id,
+            review_iteration=review_iteration,
+            evidence_source="post_failure_capacity_probe",
+            operational_failure_kind=operational_failure_kind,
+        )
+        with self.store.begin_immediate() as conn:
+            state, version, _ = self.store.load_validated_snapshot(conn, run_id)
+            if not isinstance(state, AwaitingCodexReviewState):
+                return TickRunReceipt(run_id=run_id, action="codex_capacity_state_changed")
+            if not state.codex.reviewer_session_id:
+                return self._block_review(
+                    run_id,
+                    attempt_id=attempt_id,
+                    reason_kind="codex_bootstrap_uncertain",
+                    summary="capacity wait requires bound reviewer identity",
+                )
+            new_state = apply_codex_usage_capacity_detected(state, event, now_text=now_text)
+            event_id = self._event_id_factory()
+            sequence = self.store.next_event_sequence(conn, run_id)
+            self.store.append_event(
+                conn,
+                event_id=event_id,
+                run_id=run_id,
+                sequence=sequence,
+                event=event,
+                now=now,
+            )
+            if not self.store.compare_and_swap_state(
+                conn,
+                run_id=run_id,
+                expected_version=version,
+                new_state=new_state,
+                now=now,
+            ):
+                return TickRunReceipt(run_id=run_id, action="codex_capacity_cas_lost")
+            self.store.mark_attempt_ingested(conn, attempt_id=attempt_id, now=now)
+        return TickRunReceipt(run_id=run_id, action="waiting_codex_capacity")
+
+    def _enter_review_retry_wait(
+        self,
+        run_id: str,
+        *,
+        attempt_id: str,
+        review_iteration: int,
+        failure_kind: str,
+    ) -> TickRunReceipt:
+        now = self._now_factory()
+        now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        with self.store.begin_read() as conn:
+            state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            if not isinstance(state, AwaitingCodexReviewState):
+                return TickRunReceipt(run_id=run_id, action="codex_retry_state_changed")
+            next_generation = max(state.codex.review_retry_generation, 0) + 1
+        event = CodexReviewRetryableFailureEvent(
+            run_id=run_id,
+            review_iteration=review_iteration,
+            failure_kind=failure_kind,
+            attempt_id=attempt_id,
+            retry_generation=next_generation,
+        )
+        with self.store.begin_immediate() as conn:
+            state, version, _ = self.store.load_validated_snapshot(conn, run_id)
+            if not isinstance(state, AwaitingCodexReviewState):
+                return TickRunReceipt(run_id=run_id, action="codex_retry_state_changed")
+            new_state = apply_codex_review_retryable_failure(state, event, now_text=now_text)
+            event_id = self._event_id_factory()
+            sequence = self.store.next_event_sequence(conn, run_id)
+            self.store.append_event(
+                conn,
+                event_id=event_id,
+                run_id=run_id,
+                sequence=sequence,
+                event=event,
+                now=now,
+            )
+            if not self.store.compare_and_swap_state(
+                conn,
+                run_id=run_id,
+                expected_version=version,
+                new_state=new_state,
+                now=now,
+            ):
+                return TickRunReceipt(run_id=run_id, action="codex_retry_cas_lost")
+            self.store.mark_attempt_ingested(conn, attempt_id=attempt_id, now=now)
+        return TickRunReceipt(
+            run_id=run_id, action="waiting_codex_review_retry", detail=failure_kind
         )
 
     def _block_capacity_probe(

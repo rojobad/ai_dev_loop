@@ -404,4 +404,4 @@ def test_schema_version_is_five_after_bootstrap(scheduler_paths: dict[str, Path]
     store = SqliteSchedulerStore(scheduler_paths["db_path"])
     with store.begin_read() as conn:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == SCHEMA_VERSION == 5
+    assert version == SCHEMA_VERSION == 6

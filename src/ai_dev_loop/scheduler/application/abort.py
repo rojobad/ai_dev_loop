@@ -34,6 +34,7 @@ from ai_dev_loop.scheduler.domain.state import (
     CursorReadyState,
     PreflightCompleteState,
     SubmittedState,
+    WaitingCodexReviewRetryState,
     WaitingForCursorFixState,
     WaitingUsageLimitState,
 )
@@ -117,6 +118,7 @@ class SchedulerAbortService:
                     | CursorReadyState
                     | WaitingUsageLimitState
                     | AwaitingCodexReviewState
+                    | WaitingCodexReviewRetryState
                     | WaitingForCursorFixState
                     | AbortedState,
                     state,

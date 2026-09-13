@@ -97,7 +97,25 @@ def _safe_detail_for_event(event_kind: str, payload_text: str) -> str:
         return f"{event_kind}: wait_until={wait_until}"
     if event_kind in {"codex_usage_capacity_detected", "codex_capacity_available"}:
         iteration = payload.get("review_iteration")
+        source = payload.get("evidence_source")
+        if source:
+            return f"{event_kind}: review_iteration={iteration} evidence_source={source}"
         return f"{event_kind}: review_iteration={iteration}"
+    if event_kind == "codex_review_retryable_failure":
+        return (
+            f"{event_kind}: failure_kind={payload.get('failure_kind')} "
+            f"retry_generation={payload.get('retry_generation')}"
+        )
+    if event_kind == "codex_review_retry_requested":
+        return (
+            f"{event_kind}: retry_generation={payload.get('retry_generation')} "
+            f"idempotent_replay={payload.get('idempotent_replay')}"
+        )
+    if event_kind == "codex_review_recovery_successor_created":
+        return (
+            f"{event_kind}: source_run_id={payload.get('source_run_id')} "
+            f"successor_run_id={payload.get('successor_run_id')}"
+        )
     if event_kind == "attempt_completed":
         return (
             f"{event_kind}: termination={payload.get('termination_class')} "

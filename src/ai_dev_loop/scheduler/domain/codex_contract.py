@@ -43,13 +43,29 @@ def codex_attempt_stderr_rel(review_iteration: int, attempt_id: str) -> str:
     return f"codex/events/{iteration_label(review_iteration)}.{attempt_id}.stderr.txt"
 
 
-def codex_review_result_rel(review_iteration: int) -> str:
-    return f"codex/reviews/{iteration_label(review_iteration)}.json"
+def codex_review_result_rel(review_iteration: int, attempt_id: str | None = None) -> str:
+    label = iteration_label(review_iteration)
+    if attempt_id:
+        return f"codex/reviews/{label}.{attempt_id}.json"
+    return f"codex/reviews/{label}.json"
 
 
-def codex_review_metadata_rel(review_iteration: int) -> str:
-    return f"codex/reviews/{iteration_label(review_iteration)}.metadata.json"
+def codex_review_metadata_rel(review_iteration: int, attempt_id: str | None = None) -> str:
+    label = iteration_label(review_iteration)
+    if attempt_id:
+        return f"codex/reviews/{label}.{attempt_id}.metadata.json"
+    return f"codex/reviews/{label}.metadata.json"
 
 
-def codex_review_report_rel(review_iteration: int) -> str:
-    return f"codex/reviews/{iteration_label(review_iteration)}.md"
+def codex_review_report_rel(review_iteration: int, attempt_id: str | None = None) -> str:
+    label = iteration_label(review_iteration)
+    if attempt_id:
+        return f"codex/reviews/{label}.{attempt_id}.md"
+    return f"codex/reviews/{label}.md"
+
+
+REVIEW_RETRY_OPERATIONAL_ENVELOPE = (
+    "This is an automated scheduler retry of Codex review. "
+    "The prior attempt did not yield a valid structured review result. "
+    "Return a fresh schema-valid review of the same staged snapshot only.\n\n"
+)

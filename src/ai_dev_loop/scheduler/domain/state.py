@@ -297,12 +297,38 @@ class CodexWorkflowCheckpoint(DomainModel):
     latest_review_result_path: NonEmptyStr | None = None
     latest_review_result_sha256: Sha256Hex | None = None
     codex_capacity_wait_started_at: NonEmptyStr | None = None
+    capacity_evidence_source: Literal["structured_error", "post_failure_capacity_probe"] | None = (
+        None
+    )
+    inferred_operational_failure_kind: NonEmptyStr | None = None
+    review_retry_failure_kind: NonEmptyStr | None = None
+    review_retry_generation: int = Field(default=0)
+    review_retry_scheduled_generation: int | None = None
+    last_failed_attempt_id: NonEmptyStr | None = None
 
-    @field_validator("review_iteration", "reviews_completed")
+    @field_validator("review_iteration", "reviews_completed", "review_retry_generation")
     @classmethod
     def non_negative_review_counters(cls, value: int) -> int:
         if value < 0:
             raise ValueError("review counters must be >= 0")
+        return value
+
+
+class ReviewRecoveryLineage(DomainModel):
+    """Immutable lineage for a scheduler review-recovery successor."""
+
+    source_run_id: NonEmptyStr
+    source_block_reason_kind: NonEmptyStr
+    source_review_iteration: int
+    source_staged_patch_sha256: Sha256Hex
+    source_failed_attempt_id: NonEmptyStr | None = None
+    created_at: NonEmptyStr
+
+    @field_validator("source_review_iteration")
+    @classmethod
+    def review_iteration_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("source_review_iteration must be >= 1")
         return value
 
 
@@ -434,6 +460,7 @@ class AwaitingCodexReviewState(SchedulerRunBase):
     checkpoint: AdmittedRunCheckpoint
     cursor: CursorWorkflowCheckpoint
     codex: CodexWorkflowCheckpoint = Field(default_factory=CodexWorkflowCheckpoint)
+    recovery: ReviewRecoveryLineage | None = None
 
     @field_validator("schema_version")
     @classmethod
@@ -446,6 +473,36 @@ class AwaitingCodexReviewState(SchedulerRunBase):
             raise ValueError("awaiting_codex_review requires staged patch artifacts")
         if self.codex.bootstrap_uncertainty_reason:
             raise ValueError("awaiting_codex_review cannot carry bootstrap uncertainty")
+        return self
+
+
+class WaitingCodexReviewRetryState(SchedulerRunBase):
+    """Run waiting for an explicit operator Codex review retry."""
+
+    kind: Literal["waiting_codex_review_retry"] = "waiting_codex_review_retry"
+    schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
+    checkpoint: AdmittedRunCheckpoint
+    cursor: CursorWorkflowCheckpoint
+    codex: CodexWorkflowCheckpoint
+    recovery: ReviewRecoveryLineage | None = None
+
+    @field_validator("schema_version")
+    @classmethod
+    def schema_version_is_four(cls, value: int) -> int:
+        return _schema_version_is_four(value)
+
+    @model_validator(mode="after")
+    def retry_wait_fields_required(self) -> WaitingCodexReviewRetryState:
+        if not self.cursor.staged_patch_path or not self.cursor.staged_patch_sha256:
+            raise ValueError("waiting_codex_review_retry requires staged patch artifacts")
+        if not self.codex.reviewer_session_id:
+            raise ValueError("waiting_codex_review_retry requires bound reviewer identity")
+        if not self.codex.review_retry_failure_kind:
+            raise ValueError("waiting_codex_review_retry requires review_retry_failure_kind")
+        if not self.codex.last_failed_attempt_id:
+            raise ValueError("waiting_codex_review_retry requires last_failed_attempt_id")
+        if self.codex.review_retry_generation < 1:
+            raise ValueError("waiting_codex_review_retry requires review_retry_generation >= 1")
         return self
 
 
@@ -575,6 +632,7 @@ SchedulerState = Annotated[
     | Annotated[WaitingUsageLimitState, Tag("waiting_usage_limit")]
     | Annotated[WaitingCodexCapacityState, Tag("waiting_codex_capacity")]
     | Annotated[AwaitingCodexReviewState, Tag("awaiting_codex_review")]
+    | Annotated[WaitingCodexReviewRetryState, Tag("waiting_codex_review_retry")]
     | Annotated[WaitingForCursorFixState, Tag("waiting_for_cursor_fix")]
     | Annotated[CompletedState, Tag("completed")]
     | Annotated[CompletedWithResidualRiskState, Tag("completed_with_residual_risk")]
@@ -604,6 +662,7 @@ SCHEDULER_ABORTABLE_STATE_KINDS = frozenset(
         "waiting_usage_limit",
         "waiting_codex_capacity",
         "awaiting_codex_review",
+        "waiting_codex_review_retry",
         "waiting_for_cursor_fix",
     }
 )
@@ -628,6 +687,7 @@ def parse_scheduler_state(
     | WaitingUsageLimitState
     | WaitingCodexCapacityState
     | AwaitingCodexReviewState
+    | WaitingCodexReviewRetryState
     | WaitingForCursorFixState
     | CompletedState
     | CompletedWithResidualRiskState
@@ -646,6 +706,7 @@ def parse_scheduler_state(
             WaitingUsageLimitState,
             WaitingCodexCapacityState,
             AwaitingCodexReviewState,
+            WaitingCodexReviewRetryState,
             WaitingForCursorFixState,
             CompletedState,
             CompletedWithResidualRiskState,

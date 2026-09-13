@@ -203,9 +203,10 @@ def load_authenticated_codex_outcome(
     return outcome
 
 
-def validate_codex_review_outcome_semantics(
+def validate_codex_review_outcome_integrity(
     outcome: dict[str, object],
     *,
+    run_root: Path,
     expected_review_iteration: int,
     expected_effect_kind: str,
     bound_session_id: str | None,
@@ -231,6 +232,43 @@ def validate_codex_review_outcome_semantics(
             raise CodexEvidenceError("codex resume outcome session mismatch")
     else:
         raise CodexEvidenceError("unsupported codex outcome effect kind")
+    result_path = str(outcome.get("review_result_path", "")).strip()
+    result_sha = str(outcome.get("review_result_sha256", "")).strip()
+    if result_path and result_sha:
+        path = run_root / result_path
+        if path.is_symlink():
+            raise CodexEvidenceError("codex review result artifact must not be a symlink")
+        if not path.is_file():
+            raise CodexEvidenceError("codex review result artifact missing")
+        actual_sha = sha256_file(path)
+        if actual_sha != result_sha:
+            raise CodexEvidenceError("codex review result digest mismatch")
+
+
+def integrity_reason_kind_from_codex_evidence(exc: CodexEvidenceError) -> str:
+    message = str(exc).lower()
+    if "identity conflict" in message or "session mismatch" in message:
+        return "reviewer_identity_conflict"
+    if "digest mismatch" in message:
+        return "outcome_evidence_invalid"
+    return "outcome_evidence_invalid"
+
+
+def validate_codex_review_outcome_semantics(
+    outcome: dict[str, object],
+    *,
+    run_root: Path,
+    expected_review_iteration: int,
+    expected_effect_kind: str,
+    bound_session_id: str | None,
+) -> None:
+    validate_codex_review_outcome_integrity(
+        outcome,
+        run_root=run_root,
+        expected_review_iteration=expected_review_iteration,
+        expected_effect_kind=expected_effect_kind,
+        bound_session_id=bound_session_id,
+    )
     result_path = str(outcome.get("review_result_path", "")).strip()
     result_sha = str(outcome.get("review_result_sha256", "")).strip()
     if not result_path or not result_sha:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Discriminator, Field, Tag, TypeAdapter, field_validator
 
@@ -37,6 +37,9 @@ CODEX_REVIEW_COMPLETED_EVENT_KIND = "codex_review_completed"
 CODEX_REVIEW_BLOCKED_EVENT_KIND = "codex_review_blocked"
 CODEX_USAGE_CAPACITY_DETECTED_EVENT_KIND = "codex_usage_capacity_detected"
 CODEX_CAPACITY_AVAILABLE_EVENT_KIND = "codex_capacity_available"
+CODEX_REVIEW_RETRYABLE_FAILURE_EVENT_KIND = "codex_review_retryable_failure"
+CODEX_REVIEW_RETRY_REQUESTED_EVENT_KIND = "codex_review_retry_requested"
+CODEX_REVIEW_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND = "codex_review_recovery_successor_created"
 WAITING_FOR_CURSOR_FIX_EVENT_KIND = "waiting_for_cursor_fix_entered"
 RUN_COMPLETED_EVENT_KIND = "run_completed"
 RUN_COMPLETED_WITH_RESIDUAL_RISK_EVENT_KIND = "run_completed_with_residual_risk"
@@ -419,12 +422,60 @@ class CodexUsageCapacityDetectedEvent(DomainModel):
     kind: str = Field(default=CODEX_USAGE_CAPACITY_DETECTED_EVENT_KIND)
     run_id: str
     review_iteration: int
+    evidence_source: Literal["structured_error", "post_failure_capacity_probe"] = "structured_error"
+    operational_failure_kind: NonEmptyStr | None = None
 
     @field_validator("kind")
     @classmethod
     def kind_is_codex_usage_capacity_detected(cls, value: str) -> str:
         if value != CODEX_USAGE_CAPACITY_DETECTED_EVENT_KIND:
             raise ValueError("kind must be codex_usage_capacity_detected")
+        return value
+
+
+class CodexReviewRetryableFailureEvent(DomainModel):
+    kind: str = Field(default=CODEX_REVIEW_RETRYABLE_FAILURE_EVENT_KIND)
+    run_id: str
+    review_iteration: int
+    failure_kind: NonEmptyStr
+    attempt_id: NonEmptyStr
+    retry_generation: int
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_codex_review_retryable_failure(cls, value: str) -> str:
+        if value != CODEX_REVIEW_RETRYABLE_FAILURE_EVENT_KIND:
+            raise ValueError("kind must be codex_review_retryable_failure")
+        return value
+
+
+class CodexReviewRetryRequestedEvent(DomainModel):
+    kind: str = Field(default=CODEX_REVIEW_RETRY_REQUESTED_EVENT_KIND)
+    run_id: str
+    review_iteration: int
+    retry_generation: int
+    idempotent_replay: bool
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_codex_review_retry_requested(cls, value: str) -> str:
+        if value != CODEX_REVIEW_RETRY_REQUESTED_EVENT_KIND:
+            raise ValueError("kind must be codex_review_retry_requested")
+        return value
+
+
+class CodexReviewRecoverySuccessorCreatedEvent(DomainModel):
+    kind: str = Field(default=CODEX_REVIEW_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND)
+    source_run_id: str
+    successor_run_id: str
+    recovery_key: NonEmptyStr
+    review_iteration: int
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_codex_review_recovery_successor_created(cls, value: str) -> str:
+        if value != CODEX_REVIEW_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND:
+            raise ValueError("kind must be codex_review_recovery_successor_created")
         return value
 
 
@@ -578,6 +629,12 @@ SchedulerEvent = Annotated[
     | Annotated[CodexReviewBlockedEvent, Tag(CODEX_REVIEW_BLOCKED_EVENT_KIND)]
     | Annotated[CodexUsageCapacityDetectedEvent, Tag(CODEX_USAGE_CAPACITY_DETECTED_EVENT_KIND)]
     | Annotated[CodexCapacityAvailableEvent, Tag(CODEX_CAPACITY_AVAILABLE_EVENT_KIND)]
+    | Annotated[CodexReviewRetryableFailureEvent, Tag(CODEX_REVIEW_RETRYABLE_FAILURE_EVENT_KIND)]
+    | Annotated[CodexReviewRetryRequestedEvent, Tag(CODEX_REVIEW_RETRY_REQUESTED_EVENT_KIND)]
+    | Annotated[
+        CodexReviewRecoverySuccessorCreatedEvent,
+        Tag(CODEX_REVIEW_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND),
+    ]
     | Annotated[WaitingForCursorFixEnteredEvent, Tag(WAITING_FOR_CURSOR_FIX_EVENT_KIND)]
     | Annotated[RunCompletedEvent, Tag(RUN_COMPLETED_EVENT_KIND)]
     | Annotated[RunCompletedWithResidualRiskEvent, Tag(RUN_COMPLETED_WITH_RESIDUAL_RISK_EVENT_KIND)]

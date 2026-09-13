@@ -397,6 +397,55 @@ usuario sigue siendo manual.
 Si la sonda no esta disponible, el run pasa a `blocked` con
 `codex_capacity_probe_unavailable`; no hay reintento automatico ciego.
 
+## Codex fallo en review pero el patch staged sigue intacto
+
+Sintoma:
+
+- `scheduler status` muestra `waiting_codex_review_retry`;
+- `scheduler history` registra `codex_review_retryable_failure` con un
+  `failure_kind` operacional (por ejemplo `codex_review_outcome_invalid`);
+- Cursor ya completo y el patch staged sigue reservado para el mismo run.
+
+Accion segura:
+
+```bash
+ai_dev_loop scheduler status <run-id>
+ai_dev_loop scheduler history <run-id>
+ai_dev_loop scheduler review retry <run-id>
+ai_dev_loop scheduler tick
+```
+
+`scheduler review retry` es process-free: solo autoriza el reintento y deja que el
+siguiente tick lance `codex exec resume` con el mismo reviewer B y el mismo patch.
+Si el comando se repite para la misma generacion de fallo, la respuesta es
+idempotente.
+
+Para algunos runs historicos que terminaron en `blocked` con
+`codex_review_outcome_invalid` u otro fallo operacional de review despues de un
+Cursor completado, el mismo comando puede crear (o reutilizar) un successor de
+recovery y devolver un nuevo `run_id`. El source bloqueado permanece inmutable;
+sus artefactos staged y el ledger no se reescriben.
+
+Ese recovery historico solo es elegible cuando el outcome autenticado del intento
+Cursor (`attempts/<attempt-id>/stdout.txt`, verificado contra el envelope de
+completion) incluye `final_response_path` y `final_response_sha256`. Esos campos
+atan la respuesta final que Codex usara al reanudar review. Los runs pre-Phase
+20.1.1 cuyo outcome carece de esos bindings no pueden recuperarse con este
+comando: el analisis falla cerrado con un error de validacion como
+`cursor outcome missing authenticated final response binding`. El source
+historico y su patch staged siguen preservados para inspeccion, pero no se crea
+successor.
+
+Para esos casos no elegibles, la accion segura es revisar manualmente el source
+bloqueado (artefactos, ledger, patch staged) o admitir un flujo nuevo por separado
+con las reglas normales de `scheduler submit`/`start` (inputs congelados, identidad
+de reviewer y admission del worktree). No anadas hashes retroactivamente, no
+reescribas evidencia del source ni intentes eludir la autenticacion del envelope.
+
+Los fallos de integridad (bootstrap incierto, conflicto de identidad, drift del
+patch, corrupcion de artefactos, resultado Codex digest-bound ausente o alterado)
+siguen siendo `blocked` sin retry automatico.
+
 ## Cursor alcanzo el limite de uso del modelo
 
 Sintoma:
