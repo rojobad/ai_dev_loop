@@ -11,22 +11,38 @@ schema-validated Codex attempt; all ceiling reads use one complete ordered
 replay after re-exhaustion recommends an explicit higher `scheduler extend` target
 rather than `scheduler tick`.
 
+Acceptance corrections close the remaining manual-acceptance gaps: exact-target
+replay is mutation-free from every later scheduler state and returns the current
+state's centralized safe next action; Git/reservation/conflict and injected
+transaction failures leave durable data unchanged; CLI/status/controller/history
+projections disclose only safe totals/actions; and sequence-bound runs do not
+advance on grant alone.
+
 ## Commands Run
 
 ```text
 TMPDIR=/tmp TMP=/tmp TEMP=/tmp uv run python -m pytest -q
 TMPDIR=/tmp TMP=/tmp TEMP=/tmp uv run python -m pytest tests/unit/scheduler/test_review_budget_extend.py -q
-uv run python -m ruff check src/ai_dev_loop/scheduler/application/review_budget*.py tests/unit/scheduler/test_review_budget_extend.py
-uv run python -m mypy src/ai_dev_loop/scheduler/application/review_budget.py src/ai_dev_loop/scheduler/application/review_budget_artifacts.py src/ai_dev_loop/scheduler/application/review_budget_extend.py
+uv run python -m ruff format --check .
+uv run python -m ruff check .
+uv run python -m mypy src
+uv run python -m build
+uv run mkdocs build --strict
+git diff --check
 ```
 
 ## Validation Results
 
-- Full pytest suite: 795 passed (fake agents, isolated XDG state).
-- Focused extension tests: 14 passed (ledger validation, artifact binding,
-  >500-event ledger completeness, re-exhaustion replay, reducer, integration loop).
-- Ruff check on changed review-budget modules/tests: clean after import fix.
-- Mypy on changed review-budget modules: clean.
+- Full pytest suite: 816 passed (fake agents, isolated XDG state).
+- Focused extension tests: 35 passed (ledger validation, artifact binding,
+  >500-event ledger completeness, re-exhaustion replay, progressed-state replay
+  including `cursor_ready`, blocked/aborted cleanup actions, Git bypass on replay,
+  HEAD/branch/staged-patch rejection, CLI grant/rejection contracts, reservation
+  conflicts, transaction rollback with full record snapshots, identical and
+  different-higher concurrent grants, projection privacy, sequence
+  non-advancement, reducer, integration loop).
+- Ruff format/check, mypy on `src`, package build, and MkDocs strict build:
+  clean.
 
 ## Correction Pass Evidence
 
@@ -42,9 +58,14 @@ uv run python -m mypy src/ai_dev_loop/scheduler/application/review_budget.py src
    `load_review_budget_extensions`, extension service, Codex bindings, decision
    enforcement, and status/controller projections share the full ordered extension
    query.
-4. **Idempotent replay** — `_replay_exact_target` on `max_iterations_reached`
-   returns `max_iterations_reached_safe_next_action` (explicit extend command), not
-   `scheduler tick`, without mutating versions, reservations, events, or effects.
+4. **Idempotent replay** — `_replay_exact_target` uses
+   `safe_next_action_for_scheduler_state` for every scheduler state when the
+   absolute target was already recorded. Replay is read-only from
+   `waiting_for_cursor_fix`, `cursor_ready`, `awaiting_codex_review`, completed
+   terminals, blocked and aborted states (including pending cleanup actions),
+   re-exhausted `max_iterations_reached`, and other later states; it never appends
+   events/effects or changes version/reservation and does not invoke Git/artifact
+   verification.
 
 ## Implementation Evidence
 
@@ -73,6 +94,38 @@ uv run python -m mypy src/ai_dev_loop/scheduler/application/review_budget.py src
 - Phase 20.1 review retry, Phase 20.2 sequence prepare/start, and ordinary max
   exhaustion without extension remain covered by existing regression tests.
 
+## Acceptance Correction Evidence
+
+1. **`review_budget_extend.py`** — `_replay_exact_target` accepts the full
+   `SchedulerState` union and derives safe actions through the centralized
+   projection instead of hard-coding `waiting_for_cursor_fix` replay behavior.
+2. **Progressed-state replay** — repeating an already-recorded absolute target
+   after timer-driven progress to `cursor_ready`, `awaiting_codex_review`, or
+   `completed` returns the current safe action with unchanged state/event/effect
+   records; replay from blocked, aborted, and aborted-with-pending-cleanup states
+   returns the matching inspect/none/tick-cleanup actions.
+3. **Replay Git bypass** — exact-target replay succeeds after repository drift and
+   does not call `verify_review_retry_repository_checkpoint`.
+4. **Git rejection on new grants** — untracked files, unstaged tracked edits to
+   `docs/plans/sample-plan.md`, HEAD commits, branch switches, and staged-index
+   drift reject extension without mutating durable scheduler records.
+5. **Conflict and rollback tests** — active attempts, conflicting reservations,
+   and injected reservation-claim/append/CAS/effect failures roll back complete
+   state/event/effect/reservation snapshots.
+6. **Concurrency** — overlapping identical grants produce one extension event and
+   one extension-linked correction effect; overlapping different-higher targets
+   from the same exhausted checkpoint use synchronized observation of the
+   exhausted state before the first grant commits, exercise the transactional
+   `state changed concurrently` recheck, and grant once with monotonic effective
+   totals.
+7. **CLI contracts** — `CliRunner` exercises successful new grants and lower/
+   equal-unrecorded rejections with exit code `4`, text/JSON receipts, privacy
+   redaction, and unchanged durable records on rejection.
+8. **Projections and privacy** — status, controller candidate, and history output
+   show effective/submitted ceilings without prompts, patches, or full session IDs.
+9. **Sequence regression** — extending a sequence-bound maxed run does not advance
+   sequence ordinal, current run, or version.
+
 ## Residual Risks
 
 - Extension requires the worktree reservation to be `released` for the same run.
@@ -81,7 +134,8 @@ uv run python -m mypy src/ai_dev_loop/scheduler/application/review_budget.py src
   with actionable findings and matching fix prompt/envelope artifacts.
 - Real operator rollout (package install, timer validation, manual extension on a
   production maxed run) remains outside automated validation and requires separate
-  controller acceptance.
+  controller acceptance. Phase 20.3 worktree, installed package, timer, and real
+  XDG scheduler state were not modified during this correction pass.
 
 ## Operator Rollout Steps
 

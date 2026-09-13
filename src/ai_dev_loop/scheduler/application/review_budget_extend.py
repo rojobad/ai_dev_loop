@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+import sqlite3
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,7 +14,6 @@ from ai_dev_loop.scheduler.application.contracts import (
     SafeNextAction,
     SchedulerEngineError,
     SchedulerEngineErrorKind,
-    max_iterations_reached_safe_next_action,
     waiting_for_cursor_fix_safe_next_action,
 )
 from ai_dev_loop.scheduler.application.review_budget import (
@@ -29,16 +29,14 @@ from ai_dev_loop.scheduler.application.review_checkpoint_verify import (
     ReviewCheckpointVerificationError,
     verify_review_retry_repository_checkpoint,
 )
+from ai_dev_loop.scheduler.application.safe_actions import safe_next_action_for_scheduler_state
 from ai_dev_loop.scheduler.domain.cursor_contract import (
     RUN_CURSOR_TURN_EFFECT_ID,
     RUN_CURSOR_TURN_EFFECT_KIND,
 )
 from ai_dev_loop.scheduler.domain.events import ReviewBudgetExtendedEvent
 from ai_dev_loop.scheduler.domain.reducer import apply_review_budget_extended
-from ai_dev_loop.scheduler.domain.state import (
-    MaxIterationsReachedState,
-    WaitingForCursorFixState,
-)
+from ai_dev_loop.scheduler.domain.state import MaxIterationsReachedState, SchedulerState
 from ai_dev_loop.scheduler.infrastructure.paths import default_artifact_root, default_engine_db_path
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
@@ -80,25 +78,26 @@ class ReviewBudgetExtendService:
         with self.store.begin_read() as conn:
             state, _, _ = self.store.load_validated_snapshot(conn, run_id)
             extension_events = load_review_budget_extensions(self.store, conn, run_id)
-        effective_total = effective_review_ceiling_for_state(state, extension_events)
-        if target_total < effective_total:
-            raise SchedulerEngineError(
-                SchedulerEngineErrorKind.VALIDATION,
-                "requested review ceiling is lower than the current effective total",
-            )
-        if target_total == effective_total:
-            replay = self._replay_exact_target(
-                run_id,
-                state=state,
-                extension_events=extension_events,
-                target_total=target_total,
-            )
-            if replay is not None:
-                return replay
-            raise SchedulerEngineError(
-                SchedulerEngineErrorKind.VALIDATION,
-                "requested review ceiling equals the current effective total",
-            )
+            effective_total = effective_review_ceiling_for_state(state, extension_events)
+            if target_total < effective_total:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.VALIDATION,
+                    "requested review ceiling is lower than the current effective total",
+                )
+            if target_total == effective_total:
+                replay = self._replay_exact_target(
+                    run_id,
+                    conn=conn,
+                    state=state,
+                    extension_events=extension_events,
+                    target_total=target_total,
+                )
+                if replay is not None:
+                    return replay
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.VALIDATION,
+                    "requested review ceiling equals the current effective total",
+                )
         if not isinstance(state, MaxIterationsReachedState):
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.VALIDATION,
@@ -161,6 +160,7 @@ class ReviewBudgetExtendService:
             if target_total <= current_effective:
                 replay = self._replay_exact_target(
                     run_id,
+                    conn=conn,
                     state=current,
                     extension_events=current_extensions,
                     target_total=target_total,
@@ -244,34 +244,23 @@ class ReviewBudgetExtendService:
         self,
         run_id: str,
         *,
-        state: object,
+        conn: sqlite3.Connection,
+        state: SchedulerState,
         extension_events: tuple[ReviewBudgetExtendedEvent, ...],
         target_total: int,
     ) -> ReviewBudgetExtendResult | None:
         existing = find_extension_event_for_target(extension_events, target_total)
         if existing is None:
             return None
-        if isinstance(state, WaitingForCursorFixState):
-            return ReviewBudgetExtendResult(
-                run_id=run_id,
-                state_kind=state.kind,
-                changed=False,
-                idempotent_replay=True,
-                previous_effective_total=existing.previous_effective_total,
-                new_effective_total=existing.new_effective_total,
-                safe_next_action=waiting_for_cursor_fix_safe_next_action(),
-            )
-        if isinstance(state, MaxIterationsReachedState):
-            return ReviewBudgetExtendResult(
-                run_id=run_id,
-                state_kind=state.kind,
-                changed=False,
-                idempotent_replay=True,
-                previous_effective_total=existing.previous_effective_total,
-                new_effective_total=existing.new_effective_total,
-                safe_next_action=max_iterations_reached_safe_next_action(run_id),
-            )
-        return None
+        return ReviewBudgetExtendResult(
+            run_id=run_id,
+            state_kind=state.kind,
+            changed=False,
+            idempotent_replay=True,
+            previous_effective_total=existing.previous_effective_total,
+            new_effective_total=existing.new_effective_total,
+            safe_next_action=safe_next_action_for_scheduler_state(self.store, conn, state),
+        )
 
 
 def default_review_budget_extend_service(
