@@ -33,6 +33,7 @@ from ai_dev_loop.commands.scheduler import (
     prepare_sequence,
     render_cutover_cleanup_output,
     render_list_output,
+    render_review_budget_extend_output,
     render_review_retry_output,
     render_scheduler_abort_output,
     render_scheduler_history_output,
@@ -47,6 +48,7 @@ from ai_dev_loop.commands.scheduler import (
     render_timer_validate_output,
     run_scheduler_tick,
     scheduler_abort_run,
+    scheduler_extend_review_budget,
     scheduler_history,
     scheduler_list,
     scheduler_review_retry,
@@ -346,6 +348,30 @@ def scheduler_list_command(
     def run() -> None:
         summaries = scheduler_list()
         typer.echo(render_list_output(summaries, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@scheduler_app.command("extend")
+def scheduler_extend_command(
+    run_id: Annotated[str, typer.Argument(help="Scheduler run ID in max_iterations_reached.")],
+    max_review_iterations: Annotated[
+        int,
+        typer.Option(
+            "--max-review-iterations",
+            help="Absolute higher Codex review ceiling for the same run.",
+        ),
+    ],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Authorize a higher review ceiling and schedule the exhausted-review correction."""
+
+    def run() -> None:
+        result = scheduler_extend_review_budget(
+            run_id,
+            target_total=max_review_iterations,
+        )
+        typer.echo(render_review_budget_extend_output(result, output=output.value), nl=False)
 
     _handle(run)
 

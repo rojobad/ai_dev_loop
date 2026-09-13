@@ -111,7 +111,22 @@ pendientes y no borra artefactos ni cambios staged del repositorio objetivo.
 `scheduler history` devuelve eventos acotados y redactados.
 
 `scheduler status` y `scheduler list` exponen `review_iterations_completed` y
-`max_review_iterations` segun el presupuesto de reviews del run.
+`max_review_iterations` segun el techo efectivo de reviews del run. Cuando un run
+fue extendido explicitamente, el techo efectivo puede superar el limite congelado en
+el contexto enviado; la salida indica el limite enviado solo cuando difiere.
+
+## `scheduler extend`
+
+```bash
+ai_dev_loop scheduler extend <run-id> --max-review-iterations <higher-total> [--output text|json]
+```
+
+Autoriza un techo absoluto mayor de reviews Codex para el mismo run cuando esta en
+`max_iterations_reached`. El comando es process-free: no invoca Cursor ni Codex;
+reacquire la reserva del worktree, registra el evento `review_budget_extended`,
+transiciona a `waiting_for_cursor_fix` con el fix prompt exacto de la review
+agotada y encola un efecto de correccion Cursor. Repetir el mismo objetivo absoluto
+es idempotente. Un objetivo menor o igual al techo efectivo actual se rechaza.
 
 `scheduler timeline` devuelve una tabla acotada de intentos Cursor/Codex por
 iteracion: fase, ordinal de reintento, estado seguro, marcas de tiempo durables
