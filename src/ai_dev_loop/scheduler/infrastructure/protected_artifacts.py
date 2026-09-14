@@ -237,6 +237,48 @@ class ProtectedArtifactStore:
         finally:
             lock.release()
 
+    def replace_text(
+        self,
+        run_id: str,
+        relative_path: str,
+        text: str,
+        *,
+        max_bytes: int,
+    ) -> StoredArtifact:
+        """Atomically replace an existing protected artifact with verified content."""
+
+        content = text.encode("utf-8")
+        if not content:
+            raise ProtectedArtifactError("artifact content is empty")
+        if len(content) > max_bytes:
+            raise ProtectedArtifactError("artifact exceeds size limit")
+        root = self.run_root(run_id)
+        destination = resolve_run_relative_path(root, relative_path)
+        if not destination.is_file():
+            raise ProtectedArtifactError("artifact path does not exist for replace")
+        digest = hashlib.sha256(content).hexdigest()
+        fd, temp_name = tempfile.mkstemp(dir=destination.parent, prefix=".tmp-", suffix=".part")
+        temp_path = Path(temp_name)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_path, destination)
+            if os.name != "nt":
+                os.chmod(destination, SENSITIVE_FILE_MODE)
+            verified = self.read_verified_bytes(run_id, relative_path, expected_sha256=digest)
+            if verified != content:
+                raise ProtectedArtifactError("post-replace hash verification failed")
+            return StoredArtifact(
+                relative_path=relative_path,
+                sha256=digest,
+                size_bytes=len(content),
+            )
+        finally:
+            if temp_path.exists():
+                temp_path.unlink(missing_ok=True)
+
     def write_text_or_verify(
         self,
         run_id: str,

@@ -77,7 +77,9 @@ These contracts protect the complete stage-review-fix loop and explicit resume b
 - Staged-patch equality checks before Codex review and before the next Cursor correction remain unconditional.
 - Continue protecting the repository plan hash and prompt source path.
 - Continue rejecting staged prompt-source paths.
-- Do not commit, tag, push, reset, clean, stash, unstage, or otherwise rewrite Git state from the orchestrator outside configured staging normalization.
+- Do not commit, tag, push, reset, clean, stash, unstage, or otherwise rewrite Git
+  state from the orchestrator outside configured staging normalization and the narrow
+  Phase 20.3 reviewed-tree sequence checkpoint for accepted non-final phases.
 - Fail safely on ambiguous repository state rather than guessing.
 
 ## Resume Discipline

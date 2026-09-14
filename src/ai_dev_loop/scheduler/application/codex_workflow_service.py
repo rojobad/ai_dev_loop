@@ -6,6 +6,7 @@ import json
 import secrets
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Literal
 
 from ai_dev_loop.iterations import correction_execution_envelope_path
 from ai_dev_loop.review_result import CodexReviewResult, completion_status_for_review
@@ -27,6 +28,7 @@ from ai_dev_loop.scheduler.application.codex_evidence import (
     validate_codex_review_outcome_integrity,
 )
 from ai_dev_loop.scheduler.application.contracts import TickRunReceipt
+from ai_dev_loop.scheduler.application.sequence_handoff import SequenceHandoffService
 from ai_dev_loop.scheduler.application.tick_fencing import tick_lease_is_active
 from ai_dev_loop.scheduler.domain.codex_contract import (
     BOOTSTRAP_CODEX_REVIEW_EFFECT_ID,
@@ -84,6 +86,7 @@ class CodexWorkflowService:
         event_id_factory: Callable[[], str] | None = None,
         dispatch_id_factory: Callable[[], str] | None = None,
         capacity_probe: CodexCapacityProbePort | None = None,
+        sequence_handoff: SequenceHandoffService | None = None,
     ) -> None:
         self.store = store
         self.artifacts = artifacts
@@ -91,6 +94,7 @@ class CodexWorkflowService:
         self._event_id_factory = event_id_factory or (lambda: f"evt-{secrets.token_hex(16)}")
         self._dispatch_id_factory = dispatch_id_factory or (lambda: f"fx-{secrets.token_hex(16)}")
         self._capacity_probe = capacity_probe or CodexAppServerCapacityProbe()
+        self._sequence_handoff = sequence_handoff
 
     def process_run(
         self,
@@ -889,16 +893,82 @@ class CodexWorkflowService:
             return TickRunReceipt(run_id=run_id, action="waiting_for_cursor_fix")
 
         if completion == "completed_with_residual_risk":
-            residual_event = RunCompletedWithResidualRiskEvent(
-                run_id=run_id,
+            return self._complete_accepted_review(
+                run_id,
+                attempt_id=attempt_id,
                 review_iteration=review_iteration,
+                accepted_outcome="completed_with_residual_risk",
+                result_path=result_path,
+                result_sha=result_sha,
+                now=now,
             )
-            with self.store.begin_immediate() as conn:
-                state, version, _ = self.store.load_validated_snapshot(conn, run_id)
-                if not isinstance(state, AwaitingCodexReviewState):
-                    return TickRunReceipt(run_id=run_id, action="codex_decision_state_changed")
+
+        return self._complete_accepted_review(
+            run_id,
+            attempt_id=attempt_id,
+            review_iteration=review_iteration,
+            accepted_outcome="completed",
+            result_path=result_path,
+            result_sha=result_sha,
+            now=now,
+        )
+
+    def _complete_accepted_review(
+        self,
+        run_id: str,
+        *,
+        attempt_id: str,
+        review_iteration: int,
+        accepted_outcome: Literal["completed", "completed_with_residual_risk"],
+        result_path: str,
+        result_sha: str,
+        now: datetime,
+    ) -> TickRunReceipt:
+        with self.store.begin_immediate() as conn:
+            state, version, _ = self.store.load_validated_snapshot(conn, run_id)
+            if not isinstance(state, AwaitingCodexReviewState):
+                return TickRunReceipt(run_id=run_id, action="codex_decision_state_changed")
+            sequence_binding = state.context.sequence
+            if sequence_binding is not None and self._sequence_handoff is not None:
+                if sequence_binding.ordinal < sequence_binding.total_phases:
+                    self._sequence_handoff.enter_checkpoint_pending(
+                        conn,
+                        state=state,
+                        version=version,
+                        accepted_outcome=accepted_outcome,
+                        review_iteration=review_iteration,
+                        result_path=result_path,
+                        result_sha=result_sha,
+                        now=now,
+                        attempt_id=attempt_id,
+                    )
+                    return TickRunReceipt(run_id=run_id, action="checkpoint_pending")
+                self._sequence_handoff.finalize_sequence(
+                    conn,
+                    state=state,
+                    version=version,
+                    accepted_outcome=accepted_outcome,
+                    review_iteration=review_iteration,
+                    result_path=result_path,
+                    result_sha=result_sha,
+                    now=now,
+                    attempt_id=attempt_id,
+                )
+                action = (
+                    "completed_with_residual_risk"
+                    if accepted_outcome == "completed_with_residual_risk"
+                    else "completed"
+                )
+                return TickRunReceipt(run_id=run_id, action=action)
+            if accepted_outcome == "completed_with_residual_risk":
+                residual_event = RunCompletedWithResidualRiskEvent(
+                    run_id=run_id,
+                    review_iteration=review_iteration,
+                )
                 residual_state = apply_run_completed_with_residual_risk(
-                    state, residual_event, now_text=now_text
+                    state,
+                    residual_event,
+                    now_text=now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                 )
                 residual_state = residual_state.model_copy(
                     update={
@@ -919,14 +989,13 @@ class CodexWorkflowService:
                     now=now,
                     attempt_id=attempt_id,
                 )
-            return TickRunReceipt(run_id=run_id, action="completed_with_residual_risk")
-
-        completed_event = RunCompletedEvent(run_id=run_id, review_iteration=review_iteration)
-        with self.store.begin_immediate() as conn:
-            state, version, _ = self.store.load_validated_snapshot(conn, run_id)
-            if not isinstance(state, AwaitingCodexReviewState):
-                return TickRunReceipt(run_id=run_id, action="codex_decision_state_changed")
-            completed_state = apply_run_completed(state, completed_event, now_text=now_text)
+                return TickRunReceipt(run_id=run_id, action="completed_with_residual_risk")
+            completed_event = RunCompletedEvent(run_id=run_id, review_iteration=review_iteration)
+            completed_state = apply_run_completed(
+                state,
+                completed_event,
+                now_text=now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            )
             completed_state = completed_state.model_copy(
                 update={
                     "codex": completed_state.codex.model_copy(
@@ -946,7 +1015,7 @@ class CodexWorkflowService:
                 now=now,
                 attempt_id=attempt_id,
             )
-        return TickRunReceipt(run_id=run_id, action="completed")
+            return TickRunReceipt(run_id=run_id, action="completed")
 
     def block_launch_guard_failure(
         self,

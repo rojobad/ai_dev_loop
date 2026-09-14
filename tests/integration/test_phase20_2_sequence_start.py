@@ -227,16 +227,21 @@ def test_sequence_phase_one_completes_without_checkpoint_or_phase_two(
     sequence_status = SequenceStatusService(
         SqliteSchedulerStore.open_readonly(scheduler_paths["db_path"])
     ).get_status(FIXED_SEQUENCE_ID)
-    assert sequence_status.safe_next_action.kind == SafeNextActionKind.INSPECT_BLOCKED
-    assert "Phase 20.3" in (sequence_status.safe_next_action.command or "")
+    assert sequence_status.current_run_id == FIXED_RUN_IDS[1]
+    assert sequence_status.current_ordinal == 2
+    assert sequence_status.safe_next_action.kind == SafeNextActionKind.SCHEDULER_TICK
     with tick.store.begin_read() as conn:
         run_count = conn.execute("SELECT COUNT(*) FROM scheduler_runs").fetchone()
         second_run = conn.execute(
             "SELECT run_id FROM scheduler_runs WHERE run_id = ?",
             (FIXED_RUN_IDS[1],),
         ).fetchone()
-    assert int(run_count[0]) == 1
-    assert second_run is None
+        reservation = tick.store.get_reservation_for_run(conn, FIXED_RUN_IDS[1])
+        phase_one, _, _ = tick.store.load_validated_snapshot(conn, FIXED_RUN_IDS[0])
+    assert int(run_count[0]) == 2
+    assert second_run is not None
+    assert reservation is not None
+    assert phase_one.kind == "completed"
 
 
 def test_sequence_waiting_codex_capacity_retains_reservation_and_reviewer(
@@ -272,7 +277,9 @@ def test_sequence_waiting_codex_capacity_retains_reservation_and_reviewer(
         state, _, _ = tick.store.load_validated_snapshot(conn, start.run_id)
         assert state.codex.reviewer_session_id == BOOTSTRAP_ID
         run_count = conn.execute("SELECT COUNT(*) FROM scheduler_runs").fetchone()
-    assert int(run_count[0]) == 1
+        reservation = tick.store.get_reservation_for_run(conn, FIXED_RUN_IDS[1])
+    assert int(run_count[0]) == 2
+    assert reservation is not None
 
 
 def test_sequence_admission_failure_does_not_materialize_phase_two(

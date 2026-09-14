@@ -24,6 +24,7 @@ from ai_dev_loop.scheduler.application.contracts import (
 from ai_dev_loop.scheduler.application.cursor_workflow_service import CursorWorkflowService
 from ai_dev_loop.scheduler.application.git_admission import GitAdmissionPort
 from ai_dev_loop.scheduler.application.scheduler_preflight import SchedulerPreflightPort
+from ai_dev_loop.scheduler.application.sequence_handoff import SequenceHandoffService
 from ai_dev_loop.scheduler.application.tick_fencing import (
     admission_claim_matches,
     tick_lease_is_active,
@@ -88,6 +89,7 @@ class TickService:
         self._attempt_service: AttemptService | None = None
         self._cursor_workflow: CursorWorkflowService | None = None
         self._codex_workflow: CodexWorkflowService | None = None
+        self._sequence_handoff: SequenceHandoffService | None = None
         if attempt_backend is not None:
             self._cursor_workflow = CursorWorkflowService(
                 store,
@@ -97,12 +99,20 @@ class TickService:
                 dispatch_id_factory=self._dispatch_id_factory,
                 preflight_port=preflight_port,
             )
+            self._sequence_handoff = SequenceHandoffService(
+                store,
+                artifacts,
+                now_factory=self._now_factory,
+                event_id_factory=self._event_id_factory,
+                handoff_step_hook=getattr(self, "_handoff_step_hook", None),
+            )
             self._codex_workflow = CodexWorkflowService(
                 store,
                 artifacts,
                 now_factory=self._now_factory,
                 event_id_factory=self._event_id_factory,
                 dispatch_id_factory=self._dispatch_id_factory,
+                sequence_handoff=self._sequence_handoff,
             )
             self._attempt_service = AttemptService(
                 store,
@@ -221,6 +231,14 @@ class TickService:
                     run_id,
                 )
             )
+        if self._sequence_handoff is not None:
+            handoff_receipt = self._sequence_handoff.process_run(
+                tick_owner_id,
+                tick_lease_generation,
+                run_id,
+            )
+            if handoff_receipt is not None:
+                receipts.append(handoff_receipt)
         effect_receipt = self._maybe_run_synthetic_effect(
             tick_owner_id,
             tick_lease_generation,

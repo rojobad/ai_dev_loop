@@ -571,6 +571,37 @@ class WaitingForCursorFixState(SchedulerRunBase):
         return self
 
 
+class CheckpointPendingState(SchedulerRunBase):
+    """Sequence-bound non-final run awaiting reviewed-tree checkpoint and handoff."""
+
+    kind: Literal["checkpoint_pending"] = "checkpoint_pending"
+    schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
+    checkpoint: AdmittedRunCheckpoint
+    cursor: CursorWorkflowCheckpoint
+    codex: CodexWorkflowCheckpoint
+    accepted_outcome: Literal["completed", "completed_with_residual_risk"]
+    checkpoint_intent_artifact_path: NonEmptyStr
+    checkpoint_intent_sha256: Sha256Hex
+    checkpoint_trusted_tree_sha256: Sha256Hex
+
+    @field_validator("schema_version")
+    @classmethod
+    def schema_version_is_four(cls, value: int) -> int:
+        return _schema_version_is_four(value)
+
+    @model_validator(mode="after")
+    def checkpoint_pending_fields_required(self) -> CheckpointPendingState:
+        if self.context.sequence is None:
+            raise ValueError("checkpoint_pending requires sequence binding")
+        if not self.codex.reviewer_session_id:
+            raise ValueError("checkpoint_pending requires bound reviewer identity")
+        if not self.cursor.staged_patch_path or not self.cursor.staged_patch_sha256:
+            raise ValueError("checkpoint_pending requires staged patch artifacts")
+        if not self.codex.latest_review_result_path or not self.codex.latest_review_result_sha256:
+            raise ValueError("checkpoint_pending requires latest review result binding")
+        return self
+
+
 class CompletedState(SchedulerRunBase):
     """Run completed with no actionable findings and acceptable tests status."""
 
@@ -676,6 +707,7 @@ SchedulerState = Annotated[
     | Annotated[AwaitingCodexReviewState, Tag("awaiting_codex_review")]
     | Annotated[WaitingCodexReviewRetryState, Tag("waiting_codex_review_retry")]
     | Annotated[WaitingForCursorFixState, Tag("waiting_for_cursor_fix")]
+    | Annotated[CheckpointPendingState, Tag("checkpoint_pending")]
     | Annotated[CompletedState, Tag("completed")]
     | Annotated[CompletedWithResidualRiskState, Tag("completed_with_residual_risk")]
     | Annotated[MaxIterationsReachedState, Tag("max_iterations_reached")]
@@ -706,6 +738,7 @@ SCHEDULER_ABORTABLE_STATE_KINDS = frozenset(
         "awaiting_codex_review",
         "waiting_codex_review_retry",
         "waiting_for_cursor_fix",
+        "checkpoint_pending",
     }
 )
 
@@ -731,6 +764,7 @@ def parse_scheduler_state(
     | AwaitingCodexReviewState
     | WaitingCodexReviewRetryState
     | WaitingForCursorFixState
+    | CheckpointPendingState
     | CompletedState
     | CompletedWithResidualRiskState
     | MaxIterationsReachedState
@@ -750,6 +784,7 @@ def parse_scheduler_state(
             AwaitingCodexReviewState,
             WaitingCodexReviewRetryState,
             WaitingForCursorFixState,
+            CheckpointPendingState,
             CompletedState,
             CompletedWithResidualRiskState,
             MaxIterationsReachedState,

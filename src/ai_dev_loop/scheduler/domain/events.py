@@ -43,6 +43,10 @@ CODEX_REVIEW_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND = "codex_review_recovery_succ
 WAITING_FOR_CURSOR_FIX_EVENT_KIND = "waiting_for_cursor_fix_entered"
 RUN_COMPLETED_EVENT_KIND = "run_completed"
 RUN_COMPLETED_WITH_RESIDUAL_RISK_EVENT_KIND = "run_completed_with_residual_risk"
+SEQUENCE_CHECKPOINT_REQUESTED_EVENT_KIND = "sequence_checkpoint_requested"
+SEQUENCE_CHECKPOINT_COMMITTED_EVENT_KIND = "sequence_checkpoint_committed"
+SEQUENCE_HANDOFF_COMPLETED_EVENT_KIND = "sequence_handoff_completed"
+SEQUENCE_FINALIZED_EVENT_KIND = "sequence_finalized"
 MAX_ITERATIONS_REACHED_EVENT_KIND = "max_iterations_reached"
 ABORT_REQUESTED_EVENT_KIND = "abort_requested"
 RUN_ABORTED_EVENT_KIND = "run_aborted"
@@ -535,6 +539,69 @@ class RunCompletedWithResidualRiskEvent(DomainModel):
         return value
 
 
+class SequenceCheckpointRequestedEvent(DomainModel):
+    kind: str = Field(default=SEQUENCE_CHECKPOINT_REQUESTED_EVENT_KIND)
+    run_id: str
+    sequence_id: NonEmptyStr
+    accepted_outcome: Literal["completed", "completed_with_residual_risk"]
+    review_iteration: int
+    checkpoint_intent_artifact_path: NonEmptyStr
+    checkpoint_intent_sha256: Sha256Hex
+    checkpoint_trusted_tree_sha256: Sha256Hex
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_sequence_checkpoint_requested(cls, value: str) -> str:
+        if value != SEQUENCE_CHECKPOINT_REQUESTED_EVENT_KIND:
+            raise ValueError("kind must be sequence_checkpoint_requested")
+        return value
+
+
+class SequenceCheckpointCommittedEvent(DomainModel):
+    kind: str = Field(default=SEQUENCE_CHECKPOINT_COMMITTED_EVENT_KIND)
+    run_id: str
+    sequence_id: NonEmptyStr
+    commit_sha256_prefix: NonEmptyStr
+    tree_sha256_prefix: NonEmptyStr
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_sequence_checkpoint_committed(cls, value: str) -> str:
+        if value != SEQUENCE_CHECKPOINT_COMMITTED_EVENT_KIND:
+            raise ValueError("kind must be sequence_checkpoint_committed")
+        return value
+
+
+class SequenceHandoffCompletedEvent(DomainModel):
+    kind: str = Field(default=SEQUENCE_HANDOFF_COMPLETED_EVENT_KIND)
+    predecessor_run_id: str
+    successor_run_id: str
+    sequence_id: NonEmptyStr
+    predecessor_ordinal: int
+    successor_ordinal: int
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_sequence_handoff_completed(cls, value: str) -> str:
+        if value != SEQUENCE_HANDOFF_COMPLETED_EVENT_KIND:
+            raise ValueError("kind must be sequence_handoff_completed")
+        return value
+
+
+class SequenceFinalizedEvent(DomainModel):
+    kind: str = Field(default=SEQUENCE_FINALIZED_EVENT_KIND)
+    sequence_id: NonEmptyStr
+    final_run_id: str
+    final_outcome: Literal["completed", "completed_with_residual_risk"]
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_sequence_finalized(cls, value: str) -> str:
+        if value != SEQUENCE_FINALIZED_EVENT_KIND:
+            raise ValueError("kind must be sequence_finalized")
+        return value
+
+
 class MaxIterationsReachedEvent(DomainModel):
     kind: str = Field(default=MAX_ITERATIONS_REACHED_EVENT_KIND)
     run_id: str
@@ -638,6 +705,10 @@ SchedulerEvent = Annotated[
     | Annotated[WaitingForCursorFixEnteredEvent, Tag(WAITING_FOR_CURSOR_FIX_EVENT_KIND)]
     | Annotated[RunCompletedEvent, Tag(RUN_COMPLETED_EVENT_KIND)]
     | Annotated[RunCompletedWithResidualRiskEvent, Tag(RUN_COMPLETED_WITH_RESIDUAL_RISK_EVENT_KIND)]
+    | Annotated[SequenceCheckpointRequestedEvent, Tag(SEQUENCE_CHECKPOINT_REQUESTED_EVENT_KIND)]
+    | Annotated[SequenceCheckpointCommittedEvent, Tag(SEQUENCE_CHECKPOINT_COMMITTED_EVENT_KIND)]
+    | Annotated[SequenceHandoffCompletedEvent, Tag(SEQUENCE_HANDOFF_COMPLETED_EVENT_KIND)]
+    | Annotated[SequenceFinalizedEvent, Tag(SEQUENCE_FINALIZED_EVENT_KIND)]
     | Annotated[MaxIterationsReachedEvent, Tag(MAX_ITERATIONS_REACHED_EVENT_KIND)]
     | Annotated[AbortRequestedEvent, Tag(ABORT_REQUESTED_EVENT_KIND)]
     | Annotated[RunAbortedEvent, Tag(RUN_ABORTED_EVENT_KIND)]

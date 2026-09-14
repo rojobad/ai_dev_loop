@@ -22,6 +22,8 @@ from ai_dev_loop.fresh_codex_reviewer import (
 from ai_dev_loop.integrations.codex.session_runtime import require_codex_session_id
 from ai_dev_loop.runners.git import relative_repo_path, resolve_repo_relative_path
 from ai_dev_loop.scheduler.application.contracts import (
+    SchedulerEngineError,
+    SchedulerEngineErrorKind,
     SequencePrepareResult,
     prepared_sequence_safe_next_action,
     prepared_sequence_start_next_action,
@@ -514,6 +516,11 @@ class SequencePrepareService:
                     conn,
                     str(existing["sequence_id"]),
                 )
+                if not isinstance(existing_state, (PreparedSequenceState, ActiveSequenceState)):
+                    raise SchedulerEngineError(
+                        SchedulerEngineErrorKind.CONFLICT,
+                        "existing sequence is not reusable for prepare",
+                    )
                 return self._reuse_existing_result(existing_state)
 
             idempotency_key = _sequence_idempotency_key(
@@ -569,11 +576,6 @@ class SequencePrepareService:
         )
         self._prepare_step("artifacts_written")
 
-        from ai_dev_loop.scheduler.application.contracts import (
-            SchedulerEngineError,
-            SchedulerEngineErrorKind,
-        )
-
         with self.store.begin_immediate() as conn:
             self.store.require_sequence_schema(conn)
             existing = self.store.find_existing_prepared_sequence(
@@ -586,6 +588,11 @@ class SequencePrepareService:
                     conn,
                     str(existing["sequence_id"]),
                 )
+                if not isinstance(existing_state, (PreparedSequenceState, ActiveSequenceState)):
+                    raise SchedulerEngineError(
+                        SchedulerEngineErrorKind.CONFLICT,
+                        "existing sequence is not reusable for prepare",
+                    )
                 return self._reuse_existing_result(existing_state)
             self._prepare_step("before_db_insert")
             try:
@@ -610,6 +617,11 @@ class SequencePrepareService:
                     conn,
                     str(existing["sequence_id"]),
                 )
+                if not isinstance(existing_state, (PreparedSequenceState, ActiveSequenceState)):
+                    raise SchedulerEngineError(
+                        SchedulerEngineErrorKind.CONFLICT,
+                        "existing sequence is not reusable for prepare",
+                    ) from None
                 return self._reuse_existing_result(existing_state)
             self._prepare_step("after_db_insert")
 

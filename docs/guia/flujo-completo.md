@@ -2,8 +2,15 @@
 
 Esta guia describe el recorrido desde una conversacion de diseño en un proyecto
 target hasta cambios staged y revisados por Codex. `ai_dev_loop` automatiza la
-ejecucion y las revisiones mediante el scheduler central; no hace commit ni
-sustituye la ultima validacion humana antes de integrar.
+ejecucion y las revisiones mediante el scheduler central; no hace commit en runs
+standalone ni en la fase final de una secuencia, y no sustituye la ultima
+validacion humana antes de integrar.
+
+Las secuencias multi-fase (Phase 20.3) pueden crear un commit local sin firmar
+entre fases no finales aceptadas (`completed` o `completed_with_residual_risk`),
+preservando ordinales de riesgo residual y transfiriendo la reserva del worktree
+al run sucesor sin liberar el repositorio. La fase final pasa a
+`awaiting_finalization` con cambios staged intactos y sin commit.
 
 ## Roles
 

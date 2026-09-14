@@ -152,6 +152,33 @@ class SequenceRunMaterializer:
         )
         return context, entry_hash
 
+    def materialize_next_entry(
+        self,
+        *,
+        sequence_id: str,
+        definition: PreparedSequenceDefinition,
+        entry: FrozenSequenceEntry,
+    ) -> tuple[SubmittedRunContext, str]:
+        if entry.ordinal < 2:
+            raise ValueError("materialize_next_entry requires ordinal >= 2")
+        expected = definition.entries[entry.ordinal - 1]
+        if expected.planned_run_id != entry.planned_run_id:
+            raise ValueError("entry planned_run_id disagrees with sequence definition")
+        entry_hash = frozen_entry_hash(entry)
+        context = build_sequence_run_context(
+            definition=definition,
+            entry=entry,
+            entry_hash=entry_hash,
+        )
+        run_id = entry.planned_run_id
+        self._validate_orphan_run_artifact_tree(run_id)
+        self._copy_entry_artifacts(
+            sequence_id=sequence_id,
+            run_id=run_id,
+            entry=entry,
+        )
+        return context, entry_hash
+
     def _validate_orphan_run_artifact_tree(self, run_id: str) -> None:
         try:
             self.artifacts.reject_unexpected_run_artifacts(

@@ -34,8 +34,35 @@ git clean
 git stash
 ```
 
+### Excepcion acotada Phase 20.3: checkpoint de secuencia
+
+Para secuencias multi-fase, el scheduler puede crear **un commit local sin firmar** entre
+fases no finales aceptadas por Codex. Esta es la unica autoridad Git de escritura del
+producto y solo aplica cuando:
+
+- el run de secuencia esta en `checkpoint_pending` con un intent inmutable verificado;
+- el arbol revisado y el patch staged coinciden byte a byte con artefactos protegidos;
+- la reserva del worktree permanece activa y se transfiere al sucesor sin liberar el
+  repositorio entre fases;
+- Git usa `write-tree`, `commit-tree` y `update-ref` compare-and-swap con configuracion
+  local por comando (`core.hooksPath` vacio, `commit.gpgsign=false`) sin mutar la
+  configuracion del usuario ni del repositorio.
+
+La fase final de una secuencia **no** crea commit: la secuencia pasa a
+`awaiting_finalization`, libera la reserva y deja los cambios staged para revision
+manual del operador. Los runs standalone siguen sin commits.
+
+Los artefactos `sequence-checkpoints/intent.json` (inmutable),
+`sequence-checkpoints/evidence.json` (evidencia autenticada) y
+`sequence-checkpoints/result.json` viven solo bajo artefactos protegidos del scheduler.
+No se copian prompts, reviews completos ni session IDs completos en salida CLI por defecto.
+
+`scheduler abort` durante `checkpoint_pending` impide nuevas mutaciones Git y deja la
+evidencia durable para reconciliacion manual si un ref ya avanzo.
+
 El CLI `pr-review` y el motor SQLite v2 fueron retirados en Phase 17.7. El workflow
-local soportado no hace commit, push ni escritura GitHub desde el scheduler. Las
+local soportado no hace commit, push ni escritura GitHub desde el scheduler salvo el
+checkpoint de secuencia descrito arriba. Las
 credenciales GitHub, si se usan fuera de este producto, viven solo en la sesion `gh`
 autenticada; el push Git usa SSH + `ssh-agent`.
 

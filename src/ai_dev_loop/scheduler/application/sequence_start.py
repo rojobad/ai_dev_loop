@@ -14,10 +14,8 @@ from ai_dev_loop.scheduler.application.contracts import (
     SchedulerEngineError,
     SchedulerEngineErrorKind,
     SequenceStartResult,
-    active_sequence_checkpoint_boundary_action,
     active_sequence_safe_next_action,
     authorized_safe_next_action,
-    sequence_exposes_checkpoint_boundary,
 )
 from ai_dev_loop.scheduler.application.sequence_materializer import (
     SequenceRunMaterializer,
@@ -396,12 +394,6 @@ class SequenceStartService:
             safe_next_action_for_scheduler_state,
         )
 
-        if sequence_exposes_checkpoint_boundary(
-            run_state_kind=run_state.kind,
-            current_ordinal=sequence_state.current_ordinal,
-            total_phases=len(sequence_state.definition.entries),
-        ):
-            return active_sequence_checkpoint_boundary_action(sequence_state.sequence_id)
         if run_state.kind == "authorized":
             return authorized_safe_next_action()
         return active_sequence_safe_next_action(

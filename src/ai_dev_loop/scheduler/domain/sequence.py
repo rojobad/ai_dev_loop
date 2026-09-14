@@ -22,6 +22,7 @@ PREPARED_SEQUENCE_SCHEMA_VERSION = 1
 FROZEN_SEQUENCE_ENTRY_SCHEMA_VERSION = 1
 PREPARED_SEQUENCE_STATE_KIND = "prepared"
 ACTIVE_SEQUENCE_STATE_KIND = "active"
+AWAITING_FINALIZATION_SEQUENCE_STATE_KIND = "awaiting_finalization"
 
 MIN_SEQUENCE_PHASE_COUNT = 2
 MAX_SEQUENCE_PHASE_COUNT = 32
@@ -203,6 +204,7 @@ class ActiveSequenceState(DomainModel):
     current_ordinal: int
     current_run_id: NonEmptyStr
     materialized_entries: tuple[MaterializedSequenceEntry, ...] = Field(min_length=1)
+    residual_risk_ordinals: tuple[int, ...] = ()
 
     @field_validator("version")
     @classmethod
@@ -239,6 +241,45 @@ class ActiveSequenceState(DomainModel):
         return self
 
 
+class AwaitingFinalizationSequenceState(DomainModel):
+    """Sequence whose final phase completed; staged changes await operator finalization."""
+
+    schema_version: Literal[1] = 1
+    sequence_id: NonEmptyStr
+    version: int
+    prepared_at: NonEmptyStr
+    updated_at: NonEmptyStr
+    started_at: NonEmptyStr
+    finalized_at: NonEmptyStr
+    idempotency_key: Sha256Hex
+    definition: PreparedSequenceDefinition
+    final_run_id: NonEmptyStr
+    final_outcome: Literal["completed", "completed_with_residual_risk"]
+    materialized_entries: tuple[MaterializedSequenceEntry, ...] = Field(min_length=1)
+    residual_risk_ordinals: tuple[int, ...] = ()
+
+    @field_validator("version")
+    @classmethod
+    def version_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("version must be >= 1")
+        return value
+
+    @model_validator(mode="after")
+    def validate_final_projection(self) -> AwaitingFinalizationSequenceState:
+        total = len(self.definition.entries)
+        final_entry = self.definition.entries[-1]
+        if final_entry.ordinal != total:
+            raise ValueError("final entry ordinal must equal entry count")
+        materialized = next(
+            (entry for entry in self.materialized_entries if entry.ordinal == total),
+            None,
+        )
+        if materialized is None or materialized.run_id != self.final_run_id:
+            raise ValueError("final_run_id must match materialized final entry")
+        return self
+
+
 def sequence_identity_payload(definition: PreparedSequenceDefinition) -> dict[str, object]:
     payload = definition.model_dump(mode="json")
     payload.pop("sequence_id", None)
@@ -259,5 +300,8 @@ PREPARED_SEQUENCE_STATE_ADAPTER: TypeAdapter[PreparedSequenceState] = TypeAdapte
     PreparedSequenceState
 )
 ACTIVE_SEQUENCE_STATE_ADAPTER: TypeAdapter[ActiveSequenceState] = TypeAdapter(ActiveSequenceState)
+AWAITING_FINALIZATION_SEQUENCE_STATE_ADAPTER: TypeAdapter[AwaitingFinalizationSequenceState] = (
+    TypeAdapter(AwaitingFinalizationSequenceState)
+)
 FROZEN_SEQUENCE_ENTRY_ADAPTER: TypeAdapter[FrozenSequenceEntry] = TypeAdapter(FrozenSequenceEntry)
 SEQUENCE_MANIFEST_ADAPTER: TypeAdapter[SequenceManifest] = TypeAdapter(SequenceManifest)

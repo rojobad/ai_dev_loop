@@ -11,20 +11,22 @@ from ai_dev_loop.scheduler.application.contracts import (
     SchedulerEngineErrorKind,
     SequenceEntrySummary,
     SequenceStatusResult,
-    active_sequence_checkpoint_boundary_action,
     active_sequence_safe_next_action,
+    awaiting_finalization_sequence_safe_next_action,
     prepared_sequence_safe_next_action,
-    sequence_exposes_checkpoint_boundary,
 )
 from ai_dev_loop.scheduler.application.safe_actions import safe_next_action_for_scheduler_state
 from ai_dev_loop.scheduler.domain.sequence import (
     ACTIVE_SEQUENCE_STATE_KIND,
+    AWAITING_FINALIZATION_SEQUENCE_STATE_KIND,
     PREPARED_SEQUENCE_STATE_KIND,
     ActiveSequenceState,
+    AwaitingFinalizationSequenceState,
     PreparedSequenceState,
 )
 from ai_dev_loop.scheduler.domain.state import (
     SCHEDULER_TERMINAL_STATE_KINDS,
+    CheckpointPendingState,
     CompletedWithResidualRiskState,
     SchedulerState,
 )
@@ -45,7 +47,7 @@ class SequenceStatusService:
         self,
         conn: sqlite3.Connection,
         sequence_id: str,
-    ) -> PreparedSequenceState | ActiveSequenceState:
+    ) -> PreparedSequenceState | ActiveSequenceState | AwaitingFinalizationSequenceState:
         self.store.require_sequence_schema(conn)
         try:
             loaded = self.store.load_validated_sequence_state(conn, sequence_id)
@@ -56,7 +58,10 @@ class SequenceStatusService:
                     f"prepared sequence not found: {sequence_id}",
                 ) from exc
             raise
-        if isinstance(loaded, (PreparedSequenceState, ActiveSequenceState)):
+        if isinstance(
+            loaded,
+            (PreparedSequenceState, ActiveSequenceState, AwaitingFinalizationSequenceState),
+        ):
             return loaded
         raise SchedulerEngineError(
             SchedulerEngineErrorKind.CORRUPTION,
@@ -66,7 +71,7 @@ class SequenceStatusService:
     def _result_from_state(
         self,
         conn: sqlite3.Connection,
-        state: PreparedSequenceState | ActiveSequenceState,
+        state: PreparedSequenceState | ActiveSequenceState | AwaitingFinalizationSequenceState,
     ) -> SequenceStatusResult:
         definition = state.definition
         entries = tuple(
@@ -78,6 +83,27 @@ class SequenceStatusService:
             )
             for entry in definition.entries
         )
+        if isinstance(state, AwaitingFinalizationSequenceState):
+            return SequenceStatusResult(
+                sequence_id=state.sequence_id,
+                name=definition.name,
+                state_kind=AWAITING_FINALIZATION_SEQUENCE_STATE_KIND,
+                project_name=definition.project_name,
+                repository_root=definition.repository.root,
+                entry_count=len(definition.entries),
+                current_ordinal=len(definition.entries),
+                current_run_id=state.final_run_id,
+                current_run_state_kind=state.final_outcome,
+                current_phase_name=definition.entries[-1].phase_name,
+                residual_risk=bool(state.residual_risk_ordinals),
+                prepared_at=state.prepared_at,
+                updated_at=state.updated_at,
+                started_at=state.started_at,
+                idempotency_key_prefix=state.idempotency_key[:16],
+                entries=entries,
+                safe_next_action=awaiting_finalization_sequence_safe_next_action(state.sequence_id),
+            )
+
         if isinstance(state, PreparedSequenceState):
             return SequenceStatusResult(
                 sequence_id=state.sequence_id,
@@ -96,7 +122,9 @@ class SequenceStatusService:
 
         run_state, _, _ = self.store.load_validated_snapshot(conn, state.current_run_id)
         current_phase = definition.entries[state.current_ordinal - 1].phase_name
-        residual_risk = isinstance(run_state, CompletedWithResidualRiskState)
+        residual_risk = bool(state.residual_risk_ordinals) or isinstance(
+            run_state, CompletedWithResidualRiskState
+        )
         safe_action = self._safe_action_for_active(conn, state, run_state)
         return SequenceStatusResult(
             sequence_id=state.sequence_id,
@@ -127,12 +155,11 @@ class SequenceStatusService:
         run_state: SchedulerState,
     ) -> SafeNextAction:
         run_action = safe_next_action_for_scheduler_state(self.store, conn, run_state)
-        if sequence_exposes_checkpoint_boundary(
-            run_state_kind=run_state.kind,
-            current_ordinal=sequence_state.current_ordinal,
-            total_phases=len(sequence_state.definition.entries),
-        ):
-            return active_sequence_checkpoint_boundary_action(sequence_state.sequence_id)
+        if isinstance(run_state, CheckpointPendingState):
+            return active_sequence_safe_next_action(
+                sequence_id=sequence_state.sequence_id,
+                run_safe_action=run_action,
+            )
         return active_sequence_safe_next_action(
             sequence_id=sequence_state.sequence_id,
             run_safe_action=run_action,

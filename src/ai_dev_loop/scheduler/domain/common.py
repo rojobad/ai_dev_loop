@@ -13,6 +13,10 @@ NonEmptyStr = Annotated[str, StringConstraints(min_length=1, strip_whitespace=Tr
 Sha256Hex = Annotated[
     str, StringConstraints(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
 ]
+GitObjectSha = Annotated[
+    str,
+    StringConstraints(min_length=40, max_length=40, pattern=r"^[0-9a-f]{40}$"),
+]
 UuidSessionId = Annotated[
     str,
     StringConstraints(

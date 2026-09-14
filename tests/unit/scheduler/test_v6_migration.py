@@ -18,6 +18,22 @@ def _user_version(db: Path) -> int:
         conn.close()
 
 
+def _pause_v6_database(tmp_path: Path) -> Path:
+    db = tmp_path / "v6.sqlite3"
+    paused = False
+
+    def pause_v7(statement: str) -> None:
+        nonlocal paused
+        if not paused and "CREATE TABLE scheduler_checkpoint_holds" in statement:
+            paused = True
+            raise RuntimeError("pause-v7")
+
+    with pytest.raises(RuntimeError, match="pause-v7"):
+        SqliteSchedulerStore(db, migration_fault_hook=pause_v7)
+    assert _user_version(db) == 6
+    return db
+
+
 def _pause_v5_database(tmp_path: Path) -> Path:
     db = tmp_path / "v5.sqlite3"
     paused = False
@@ -37,7 +53,7 @@ def _pause_v5_database(tmp_path: Path) -> Path:
 def test_v6_migration_adds_review_retry_tables(tmp_path: Path) -> None:
     db = _pause_v5_database(tmp_path)
     store = SqliteSchedulerStore(db)
-    assert _user_version(db) == SCHEMA_VERSION == 6
+    assert _user_version(db) == SCHEMA_VERSION
     with store.begin_read() as conn:
         tables = {
             row[0]

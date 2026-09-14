@@ -51,7 +51,7 @@ def _pause_v4_database(tmp_path: Path) -> Path:
 def test_v5_migration_adds_sequence_tables(tmp_path: Path) -> None:
     db = _pause_v4_database(tmp_path)
     store = SqliteSchedulerStore(db)
-    assert _user_version(db) == SCHEMA_VERSION == 6
+    assert _user_version(db) == SCHEMA_VERSION
     with store.begin_read() as conn:
         tables = {
             row[0]

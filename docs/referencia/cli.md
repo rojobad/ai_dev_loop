@@ -84,9 +84,17 @@ congelada. Materializa solo la fase 1 como un run normal de scheduler con el
 `run_submitted` y `run_authorized`, y deja el run en `authorized` para que el tick
 existente haga la admision Git. El comando no invoca Git, Cursor, Codex ni systemd.
 
-Phase 20.2 no crea commits de checkpoint ni materializa fases posteriores. Tras
-`prepare`, la accion segura es `scheduler sequence start <sequence-id>`; tras un start
-exitoso, `scheduler tick` y `scheduler sequence status <sequence-id>`.
+Phase 20.3 agrega checkpoint de secuencia entre fases no finales aceptadas por Codex.
+Tras un review aceptado de fase intermedia, el run entra en `checkpoint_pending` y el
+tick reconcilia un commit local sin firmar (via `write-tree` / `commit-tree` /
+`update-ref` CAS), transfiere la reserva al sucesor y materializa la siguiente fase sin
+liberar el repositorio. La fase final pasa la secuencia a `awaiting_finalization` sin
+commit y libera la reserva con los cambios staged intactos. Los runs standalone no
+crean commits.
+
+Tras `prepare`, la accion segura es `scheduler sequence start <sequence-id>`; tras un
+start exitoso, `scheduler tick` y `scheduler sequence status <sequence-id>`.
+`scheduler abort` durante `checkpoint_pending` impide nuevas mutaciones Git.
 
 Opciones de repositorio, `--config-path`, `--controller-session-id`, `--resubmission-id`
 y overrides globales siguen el contrato de `scheduler submit`. Cada fase del manifest

@@ -350,6 +350,8 @@ def safe_next_action_for_state_kind(
         return awaiting_codex_review_safe_next_action()
     if state_kind == "waiting_for_cursor_fix":
         return waiting_for_cursor_fix_safe_next_action()
+    if state_kind == "checkpoint_pending":
+        return checkpoint_pending_safe_next_action()
     if state_kind in {"completed", "completed_with_residual_risk", "max_iterations_reached"}:
         return terminal_review_safe_next_action()
     if state_kind == "aborted":
@@ -571,13 +573,22 @@ def active_sequence_safe_next_action(
     return run_safe_action
 
 
-def active_sequence_checkpoint_boundary_action(sequence_id: str) -> SafeNextAction:
+def checkpoint_pending_safe_next_action() -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.SCHEDULER_TICK,
+        command=(
+            "ai_dev_loop scheduler tick "
+            "(sequence checkpoint reconciliation and handoff in progress)."
+        ),
+    )
+
+
+def awaiting_finalization_sequence_safe_next_action(sequence_id: str) -> SafeNextAction:
     return SafeNextAction(
         kind=SafeNextActionKind.INSPECT_BLOCKED,
         command=(
-            f"Sequence {sequence_id} completed phase 1 without automatic checkpoint commit "
-            "or later-phase materialization until Phase 20.3. Inspect the staged run result "
-            f"with ai_dev_loop scheduler sequence status {sequence_id} and ai_dev_loop "
-            "scheduler status <run-id>."
+            f"Sequence {sequence_id} is awaiting finalization. Inspect staged final-phase "
+            f"changes with ai_dev_loop scheduler sequence status {sequence_id}. "
+            "Final commit, push, and PR remain operator actions."
         ),
     )

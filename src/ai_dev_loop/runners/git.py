@@ -5,10 +5,11 @@ from __future__ import annotations
 import hashlib
 import os
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from ai_dev_loop.errors import ValidationError
-from ai_dev_loop.process import ProcessResult, require_success, run_process
+from ai_dev_loop.process import ProcessResult, require_success, run_process, run_process_bytes
 from ai_dev_loop.state import RunState, sha256_file
 
 
@@ -23,8 +24,135 @@ class GitRepositoryInfo:
     staged_paths: tuple[str, ...]
 
 
+CHECKPOINT_GIT_TIMEOUT_SECONDS = 120.0
+CHECKPOINT_GIT_LEASE_BUFFER_SECONDS = 1.0
+_EMPTY_HOOKS_DIR = Path(__file__).resolve().parent / "empty_hooks"
+
+
+@dataclass(frozen=True)
+class CheckpointGitDeadline:
+    """Absolute tick-lease deadline for checkpoint Git subprocess budgeting."""
+
+    lease_expires_at: datetime | None
+
+    @classmethod
+    def from_lease(cls, lease_expires_at: datetime | None) -> CheckpointGitDeadline:
+        return cls(lease_expires_at=lease_expires_at)
+
+    def remaining_timeout(self, now: datetime) -> float:
+        return checkpoint_git_timeout_for_lease(
+            lease_expires_at=self.lease_expires_at,
+            now=now,
+        )
+
+
 def _git(args: list[str], *, cwd: Path) -> ProcessResult:
     return run_process(["git", *args], cwd=str(cwd))
+
+
+def checkpoint_git_config_args() -> list[str]:
+    """Command-local Git configuration that suppresses hooks and signing."""
+
+    hooks_path = str(_EMPTY_HOOKS_DIR)
+    return [
+        "-c",
+        f"core.hooksPath={hooks_path}",
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "tag.gpgsign=false",
+    ]
+
+
+def checkpoint_git_env(identity: GitIdentity | None = None) -> dict[str, str]:
+    """Minimal environment for bounded checkpoint Git subprocesses."""
+
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+        "LANG": "C",
+        "LC_ALL": "C",
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+    if identity is not None:
+        env.update(
+            {
+                "GIT_AUTHOR_NAME": identity.author_name,
+                "GIT_AUTHOR_EMAIL": identity.author_email,
+                "GIT_AUTHOR_DATE": identity.author_date,
+                "GIT_COMMITTER_NAME": identity.committer_name,
+                "GIT_COMMITTER_EMAIL": identity.committer_email,
+                "GIT_COMMITTER_DATE": identity.committer_date,
+            }
+        )
+    return env
+
+
+def checkpoint_git_timeout_for_lease(
+    *,
+    lease_expires_at: datetime | None,
+    now: datetime,
+) -> float:
+    """Bound checkpoint subprocess duration to the remaining tick lease."""
+
+    if lease_expires_at is None:
+        return CHECKPOINT_GIT_TIMEOUT_SECONDS
+    remaining = (lease_expires_at - now).total_seconds() - CHECKPOINT_GIT_LEASE_BUFFER_SECONDS
+    if remaining <= 0:
+        raise ValidationError("checkpoint tick lease expired before Git subprocess")
+    return min(CHECKPOINT_GIT_TIMEOUT_SECONDS, remaining)
+
+
+def _checkpoint_git(
+    args: list[str],
+    *,
+    cwd: Path,
+    identity: GitIdentity | None = None,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> ProcessResult:
+    return run_process(
+        ["git", *checkpoint_git_config_args(), *args],
+        cwd=str(cwd),
+        env=checkpoint_git_env(identity),
+        timeout=timeout,
+    )
+
+
+def _checkpoint_git_bytes(
+    args: list[str],
+    *,
+    cwd: Path,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> ProcessResult:
+    from ai_dev_loop.process import BinaryProcessResult
+
+    binary: BinaryProcessResult = run_process_bytes(
+        ["git", *checkpoint_git_config_args(), *args],
+        cwd=str(cwd),
+        env=checkpoint_git_env(),
+        timeout=timeout,
+    )
+    return ProcessResult(
+        args=list(binary.args),
+        returncode=binary.returncode,
+        stdout=binary.stdout.decode("utf-8", errors="surrogateescape"),
+        stderr=binary.stderr.decode("utf-8", errors="replace"),
+        timed_out=binary.timed_out,
+    )
+
+
+def _checkpoint_git_success(
+    args: list[str],
+    *,
+    cwd: Path,
+    context: str,
+    identity: GitIdentity | None = None,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> str:
+    result = _checkpoint_git(args, cwd=cwd, identity=identity, timeout=timeout)
+    if result.timed_out:
+        raise ValidationError(f"{context} timed out during checkpoint")
+    return require_success(result, context=context)
 
 
 def discover_repository(repo_path: Path) -> GitRepositoryInfo:
@@ -509,17 +637,16 @@ def validate_usage_limit_recovery_correction_pre_cursor(
     )
 
 
-def validate_repository_identity(
+def validate_repository_layout(
     repo_root: Path,
     *,
     expected_root: str,
     expected_git_common_dir: str,
     expected_git_dir: str,
     expected_branch: str,
-    expected_head: str,
     context: str,
 ) -> None:
-    """Require HEAD, branch, and repository identity to match the prepared run."""
+    """Require branch and repository identity without comparing HEAD."""
 
     repo_info = discover_repository(repo_root)
     if repo_info.root.resolve() != Path(expected_root).resolve():
@@ -532,6 +659,29 @@ def validate_repository_identity(
         raise ValidationError(
             f"repository branch changed {context}: expected {expected_branch}, found {repo_info.branch}"
         )
+
+
+def validate_repository_identity(
+    repo_root: Path,
+    *,
+    expected_root: str,
+    expected_git_common_dir: str,
+    expected_git_dir: str,
+    expected_branch: str,
+    expected_head: str,
+    context: str,
+) -> None:
+    """Require HEAD, branch, and repository identity to match the prepared run."""
+
+    validate_repository_layout(
+        repo_root,
+        expected_root=expected_root,
+        expected_git_common_dir=expected_git_common_dir,
+        expected_git_dir=expected_git_dir,
+        expected_branch=expected_branch,
+        context=context,
+    )
+    repo_info = discover_repository(repo_root)
     if repo_info.head != expected_head:
         raise ValidationError(f"repository HEAD changed {context}")
 
@@ -565,3 +715,446 @@ def validate_staged_paths_safe(
         raise ValidationError(f"prompt source file must not be staged: {prompt_repo_path}")
 
     validate_plan_hash_unchanged(repo_root, plan_repo_path, plan_hash)
+
+
+@dataclass(frozen=True)
+class GitIdentity:
+    author_name: str
+    author_email: str
+    author_date: str
+    committer_name: str
+    committer_email: str
+    committer_date: str
+
+
+def _parse_git_ident_line(value: str) -> tuple[str, str, str]:
+    if " <" not in value or ">" not in value:
+        raise ValidationError("unable to parse git identity line")
+    name, remainder = value.split(" <", 1)
+    email, timestamp = remainder.split(">", 1)
+    name = name.strip()
+    email = email.strip()
+    timestamp = timestamp.strip()
+    if not name or not email or not timestamp:
+        raise ValidationError("git identity is incomplete")
+    return name, email, timestamp
+
+
+def resolve_git_identity(repo_root: Path) -> GitIdentity:
+    """Resolve author/committer identity without mutating repository configuration."""
+
+    author_ident = require_success(
+        _git(["var", "GIT_AUTHOR_IDENT"], cwd=repo_root),
+        context="git var GIT_AUTHOR_IDENT",
+    )
+    author_name, author_email, author_date = _parse_git_ident_line(author_ident)
+    committer_ident = require_success(
+        _git(["var", "GIT_COMMITTER_IDENT"], cwd=repo_root),
+        context="git var GIT_COMMITTER_IDENT",
+    )
+    committer_name, committer_email, committer_date = _parse_git_ident_line(committer_ident)
+    return GitIdentity(
+        author_name=author_name,
+        author_email=author_email,
+        author_date=author_date,
+        committer_name=committer_name,
+        committer_email=committer_email,
+        committer_date=committer_date,
+    )
+
+
+def git_write_tree(repo_root: Path) -> str:
+    return checkpoint_git_write_tree(repo_root)
+
+
+def checkpoint_git_write_tree(
+    repo_root: Path,
+    *,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> str:
+    return _checkpoint_git_success(
+        ["write-tree"],
+        cwd=repo_root,
+        context="git write-tree",
+        timeout=timeout,
+    ).strip()
+
+
+def git_rev_parse(repo_root: Path, ref: str) -> str:
+    return checkpoint_git_rev_parse(repo_root, ref)
+
+
+def checkpoint_git_rev_parse(
+    repo_root: Path,
+    ref: str,
+    *,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> str:
+    return _checkpoint_git_success(
+        ["rev-parse", ref],
+        cwd=repo_root,
+        context=f"git rev-parse {ref}",
+        timeout=timeout,
+    ).strip()
+
+
+def git_symbolic_ref(repo_root: Path, ref: str) -> str:
+    return checkpoint_git_symbolic_ref(repo_root, ref)
+
+
+def checkpoint_git_symbolic_ref(
+    repo_root: Path,
+    ref: str,
+    *,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> str:
+    return _checkpoint_git_success(
+        ["symbolic-ref", ref],
+        cwd=repo_root,
+        context=f"git symbolic-ref {ref}",
+        timeout=timeout,
+    ).strip()
+
+
+def checkpoint_git_status_porcelain(
+    repo_root: Path,
+    *,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> str:
+    return _checkpoint_git_success(
+        ["status", "--porcelain=v2", "--untracked-files=all"],
+        cwd=repo_root,
+        context="git status",
+        timeout=timeout,
+    )
+
+
+def checkpoint_git_diff_cached_patch_bytes(
+    repo_root: Path,
+    *,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> bytes:
+    result = _checkpoint_git_bytes(
+        ["diff", "--cached", "--binary"],
+        cwd=repo_root,
+        timeout=timeout,
+    )
+    if result.timed_out:
+        raise ValidationError("git diff --cached --binary timed out during checkpoint")
+    if result.returncode != 0:
+        detail = result.stderr.strip() or "unknown error"
+        raise ValidationError(f"git diff --cached --binary failed: {detail}")
+    return result.stdout.encode("utf-8", errors="surrogateescape")
+
+
+def checkpoint_validate_repository_layout(
+    repo_root: Path,
+    *,
+    expected_root: str,
+    expected_git_common_dir: str,
+    expected_git_dir: str,
+    expected_branch: str,
+    context: str,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> None:
+    repo_root = repo_root.resolve()
+    root = Path(
+        _checkpoint_git_success(
+            ["rev-parse", "--show-toplevel"],
+            cwd=repo_root,
+            context="git root",
+            timeout=timeout,
+        )
+    ).resolve()
+    git_common_dir = Path(
+        _checkpoint_git_success(
+            ["rev-parse", "--git-common-dir"],
+            cwd=repo_root,
+            context="git common dir",
+            timeout=timeout,
+        )
+    )
+    if not git_common_dir.is_absolute():
+        git_common_dir = (root / git_common_dir).resolve()
+    git_dir = Path(
+        _checkpoint_git_success(
+            ["rev-parse", "--git-dir"],
+            cwd=repo_root,
+            context="git dir",
+            timeout=timeout,
+        )
+    )
+    if not git_dir.is_absolute():
+        git_dir = (root / git_dir).resolve()
+    branch = _checkpoint_git_success(
+        ["rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=repo_root,
+        context="git branch",
+        timeout=timeout,
+    )
+    if root.resolve() != Path(expected_root).resolve():
+        raise ValidationError(f"repository root changed {context}")
+    if git_common_dir.resolve() != Path(expected_git_common_dir).resolve():
+        raise ValidationError(f"git common directory changed {context}")
+    if git_dir.resolve() != Path(expected_git_dir).resolve():
+        raise ValidationError(f"git directory changed {context}")
+    if branch != expected_branch:
+        raise ValidationError(
+            f"repository branch changed {context}: expected {expected_branch}, found {branch}"
+        )
+
+
+def checkpoint_validate_checked_out_branch(
+    repo_root: Path,
+    *,
+    expected_branch: str,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> str:
+    branch = _checkpoint_git_success(
+        ["rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=repo_root,
+        context="git branch",
+        timeout=timeout,
+    )
+    if branch == "HEAD":
+        raise ValidationError("repository is on detached HEAD")
+    if branch != expected_branch:
+        raise ValidationError(
+            f"checked-out branch drift: expected {expected_branch}, found {branch}"
+        )
+    return branch
+
+
+def checkpoint_resolve_git_identity(
+    repo_root: Path,
+    *,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> GitIdentity:
+    author_ident = _checkpoint_git_success(
+        ["var", "GIT_AUTHOR_IDENT"],
+        cwd=repo_root,
+        context="git var GIT_AUTHOR_IDENT",
+        timeout=timeout,
+    )
+    author_name, author_email, author_date = _parse_git_ident_line(author_ident)
+    committer_ident = _checkpoint_git_success(
+        ["var", "GIT_COMMITTER_IDENT"],
+        cwd=repo_root,
+        context="git var GIT_COMMITTER_IDENT",
+        timeout=timeout,
+    )
+    committer_name, committer_email, committer_date = _parse_git_ident_line(committer_ident)
+    return GitIdentity(
+        author_name=author_name,
+        author_email=author_email,
+        author_date=author_date,
+        committer_name=committer_name,
+        committer_email=committer_email,
+        committer_date=committer_date,
+    )
+
+
+def checkpoint_validate_staged_patch_matches_artifact(
+    repo_root: Path,
+    patch_artifact: Path,
+    *,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> None:
+    if not patch_artifact.is_file():
+        raise ValidationError(f"recorded staged patch artifact missing: {patch_artifact}")
+    recorded = patch_artifact.read_bytes()
+    current = checkpoint_git_diff_cached_patch_bytes(repo_root, timeout=timeout)
+    if current != recorded:
+        recorded_sha256 = hashlib.sha256(recorded).hexdigest()
+        current_sha256 = hashlib.sha256(current).hexdigest()
+        raise ValidationError(
+            "staged index no longer matches the previous orchestrator-recorded staged patch "
+            f"(recorded_sha256={recorded_sha256}, current_sha256={current_sha256})"
+        )
+
+
+def git_commit_tree(
+    repo_root: Path,
+    *,
+    tree_sha: str,
+    parent_sha: str,
+    message: str,
+    identity: GitIdentity,
+) -> str:
+    """Create an unsigned commit object without invoking hooks or porcelain commit."""
+
+    return checkpoint_git_commit_tree(
+        repo_root,
+        tree_sha=tree_sha,
+        parent_sha=parent_sha,
+        message=message,
+        identity=identity,
+    )
+
+
+def checkpoint_git_commit_tree(
+    repo_root: Path,
+    *,
+    tree_sha: str,
+    parent_sha: str,
+    message: str,
+    identity: GitIdentity,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> str:
+    result = _checkpoint_git(
+        [
+            "commit-tree",
+            tree_sha,
+            "-p",
+            parent_sha,
+            "-m",
+            message,
+        ],
+        cwd=repo_root,
+        identity=identity,
+        timeout=timeout,
+    )
+    if result.timed_out:
+        raise ValidationError("git commit-tree timed out during checkpoint")
+    if result.returncode != 0:
+        detail = result.stderr.strip() or "unknown error"
+        raise ValidationError(f"git commit-tree failed: {detail}")
+    commit_sha = result.stdout.strip()
+    if not commit_sha:
+        raise ValidationError("git commit-tree returned empty commit SHA")
+    return commit_sha
+
+
+def git_update_ref_cas(
+    repo_root: Path,
+    *,
+    ref: str,
+    new_sha: str,
+    old_sha: str,
+) -> None:
+    """Compare-and-swap a local branch ref without checkout/reset."""
+
+    checkpoint_git_update_ref_cas(
+        repo_root,
+        ref=ref,
+        new_sha=new_sha,
+        old_sha=old_sha,
+    )
+
+
+def checkpoint_git_update_ref_cas(
+    repo_root: Path,
+    *,
+    ref: str,
+    new_sha: str,
+    old_sha: str,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> None:
+    result = _checkpoint_git(
+        ["update-ref", ref, new_sha, old_sha],
+        cwd=repo_root,
+        timeout=timeout,
+    )
+    if result.timed_out:
+        raise ValidationError("git update-ref timed out during checkpoint")
+    if result.returncode != 0:
+        detail = result.stderr.strip() or "unknown error"
+        raise ValidationError(f"git update-ref CAS failed: {detail}")
+
+
+def validate_checked_out_branch(repo_root: Path, *, expected_branch: str) -> str:
+    branch = require_success(
+        _git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_root),
+        context="git branch",
+    )
+    if branch == "HEAD":
+        raise ValidationError("repository is on detached HEAD")
+    if branch != expected_branch:
+        raise ValidationError(
+            f"checked-out branch drift: expected {expected_branch}, found {branch}"
+        )
+    return branch
+
+
+def validate_checkpoint_postconditions(
+    repo_root: Path,
+    *,
+    expected_tree: str,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> None:
+    """Require HEAD tree match, empty index, and clean worktree after checkpoint."""
+
+    head_tree = checkpoint_git_rev_parse(repo_root, "HEAD^{tree}", timeout=timeout)
+    if head_tree != expected_tree:
+        raise ValidationError("HEAD tree does not match reviewed checkpoint tree")
+    staged_patch = checkpoint_git_diff_cached_patch_bytes(repo_root, timeout=timeout)
+    if staged_patch:
+        raise ValidationError("staged index must be empty after checkpoint")
+    status = checkpoint_git_status_porcelain(repo_root, timeout=timeout)
+    unstaged = paths_with_unstaged_changes(status)
+    if unstaged:
+        joined = ", ".join(sorted(unstaged))
+        raise ValidationError(f"tracked unstaged changes remain after checkpoint: {joined}")
+    untracked = paths_with_untracked(status)
+    if untracked:
+        joined = ", ".join(sorted(untracked))
+        raise ValidationError(f"untracked files remain after checkpoint: {joined}")
+
+
+def validate_post_checkpoint_clean(repo_root: Path, *, expected_tree: str) -> None:
+    validate_checkpoint_postconditions(repo_root, expected_tree=expected_tree)
+
+
+def checkpoint_verify_commit_identity(
+    repo_root: Path,
+    *,
+    commit_sha: str,
+    tree_sha: str,
+    parent_sha: str,
+    message: str,
+    identity: GitIdentity,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> None:
+    """Verify an existing commit object matches the frozen checkpoint intent."""
+
+    commit_tree = checkpoint_git_rev_parse(repo_root, f"{commit_sha}^{{tree}}", timeout=timeout)
+    if commit_tree != tree_sha:
+        raise ValidationError("commit object tree does not match reviewed tree")
+    commit_parent = checkpoint_git_rev_parse(repo_root, f"{commit_sha}^", timeout=timeout)
+    if commit_parent != parent_sha:
+        raise ValidationError("commit object parent does not match frozen parent HEAD")
+    raw_commit = _checkpoint_git_success(
+        ["cat-file", "-p", commit_sha],
+        cwd=repo_root,
+        context=f"git cat-file -p {commit_sha}",
+        timeout=timeout,
+    )
+    lines = raw_commit.splitlines()
+    if len(lines) < 4:
+        raise ValidationError("commit object payload is truncated")
+    if lines[0] != f"tree {tree_sha}":
+        raise ValidationError("commit object tree line mismatch")
+    if lines[1] != f"parent {parent_sha}":
+        raise ValidationError("commit object parent line mismatch")
+    author_line = lines[2]
+    committer_line = lines[3]
+    if not author_line.startswith("author "):
+        raise ValidationError("commit object author line missing")
+    if not committer_line.startswith("committer "):
+        raise ValidationError("commit object committer line missing")
+    expected_author = (
+        f"author {identity.author_name} <{identity.author_email}> {identity.author_date}"
+    )
+    expected_committer = (
+        f"committer {identity.committer_name} <{identity.committer_email}> "
+        f"{identity.committer_date}"
+    )
+    if author_line != expected_author:
+        raise ValidationError("commit object author identity mismatch")
+    if committer_line != expected_committer:
+        raise ValidationError("commit object committer identity mismatch")
+    if len(lines) < 5 or lines[4] != "":
+        raise ValidationError("commit object message separator missing")
+    commit_message = "\n".join(lines[5:])
+    if commit_message != message:
+        raise ValidationError("commit object message does not match checkpoint intent")

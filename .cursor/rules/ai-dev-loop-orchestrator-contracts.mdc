@@ -36,7 +36,10 @@ These contracts preserve the product's safety model across implementation phases
 - `prepare` validates the baseline and never starts agents.
 - `start` and later active-loop commands must verify branch, HEAD, plan hash, prompt hash, and baseline worktree before mutation.
 - With `stage_mode: all`, staging is allowed only in phases that explicitly implement staging and after safety checks pass.
-- Never commit, tag, push, reset, clean, stash, or unstage user work.
+- Never commit, tag, push, reset, clean, stash, or unstage user work, except the
+  narrow Phase 20.3 sequence checkpoint: an explicitly started multi-phase sequence
+  may create one local unsigned/no-hook checkpoint commit per accepted non-final
+  phase after exact staged review validation.
 - Use direct Git argument arrays with explicit working directories.
 - Fail safely on ambiguous status, symlink escapes, unrelated dirty work, or baseline drift.
 - Staged diff artifacts are part of the audit trail. Capture them durably before any review phase consumes them.
