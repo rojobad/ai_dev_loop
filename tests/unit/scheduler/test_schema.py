@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
+import jsonschema
 import pytest
 from pydantic import ValidationError
 
@@ -14,6 +15,7 @@ from ai_dev_loop.scheduler.domain.state import (
     SUBMITTED_CONTEXT_SCHEMA_VERSION,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH,
+    SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
     SUBMITTED_STATE_ADAPTER,
     CodexRuntimeBinding,
     ControllerBinding,
@@ -23,6 +25,7 @@ from ai_dev_loop.scheduler.domain.state import (
     PlanPromptBinding,
     RepositoryBinding,
     RepositoryTargetBinding,
+    SequenceRunBinding,
     SubmittedRunContext,
     SubmittedState,
     WorkflowLimits,
@@ -239,6 +242,27 @@ def test_submitted_context_model_schema_alignment() -> None:
     assert legacy["controller"]["controller_session_id"] != legacy["codex"]["session_id"]
 
 
+def test_submitted_context_v4_schema_alignment() -> None:
+    context = _sample_agent_led_context().model_copy(
+        update={
+            "schema_version": SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
+            "sequence": SequenceRunBinding(
+                sequence_id="fixture-project-seq-abc",
+                ordinal=1,
+                total_phases=2,
+                entry_hash="c" * 64,
+            ),
+        }
+    )
+    json_payload = json.loads(SUBMITTED_CONTEXT_ADAPTER.dump_json(context))
+    schema = json.loads(
+        schema_path("scheduler-submitted-run-context-v4.json").read_text(encoding="utf-8")
+    )
+    jsonschema.validate(json_payload, schema)
+    assert json_payload["schema_version"] == 4
+    assert json_payload["sequence"]["ordinal"] == 1
+
+
 def test_submitted_state_model_schema_alignment() -> None:
     now = datetime(2026, 9, 4, 12, 0, 0, tzinfo=UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     state = SubmittedState(
@@ -440,3 +464,138 @@ def test_repository_binding_rejects_empty_branch() -> None:
             initial_head="abc123",
             worktree_key=digest,
         )
+
+
+def test_sequence_manifest_schema_parity() -> None:
+    from ai_dev_loop.scheduler.domain.sequence import SequenceManifest
+
+    schema = json.loads(
+        schema_path("scheduler-sequence-manifest-v1.json").read_text(encoding="utf-8")
+    )
+    validator = jsonschema.Draft202012Validator(schema)
+    positive_payloads = [
+        {
+            "schema_version": 1,
+            "name": "fixture-sequence",
+            "phases": [
+                {
+                    "name": "phase-one",
+                    "plan_path": "docs/plans/a.md",
+                    "prompt_source_path": "docs/plans/p.txt",
+                    "commit_message": "checkpoint",
+                    "cursor": {"command": None, "model": None, "output_format": None},
+                    "codex": {
+                        "review_model": "gpt-5.6-sol",
+                        "review_reasoning_effort": "high",
+                    },
+                },
+                {
+                    "name": "phase-two",
+                    "plan_path": "docs/plans/a.md",
+                    "prompt_source_path": "docs/plans/p.txt",
+                    "codex": {
+                        "review_model": "gpt-5.6-sol",
+                        "review_reasoning_effort": "high",
+                    },
+                },
+            ],
+        },
+        {
+            "schema_version": 1,
+            "name": "nullable-overrides",
+            "phases": [
+                {
+                    "name": "phase-one",
+                    "plan_path": "docs/plans/a.md",
+                    "prompt_source_path": "docs/plans/p.txt",
+                    "commit_message": "checkpoint",
+                    "cursor": None,
+                    "workflow": None,
+                    "codex": {
+                        "command": None,
+                        "review_model": "gpt-5.6-sol",
+                        "review_reasoning_effort": "high",
+                        "review_skill": None,
+                    },
+                },
+                {
+                    "name": "phase-two",
+                    "plan_path": "docs/plans/a.md",
+                    "prompt_source_path": "docs/plans/p.txt",
+                    "codex": {
+                        "review_model": "gpt-5.6-sol",
+                        "review_reasoning_effort": "high",
+                    },
+                },
+            ],
+        },
+    ]
+    negative_payloads = [
+        {
+            "schema_version": 1,
+            "name": "bad",
+            "unexpected": True,
+            "phases": [
+                {
+                    "name": "one",
+                    "plan_path": "a",
+                    "prompt_source_path": "b",
+                    "commit_message": "one",
+                    "codex": {
+                        "review_model": "gpt-5.6-sol",
+                        "review_reasoning_effort": "high",
+                    },
+                },
+                {
+                    "name": "two",
+                    "plan_path": "a",
+                    "prompt_source_path": "b",
+                    "codex": {
+                        "review_model": "gpt-5.6-sol",
+                        "review_reasoning_effort": "high",
+                    },
+                },
+            ],
+        },
+        {
+            "schema_version": 1,
+            "name": "missing-codex",
+            "phases": [
+                {
+                    "name": "one",
+                    "plan_path": "a",
+                    "prompt_source_path": "b",
+                    "commit_message": "one",
+                },
+                {
+                    "name": "two",
+                    "plan_path": "a",
+                    "prompt_source_path": "b",
+                },
+            ],
+        },
+        {
+            "schema_version": 1,
+            "name": "single-phase",
+            "phases": [
+                {
+                    "name": "only",
+                    "plan_path": "a",
+                    "prompt_source_path": "b",
+                    "commit_message": "one",
+                    "codex": {
+                        "review_model": "gpt-5.6-sol",
+                        "review_reasoning_effort": "high",
+                    },
+                },
+            ],
+        },
+    ]
+    for payload in positive_payloads:
+        validator.validate(payload)
+        SequenceManifest.model_validate(payload)
+    for payload in negative_payloads:
+        with pytest.raises(jsonschema.exceptions.ValidationError):
+            validator.validate(payload)
+    sample = SequenceManifest.model_validate(positive_payloads[0])
+    assert sample.model_dump(mode="json")["schema_version"] == 1

@@ -28,11 +28,17 @@ from ai_dev_loop.commands.integrations import (
     uninstall_integrations,
 )
 from ai_dev_loop.commands.scheduler import (
+    SequencePrepareOptions,
     SubmitOptions,
+    prepare_sequence,
     render_cutover_cleanup_output,
     render_list_output,
+    render_review_budget_extend_output,
+    render_review_retry_output,
     render_scheduler_abort_output,
     render_scheduler_history_output,
+    render_sequence_prepare_output,
+    render_sequence_status_output,
     render_status_output,
     render_submit_output,
     render_tick_output,
@@ -42,8 +48,11 @@ from ai_dev_loop.commands.scheduler import (
     render_timer_validate_output,
     run_scheduler_tick,
     scheduler_abort_run,
+    scheduler_extend_review_budget,
     scheduler_history,
     scheduler_list,
+    scheduler_review_retry,
+    scheduler_sequence_status,
     scheduler_status,
     scheduler_timeline,
     submit_run,
@@ -85,11 +94,20 @@ cutover_app = typer.Typer(
     help="Explicit destructive cleanup of retired legacy XDG state roots.",
 )
 timer_app = typer.Typer(help="Packaged systemd timer asset helpers (no auto-enable).")
+sequence_app = typer.Typer(
+    help=(
+        "Prepare, start, abort, and inspect immutable scheduler sequence definitions. "
+        "Sequence start materializes phase 1; later phases materialize after accepted reviews."
+    ),
+)
 integrations_app = typer.Typer(help="Global Codex integration commands.")
 sessions_app = typer.Typer(help="Desktop session rollout bridge commands.")
 integrations_app.add_typer(sessions_app, name="sessions")
 scheduler_app.add_typer(cutover_app, name="cutover")
 scheduler_app.add_typer(timer_app, name="timer")
+scheduler_app.add_typer(sequence_app, name="sequence")
+review_app = typer.Typer(help="Codex review retry and blocked-run recovery.")
+scheduler_app.add_typer(review_app, name="review")
 app.add_typer(config_app, name="config")
 app.add_typer(controller_app, name="controller")
 app.add_typer(scheduler_app, name="scheduler")
@@ -334,6 +352,44 @@ def scheduler_list_command(
     _handle(run)
 
 
+@scheduler_app.command("extend")
+def scheduler_extend_command(
+    run_id: Annotated[str, typer.Argument(help="Scheduler run ID in max_iterations_reached.")],
+    max_review_iterations: Annotated[
+        int,
+        typer.Option(
+            "--max-review-iterations",
+            help="Absolute higher Codex review ceiling for the same run.",
+        ),
+    ],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Authorize a higher review ceiling and schedule the exhausted-review correction."""
+
+    def run() -> None:
+        result = scheduler_extend_review_budget(
+            run_id,
+            target_total=max_review_iterations,
+        )
+        typer.echo(render_review_budget_extend_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@review_app.command("retry")
+def scheduler_review_retry_command(
+    run_id: Annotated[str, typer.Argument(help="Scheduler run ID or blocked source run ID.")],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Authorize a Codex review retry or create a blocked-run recovery successor."""
+
+    def run() -> None:
+        result = scheduler_review_retry(run_id)
+        typer.echo(render_review_retry_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
 @scheduler_app.command("abort")
 def scheduler_abort_command(
     run_id: Annotated[str, typer.Argument(help="Scheduler run ID.")],
@@ -384,6 +440,148 @@ def scheduler_history_command(
     def run() -> None:
         result = scheduler_history(run_id, limit=limit, order=order)
         typer.echo(render_scheduler_history_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@sequence_app.command("prepare")
+def scheduler_sequence_prepare_command(
+    manifest: Annotated[
+        Path,
+        typer.Option("--manifest", help="Versioned YAML sequence manifest path."),
+    ],
+    config_path: Annotated[
+        Path | None,
+        typer.Option("--config-path", help="Path to ai_dev_loop.yaml."),
+    ] = None,
+    project_name: Annotated[
+        str | None,
+        typer.Option("--project-name", help="Override project.name for all phases."),
+    ] = None,
+    repo_path: Annotated[
+        Path | None,
+        typer.Option("--repo-path", help="Target repository root."),
+    ] = None,
+    controller_session_id: Annotated[
+        str | None,
+        typer.Option(
+            "--controller-session-id",
+            help="Optional controller Codex session ID provenance.",
+        ),
+    ] = None,
+    cursor_command: Annotated[
+        str | None,
+        typer.Option("--cursor-command", help="Default cursor.command override."),
+    ] = None,
+    cursor_model: Annotated[
+        str | None,
+        typer.Option("--cursor-model", help="Default cursor.model override."),
+    ] = None,
+    cursor_output_format: Annotated[
+        str | None,
+        typer.Option("--cursor-output-format", help="Default cursor.output_format override."),
+    ] = None,
+    codex_command: Annotated[
+        str | None,
+        typer.Option("--codex-command", help="Default codex.command override."),
+    ] = None,
+    review_skill: Annotated[
+        str | None,
+        typer.Option("--review-skill", help="Default codex.review_skill override."),
+    ] = None,
+    max_review_iterations: Annotated[
+        int | None,
+        typer.Option("--max-review-iterations", help="Default workflow.max_review_iterations."),
+    ] = None,
+    cursor_timeout_minutes: Annotated[
+        int | None,
+        typer.Option("--cursor-timeout-minutes", help="Default workflow.cursor_timeout_minutes."),
+    ] = None,
+    codex_timeout_minutes: Annotated[
+        int | None,
+        typer.Option("--codex-timeout-minutes", help="Default workflow.codex_timeout_minutes."),
+    ] = None,
+    resubmission_id: Annotated[
+        str | None,
+        typer.Option(
+            "--resubmission-id",
+            help=(
+                "Explicit UUID for an intentional fresh sequence after a prior definition. "
+                "Reuse the same value to replay that preparation idempotently."
+            ),
+        ),
+    ] = None,
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Freeze an immutable multi-phase sequence definition without Git or agent side effects."""
+
+    def run() -> None:
+        options = SequencePrepareOptions(
+            manifest_path=manifest,
+            config_path=config_path,
+            project_name=project_name,
+            repo_path=repo_path,
+            controller_session_id=controller_session_id,
+            cursor_command=cursor_command,
+            cursor_model=cursor_model,
+            cursor_output_format=cursor_output_format,
+            codex_command=codex_command,
+            review_skill=review_skill,
+            max_review_iterations=max_review_iterations,
+            cursor_timeout_minutes=cursor_timeout_minutes,
+            codex_timeout_minutes=codex_timeout_minutes,
+            resubmission_id=resubmission_id,
+        )
+        result = prepare_sequence(options)
+        typer.echo(render_sequence_prepare_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@sequence_app.command("status")
+def scheduler_sequence_status_command(
+    sequence_id: Annotated[str, typer.Argument(help="Prepared scheduler sequence ID.")],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Show read-only status for one prepared sequence by exact ID."""
+
+    def run() -> None:
+        result = scheduler_sequence_status(sequence_id)
+        typer.echo(render_sequence_status_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@sequence_app.command("start")
+def scheduler_sequence_start_command(
+    sequence_id: Annotated[str, typer.Argument(help="Prepared scheduler sequence ID.")],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Authorize a prepared sequence and materialize its first scheduler run."""
+
+    def run() -> None:
+        from ai_dev_loop.commands.scheduler import render_sequence_start_output
+        from ai_dev_loop.scheduler.application.sequence_start import start_sequence
+
+        result = start_sequence(sequence_id)
+        typer.echo(render_sequence_start_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@sequence_app.command("abort")
+def scheduler_sequence_abort_command(
+    sequence_id: Annotated[str, typer.Argument(help="Prepared or active scheduler sequence ID.")],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Abort a prepared or active sequence without destructive Git behavior."""
+
+    def run() -> None:
+        from ai_dev_loop.commands.scheduler import render_sequence_abort_output
+        from ai_dev_loop.scheduler.application.sequence_abort import scheduler_sequence_abort
+
+        result = scheduler_sequence_abort(sequence_id)
+        typer.echo(render_sequence_abort_output(result, output=output.value), nl=False)
 
     _handle(run)
 

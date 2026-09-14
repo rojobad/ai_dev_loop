@@ -28,6 +28,7 @@ SCHEDULER_STATE_SCHEMA_VERSION_V4 = 4
 SUBMITTED_CONTEXT_SCHEMA_VERSION = 1
 SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH = 2
 SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED = 3
+SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE = 4
 
 
 class RepositoryTargetBinding(DomainModel):
@@ -119,6 +120,26 @@ class ControllerBinding(DomainModel):
     controller_session_id: UuidSessionId | None = None
 
 
+class SequenceRunBinding(DomainModel):
+    sequence_id: NonEmptyStr
+    ordinal: int
+    total_phases: int
+    entry_hash: Sha256Hex
+
+    @field_validator("ordinal", "total_phases")
+    @classmethod
+    def positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("must be >= 1")
+        return value
+
+    @model_validator(mode="after")
+    def ordinal_within_total(self) -> SequenceRunBinding:
+        if self.ordinal > self.total_phases:
+            raise ValueError("ordinal must be <= total_phases")
+        return self
+
+
 class SubmittedRunContext(DomainModel):
     """Frozen immutable input context for a submitted A/B scheduler run."""
 
@@ -131,6 +152,7 @@ class SubmittedRunContext(DomainModel):
     cursor: CursorBinding
     workflow: WorkflowLimits
     controller: ControllerBinding
+    sequence: SequenceRunBinding | None = None
     baseline_status_artifact_path: NonEmptyStr | None = None
     baseline_status_sha256: Sha256Hex | None = None
 
@@ -141,8 +163,9 @@ class SubmittedRunContext(DomainModel):
             SUBMITTED_CONTEXT_SCHEMA_VERSION,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
         }:
-            raise ValueError("schema_version must be 1, 2, or 3")
+            raise ValueError("schema_version must be 1, 2, 3, or 4")
         return value
 
     @model_validator(mode="after")
@@ -171,6 +194,20 @@ class SubmittedRunContext(DomainModel):
                 or self.baseline_status_sha256 is not None
             ):
                 raise ValueError("schema_version 3 must not include baseline fields")
+            if self.sequence is not None:
+                raise ValueError("schema_version 3 must not include sequence binding")
+        elif self.schema_version == SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE:
+            if not isinstance(self.codex, FreshCodexReviewerBinding):
+                raise ValueError("schema_version 4 requires FreshCodexReviewerBinding")
+            if not isinstance(self.repository, RepositoryTargetBinding):
+                raise ValueError("schema_version 4 requires RepositoryTargetBinding")
+            if (
+                self.baseline_status_artifact_path is not None
+                or self.baseline_status_sha256 is not None
+            ):
+                raise ValueError("schema_version 4 must not include baseline fields")
+            if self.sequence is None:
+                raise ValueError("schema_version 4 requires sequence binding")
         return self
 
     @model_serializer(mode="wrap")
@@ -179,9 +216,14 @@ class SubmittedRunContext(DomainModel):
         handler: Callable[[SubmittedRunContext], dict[str, object]],
     ) -> dict[str, object]:
         data = handler(self)
-        if self.schema_version == SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED:
+        if self.schema_version in {
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
+        }:
             data.pop("baseline_status_artifact_path", None)
             data.pop("baseline_status_sha256", None)
+        if self.schema_version != SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE:
+            data.pop("sequence", None)
         return data
 
 
@@ -297,12 +339,38 @@ class CodexWorkflowCheckpoint(DomainModel):
     latest_review_result_path: NonEmptyStr | None = None
     latest_review_result_sha256: Sha256Hex | None = None
     codex_capacity_wait_started_at: NonEmptyStr | None = None
+    capacity_evidence_source: Literal["structured_error", "post_failure_capacity_probe"] | None = (
+        None
+    )
+    inferred_operational_failure_kind: NonEmptyStr | None = None
+    review_retry_failure_kind: NonEmptyStr | None = None
+    review_retry_generation: int = Field(default=0)
+    review_retry_scheduled_generation: int | None = None
+    last_failed_attempt_id: NonEmptyStr | None = None
 
-    @field_validator("review_iteration", "reviews_completed")
+    @field_validator("review_iteration", "reviews_completed", "review_retry_generation")
     @classmethod
     def non_negative_review_counters(cls, value: int) -> int:
         if value < 0:
             raise ValueError("review counters must be >= 0")
+        return value
+
+
+class ReviewRecoveryLineage(DomainModel):
+    """Immutable lineage for a scheduler review-recovery successor."""
+
+    source_run_id: NonEmptyStr
+    source_block_reason_kind: NonEmptyStr
+    source_review_iteration: int
+    source_staged_patch_sha256: Sha256Hex
+    source_failed_attempt_id: NonEmptyStr | None = None
+    created_at: NonEmptyStr
+
+    @field_validator("source_review_iteration")
+    @classmethod
+    def review_iteration_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("source_review_iteration must be >= 1")
         return value
 
 
@@ -434,6 +502,7 @@ class AwaitingCodexReviewState(SchedulerRunBase):
     checkpoint: AdmittedRunCheckpoint
     cursor: CursorWorkflowCheckpoint
     codex: CodexWorkflowCheckpoint = Field(default_factory=CodexWorkflowCheckpoint)
+    recovery: ReviewRecoveryLineage | None = None
 
     @field_validator("schema_version")
     @classmethod
@@ -446,6 +515,36 @@ class AwaitingCodexReviewState(SchedulerRunBase):
             raise ValueError("awaiting_codex_review requires staged patch artifacts")
         if self.codex.bootstrap_uncertainty_reason:
             raise ValueError("awaiting_codex_review cannot carry bootstrap uncertainty")
+        return self
+
+
+class WaitingCodexReviewRetryState(SchedulerRunBase):
+    """Run waiting for an explicit operator Codex review retry."""
+
+    kind: Literal["waiting_codex_review_retry"] = "waiting_codex_review_retry"
+    schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
+    checkpoint: AdmittedRunCheckpoint
+    cursor: CursorWorkflowCheckpoint
+    codex: CodexWorkflowCheckpoint
+    recovery: ReviewRecoveryLineage | None = None
+
+    @field_validator("schema_version")
+    @classmethod
+    def schema_version_is_four(cls, value: int) -> int:
+        return _schema_version_is_four(value)
+
+    @model_validator(mode="after")
+    def retry_wait_fields_required(self) -> WaitingCodexReviewRetryState:
+        if not self.cursor.staged_patch_path or not self.cursor.staged_patch_sha256:
+            raise ValueError("waiting_codex_review_retry requires staged patch artifacts")
+        if not self.codex.reviewer_session_id:
+            raise ValueError("waiting_codex_review_retry requires bound reviewer identity")
+        if not self.codex.review_retry_failure_kind:
+            raise ValueError("waiting_codex_review_retry requires review_retry_failure_kind")
+        if not self.codex.last_failed_attempt_id:
+            raise ValueError("waiting_codex_review_retry requires last_failed_attempt_id")
+        if self.codex.review_retry_generation < 1:
+            raise ValueError("waiting_codex_review_retry requires review_retry_generation >= 1")
         return self
 
 
@@ -469,6 +568,37 @@ class WaitingForCursorFixState(SchedulerRunBase):
             raise ValueError("waiting_for_cursor_fix requires bound reviewer identity")
         if not self.codex.latest_fix_prompt_path or not self.codex.latest_fix_prompt_sha256:
             raise ValueError("waiting_for_cursor_fix requires persisted fix prompt")
+        return self
+
+
+class CheckpointPendingState(SchedulerRunBase):
+    """Sequence-bound non-final run awaiting reviewed-tree checkpoint and handoff."""
+
+    kind: Literal["checkpoint_pending"] = "checkpoint_pending"
+    schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
+    checkpoint: AdmittedRunCheckpoint
+    cursor: CursorWorkflowCheckpoint
+    codex: CodexWorkflowCheckpoint
+    accepted_outcome: Literal["completed", "completed_with_residual_risk"]
+    checkpoint_intent_artifact_path: NonEmptyStr
+    checkpoint_intent_sha256: Sha256Hex
+    checkpoint_trusted_tree_sha256: Sha256Hex
+
+    @field_validator("schema_version")
+    @classmethod
+    def schema_version_is_four(cls, value: int) -> int:
+        return _schema_version_is_four(value)
+
+    @model_validator(mode="after")
+    def checkpoint_pending_fields_required(self) -> CheckpointPendingState:
+        if self.context.sequence is None:
+            raise ValueError("checkpoint_pending requires sequence binding")
+        if not self.codex.reviewer_session_id:
+            raise ValueError("checkpoint_pending requires bound reviewer identity")
+        if not self.cursor.staged_patch_path or not self.cursor.staged_patch_sha256:
+            raise ValueError("checkpoint_pending requires staged patch artifacts")
+        if not self.codex.latest_review_result_path or not self.codex.latest_review_result_sha256:
+            raise ValueError("checkpoint_pending requires latest review result binding")
         return self
 
 
@@ -575,7 +705,9 @@ SchedulerState = Annotated[
     | Annotated[WaitingUsageLimitState, Tag("waiting_usage_limit")]
     | Annotated[WaitingCodexCapacityState, Tag("waiting_codex_capacity")]
     | Annotated[AwaitingCodexReviewState, Tag("awaiting_codex_review")]
+    | Annotated[WaitingCodexReviewRetryState, Tag("waiting_codex_review_retry")]
     | Annotated[WaitingForCursorFixState, Tag("waiting_for_cursor_fix")]
+    | Annotated[CheckpointPendingState, Tag("checkpoint_pending")]
     | Annotated[CompletedState, Tag("completed")]
     | Annotated[CompletedWithResidualRiskState, Tag("completed_with_residual_risk")]
     | Annotated[MaxIterationsReachedState, Tag("max_iterations_reached")]
@@ -604,7 +736,9 @@ SCHEDULER_ABORTABLE_STATE_KINDS = frozenset(
         "waiting_usage_limit",
         "waiting_codex_capacity",
         "awaiting_codex_review",
+        "waiting_codex_review_retry",
         "waiting_for_cursor_fix",
+        "checkpoint_pending",
     }
 )
 
@@ -628,7 +762,9 @@ def parse_scheduler_state(
     | WaitingUsageLimitState
     | WaitingCodexCapacityState
     | AwaitingCodexReviewState
+    | WaitingCodexReviewRetryState
     | WaitingForCursorFixState
+    | CheckpointPendingState
     | CompletedState
     | CompletedWithResidualRiskState
     | MaxIterationsReachedState
@@ -646,7 +782,9 @@ def parse_scheduler_state(
             WaitingUsageLimitState,
             WaitingCodexCapacityState,
             AwaitingCodexReviewState,
+            WaitingCodexReviewRetryState,
             WaitingForCursorFixState,
+            CheckpointPendingState,
             CompletedState,
             CompletedWithResidualRiskState,
             MaxIterationsReachedState,

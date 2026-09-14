@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/scheduler-frozen-sequence-entry-v1.json",
+  "title": "FrozenSequenceEntry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "ordinal",
+    "phase_name",
+    "planned_run_id",
+    "plan_prompt",
+    "effective_config",
+    "codex",
+    "cursor",
+    "workflow"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "ordinal": { "type": "integer", "minimum": 1 },
+    "phase_name": { "type": "string", "minLength": 1 },
+    "planned_run_id": { "type": "string", "minLength": 1 },
+    "commit_message": { "type": ["string", "null"] },
+    "plan_prompt": { "$ref": "scheduler-submitted-run-context-v3.json#/$defs/plan_prompt_binding" },
+    "effective_config": { "$ref": "scheduler-submitted-run-context-v3.json#/$defs/effective_config_binding" },
+    "codex": { "$ref": "scheduler-submitted-run-context-v3.json#/$defs/fresh_codex_reviewer_binding" },
+    "cursor": { "$ref": "scheduler-submitted-run-context-v3.json#/$defs/cursor_binding" },
+    "workflow": { "$ref": "scheduler-submitted-run-context-v3.json#/$defs/workflow_limits" }
+  }
+}

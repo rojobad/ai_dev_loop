@@ -50,6 +50,7 @@ from ai_dev_loop.scheduler.domain.codex_contract import (
     MAX_CODEX_CAPTURE_STDOUT_BYTES,
     MAX_CODEX_EVENTS_ARTIFACT_BYTES,
     MAX_CODEX_REVIEW_RESULT_BYTES,
+    REVIEW_RETRY_OPERATIONAL_ENVELOPE,
     codex_attempt_events_rel,
     codex_attempt_stderr_rel,
     codex_review_metadata_rel,
@@ -268,9 +269,9 @@ def _run_codex_review(
 
     events_rel = codex_attempt_events_rel(review_iteration, attempt_id)
     stderr_rel = codex_attempt_stderr_rel(review_iteration, attempt_id)
-    result_rel = codex_review_result_rel(review_iteration)
-    metadata_rel = codex_review_metadata_rel(review_iteration)
-    report_rel = codex_review_report_rel(review_iteration)
+    result_rel = codex_review_result_rel(review_iteration, attempt_id)
+    metadata_rel = codex_review_metadata_rel(review_iteration, attempt_id)
+    report_rel = codex_review_report_rel(review_iteration, attempt_id)
 
     events_path = run_root / events_rel
     stderr_path = run_root / stderr_rel
@@ -296,6 +297,8 @@ def _run_codex_review(
         iteration=iteration_label,
         cursor_final_response=cursor_final,
     )
+    if evidence.get("operational_review_retry"):
+        prompt = REVIEW_RETRY_OPERATIONAL_ENVELOPE + prompt
 
     if effect_kind == BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND:
         args = build_scheduler_codex_bootstrap_args(

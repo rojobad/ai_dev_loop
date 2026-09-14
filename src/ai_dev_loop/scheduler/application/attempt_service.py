@@ -50,6 +50,7 @@ from ai_dev_loop.scheduler.application.cursor_evidence import (
     verify_pre_execution_cursor_guards,
 )
 from ai_dev_loop.scheduler.application.cursor_workflow_service import CursorWorkflowService
+from ai_dev_loop.scheduler.application.review_budget import effective_review_ceiling_for_run
 from ai_dev_loop.scheduler.application.scheduler_checkpoint import checkpoint_from_state
 from ai_dev_loop.scheduler.application.tick_fencing import tick_lease_is_active
 from ai_dev_loop.scheduler.domain.codex_contract import (
@@ -524,6 +525,8 @@ class AttemptService:
             checkpoint=checkpoint,
         )
         codex = context.codex
+        with self.store.begin_read() as conn:
+            max_reviews = effective_review_ceiling_for_run(self.store, conn, state)
         binding: dict[str, object] = {
             "effect_kind": effect_kind,
             "repository_root": identity.root,
@@ -544,7 +547,7 @@ class AttemptService:
             "prompt_sha256": context.plan_prompt.prompt_sha256,
             "review_iteration": state.cursor.iteration,
             "cursor_chat_id": state.cursor.chat_id,
-            "max_review_iterations": context.workflow.max_review_iterations,
+            "max_review_iterations": max_reviews,
             "codex_timeout_minutes": context.workflow.codex_timeout_minutes,
         }
         if state.codex.reviewer_session_id:
@@ -568,6 +571,10 @@ class AttemptService:
             raise ValidationError("resume codex review requires bound reviewer identity")
         if effect_kind == BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND and state.codex.reviewer_session_id:
             raise ValidationError("bootstrap codex review cannot run with bound reviewer identity")
+        generation = state.codex.review_retry_generation
+        scheduled = state.codex.review_retry_scheduled_generation
+        if generation > 0 and scheduled == generation:
+            binding["operational_review_retry"] = True
         return binding
 
     def _cursor_binding(

@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/scheduler-sequence-manifest-v1.json",
+  "title": "SequenceManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "name", "phases"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "phases": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/phase" }
+    }
+  },
+  "$defs": {
+    "phase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "plan_path", "prompt_source_path", "codex"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "plan_path": { "type": "string", "minLength": 1 },
+        "prompt_source_path": { "type": "string", "minLength": 1 },
+        "commit_message": { "type": ["string", "null"] },
+        "cursor": {
+          "anyOf": [{ "$ref": "#/$defs/cursorOverrides" }, { "type": "null" }]
+        },
+        "codex": { "$ref": "#/$defs/codexOverrides" },
+        "workflow": {
+          "anyOf": [{ "$ref": "#/$defs/workflowOverrides" }, { "type": "null" }]
+        }
+      }
+    },
+    "cursorOverrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": { "type": ["string", "null"] },
+        "model": { "type": ["string", "null"] },
+        "output_format": { "type": ["string", "null"] }
+      }
+    },
+    "codexOverrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["review_model", "review_reasoning_effort"],
+      "properties": {
+        "command": { "type": ["string", "null"] },
+        "review_model": { "type": "string", "minLength": 1 },
+        "review_reasoning_effort": { "type": "string", "minLength": 1 },
+        "review_skill": { "type": ["string", "null"] }
+      }
+    },
+    "workflowOverrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_review_iterations": { "type": ["integer", "null"], "minimum": 1 },
+        "cursor_timeout_minutes": { "type": ["integer", "null"], "minimum": 1 },
+        "codex_timeout_minutes": { "type": ["integer", "null"], "minimum": 1 }
+      }
+    }
+  }
+}

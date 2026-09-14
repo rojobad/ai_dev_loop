@@ -703,16 +703,11 @@ def test_invalid_review_json_blocks_without_sensitive_payload(
         tick.run_once()
         with tick.store.begin_read() as conn:
             state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
-            if state.kind == "blocked":
-                assert (
-                    "invalid" in state.block_reason_kind
-                    or "outcome" in state.block_reason_kind
-                    or "review" in state.block_reason_kind
-                )
-                assert "ValidationError" not in state.block_reason_summary
-                assert "cursor_fix_prompt" not in state.block_reason_summary
+            if state.kind == "waiting_codex_review_retry":
+                assert state.codex.review_retry_failure_kind == "codex_review_outcome_invalid"
+                assert "ValidationError" not in (state.codex.review_retry_failure_kind or "")
                 return
-    pytest.fail("expected blocked run after invalid review JSON")
+    pytest.fail("expected retryable run after invalid review JSON")
 
 
 def test_codex_capture_stdout_limit_matches_events_artifact_bound() -> None:
@@ -806,8 +801,9 @@ def test_large_jsonl_truncation_still_completes_valid_review(
     events_files = list((run_root / "codex" / "events").glob("01.*.jsonl"))
     assert events_files, "expected codex events artifact"
     assert events_files[0].stat().st_size <= MAX_CODEX_EVENTS_ARTIFACT_BYTES
-    metadata_path = run_root / "codex" / "reviews" / "01.metadata.json"
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata_files = list((run_root / "codex" / "reviews").glob("01.*.metadata.json"))
+    assert metadata_files, "expected codex review metadata artifact"
+    metadata = json.loads(metadata_files[0].read_text(encoding="utf-8"))
     assert metadata.get("stdout_truncated") is True
     codex_log = Path(fake_clis["codex_log"]).read_text(encoding="utf-8")
     bootstrap_count = sum(
@@ -844,14 +840,11 @@ def test_large_jsonl_without_valid_result_blocks_with_truncated_reason(
         tick.run_once()
         with tick.store.begin_read() as conn:
             state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
-            if state.kind == "blocked":
-                assert state.block_reason_kind == "codex_review_output_truncated"
-                assert "truncated" in state.block_reason_summary.lower()
-                assert BOOTSTRAP_ID not in state.block_reason_summary
-                capacity = tick.store.get_capacity_row(conn)
-                assert capacity["holder_run_id"] is None
+            if state.kind == "waiting_codex_review_retry":
+                assert state.codex.review_retry_failure_kind == "codex_review_output_truncated"
+                assert tick.store.get_reservation_for_run(conn, run_id) is not None
                 return
-    pytest.fail("expected blocked run after truncated codex review without valid result")
+    pytest.fail("expected retryable run after truncated codex review without valid result")
 
 
 def _awaiting_codex_review_workflow(
@@ -1017,10 +1010,10 @@ def test_ingest_timeout_precedes_truncation_when_identity_is_established(
     }
     with patch.object(workflow, "_authenticated_outcome", return_value=synthetic_outcome):
         receipt = workflow._ingest_codex_review(run_id, attempt)
-    assert receipt.action == "blocked"
+    assert receipt.action == "waiting_codex_review_retry"
     assert receipt.detail == "codex_review_timeout"
     with workflow.store.begin_read() as conn:
         state, _, _ = workflow.store.load_validated_snapshot(conn, run_id)
-        assert state.kind == "blocked"
-        assert state.block_reason_kind == "codex_review_timeout"
-        assert state.block_reason_kind != "codex_review_output_truncated"
+        assert state.kind == "waiting_codex_review_retry"
+        assert state.codex.review_retry_failure_kind == "codex_review_timeout"
+        assert state.codex.review_retry_failure_kind != "codex_review_output_truncated"

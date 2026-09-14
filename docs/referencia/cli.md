@@ -65,6 +65,65 @@ ai_dev_loop scheduler submit \
   --output json < docs/plans/prompt_mi-plan.txt
 ```
 
+## `scheduler sequence prepare` / `start` / `status` / `abort`
+
+```bash
+ai_dev_loop scheduler sequence prepare --manifest /path/to/sequence.yaml [OPTIONS]
+ai_dev_loop scheduler sequence start <sequence-id> [--output text|json]
+ai_dev_loop scheduler sequence status <sequence-id> [--output text|json]
+ai_dev_loop scheduler sequence abort <sequence-id> [--output text|json]
+```
+
+Phase 20.1 congela una definicion lineal inmutable de 2 a 32 fases sin reservar el
+repositorio, sin invocar Git y sin crear filas en `scheduler_runs`. Cada fase congela
+plan, prompt, configuracion efectiva, rutas ejecutables, limites de workflow, modelo y
+reasoning de review, y (para fases no finales) el mensaje de commit intermedio. Los
+artefactos viven bajo `$XDG_STATE_HOME/ai_dev_loop/artifacts/sequences/`.
+
+`scheduler sequence start <sequence-id>` es la autorizacion explicita de la secuencia
+congelada. Materializa solo la fase 1 como un run normal de scheduler con el
+`planned_run_id` preasignado, reclama la reserva del repositorio, inserta los eventos
+`run_submitted` y `run_authorized`, y deja el run en `authorized` para que el tick
+existente haga la admision Git. El comando no invoca Git, Cursor, Codex ni systemd.
+
+Phase 20.3 agrega checkpoint de secuencia entre fases no finales aceptadas por Codex.
+Tras un review aceptado de fase intermedia, el run entra en `checkpoint_pending` y el
+tick reconcilia un commit local sin firmar (via `write-tree` / `commit-tree` /
+`update-ref` CAS), transfiere la reserva al sucesor y materializa la siguiente fase sin
+liberar el repositorio. La fase final pasa la secuencia a `awaiting_finalization` sin
+commit y libera la reserva con los cambios staged intactos. Los runs standalone no
+crean commits.
+
+Phase 20.4 completa el ciclo de vida de secuencias: estados `active`,
+`abort_pending`, `blocked`, `aborted` y `awaiting_finalization`; reconciliacion de
+outcomes terminales no exitosos del run materializado (`blocked`,
+`max_iterations_reached`, `aborted` por abort de secuencia) sin materializar sucesores;
+`scheduler sequence abort` como control no destructivo (prepared sin runs, active
+delegando al abort de run existente); status enriquecido con conteos agregados,
+marcadores de residual risk y prefijos de checkpoint; y reporte seguro
+`reports/completion-v1.json` al llegar a `awaiting_finalization` (sin commit/push/PR).
+
+Tras `prepare`, la accion segura es `scheduler sequence start <sequence-id>`; tras un
+start exitoso, `scheduler tick` y `scheduler sequence status <sequence-id>`.
+`scheduler sequence abort` persiste la intencion antes de delegar al run activo y
+cancela fases futuras sin crear filas `scheduler_runs` para ellas.
+`scheduler abort <run-id>` durante `checkpoint_pending` impide nuevas mutaciones Git;
+un abort de secuencia despues de un ref CAS ya aplicado reconcilia el checkpoint ya
+aplicado (sin nuevas mutaciones Git ni sucesor) y completa el abort registrado. Mientras
+una secuencia activa o `abort_pending` gobierna el run, o queden holds de
+checkpoint/proceso, `scheduler abort` no libera la reserva del repositorio. Un abort de
+secuencia con el run materializado ya terminal (p. ej. `max_iterations_reached`) finaliza
+la secuencia sin reintentar abort del run. El reporte `reports/completion-v1.json` se publica solo despues de persistir
+`awaiting_finalization` y `finalized_at` en el ledger; `completion_report_sha256` se
+registra en una reconciliacion replayable por `tick` (sin escribir el artefacto dentro de
+la transaccion de finalizacion). Los checkpoints del reporte se verifican contra los
+objetos commit reales del repositorio.
+
+Opciones de repositorio, `--config-path`, `--controller-session-id`, `--resubmission-id`
+y overrides globales siguen el contrato de `scheduler submit`. Cada fase del manifest
+debe declarar `codex.review_model` y `codex.review_reasoning_effort`; la fase final no
+puede incluir `commit_message`.
+
 ## `scheduler start` / `tick` / `status` / `list` / `abort` / `history` / `timeline`
 
 ```bash
@@ -83,7 +142,22 @@ pendientes y no borra artefactos ni cambios staged del repositorio objetivo.
 `scheduler history` devuelve eventos acotados y redactados.
 
 `scheduler status` y `scheduler list` exponen `review_iterations_completed` y
-`max_review_iterations` segun el presupuesto de reviews del run.
+`max_review_iterations` segun el techo efectivo de reviews del run. Cuando un run
+fue extendido explicitamente, el techo efectivo puede superar el limite congelado en
+el contexto enviado; la salida indica el limite enviado solo cuando difiere.
+
+## `scheduler extend`
+
+```bash
+ai_dev_loop scheduler extend <run-id> --max-review-iterations <higher-total> [--output text|json]
+```
+
+Autoriza un techo absoluto mayor de reviews Codex para el mismo run cuando esta en
+`max_iterations_reached`. El comando es process-free: no invoca Cursor ni Codex;
+reacquire la reserva del worktree, registra el evento `review_budget_extended`,
+transiciona a `waiting_for_cursor_fix` con el fix prompt exacto de la review
+agotada y encola un efecto de correccion Cursor. Repetir el mismo objetivo absoluto
+es idempotente. Un objetivo menor o igual al techo efectivo actual se rechaza.
 
 `scheduler timeline` devuelve una tabla acotada de intentos Cursor/Codex por
 iteracion: fase, ordinal de reintento, estado seguro, marcas de tiempo durables

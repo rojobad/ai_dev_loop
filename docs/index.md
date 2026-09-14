@@ -67,7 +67,10 @@ Para depurar un problema existente, empieza por [Estado, logs e inspeccion](oper
 - El reviewer B se crea una vez en el primer review y se reanuda exactamente en correcciones posteriores.
 - Codex decide el resultado mediante JSON estructurado; el Markdown no se scrapea para tomar decisiones.
 - `ai_dev_loop` no genera prompts de correccion; solo valida y reenvia el prompt devuelto por Codex.
-- El loop no commitea, no pushea, no limpia, no resetea y no unstaged cambios.
+- El loop ordinario no commitea, no pushea, no limpia, no resetea ni unstaged cambios.
+  La excepcion acotada Phase 20.3 permite un commit local sin firmar entre fases no
+  finales de una secuencia multi-fase aceptada por Codex; la fase final y los runs
+  standalone siguen sin commits.
 - El estado del orquestador vive fuera del repositorio objetivo, bajo rutas XDG (`engine.sqlite3`, `artifacts/`, etc.).
 
 ## Validacion de la documentacion

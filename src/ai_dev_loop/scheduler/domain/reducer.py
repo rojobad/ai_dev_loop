@@ -14,6 +14,8 @@ from ai_dev_loop.scheduler.domain.events import (
     CodexReviewBlockedEvent,
     CodexReviewCompletedEvent,
     CodexReviewerBoundEvent,
+    CodexReviewRetryableFailureEvent,
+    CodexReviewRetryRequestedEvent,
     CodexUsageCapacityDetectedEvent,
     CursorChatBlockedEvent,
     CursorChatCreatedEvent,
@@ -23,11 +25,13 @@ from ai_dev_loop.scheduler.domain.events import (
     MaxIterationsReachedEvent,
     PreflightBlockedEvent,
     PreflightCompletedEvent,
+    ReviewBudgetExtendedEvent,
     RunAbortedEvent,
     RunAuthorizedEvent,
     RunCompletedEvent,
     RunCompletedWithResidualRiskEvent,
     RunSubmittedEvent,
+    SequenceCheckpointRequestedEvent,
     StagingBlockedEvent,
     StagingCompletedEvent,
     SyntheticEffectCompletedEvent,
@@ -45,6 +49,7 @@ from ai_dev_loop.scheduler.domain.state import (
     AuthorizedState,
     AwaitingCodexReviewState,
     BlockedState,
+    CheckpointPendingState,
     CodexWorkflowCheckpoint,
     CompletedState,
     CompletedWithResidualRiskState,
@@ -54,6 +59,7 @@ from ai_dev_loop.scheduler.domain.state import (
     PreflightCompleteState,
     SubmittedState,
     WaitingCodexCapacityState,
+    WaitingCodexReviewRetryState,
     WaitingForCursorFixState,
     WaitingUsageLimitState,
 )
@@ -473,6 +479,8 @@ def apply_codex_usage_capacity_detected(
         update={
             "review_iteration": event.review_iteration,
             "codex_capacity_wait_started_at": now_text,
+            "capacity_evidence_source": event.evidence_source,
+            "inferred_operational_failure_kind": event.operational_failure_kind,
         }
     )
     return WaitingCodexCapacityState(
@@ -485,6 +493,71 @@ def apply_codex_usage_capacity_detected(
         checkpoint=state.checkpoint,
         cursor=state.cursor,
         codex=codex,
+    )
+
+
+def apply_codex_review_retryable_failure(
+    state: AwaitingCodexReviewState,
+    event: CodexReviewRetryableFailureEvent,
+    *,
+    now_text: str,
+) -> WaitingCodexReviewRetryState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    if not state.codex.reviewer_session_id:
+        raise ValueError("retryable review failure requires bound reviewer identity")
+    codex = state.codex.model_copy(
+        update={
+            "review_iteration": event.review_iteration,
+            "review_retry_failure_kind": event.failure_kind,
+            "review_retry_generation": event.retry_generation,
+            "review_retry_scheduled_generation": None,
+            "last_failed_attempt_id": event.attempt_id,
+            "inferred_operational_failure_kind": None,
+            "capacity_evidence_source": None,
+            "codex_capacity_wait_started_at": None,
+        }
+    )
+    return WaitingCodexReviewRetryState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        checkpoint=state.checkpoint,
+        cursor=state.cursor,
+        codex=codex,
+        recovery=state.recovery,
+    )
+
+
+def apply_codex_review_retry_requested(
+    state: WaitingCodexReviewRetryState,
+    event: CodexReviewRetryRequestedEvent,
+    *,
+    now_text: str,
+) -> AwaitingCodexReviewState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    if event.retry_generation != state.codex.review_retry_generation:
+        raise ValueError("retry generation mismatch")
+    codex = state.codex.model_copy(
+        update={
+            "review_retry_scheduled_generation": event.retry_generation,
+        }
+    )
+    return AwaitingCodexReviewState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        checkpoint=state.checkpoint,
+        cursor=state.cursor,
+        codex=codex,
+        recovery=state.recovery,
     )
 
 
@@ -512,6 +585,7 @@ def apply_codex_capacity_available(
         checkpoint=state.checkpoint,
         cursor=state.cursor,
         codex=codex,
+        recovery=getattr(state, "recovery", None),
     )
 
 
@@ -609,20 +683,56 @@ def apply_waiting_for_cursor_fix_entered(
     )
 
 
-def apply_run_completed(
+def apply_sequence_checkpoint_requested(
     state: AwaitingCodexReviewState,
-    event: RunCompletedEvent,
+    event: SequenceCheckpointRequestedEvent,
     *,
     now_text: str,
-) -> CompletedState:
+) -> CheckpointPendingState:
     if event.run_id != state.run_id:
         raise ValueError("event run_id disagrees with state")
+    if state.context.sequence is None:
+        raise ValueError("sequence_checkpoint_requested requires sequence binding")
     codex = state.codex.model_copy(
         update={
             "review_iteration": event.review_iteration,
             "reviews_completed": state.codex.reviews_completed + 1,
         }
     )
+    return CheckpointPendingState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        checkpoint=state.checkpoint,
+        cursor=state.cursor,
+        codex=codex,
+        accepted_outcome=event.accepted_outcome,
+        checkpoint_intent_artifact_path=event.checkpoint_intent_artifact_path,
+        checkpoint_intent_sha256=event.checkpoint_intent_sha256,
+        checkpoint_trusted_tree_sha256=event.checkpoint_trusted_tree_sha256,
+    )
+
+
+def apply_run_completed(
+    state: AwaitingCodexReviewState | CheckpointPendingState,
+    event: RunCompletedEvent,
+    *,
+    now_text: str,
+) -> CompletedState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    if isinstance(state, CheckpointPendingState):
+        codex = state.codex
+    else:
+        codex = state.codex.model_copy(
+            update={
+                "review_iteration": event.review_iteration,
+                "reviews_completed": state.codex.reviews_completed + 1,
+            }
+        )
     return CompletedState(
         run_id=state.run_id,
         version=state.version + 1,
@@ -637,19 +747,22 @@ def apply_run_completed(
 
 
 def apply_run_completed_with_residual_risk(
-    state: AwaitingCodexReviewState,
+    state: AwaitingCodexReviewState | CheckpointPendingState,
     event: RunCompletedWithResidualRiskEvent,
     *,
     now_text: str,
 ) -> CompletedWithResidualRiskState:
     if event.run_id != state.run_id:
         raise ValueError("event run_id disagrees with state")
-    codex = state.codex.model_copy(
-        update={
-            "review_iteration": event.review_iteration,
-            "reviews_completed": state.codex.reviews_completed + 1,
-        }
-    )
+    if isinstance(state, CheckpointPendingState):
+        codex = state.codex
+    else:
+        codex = state.codex.model_copy(
+            update={
+                "review_iteration": event.review_iteration,
+                "reviews_completed": state.codex.reviews_completed + 1,
+            }
+        )
     return CompletedWithResidualRiskState(
         run_id=state.run_id,
         version=state.version + 1,
@@ -671,12 +784,20 @@ def apply_max_iterations_reached(
 ) -> MaxIterationsReachedState:
     if event.run_id != state.run_id:
         raise ValueError("event run_id disagrees with state")
-    codex = state.codex.model_copy(
-        update={
-            "review_iteration": event.review_iteration,
-            "reviews_completed": state.codex.reviews_completed + 1,
-        }
-    )
+    codex_update: dict[str, object] = {
+        "review_iteration": event.review_iteration,
+        "reviews_completed": state.codex.reviews_completed + 1,
+    }
+    if event.review_result_path and event.review_result_sha256:
+        codex_update["latest_review_result_path"] = event.review_result_path
+        codex_update["latest_review_result_sha256"] = event.review_result_sha256
+    if event.fix_prompt_path and event.fix_prompt_sha256:
+        codex_update["latest_fix_prompt_path"] = event.fix_prompt_path
+        codex_update["latest_fix_prompt_sha256"] = event.fix_prompt_sha256
+    if event.correction_envelope_path and event.correction_envelope_sha256:
+        codex_update["latest_correction_envelope_path"] = event.correction_envelope_path
+        codex_update["latest_correction_envelope_sha256"] = event.correction_envelope_sha256
+    codex = state.codex.model_copy(update=codex_update)
     return MaxIterationsReachedState(
         run_id=state.run_id,
         version=state.version + 1,
@@ -686,6 +807,51 @@ def apply_max_iterations_reached(
         context=state.context,
         checkpoint=state.checkpoint,
         cursor=state.cursor,
+        codex=codex,
+    )
+
+
+def apply_review_budget_extended(
+    state: MaxIterationsReachedState,
+    event: ReviewBudgetExtendedEvent,
+    *,
+    now_text: str,
+) -> WaitingForCursorFixState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    if event.review_iteration != state.codex.review_iteration:
+        raise ValueError("extension review_iteration disagrees with exhausted checkpoint")
+    if event.review_iteration != state.codex.reviews_completed:
+        raise ValueError("extension review_iteration disagrees with completed review count")
+    codex = state.codex.model_copy(
+        update={
+            "latest_review_result_path": event.review_result_path,
+            "latest_review_result_sha256": event.review_result_sha256,
+            "latest_fix_prompt_path": event.fix_prompt_path,
+            "latest_fix_prompt_sha256": event.fix_prompt_sha256,
+            "latest_correction_envelope_path": event.correction_envelope_path,
+            "latest_correction_envelope_sha256": event.correction_envelope_sha256,
+        }
+    )
+    cursor = state.cursor.model_copy(
+        update={
+            "iteration": event.review_iteration + 1,
+            "usage_limit_fingerprint_path": None,
+            "usage_limit_fingerprint_sha256": None,
+            "continuation_envelope_path": None,
+            "continuation_envelope_sha256": None,
+            "wait_until": None,
+        }
+    )
+    return WaitingForCursorFixState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        checkpoint=state.checkpoint,
+        cursor=cursor,
         codex=codex,
     )
 
@@ -777,7 +943,9 @@ def apply_run_aborted(
         | WaitingUsageLimitState
         | WaitingCodexCapacityState
         | AwaitingCodexReviewState
+        | WaitingCodexReviewRetryState
         | WaitingForCursorFixState
+        | CheckpointPendingState
         | AbortedState
     ),
     event: RunAbortedEvent,

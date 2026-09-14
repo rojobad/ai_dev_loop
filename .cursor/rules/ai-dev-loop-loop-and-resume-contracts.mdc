@@ -22,7 +22,8 @@ These contracts protect the complete stage-review-fix loop and explicit resume b
 - Iterations `02+` are Cursor correction turns and their corresponding reviews.
 - If review `NN` has no actionable findings, stop with `completed` or `completed_with_residual_risk` according to the structured `tests_status`.
 - If review `NN` has actionable findings and `NN < max_review_iterations`, persist `waiting_for_cursor_fix`, then continue with Cursor correction iteration `NN+1`.
-- If review `NN` has actionable findings and `NN >= max_review_iterations`, set `max_iterations_reached`, leave changes staged, preserve the latest review and fix prompt, and do not invoke Cursor again.
+- If review `NN` has actionable findings and `NN >=` the effective review ceiling, set `max_iterations_reached`, leave changes staged, persist the final review result and exact fix prompt artifacts, and do not invoke Cursor again.
+- `max_iterations_reached` remains terminal for automatic scheduler progress. Only the explicit `ai_dev_loop scheduler extend <run-id> --max-review-iterations <higher-total>` command may raise the effective ceiling for the same run and recover the exact final exhausted review's validated fix prompt into `waiting_for_cursor_fix` without creating a successor run or changing frozen submit context.
 - Any path that resumes from `waiting_for_cursor_fix` must re-check the review iteration limit before transitioning to a Cursor correction turn. Legacy or checkpointed waiting states at the limit must become `max_iterations_reached` without another Cursor invocation.
 
 ## Cursor Identity And Fix Prompts
@@ -77,7 +78,9 @@ These contracts protect the complete stage-review-fix loop and explicit resume b
 - Staged-patch equality checks before Codex review and before the next Cursor correction remain unconditional.
 - Continue protecting the repository plan hash and prompt source path.
 - Continue rejecting staged prompt-source paths.
-- Do not commit, tag, push, reset, clean, stash, unstage, or otherwise rewrite Git state from the orchestrator outside configured staging normalization.
+- Do not commit, tag, push, reset, clean, stash, unstage, or otherwise rewrite Git
+  state from the orchestrator outside configured staging normalization and the narrow
+  Phase 20.3 reviewed-tree sequence checkpoint for accepted non-final phases.
 - Fail safely on ambiguous repository state rather than guessing.
 
 ## Resume Discipline

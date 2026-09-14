@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ai_dev_loop.scheduler.application.attempt_backend import TerminationClass, UnitLifecycleState
+from ai_dev_loop.scheduler.application.attempt_backend import (
+    OWNED_ATTEMPT_RUNNER_TIMEOUT_EXIT_CODE,
+    TerminationClass,
+    UnitLifecycleState,
+)
 
 _RUNNING_SUB_STATES = frozenset(
     {"running", "start", "start-pre", "start-post", "auto-restart", "reload", "reload-notify"}
@@ -168,6 +172,12 @@ def termination_from_show(
         return TerminationClass.SUCCESS
     if exit_code is None:
         return TerminationClass.UNKNOWN
+    if (
+        result == "exit-code"
+        and exec_main_code == 1
+        and exit_code == OWNED_ATTEMPT_RUNNER_TIMEOUT_EXIT_CODE
+    ):
+        return TerminationClass.TIMEOUT
     if exit_code > 0:
         return TerminationClass.NONZERO_EXIT
     return TerminationClass.KILLED

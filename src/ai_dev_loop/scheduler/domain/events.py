@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Discriminator, Field, Tag, TypeAdapter, field_validator
 
@@ -37,10 +37,21 @@ CODEX_REVIEW_COMPLETED_EVENT_KIND = "codex_review_completed"
 CODEX_REVIEW_BLOCKED_EVENT_KIND = "codex_review_blocked"
 CODEX_USAGE_CAPACITY_DETECTED_EVENT_KIND = "codex_usage_capacity_detected"
 CODEX_CAPACITY_AVAILABLE_EVENT_KIND = "codex_capacity_available"
+CODEX_REVIEW_RETRYABLE_FAILURE_EVENT_KIND = "codex_review_retryable_failure"
+CODEX_REVIEW_RETRY_REQUESTED_EVENT_KIND = "codex_review_retry_requested"
+CODEX_REVIEW_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND = "codex_review_recovery_successor_created"
 WAITING_FOR_CURSOR_FIX_EVENT_KIND = "waiting_for_cursor_fix_entered"
 RUN_COMPLETED_EVENT_KIND = "run_completed"
 RUN_COMPLETED_WITH_RESIDUAL_RISK_EVENT_KIND = "run_completed_with_residual_risk"
+SEQUENCE_CHECKPOINT_REQUESTED_EVENT_KIND = "sequence_checkpoint_requested"
+SEQUENCE_CHECKPOINT_COMMITTED_EVENT_KIND = "sequence_checkpoint_committed"
+SEQUENCE_HANDOFF_COMPLETED_EVENT_KIND = "sequence_handoff_completed"
+SEQUENCE_FINALIZED_EVENT_KIND = "sequence_finalized"
+SEQUENCE_ABORT_REQUESTED_EVENT_KIND = "sequence_abort_requested"
+SEQUENCE_ABORTED_EVENT_KIND = "sequence_aborted"
+SEQUENCE_BLOCKED_EVENT_KIND = "sequence_blocked"
 MAX_ITERATIONS_REACHED_EVENT_KIND = "max_iterations_reached"
+REVIEW_BUDGET_EXTENDED_EVENT_KIND = "review_budget_extended"
 ABORT_REQUESTED_EVENT_KIND = "abort_requested"
 RUN_ABORTED_EVENT_KIND = "run_aborted"
 ATTEMPT_RESULT_STALE_EVENT_KIND = "attempt_result_stale"
@@ -419,12 +430,60 @@ class CodexUsageCapacityDetectedEvent(DomainModel):
     kind: str = Field(default=CODEX_USAGE_CAPACITY_DETECTED_EVENT_KIND)
     run_id: str
     review_iteration: int
+    evidence_source: Literal["structured_error", "post_failure_capacity_probe"] = "structured_error"
+    operational_failure_kind: NonEmptyStr | None = None
 
     @field_validator("kind")
     @classmethod
     def kind_is_codex_usage_capacity_detected(cls, value: str) -> str:
         if value != CODEX_USAGE_CAPACITY_DETECTED_EVENT_KIND:
             raise ValueError("kind must be codex_usage_capacity_detected")
+        return value
+
+
+class CodexReviewRetryableFailureEvent(DomainModel):
+    kind: str = Field(default=CODEX_REVIEW_RETRYABLE_FAILURE_EVENT_KIND)
+    run_id: str
+    review_iteration: int
+    failure_kind: NonEmptyStr
+    attempt_id: NonEmptyStr
+    retry_generation: int
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_codex_review_retryable_failure(cls, value: str) -> str:
+        if value != CODEX_REVIEW_RETRYABLE_FAILURE_EVENT_KIND:
+            raise ValueError("kind must be codex_review_retryable_failure")
+        return value
+
+
+class CodexReviewRetryRequestedEvent(DomainModel):
+    kind: str = Field(default=CODEX_REVIEW_RETRY_REQUESTED_EVENT_KIND)
+    run_id: str
+    review_iteration: int
+    retry_generation: int
+    idempotent_replay: bool
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_codex_review_retry_requested(cls, value: str) -> str:
+        if value != CODEX_REVIEW_RETRY_REQUESTED_EVENT_KIND:
+            raise ValueError("kind must be codex_review_retry_requested")
+        return value
+
+
+class CodexReviewRecoverySuccessorCreatedEvent(DomainModel):
+    kind: str = Field(default=CODEX_REVIEW_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND)
+    source_run_id: str
+    successor_run_id: str
+    recovery_key: NonEmptyStr
+    review_iteration: int
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_codex_review_recovery_successor_created(cls, value: str) -> str:
+        if value != CODEX_REVIEW_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND:
+            raise ValueError("kind must be codex_review_recovery_successor_created")
         return value
 
 
@@ -484,16 +543,156 @@ class RunCompletedWithResidualRiskEvent(DomainModel):
         return value
 
 
+class SequenceCheckpointRequestedEvent(DomainModel):
+    kind: str = Field(default=SEQUENCE_CHECKPOINT_REQUESTED_EVENT_KIND)
+    run_id: str
+    sequence_id: NonEmptyStr
+    accepted_outcome: Literal["completed", "completed_with_residual_risk"]
+    review_iteration: int
+    checkpoint_intent_artifact_path: NonEmptyStr
+    checkpoint_intent_sha256: Sha256Hex
+    checkpoint_trusted_tree_sha256: Sha256Hex
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_sequence_checkpoint_requested(cls, value: str) -> str:
+        if value != SEQUENCE_CHECKPOINT_REQUESTED_EVENT_KIND:
+            raise ValueError("kind must be sequence_checkpoint_requested")
+        return value
+
+
+class SequenceCheckpointCommittedEvent(DomainModel):
+    kind: str = Field(default=SEQUENCE_CHECKPOINT_COMMITTED_EVENT_KIND)
+    run_id: str
+    sequence_id: NonEmptyStr
+    commit_sha256_prefix: NonEmptyStr
+    tree_sha256_prefix: NonEmptyStr
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_sequence_checkpoint_committed(cls, value: str) -> str:
+        if value != SEQUENCE_CHECKPOINT_COMMITTED_EVENT_KIND:
+            raise ValueError("kind must be sequence_checkpoint_committed")
+        return value
+
+
+class SequenceHandoffCompletedEvent(DomainModel):
+    kind: str = Field(default=SEQUENCE_HANDOFF_COMPLETED_EVENT_KIND)
+    predecessor_run_id: str
+    successor_run_id: str
+    sequence_id: NonEmptyStr
+    predecessor_ordinal: int
+    successor_ordinal: int
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_sequence_handoff_completed(cls, value: str) -> str:
+        if value != SEQUENCE_HANDOFF_COMPLETED_EVENT_KIND:
+            raise ValueError("kind must be sequence_handoff_completed")
+        return value
+
+
+class SequenceFinalizedEvent(DomainModel):
+    kind: str = Field(default=SEQUENCE_FINALIZED_EVENT_KIND)
+    sequence_id: NonEmptyStr
+    final_run_id: str
+    final_outcome: Literal["completed", "completed_with_residual_risk"]
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_sequence_finalized(cls, value: str) -> str:
+        if value != SEQUENCE_FINALIZED_EVENT_KIND:
+            raise ValueError("kind must be sequence_finalized")
+        return value
+
+
+class SequenceAbortRequestedEvent(DomainModel):
+    kind: str = Field(default=SEQUENCE_ABORT_REQUESTED_EVENT_KIND)
+    sequence_id: NonEmptyStr
+    reason: NonEmptyStr = "user_requested_abort"
+    current_run_id: str | None = None
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_sequence_abort_requested(cls, value: str) -> str:
+        if value != SEQUENCE_ABORT_REQUESTED_EVENT_KIND:
+            raise ValueError("kind must be sequence_abort_requested")
+        return value
+
+
+class SequenceAbortedEvent(DomainModel):
+    kind: str = Field(default=SEQUENCE_ABORTED_EVENT_KIND)
+    sequence_id: NonEmptyStr
+    reason: NonEmptyStr
+    current_run_id: str | None = None
+    cancelled_ordinal_count: int = 0
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_sequence_aborted(cls, value: str) -> str:
+        if value != SEQUENCE_ABORTED_EVENT_KIND:
+            raise ValueError("kind must be sequence_aborted")
+        return value
+
+
+class SequenceBlockedEvent(DomainModel):
+    kind: str = Field(default=SEQUENCE_BLOCKED_EVENT_KIND)
+    sequence_id: NonEmptyStr
+    current_run_id: str
+    block_reason_kind: NonEmptyStr
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_sequence_blocked(cls, value: str) -> str:
+        if value != SEQUENCE_BLOCKED_EVENT_KIND:
+            raise ValueError("kind must be sequence_blocked")
+        return value
+
+
 class MaxIterationsReachedEvent(DomainModel):
     kind: str = Field(default=MAX_ITERATIONS_REACHED_EVENT_KIND)
     run_id: str
     review_iteration: int
+    review_result_path: NonEmptyStr | None = None
+    review_result_sha256: Sha256Hex | None = None
+    fix_prompt_path: NonEmptyStr | None = None
+    fix_prompt_sha256: Sha256Hex | None = None
+    correction_envelope_path: NonEmptyStr | None = None
+    correction_envelope_sha256: Sha256Hex | None = None
 
     @field_validator("kind")
     @classmethod
     def kind_is_max_iterations_reached(cls, value: str) -> str:
         if value != MAX_ITERATIONS_REACHED_EVENT_KIND:
             raise ValueError("kind must be max_iterations_reached")
+        return value
+
+
+class ReviewBudgetExtendedEvent(DomainModel):
+    kind: str = Field(default=REVIEW_BUDGET_EXTENDED_EVENT_KIND)
+    run_id: str
+    review_iteration: int
+    previous_effective_total: int
+    new_effective_total: int
+    review_result_path: NonEmptyStr
+    review_result_sha256: Sha256Hex
+    fix_prompt_path: NonEmptyStr
+    fix_prompt_sha256: Sha256Hex
+    correction_envelope_path: NonEmptyStr
+    correction_envelope_sha256: Sha256Hex
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_review_budget_extended(cls, value: str) -> str:
+        if value != REVIEW_BUDGET_EXTENDED_EVENT_KIND:
+            raise ValueError("kind must be review_budget_extended")
+        return value
+
+    @field_validator("previous_effective_total", "new_effective_total", "review_iteration")
+    @classmethod
+    def positive_integers(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("review budget extension totals must be positive")
         return value
 
 
@@ -578,10 +777,24 @@ SchedulerEvent = Annotated[
     | Annotated[CodexReviewBlockedEvent, Tag(CODEX_REVIEW_BLOCKED_EVENT_KIND)]
     | Annotated[CodexUsageCapacityDetectedEvent, Tag(CODEX_USAGE_CAPACITY_DETECTED_EVENT_KIND)]
     | Annotated[CodexCapacityAvailableEvent, Tag(CODEX_CAPACITY_AVAILABLE_EVENT_KIND)]
+    | Annotated[CodexReviewRetryableFailureEvent, Tag(CODEX_REVIEW_RETRYABLE_FAILURE_EVENT_KIND)]
+    | Annotated[CodexReviewRetryRequestedEvent, Tag(CODEX_REVIEW_RETRY_REQUESTED_EVENT_KIND)]
+    | Annotated[
+        CodexReviewRecoverySuccessorCreatedEvent,
+        Tag(CODEX_REVIEW_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND),
+    ]
     | Annotated[WaitingForCursorFixEnteredEvent, Tag(WAITING_FOR_CURSOR_FIX_EVENT_KIND)]
     | Annotated[RunCompletedEvent, Tag(RUN_COMPLETED_EVENT_KIND)]
     | Annotated[RunCompletedWithResidualRiskEvent, Tag(RUN_COMPLETED_WITH_RESIDUAL_RISK_EVENT_KIND)]
+    | Annotated[SequenceCheckpointRequestedEvent, Tag(SEQUENCE_CHECKPOINT_REQUESTED_EVENT_KIND)]
+    | Annotated[SequenceCheckpointCommittedEvent, Tag(SEQUENCE_CHECKPOINT_COMMITTED_EVENT_KIND)]
+    | Annotated[SequenceHandoffCompletedEvent, Tag(SEQUENCE_HANDOFF_COMPLETED_EVENT_KIND)]
+    | Annotated[SequenceFinalizedEvent, Tag(SEQUENCE_FINALIZED_EVENT_KIND)]
+    | Annotated[SequenceAbortRequestedEvent, Tag(SEQUENCE_ABORT_REQUESTED_EVENT_KIND)]
+    | Annotated[SequenceAbortedEvent, Tag(SEQUENCE_ABORTED_EVENT_KIND)]
+    | Annotated[SequenceBlockedEvent, Tag(SEQUENCE_BLOCKED_EVENT_KIND)]
     | Annotated[MaxIterationsReachedEvent, Tag(MAX_ITERATIONS_REACHED_EVENT_KIND)]
+    | Annotated[ReviewBudgetExtendedEvent, Tag(REVIEW_BUDGET_EXTENDED_EVENT_KIND)]
     | Annotated[AbortRequestedEvent, Tag(ABORT_REQUESTED_EVENT_KIND)]
     | Annotated[RunAbortedEvent, Tag(RUN_ABORTED_EVENT_KIND)]
     | Annotated[AttemptResultStaleEvent, Tag(ATTEMPT_RESULT_STALE_EVENT_KIND)],

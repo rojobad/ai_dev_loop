@@ -10,6 +10,10 @@ from ai_dev_loop.scheduler.application.contracts import (
     HistoryResult,
     SchedulerRunSummary,
     SchedulerStatusResult,
+    SequenceAbortResult,
+    SequencePrepareResult,
+    SequenceStartResult,
+    SequenceStatusResult,
     StartResult,
     SubmitResult,
     TickReceipt,
@@ -17,6 +21,16 @@ from ai_dev_loop.scheduler.application.contracts import (
 )
 from ai_dev_loop.scheduler.application.cutover_cleanup import CutoverCleanupResult
 from ai_dev_loop.scheduler.application.history import scheduler_history
+from ai_dev_loop.scheduler.application.review_budget_extend import (
+    ReviewBudgetExtendResult,
+    scheduler_extend_review_budget,
+)
+from ai_dev_loop.scheduler.application.review_retry import ReviewRetryResult, scheduler_review_retry
+from ai_dev_loop.scheduler.application.sequence_prepare import (
+    SequencePrepareOptions,
+    prepare_sequence,
+)
+from ai_dev_loop.scheduler.application.sequence_status import scheduler_sequence_status
 from ai_dev_loop.scheduler.application.start import start_run
 from ai_dev_loop.scheduler.application.status import scheduler_list, scheduler_status
 from ai_dev_loop.scheduler.application.submission import SubmitOptions, submit_run
@@ -72,7 +86,15 @@ def _render_summary(summary: SchedulerRunSummary, *, output: str) -> dict[str, o
         f"State: {summary.state_kind}",
         f"Project: {summary.project_name}",
         f"Repository: {summary.repository_root}",
-        f"Reviews completed: {summary.review_iterations_completed}/{summary.max_review_iterations}",
+        (
+            f"Reviews completed: {summary.review_iterations_completed}/"
+            f"{summary.max_review_iterations}"
+            + (
+                f" (submitted limit {summary.submitted_max_review_iterations})"
+                if summary.submitted_max_review_iterations is not None
+                else ""
+            )
+        ),
         *(
             [f"Controller: {summary.controller_session_id_prefix}"]
             if summary.controller_session_id_prefix
@@ -82,6 +104,12 @@ def _render_summary(summary: SchedulerRunSummary, *, output: str) -> dict[str, o
         f"Submitted: {summary.submitted_at}",
         f"Updated: {summary.updated_at}",
     ]
+    if summary.sequence_id_prefix is not None:
+        lines.append(
+            "Sequence: "
+            f"{summary.sequence_id_prefix} "
+            f"phase {summary.sequence_ordinal}/{summary.sequence_total_phases}"
+        )
     if summary.cursor_wait_until:
         lines.append(f"Cursor wait until: {summary.cursor_wait_until}")
     if summary.block_reason_kind:
@@ -355,6 +383,251 @@ def render_timer_disable_output(result: TimerDisableResult, *, output: str) -> s
     return "\n".join(lines) + "\n"
 
 
+def render_sequence_prepare_output(result: SequencePrepareResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "sequence_id": result.sequence_id,
+            "name": result.name,
+            "state_kind": result.state_kind,
+            "entry_count": result.entry_count,
+            "reused_existing": result.reused_existing,
+            "safe_next_action": result.safe_next_action.model_dump(mode="json"),
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    if result.reused_existing:
+        header = f"Scheduler sequence {result.sequence_id} (reused existing sequence)"
+    else:
+        header = f"Prepared scheduler sequence {result.sequence_id}"
+    lines = [
+        header,
+        f"Name: {result.name}",
+        f"State: {result.state_kind}",
+        f"Entries: {result.entry_count}",
+        "Sequence prepare freezes definitions only; it does not reserve the repository or invoke Git.",
+        f"Next action: {result.safe_next_action.command}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def render_sequence_status_output(result: SequenceStatusResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "sequence_id": result.sequence_id,
+            "name": result.name,
+            "state_kind": result.state_kind,
+            "project": result.project_name,
+            "repository_root": result.repository_root,
+            "entry_count": result.entry_count,
+            "current_ordinal": result.current_ordinal,
+            "current_run_id": result.current_run_id,
+            "current_run_state_kind": result.current_run_state_kind,
+            "current_phase_name": result.current_phase_name,
+            "residual_risk": result.residual_risk,
+            "residual_risk_ordinals": list(result.residual_risk_ordinals),
+            "block_reason_kind": result.block_reason_kind,
+            "abort_reason": result.abort_reason,
+            "finalized_at": result.finalized_at,
+            "completion_report_sha256_prefix": result.completion_report_sha256_prefix,
+            "prepared_at": result.prepared_at,
+            "updated_at": result.updated_at,
+            "started_at": result.started_at,
+            "idempotency_key_prefix": result.idempotency_key_prefix,
+            "entries": [entry.model_dump(mode="json") for entry in result.entries],
+            "aggregate_counts": (
+                result.aggregate_counts.model_dump(mode="json")
+                if result.aggregate_counts is not None
+                else None
+            ),
+            "safe_next_action": result.safe_next_action.model_dump(mode="json"),
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    lines = [
+        f"Sequence: {result.sequence_id}",
+        f"Name: {result.name}",
+        f"State: {result.state_kind}",
+        f"Project: {result.project_name}",
+        f"Repository: {result.repository_root}",
+        f"Entries: {result.entry_count}",
+    ]
+    if result.current_ordinal is not None:
+        lines.append(f"Current phase: {result.current_ordinal:02d}/{result.entry_count}")
+    if result.current_phase_name is not None:
+        lines.append(f"Current phase name: {result.current_phase_name}")
+    if result.current_run_id is not None:
+        lines.append(f"Materialized run: {result.current_run_id}")
+    if result.current_run_state_kind is not None:
+        lines.append(f"Materialized run state: {result.current_run_state_kind}")
+    if result.residual_risk is not None:
+        lines.append(f"Residual risk: {result.residual_risk}")
+    if result.residual_risk_ordinals:
+        lines.append(
+            f"Residual-risk phases: {', '.join(str(o) for o in result.residual_risk_ordinals)}"
+        )
+    if result.block_reason_kind:
+        lines.append(f"Block reason: {result.block_reason_kind}")
+    if result.abort_reason:
+        lines.append(f"Abort reason: {result.abort_reason}")
+    if result.finalized_at:
+        lines.append(f"Finalized: {result.finalized_at}")
+    if result.completion_report_sha256_prefix:
+        lines.append(f"Completion report prefix: {result.completion_report_sha256_prefix}")
+    if result.aggregate_counts is not None:
+        counts = result.aggregate_counts
+        lines.append(
+            "Counts: "
+            f"planned={counts.planned} materialized={counts.materialized} "
+            f"accepted={counts.accepted} residual_risk={counts.residual_risk} "
+            f"checkpointed={counts.checkpointed} cancelled={counts.cancelled} "
+            f"remaining={counts.remaining}"
+        )
+    lines.extend(
+        [
+            f"Prepared: {result.prepared_at}",
+            f"Updated: {result.updated_at}",
+        ]
+    )
+    if result.started_at is not None:
+        lines.append(f"Started: {result.started_at}")
+    lines.append(f"Idempotency key prefix: {result.idempotency_key_prefix}")
+    for entry in result.entries:
+        commit_note = " (checkpoint commit message frozen)" if entry.commit_message_present else ""
+        status_bits: list[str] = []
+        if entry.materialized:
+            status_bits.append("materialized")
+        if entry.accepted_outcome:
+            status_bits.append(entry.accepted_outcome)
+        if entry.residual_risk:
+            status_bits.append("residual_risk")
+        if entry.checkpoint_commit_sha256_prefix:
+            status_bits.append(f"checkpoint={entry.checkpoint_commit_sha256_prefix}")
+        if entry.cancelled:
+            status_bits.append("cancelled")
+        status = f" [{', '.join(status_bits)}]" if status_bits else ""
+        lines.append(
+            f"- Phase {entry.ordinal:02d}: {entry.phase_name} "
+            f"(planned run prefix {entry.planned_run_id_prefix}){commit_note}{status}"
+        )
+    lines.append(f"Next action: {result.safe_next_action.command}")
+    return "\n".join(lines) + "\n"
+
+
+def render_sequence_abort_output(result: SequenceAbortResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "sequence_id": result.sequence_id,
+            "state_kind": result.state_kind,
+            "abort_persisted": result.abort_persisted,
+            "idempotent_replay": result.idempotent_replay,
+            "run_abort_process_action": result.run_abort_process_action.value,
+            "run_termination_pending": result.run_termination_pending,
+            "safe_next_action": result.safe_next_action.model_dump(mode="json"),
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    replay = " (idempotent replay)" if result.idempotent_replay else ""
+    lines = [
+        f"Scheduler sequence abort for {result.sequence_id}{replay}",
+        f"State: {result.state_kind}",
+        f"Abort persisted: {result.abort_persisted}",
+        f"Run abort process action: {result.run_abort_process_action.value}",
+        f"Run termination pending: {result.run_termination_pending}",
+        f"Next action: {result.safe_next_action.command}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def render_review_budget_extend_output(result: ReviewBudgetExtendResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "run_id": result.run_id,
+            "state_kind": result.state_kind,
+            "changed": result.changed,
+            "idempotent_replay": result.idempotent_replay,
+            "previous_effective_total": result.previous_effective_total,
+            "new_effective_total": result.new_effective_total,
+            "safe_next_action": result.safe_next_action.model_dump(mode="json"),
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    lines = [
+        f"Review budget extension run: {result.run_id}",
+        f"State: {result.state_kind}",
+        f"Changed: {result.changed}",
+        f"Idempotent replay: {result.idempotent_replay}",
+        (
+            "Effective review ceiling: "
+            f"{result.previous_effective_total} -> {result.new_effective_total}"
+        ),
+    ]
+    if result.safe_next_action.command:
+        lines.append(f"Next action: {result.safe_next_action.command}")
+    else:
+        lines.append(f"Next action: {result.safe_next_action.kind.value}")
+    return "\n".join(lines) + "\n"
+
+
+def render_review_retry_output(result: ReviewRetryResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "run_id": result.run_id,
+            "source_run_id": result.source_run_id,
+            "state_kind": result.state_kind,
+            "changed": result.changed,
+            "idempotent_replay": result.idempotent_replay,
+            "recovery_successor": result.recovery_successor,
+            "safe_next_action": result.safe_next_action.model_dump(mode="json"),
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    lines = [
+        f"Review retry run: {result.run_id}",
+        f"State: {result.state_kind}",
+        f"Changed: {result.changed}",
+        f"Idempotent replay: {result.idempotent_replay}",
+    ]
+    if result.source_run_id:
+        lines.append(f"Source run: {result.source_run_id}")
+    if result.recovery_successor:
+        lines.append("Recovery successor: yes")
+    lines.append(f"Next action: {result.safe_next_action.command}")
+    return "\n".join(lines) + "\n"
+
+
+def render_sequence_start_output(result: SequenceStartResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "sequence_id": result.sequence_id,
+            "run_id": result.run_id,
+            "sequence_state_kind": result.sequence_state_kind,
+            "run_state_kind": result.run_state_kind,
+            "current_ordinal": result.current_ordinal,
+            "entry_count": result.entry_count,
+            "current_phase_name": result.current_phase_name,
+            "changed": result.changed,
+            "idempotent_replay": result.idempotent_replay,
+            "safe_next_action": result.safe_next_action.model_dump(mode="json"),
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    header = (
+        f"Started scheduler sequence {result.sequence_id} (reused existing authorization)"
+        if result.idempotent_replay
+        else f"Started scheduler sequence {result.sequence_id}"
+    )
+    lines = [
+        header,
+        f"Materialized run: {result.run_id}",
+        f"Phase: {result.current_ordinal:02d}/{result.entry_count} ({result.current_phase_name})",
+        f"Run state: {result.run_state_kind}",
+        "Sequence start authorizes the frozen sequence and materializes only phase 1.",
+        "Phase 20.2 does not commit checkpoints or materialize later phases.",
+        f"Next action: {result.safe_next_action.command}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def render_timer_validate_output(errors: list[str], *, output: str) -> str:
     if output == "json":
         payload = {
@@ -371,13 +644,23 @@ def render_timer_validate_output(errors: list[str], *, output: str) -> str:
 
 
 __all__ = [
+    "SequencePrepareOptions",
     "SubmitOptions",
+    "prepare_sequence",
     "render_cutover_cleanup_output",
     "render_scheduler_abort_output",
     "render_scheduler_history_output",
     "render_scheduler_timeline_output",
+    "render_sequence_abort_output",
+    "render_sequence_prepare_output",
+    "render_sequence_start_output",
+    "render_sequence_status_output",
+    "scheduler_sequence_status",
     "scheduler_timeline",
     "render_list_output",
+    "render_review_budget_extend_output",
+    "render_review_retry_output",
+    "scheduler_extend_review_budget",
     "render_start_output",
     "render_status_output",
     "render_submit_output",
@@ -390,6 +673,8 @@ __all__ = [
     "scheduler_abort_run",
     "scheduler_history",
     "scheduler_list",
+    "scheduler_extend_review_budget",
+    "scheduler_review_retry",
     "scheduler_status",
     "start_run",
     "submit_run",

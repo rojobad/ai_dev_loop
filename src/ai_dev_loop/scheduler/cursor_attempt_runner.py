@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -306,9 +307,15 @@ def _run_cursor_turn(
     }
     if execution.failure_code:
         metadata_payload["failure_code"] = execution.failure_code
-    atomic_write_json(run_root / metadata_rel, metadata_payload, sensitive=True)
+    final_response_sha256: str | None = None
     if has_completion_signal and execution.parse.final_text:
         atomic_write_text(run_root / final_rel, execution.parse.final_text, sensitive=True)
+        final_response_sha256 = hashlib.sha256(
+            execution.parse.final_text.encode("utf-8")
+        ).hexdigest()
+        metadata_payload["final_response_path"] = final_rel
+        metadata_payload["final_response_sha256"] = final_response_sha256
+    atomic_write_json(run_root / metadata_rel, metadata_payload, sensitive=True)
 
     run_state = _run_state_from_binding(evidence)
     fingerprint_path = ""
@@ -351,6 +358,8 @@ def _run_cursor_turn(
         "cursor_output_fingerprint_sha256": fingerprint_sha,
         "usage_limit_fingerprint_path": usage_limit_fingerprint_path,
         "usage_limit_fingerprint_sha256": usage_limit_fingerprint_sha,
+        "final_response_path": final_rel if final_response_sha256 else None,
+        "final_response_sha256": final_response_sha256,
         **_outcome_identity(evidence),
     }
 

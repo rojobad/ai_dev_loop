@@ -72,11 +72,15 @@ class SchedulerRunSummary(AppModel):
     reviewer_session_id_prefix: str | None
     review_iterations_completed: int
     max_review_iterations: int
+    submitted_max_review_iterations: int | None = None
     submitted_at: str
     updated_at: str
     safe_next_action: SafeNextAction
     cursor_wait_until: str | None = None
     block_reason_kind: str | None = None
+    sequence_id_prefix: str | None = None
+    sequence_ordinal: int | None = None
+    sequence_total_phases: int | None = None
 
 
 class SchedulerStatusResult(AppModel):
@@ -225,6 +229,16 @@ def awaiting_codex_review_safe_next_action() -> SafeNextAction:
     )
 
 
+def waiting_codex_review_retry_safe_next_action(run_id: str) -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.SCHEDULER_TICK,
+        command=(
+            f"ai_dev_loop scheduler review retry {run_id} "
+            "(authorize Codex review retry; tick launches the attempt)."
+        ),
+    )
+
+
 def waiting_codex_capacity_safe_next_action() -> SafeNextAction:
     return SafeNextAction(
         kind=SafeNextActionKind.SCHEDULER_TICK,
@@ -246,6 +260,17 @@ def terminal_review_safe_next_action() -> SafeNextAction:
     return SafeNextAction(
         kind=SafeNextActionKind.NONE,
         command=None,
+    )
+
+
+def max_iterations_reached_safe_next_action(run_id: str) -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.NONE,
+        command=(
+            f"ai_dev_loop scheduler extend {run_id} "
+            "--max-review-iterations <higher-total> "
+            "(authorize a higher review ceiling; tick schedules the correction)."
+        ),
     )
 
 
@@ -331,11 +356,17 @@ def safe_next_action_for_state_kind(
         return active_cursor_safe_next_action()
     if state_kind == "waiting_codex_capacity":
         return waiting_codex_capacity_safe_next_action()
+    if state_kind == "waiting_codex_review_retry":
+        return waiting_codex_review_retry_safe_next_action(run_id)
     if state_kind == "awaiting_codex_review":
         return awaiting_codex_review_safe_next_action()
     if state_kind == "waiting_for_cursor_fix":
         return waiting_for_cursor_fix_safe_next_action()
-    if state_kind in {"completed", "completed_with_residual_risk", "max_iterations_reached"}:
+    if state_kind == "checkpoint_pending":
+        return checkpoint_pending_safe_next_action()
+    if state_kind == "max_iterations_reached":
+        return max_iterations_reached_safe_next_action(run_id)
+    if state_kind in {"completed", "completed_with_residual_risk"}:
         return terminal_review_safe_next_action()
     if state_kind == "aborted":
         return aborted_safe_next_action()
@@ -360,8 +391,14 @@ def review_budget_from_state(
     state: SchedulerState,
     *,
     ledger_reviews_completed: int | None = None,
+    effective_max_review_iterations: int | None = None,
 ) -> tuple[int, int]:
-    max_reviews = state.context.workflow.max_review_iterations
+    submitted_max = state.context.workflow.max_review_iterations
+    max_reviews = (
+        effective_max_review_iterations
+        if effective_max_review_iterations is not None
+        else submitted_max
+    )
     codex = getattr(state, "codex", None)
     if codex is not None:
         return int(getattr(codex, "reviews_completed", 0) or 0), max_reviews
@@ -414,6 +451,7 @@ def summary_from_context(
     bound_reviewer_session_id: str | None = None,
     review_iterations_completed: int | None = None,
     max_review_iterations: int | None = None,
+    submitted_max_review_iterations: int | None = None,
     cursor_wait_until: str | None = None,
     block_reason_kind: str | None = None,
 ) -> SchedulerRunSummary:
@@ -427,6 +465,7 @@ def summary_from_context(
         cursor_wait_until=cursor_wait_until,
         block_reason_kind=block_reason_kind,
     )
+    sequence_binding = context.sequence
     return SchedulerRunSummary(
         run_id=run_id,
         state_kind=state_kind,
@@ -444,9 +483,199 @@ def summary_from_context(
             if max_review_iterations is not None
             else context.workflow.max_review_iterations
         ),
+        submitted_max_review_iterations=submitted_max_review_iterations,
         submitted_at=submitted_at,
         updated_at=updated_at,
         safe_next_action=action,
         cursor_wait_until=cursor_wait_until,
         block_reason_kind=block_reason_kind,
+        sequence_id_prefix=(
+            sequence_binding.sequence_id[:8] if sequence_binding is not None else None
+        ),
+        sequence_ordinal=sequence_binding.ordinal if sequence_binding is not None else None,
+        sequence_total_phases=(
+            sequence_binding.total_phases if sequence_binding is not None else None
+        ),
+    )
+
+
+class SequenceEntrySummary(AppModel):
+    ordinal: int
+    phase_name: str
+    planned_run_id_prefix: str
+    commit_message_present: bool
+    materialized: bool = False
+    materialized_run_id_prefix: str | None = None
+    accepted_outcome: str | None = None
+    residual_risk: bool = False
+    checkpoint_commit_sha256_prefix: str | None = None
+    cancelled: bool = False
+
+
+class SequenceAggregateCounts(AppModel):
+    planned: int
+    materialized: int
+    accepted: int
+    residual_risk: int
+    checkpointed: int
+    cancelled: int
+    remaining: int
+
+
+class SequencePrepareResult(AppModel):
+    sequence_id: str
+    name: str
+    state_kind: str
+    entry_count: int
+    reused_existing: bool
+    safe_next_action: SafeNextAction
+
+
+class SequenceStatusResult(AppModel):
+    sequence_id: str
+    name: str
+    state_kind: str
+    project_name: str
+    repository_root: str
+    entry_count: int
+    current_ordinal: int | None
+    current_run_id: str | None = None
+    current_run_state_kind: str | None = None
+    current_phase_name: str | None = None
+    residual_risk: bool | None = None
+    residual_risk_ordinals: tuple[int, ...] = ()
+    block_reason_kind: str | None = None
+    abort_reason: str | None = None
+    finalized_at: str | None = None
+    completion_report_sha256_prefix: str | None = None
+    prepared_at: str
+    updated_at: str
+    started_at: str | None = None
+    idempotency_key_prefix: str
+    entries: tuple[SequenceEntrySummary, ...]
+    aggregate_counts: SequenceAggregateCounts | None = None
+    safe_next_action: SafeNextAction
+
+
+class SequenceAbortResult(AppModel):
+    sequence_id: str
+    state_kind: str
+    abort_persisted: bool
+    idempotent_replay: bool
+    run_abort_process_action: AbortProcessAction
+    run_termination_pending: bool = False
+    safe_next_action: SafeNextAction
+
+
+class SequenceStartResult(AppModel):
+    sequence_id: str
+    run_id: str
+    sequence_state_kind: str
+    run_state_kind: str
+    current_ordinal: int
+    entry_count: int
+    current_phase_name: str
+    changed: bool
+    idempotent_replay: bool
+    safe_next_action: SafeNextAction
+
+
+def prepared_sequence_start_next_action(sequence_id: str) -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.SCHEDULER_START,
+        command=f"ai_dev_loop scheduler sequence start {sequence_id}",
+    )
+
+
+def prepared_sequence_safe_next_action(sequence_id: str) -> SafeNextAction:
+    return prepared_sequence_start_next_action(sequence_id)
+
+
+SEQUENCE_CHECKPOINT_BOUNDARY_RUN_STATE_KINDS = frozenset(
+    {
+        "completed",
+        "completed_with_residual_risk",
+    }
+)
+
+
+def sequence_exposes_checkpoint_boundary(
+    *,
+    run_state_kind: str,
+    current_ordinal: int,
+    total_phases: int,
+) -> bool:
+    return (
+        run_state_kind in SEQUENCE_CHECKPOINT_BOUNDARY_RUN_STATE_KINDS
+        and current_ordinal < total_phases
+    )
+
+
+def active_sequence_safe_next_action(
+    *,
+    sequence_id: str,
+    run_safe_action: SafeNextAction,
+) -> SafeNextAction:
+    if run_safe_action.kind is SafeNextActionKind.SCHEDULER_TICK:
+        return SafeNextAction(
+            kind=SafeNextActionKind.SCHEDULER_TICK,
+            command=(
+                f"Active sequence {sequence_id} is waiting on materialized run progress. "
+                f"{run_safe_action.command}"
+            ),
+        )
+    return run_safe_action
+
+
+def checkpoint_pending_safe_next_action() -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.SCHEDULER_TICK,
+        command=(
+            "ai_dev_loop scheduler tick "
+            "(sequence checkpoint reconciliation and handoff in progress)."
+        ),
+    )
+
+
+def awaiting_finalization_sequence_safe_next_action(sequence_id: str) -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.INSPECT_BLOCKED,
+        command=(
+            f"Sequence {sequence_id} is awaiting finalization. Inspect staged final-phase "
+            f"changes with ai_dev_loop scheduler sequence status {sequence_id}. "
+            "Final commit, push, and PR remain operator actions."
+        ),
+    )
+
+
+def blocked_sequence_safe_next_action(
+    sequence_id: str, *, block_reason_kind: str | None = None
+) -> SafeNextAction:
+    detail = block_reason_kind or "blocked"
+    return SafeNextAction(
+        kind=SafeNextActionKind.INSPECT_BLOCKED,
+        command=(
+            f"Sequence {sequence_id} is blocked ({detail}). Inspect materialized runs and "
+            "protected artifacts. No automatic retry or successor materialization is available."
+        ),
+    )
+
+
+def aborted_sequence_safe_next_action(sequence_id: str) -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.NONE,
+        command=(
+            f"Sequence {sequence_id} was aborted. Later planned phases were cancelled without "
+            "creating scheduler runs."
+        ),
+    )
+
+
+def abort_pending_sequence_safe_next_action(sequence_id: str) -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.SCHEDULER_TICK,
+        command=(
+            f"Sequence {sequence_id} abort is pending. Run ai_dev_loop scheduler tick to "
+            "reconcile the active run abort."
+        ),
     )

@@ -13,6 +13,9 @@ from ai_dev_loop.scheduler.application.attempt_backend import (
     UnitLifecycleState,
 )
 from ai_dev_loop.scheduler.application.contracts import AbortProcessAction
+from ai_dev_loop.scheduler.application.sequence_reservation import (
+    sequence_governs_run_reservation,
+)
 from ai_dev_loop.scheduler.domain.common import encode_utc_instant
 from ai_dev_loop.scheduler.domain.events import AttemptResultStaleEvent
 from ai_dev_loop.scheduler.domain.reducer import apply_attempt_result_stale
@@ -102,7 +105,7 @@ def release_abort_hold_resources(
         return False
     released_capacity = store.release_capacity_for_run(conn, run_id=run_id, now=now)
     reservation = store.get_reservation_for_run(conn, run_id)
-    if reservation is not None:
+    if reservation is not None and not sequence_governs_run_reservation(store, conn, run_id):
         store.release_reservation(
             conn,
             worktree_key=str(reservation["worktree_key"]),

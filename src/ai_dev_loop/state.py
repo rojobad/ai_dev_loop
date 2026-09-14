@@ -634,6 +634,12 @@ def generate_run_id(project_slug: str, *, now: datetime | None = None) -> str:
     return f"{project_slug}-{timestamp}-{suffix}"
 
 
+def generate_sequence_id(project_slug: str, *, now: datetime | None = None) -> str:
+    timestamp = format_utc_timestamp(now or utc_now())
+    suffix = secrets.token_hex(3)
+    return f"{project_slug}-seq-{timestamp}-{suffix}"
+
+
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 

@@ -144,4 +144,11 @@ ai_dev_loop controller status \
   --run-id <run-id>
 ```
 
-Los cambios finales quedan staged en el repositorio objetivo. `ai_dev_loop` no hace commit.
+Los cambios finales quedan staged en el repositorio objetivo. `ai_dev_loop` no hace
+commit en runs standalone ni en la fase final de una secuencia.
+
+Para secuencias multi-fase, `scheduler sequence prepare` + `sequence start` + `tick`
+pueden crear commits locales sin firmar solo entre fases no finales aceptadas por
+Codex (`completed` o `completed_with_residual_risk`). La fase final libera la
+reserva con cambios staged intactos. `scheduler abort` durante `checkpoint_pending`
+impide nuevas mutaciones Git y preserva evidencia para reconciliacion.

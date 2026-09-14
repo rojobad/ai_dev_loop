@@ -11,6 +11,30 @@ from ai_dev_loop.response_schema import events_indicate_usage_limit_exceeded
 FAILURE_CODE_CODEX_USAGE_LIMIT = "codex_usage_limit"
 SAFE_CODEX_USAGE_LIMIT_SUMMARY = "Codex reached the account usage limit for review."
 
+INTEGRITY_REVIEW_BLOCK_KINDS = frozenset(
+    {
+        "outcome_evidence_invalid",
+        "codex_bootstrap_uncertain",
+        "codex_dispatch_payload_invalid",
+        "reviewer_identity_conflict",
+        "reviewer_binding_artifact_conflict",
+        "codex_capacity_probe_unavailable",
+        "staged_patch_drift",
+        "fix_prompt_missing",
+    }
+)
+
+OPERATIONAL_REVIEW_BLOCK_KINDS = frozenset(
+    {
+        "codex_review_timeout",
+        "codex_review_output_truncated",
+        "codex_attempt_failed",
+        "codex_review_outcome_invalid",
+    }
+)
+
+HISTORICAL_REVIEW_RECOVERY_BLOCK_KINDS = OPERATIONAL_REVIEW_BLOCK_KINDS
+
 
 class CodexFailureCode(StrEnum):
     USAGE_LIMIT = FAILURE_CODE_CODEX_USAGE_LIMIT
@@ -58,6 +82,18 @@ def is_codex_usage_limit_recovery_eligible(outcome: dict[str, object]) -> bool:
     if str(outcome.get("failure_kind", "")).strip():
         return False
     return outcome.get("parse_ok") is not False
+
+
+def is_integrity_review_block_kind(reason_kind: str) -> bool:
+    return reason_kind in INTEGRITY_REVIEW_BLOCK_KINDS
+
+
+def is_operational_review_block_kind(reason_kind: str) -> bool:
+    return reason_kind in OPERATIONAL_REVIEW_BLOCK_KINDS
+
+
+def is_historical_review_recovery_block_kind(reason_kind: str) -> bool:
+    return reason_kind in HISTORICAL_REVIEW_RECOVERY_BLOCK_KINDS
 
 
 def classify_codex_review_events_path(events_path: Path) -> CodexFailureClassification:

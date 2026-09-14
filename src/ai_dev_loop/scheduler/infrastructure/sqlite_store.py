@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from importlib import resources
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from ai_dev_loop.scheduler.application.contracts import (
     ReservationStatus,
@@ -26,20 +26,49 @@ from ai_dev_loop.scheduler.domain.effects import (
 )
 from ai_dev_loop.scheduler.domain.events import (
     SCHEDULER_EVENT_ADAPTER,
+    RunAuthorizedEvent,
+    RunSubmittedEvent,
     SchedulerEvent,
     parse_scheduler_event,
 )
 from ai_dev_loop.scheduler.domain.state import (
     SCHEDULER_STATE_ADAPTER,
+    AuthorizedState,
     SchedulerState,
     SubmittedState,
 )
 
-SCHEMA_VERSION = 4
+if TYPE_CHECKING:
+    from ai_dev_loop.scheduler.domain.events import SchedulerEvent
+    from ai_dev_loop.scheduler.domain.sequence import (
+        AbortedSequenceState,
+        AbortPendingSequenceState,
+        ActiveSequenceState,
+        AwaitingFinalizationSequenceState,
+        BlockedSequenceState,
+        PreparedSequenceState,
+    )
+
+    SequencePersistedState = (
+        PreparedSequenceState
+        | ActiveSequenceState
+        | AbortPendingSequenceState
+        | BlockedSequenceState
+        | AbortedSequenceState
+        | AwaitingFinalizationSequenceState
+    )
+
+SCHEMA_VERSION = 7
+SEQUENCE_SCHEMA_VERSION = 5
+REVIEW_RETRY_SCHEMA_VERSION = 6
+MIN_READONLY_SCHEMA_VERSION = 4
 MIGRATION_V1_NAME = "0001_initial"
 MIGRATION_V2_NAME = "0002_tick_control"
 MIGRATION_V3_NAME = "0003_attempt_executor"
 MIGRATION_V4_NAME = "0004_cursor_workflow"
+MIGRATION_V5_NAME = "0005_sequence_definitions"
+MIGRATION_V6_NAME = "0006_review_retry"
+MIGRATION_V7_NAME = "0007_checkpoint_holds"
 REQUIRED_TABLES = frozenset(
     {
         "scheduler_schema_migrations",
@@ -53,6 +82,11 @@ REQUIRED_TABLES = frozenset(
         "scheduler_repository_reservations",
         "scheduler_capacity",
         "scheduler_run_tick_claims",
+        "scheduler_sequences",
+        "scheduler_sequence_entries",
+        "scheduler_review_retry_generations",
+        "scheduler_review_recovery_successors",
+        "scheduler_checkpoint_holds",
     }
 )
 REQUIRED_INDEXES = frozenset(
@@ -74,8 +108,30 @@ REQUIRED_INDEXES = frozenset(
         "idx_scheduler_run_tick_claims_active_admission",
         "idx_scheduler_run_tick_claims_run",
         "idx_scheduler_runs_controller_repo",
+        "idx_scheduler_sequences_worktree",
+        "idx_scheduler_sequence_entries_sequence",
+        "idx_scheduler_review_recovery_source",
+        "idx_scheduler_checkpoint_holds_intent",
     }
 )
+REQUIRED_TABLES_V6 = REQUIRED_TABLES - {"scheduler_checkpoint_holds"}
+REQUIRED_INDEXES_V6 = REQUIRED_INDEXES - {"idx_scheduler_checkpoint_holds_intent"}
+REQUIRED_TABLES_V5 = REQUIRED_TABLES_V6 - {
+    "scheduler_review_retry_generations",
+    "scheduler_review_recovery_successors",
+}
+REQUIRED_TABLES_V4 = REQUIRED_TABLES_V5 - {
+    "scheduler_sequences",
+    "scheduler_sequence_entries",
+}
+REQUIRED_INDEXES_V5 = REQUIRED_INDEXES_V6 - {
+    "idx_scheduler_review_recovery_source",
+}
+REQUIRED_INDEXES_V4 = REQUIRED_INDEXES_V5 - {
+    "idx_scheduler_sequences_worktree",
+    "idx_scheduler_sequence_entries_sequence",
+}
+CHECKPOINT_HOLD_SCHEMA_VERSION = 7
 NON_TERMINAL_STATE_KINDS = frozenset(
     {
         "queued",
@@ -86,7 +142,9 @@ NON_TERMINAL_STATE_KINDS = frozenset(
         "waiting_usage_limit",
         "waiting_codex_capacity",
         "awaiting_codex_review",
+        "waiting_codex_review_retry",
         "waiting_for_cursor_fix",
+        "checkpoint_pending",
         "blocked",
     }
 )
@@ -100,7 +158,9 @@ TICK_ELIGIBLE_STATE_KINDS = frozenset(
         "waiting_usage_limit",
         "waiting_codex_capacity",
         "awaiting_codex_review",
+        "waiting_codex_review_retry",
         "waiting_for_cursor_fix",
+        "checkpoint_pending",
     }
 )
 EFFECT_STATUS_PENDING = "pending"
@@ -146,6 +206,18 @@ def _migration_v4_sql() -> str:
     return _migration_sql("0004_cursor_workflow.sql")
 
 
+def _migration_v5_sql() -> str:
+    return _migration_sql("0005_sequence_definitions.sql")
+
+
+def _migration_v6_sql() -> str:
+    return _migration_sql("0006_review_retry.sql")
+
+
+def _migration_v7_sql() -> str:
+    return _migration_sql("0007_checkpoint_holds.sql")
+
+
 def _split_sql_statements(sql: str) -> list[str]:
     statements: list[str] = []
     for chunk in sql.split(";"):
@@ -170,6 +242,12 @@ def migration_checksum(version: int) -> str:
         return hashlib.sha256(_migration_v3_sql().encode("utf-8")).hexdigest()
     if version == 4:
         return hashlib.sha256(_migration_v4_sql().encode("utf-8")).hexdigest()
+    if version == 5:
+        return hashlib.sha256(_migration_v5_sql().encode("utf-8")).hexdigest()
+    if version == 6:
+        return hashlib.sha256(_migration_v6_sql().encode("utf-8")).hexdigest()
+    if version == 7:
+        return hashlib.sha256(_migration_v7_sql().encode("utf-8")).hexdigest()
     raise ValueError(f"unsupported migration version {version}")
 
 
@@ -241,7 +319,17 @@ class SqliteSchedulerStore:
                     SchedulerEngineErrorKind.NOT_FOUND,
                     "scheduler database not initialized",
                 )
-            store._verify_current_schema(conn)
+            if version > SCHEMA_VERSION:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.SCHEMA,
+                    f"database user_version {version} is newer than supported {SCHEMA_VERSION}",
+                )
+            if version < MIN_READONLY_SCHEMA_VERSION:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.SCHEMA,
+                    f"unsupported schema version {version}",
+                )
+            store._verify_current_schema(conn, expected_version=version)
         return store
 
     def bootstrap(self) -> None:
@@ -259,20 +347,47 @@ class SqliteSchedulerStore:
                 self._migrate_v1_to_v2(conn)
                 self._migrate_v2_to_v3(conn)
                 self._migrate_v3_to_v4(conn)
+                self._migrate_v4_to_v5(conn)
+                self._migrate_v5_to_v6(conn)
+                self._migrate_v6_to_v7(conn)
             elif version == 1:
                 self._verify_migration_checksum(conn, 1)
                 self._migrate_v1_to_v2(conn)
                 self._migrate_v2_to_v3(conn)
                 self._migrate_v3_to_v4(conn)
+                self._migrate_v4_to_v5(conn)
+                self._migrate_v5_to_v6(conn)
+                self._migrate_v6_to_v7(conn)
             elif version == 2:
                 self._verify_migration_checksum(conn, 1)
                 self._verify_migration_checksum(conn, 2)
                 self._migrate_v2_to_v3(conn)
                 self._migrate_v3_to_v4(conn)
+                self._migrate_v4_to_v5(conn)
+                self._migrate_v5_to_v6(conn)
+                self._migrate_v6_to_v7(conn)
             elif version == 3:
                 for migration_version in (1, 2, 3):
                     self._verify_migration_checksum(conn, migration_version)
                 self._migrate_v3_to_v4(conn)
+                self._migrate_v4_to_v5(conn)
+                self._migrate_v5_to_v6(conn)
+                self._migrate_v6_to_v7(conn)
+            elif version == 4:
+                for migration_version in (1, 2, 3, 4):
+                    self._verify_migration_checksum(conn, migration_version)
+                self._migrate_v4_to_v5(conn)
+                self._migrate_v5_to_v6(conn)
+                self._migrate_v6_to_v7(conn)
+            elif version == 5:
+                for migration_version in (1, 2, 3, 4, 5):
+                    self._verify_migration_checksum(conn, migration_version)
+                self._migrate_v5_to_v6(conn)
+                self._migrate_v6_to_v7(conn)
+            elif version == 6:
+                for migration_version in (1, 2, 3, 4, 5, 6):
+                    self._verify_migration_checksum(conn, migration_version)
+                self._migrate_v6_to_v7(conn)
             else:
                 self._verify_current_schema(conn)
             self._apply_database_permissions(self.db_path)
@@ -400,6 +515,84 @@ class SqliteSchedulerStore:
             raise
         self._apply_database_permissions(self.db_path)
 
+    def _migrate_v4_to_v5(self, conn: sqlite3.Connection) -> None:
+        if self._user_version(conn) >= 5:
+            self._verify_current_schema(conn)
+            return
+        for migration_version in (1, 2, 3, 4):
+            self._verify_migration_checksum(conn, migration_version)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for statement in _split_sql_statements(_migration_v5_sql()):
+                self._fault_maybe_raise_migration(statement)
+                conn.execute(statement)
+            applied_at = encode_utc_instant(datetime.now(tz=UTC))
+            conn.execute(
+                """
+                INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (5, MIGRATION_V5_NAME, migration_checksum(5), applied_at),
+            )
+            conn.execute("PRAGMA user_version = 5")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        self._apply_database_permissions(self.db_path)
+
+    def _migrate_v5_to_v6(self, conn: sqlite3.Connection) -> None:
+        if self._user_version(conn) >= 6:
+            self._verify_current_schema(conn)
+            return
+        for migration_version in (1, 2, 3, 4, 5):
+            self._verify_migration_checksum(conn, migration_version)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for statement in _split_sql_statements(_migration_v6_sql()):
+                self._fault_maybe_raise_migration(statement)
+                conn.execute(statement)
+            applied_at = encode_utc_instant(datetime.now(tz=UTC))
+            conn.execute(
+                """
+                INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (6, MIGRATION_V6_NAME, migration_checksum(6), applied_at),
+            )
+            conn.execute("PRAGMA user_version = 6")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        self._apply_database_permissions(self.db_path)
+
+    def _migrate_v6_to_v7(self, conn: sqlite3.Connection) -> None:
+        if self._user_version(conn) >= 7:
+            self._verify_current_schema(conn)
+            return
+        for migration_version in (1, 2, 3, 4, 5, 6):
+            self._verify_migration_checksum(conn, migration_version)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for statement in _split_sql_statements(_migration_v7_sql()):
+                self._fault_maybe_raise_migration(statement)
+                conn.execute(statement)
+            applied_at = encode_utc_instant(datetime.now(tz=UTC))
+            conn.execute(
+                """
+                INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (7, MIGRATION_V7_NAME, migration_checksum(7), applied_at),
+            )
+            conn.execute("PRAGMA user_version = 7")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        self._apply_database_permissions(self.db_path)
+
     def _fault_maybe_raise_migration(self, statement: str) -> None:
         hook = self._migration_fault_hook
         if hook is not None:
@@ -421,28 +614,52 @@ class SqliteSchedulerStore:
                 "migration checksum drift detected",
             )
 
-    def _verify_current_schema(self, conn: sqlite3.Connection) -> None:
+    def _verify_current_schema(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        expected_version: int | None = None,
+    ) -> None:
         version = self._user_version(conn)
-        if version != SCHEMA_VERSION:
+        target = SCHEMA_VERSION if expected_version is None else expected_version
+        if version != target:
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.SCHEMA,
                 f"unsupported schema version {version}",
             )
-        for migration_version in (1, 2, 3, 4):
+        for migration_version in range(1, target + 1):
             self._verify_migration_checksum(conn, migration_version)
-        tables = self._table_names(conn)
-        missing = REQUIRED_TABLES - tables
+        if target >= SCHEMA_VERSION:
+            tables = REQUIRED_TABLES
+            indexes = REQUIRED_INDEXES
+        elif target >= 6:
+            tables = REQUIRED_TABLES_V6
+            indexes = REQUIRED_INDEXES_V6
+        elif target >= SEQUENCE_SCHEMA_VERSION:
+            tables = REQUIRED_TABLES_V5
+            indexes = REQUIRED_INDEXES_V5
+        else:
+            tables = REQUIRED_TABLES_V4
+            indexes = REQUIRED_INDEXES_V4
+        missing = tables - self._table_names(conn)
         if missing:
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.SCHEMA,
                 f"corrupt schema missing tables: {sorted(missing)}",
             )
-        indexes = self._index_names(conn)
-        missing_idx = REQUIRED_INDEXES - indexes
+        missing_idx = indexes - self._index_names(conn)
         if missing_idx:
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.SCHEMA,
                 f"corrupt schema missing indexes: {sorted(missing_idx)}",
+            )
+
+    def require_sequence_schema(self, conn: sqlite3.Connection) -> None:
+        version = self._user_version(conn)
+        if version < SEQUENCE_SCHEMA_VERSION:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.SCHEMA,
+                "prepared sequences require scheduler schema version 5",
             )
 
     @contextmanager
@@ -763,6 +980,499 @@ class SqliteSchedulerStore:
                 "run insert conflict",
             ) from exc
 
+    def insert_materialized_sequence_run(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        submitted_state: SubmittedState,
+        authorized_state: AuthorizedState,
+        submitted_event_id: str,
+        submitted_event: RunSubmittedEvent,
+        authorized_event_id: str,
+        authorized_event: RunAuthorizedEvent,
+        now: datetime,
+    ) -> None:
+        from ai_dev_loop.scheduler.domain.state import AuthorizedState as AuthorizedStateModel
+
+        if submitted_state.run_id != run_id or authorized_state.run_id != run_id:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "materialized run state run_id must equal requested run_id",
+            )
+        if not isinstance(authorized_state, AuthorizedStateModel):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "materialized run must end in authorized state",
+            )
+        if authorized_state.kind != "authorized":
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "materialized run must end in authorized state",
+            )
+        queued_kind, queued_payload, queued_digest = self.dump_state(submitted_state)
+        if queued_kind != "queued":
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "materialized run requires queued submitted state",
+            )
+        authorized_kind, authorized_payload, authorized_digest = self.dump_state(authorized_state)
+        if authorized_kind != "authorized":
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "materialized run requires authorized final state",
+            )
+        now_text = encode_utc_instant(now)
+        worktree_key_value = authorized_state.context.repository.worktree_key
+        try:
+            conn.execute(
+                """
+                INSERT INTO scheduler_runs(
+                    run_id, state_kind, state_payload, state_payload_sha256,
+                    version, idempotency_key, worktree_key, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    authorized_kind,
+                    authorized_payload,
+                    authorized_digest,
+                    authorized_state.version,
+                    authorized_state.idempotency_key,
+                    worktree_key_value,
+                    now_text,
+                    now_text,
+                ),
+            )
+            submitted_kind, submitted_payload, submitted_digest = self.dump_event(submitted_event)
+            conn.execute(
+                """
+                INSERT INTO scheduler_events(
+                    event_id, run_id, sequence, event_kind,
+                    event_payload, event_payload_sha256, created_at
+                ) VALUES (?, ?, 1, ?, ?, ?, ?)
+                """,
+                (
+                    submitted_event_id,
+                    run_id,
+                    submitted_kind,
+                    submitted_payload,
+                    submitted_digest,
+                    now_text,
+                ),
+            )
+            authorized_event_kind, authorized_event_payload, authorized_event_digest = (
+                self.dump_event(authorized_event)
+            )
+            conn.execute(
+                """
+                INSERT INTO scheduler_events(
+                    event_id, run_id, sequence, event_kind,
+                    event_payload, event_payload_sha256, created_at
+                ) VALUES (?, ?, 2, ?, ?, ?, ?)
+                """,
+                (
+                    authorized_event_id,
+                    run_id,
+                    authorized_event_kind,
+                    authorized_event_payload,
+                    authorized_event_digest,
+                    now_text,
+                ),
+            )
+            reservation = conn.execute(
+                """
+                INSERT INTO scheduler_repository_reservations(
+                    worktree_key, run_id, repository_root, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(worktree_key) DO UPDATE SET
+                    run_id = excluded.run_id,
+                    repository_root = excluded.repository_root,
+                    status = excluded.status,
+                    created_at = excluded.created_at,
+                    updated_at = excluded.updated_at
+                WHERE scheduler_repository_reservations.status = 'released'
+                """,
+                (
+                    worktree_key_value,
+                    run_id,
+                    authorized_state.context.repository.root,
+                    ReservationStatus.ACTIVE.value,
+                    now_text,
+                    now_text,
+                ),
+            )
+            if reservation.rowcount != 1:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CONFLICT,
+                    "repository worktree reservation could not be claimed",
+                )
+        except sqlite3.IntegrityError as exc:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "materialized sequence run insert conflict",
+            ) from exc
+
+    def _insert_handoff_successor_run(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        submitted_state: object,
+        authorized_state: object,
+        submitted_event_id: str,
+        submitted_event: SchedulerEvent,
+        authorized_event_id: str,
+        authorized_event: SchedulerEvent,
+        now: datetime,
+    ) -> None:
+        from ai_dev_loop.scheduler.domain.state import AuthorizedState as AuthorizedStateModel
+        from ai_dev_loop.scheduler.domain.state import SubmittedState as SubmittedStateModel
+
+        if not isinstance(submitted_state, SubmittedStateModel):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "handoff successor requires SubmittedState",
+            )
+        if not isinstance(authorized_state, AuthorizedStateModel):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "handoff successor requires AuthorizedState",
+            )
+        queued_kind, queued_payload, queued_digest = self.dump_state(submitted_state)
+        authorized_kind, authorized_payload, authorized_digest = self.dump_state(authorized_state)
+        now_text = encode_utc_instant(now)
+        worktree_key_value = authorized_state.context.repository.worktree_key
+        conn.execute(
+            """
+            INSERT INTO scheduler_runs(
+                run_id, state_kind, state_payload, state_payload_sha256,
+                version, idempotency_key, worktree_key, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                authorized_kind,
+                authorized_payload,
+                authorized_digest,
+                authorized_state.version,
+                authorized_state.idempotency_key,
+                worktree_key_value,
+                now_text,
+                now_text,
+            ),
+        )
+        submitted_kind, submitted_payload, submitted_digest = self.dump_event(submitted_event)
+        conn.execute(
+            """
+            INSERT INTO scheduler_events(
+                event_id, run_id, sequence, event_kind,
+                event_payload, event_payload_sha256, created_at
+            ) VALUES (?, ?, 1, ?, ?, ?, ?)
+            """,
+            (
+                submitted_event_id,
+                run_id,
+                submitted_kind,
+                submitted_payload,
+                submitted_digest,
+                now_text,
+            ),
+        )
+        authorized_event_kind, authorized_event_payload, authorized_event_digest = self.dump_event(
+            authorized_event
+        )
+        conn.execute(
+            """
+            INSERT INTO scheduler_events(
+                event_id, run_id, sequence, event_kind,
+                event_payload, event_payload_sha256, created_at
+            ) VALUES (?, ?, 2, ?, ?, ?, ?)
+            """,
+            (
+                authorized_event_id,
+                run_id,
+                authorized_event_kind,
+                authorized_event_payload,
+                authorized_event_digest,
+                now_text,
+            ),
+        )
+
+    def has_pending_effects_for_run(self, conn: sqlite3.Connection, run_id: str) -> bool:
+        row = conn.execute(
+            """
+            SELECT 1 FROM scheduler_effects
+            WHERE run_id = ? AND status = ?
+            LIMIT 1
+            """,
+            (run_id, EFFECT_STATUS_PENDING),
+        ).fetchone()
+        return row is not None
+
+    def complete_sequence_checkpoint_handoff(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        intent: object,
+        result: object,
+        predecessor_state: object,
+        predecessor_version: int,
+        successor_submitted: object,
+        successor_authorized: object,
+        submitted_event: SchedulerEvent,
+        authorized_event: SchedulerEvent,
+        committed_event: SchedulerEvent,
+        handoff_event: SchedulerEvent,
+        updated_sequence: object,
+        event_id_factory: Callable[[], str],
+        now: datetime,
+    ) -> None:
+        from ai_dev_loop.scheduler.domain.checkpoint import (
+            SequenceCheckpointIntent,
+            SequenceCheckpointResult,
+        )
+        from ai_dev_loop.scheduler.domain.sequence import ActiveSequenceState
+        from ai_dev_loop.scheduler.domain.state import (
+            AuthorizedState,
+            CompletedState,
+            CompletedWithResidualRiskState,
+            SubmittedState,
+        )
+
+        if not isinstance(intent, SequenceCheckpointIntent):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "handoff requires SequenceCheckpointIntent",
+            )
+        if not isinstance(result, SequenceCheckpointResult):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "handoff requires SequenceCheckpointResult",
+            )
+        if not isinstance(predecessor_state, (CompletedState, CompletedWithResidualRiskState)):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "handoff requires terminal predecessor state",
+            )
+        if not isinstance(successor_submitted, SubmittedState) or not isinstance(
+            successor_authorized, AuthorizedState
+        ):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "handoff requires successor submitted/authorized states",
+            )
+        if not isinstance(updated_sequence, ActiveSequenceState):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "handoff requires ActiveSequenceState",
+            )
+        sequence_state = self.load_validated_sequence_state(conn, intent.sequence_id)
+        if not isinstance(sequence_state, ActiveSequenceState):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "sequence must be active for checkpoint handoff",
+            )
+        if sequence_state.current_run_id != intent.predecessor_run_id:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "sequence current_run_id must match predecessor",
+            )
+        if sequence_state.current_ordinal != intent.predecessor_ordinal:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "sequence current_ordinal must match predecessor",
+            )
+        if sequence_state.version != intent.sequence_version:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "sequence version drift",
+            )
+        reservation = self.get_reservation_for_run(conn, intent.predecessor_run_id)
+        if reservation is None:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "predecessor must own active reservation",
+            )
+        existing_successor = conn.execute(
+            "SELECT run_id FROM scheduler_runs WHERE run_id = ?",
+            (intent.successor_run_id,),
+        ).fetchone()
+        if existing_successor is not None:
+            current, _, _ = self.load_validated_snapshot(conn, intent.successor_run_id)
+            if (
+                current.kind == "authorized"
+                and current.run_id == intent.successor_run_id
+                and str(reservation["run_id"]) == intent.successor_run_id
+            ):
+                if not self.compare_and_swap_state(
+                    conn,
+                    run_id=intent.predecessor_run_id,
+                    expected_version=predecessor_version,
+                    new_state=predecessor_state,
+                    now=now,
+                ):
+                    raise SchedulerEngineError(
+                        SchedulerEngineErrorKind.CONFLICT,
+                        "predecessor CAS lost during idempotent handoff",
+                    )
+                if not self.compare_and_swap_sequence_state(
+                    conn,
+                    sequence_id=intent.sequence_id,
+                    expected_version=intent.sequence_version,
+                    new_state=updated_sequence,
+                    now=now,
+                ):
+                    raise SchedulerEngineError(
+                        SchedulerEngineErrorKind.CONFLICT,
+                        "sequence CAS lost during idempotent handoff",
+                    )
+                self.release_checkpoint_reconciliation_hold(
+                    conn,
+                    run_id=intent.predecessor_run_id,
+                    intent_sha256=result.intent_sha256,
+                )
+                return
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "successor run already exists with incompatible state",
+            )
+        submitted_event_id = event_id_factory()
+        authorized_event_id = event_id_factory()
+        committed_event_id = event_id_factory()
+        handoff_event_id = event_id_factory()
+        self._insert_handoff_successor_run(
+            conn,
+            run_id=intent.successor_run_id,
+            submitted_state=successor_submitted,
+            authorized_state=successor_authorized,
+            submitted_event_id=submitted_event_id,
+            submitted_event=submitted_event,
+            authorized_event_id=authorized_event_id,
+            authorized_event=authorized_event,
+            now=now,
+        )
+        predecessor_sequence = self.next_event_sequence(conn, intent.predecessor_run_id)
+        self.append_event(
+            conn,
+            event_id=committed_event_id,
+            run_id=intent.predecessor_run_id,
+            sequence=predecessor_sequence,
+            event=committed_event,
+            now=now,
+        )
+        if not self.compare_and_swap_state(
+            conn,
+            run_id=intent.predecessor_run_id,
+            expected_version=predecessor_version,
+            new_state=predecessor_state,
+            now=now,
+        ):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "predecessor CAS lost during handoff",
+            )
+        transfer = conn.execute(
+            """
+            UPDATE scheduler_repository_reservations
+            SET run_id = ?, updated_at = ?
+            WHERE worktree_key = ? AND run_id = ? AND status = ?
+            """,
+            (
+                intent.successor_run_id,
+                encode_utc_instant(now),
+                predecessor_state.context.repository.worktree_key,
+                intent.predecessor_run_id,
+                ReservationStatus.ACTIVE.value,
+            ),
+        )
+        if transfer.rowcount != 1:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "reservation transfer failed",
+            )
+        successor_sequence = self.next_event_sequence(conn, intent.successor_run_id)
+        self.append_event(
+            conn,
+            event_id=handoff_event_id,
+            run_id=intent.successor_run_id,
+            sequence=successor_sequence,
+            event=handoff_event,
+            now=now,
+        )
+        if not self.compare_and_swap_sequence_state(
+            conn,
+            sequence_id=intent.sequence_id,
+            expected_version=intent.sequence_version,
+            new_state=updated_sequence,
+            now=now,
+        ):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "sequence CAS lost during handoff",
+            )
+        self.release_checkpoint_reconciliation_hold(
+            conn,
+            run_id=intent.predecessor_run_id,
+            intent_sha256=result.intent_sha256,
+        )
+
+    def finalize_sequence_state(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        sequence_state: object,
+        finalized_state: object,
+        finalized_event: object,
+        event_id_factory: Callable[[], str],
+        now: datetime,
+    ) -> None:
+        from ai_dev_loop.scheduler.domain.sequence import (
+            AWAITING_FINALIZATION_SEQUENCE_STATE_KIND,
+            ActiveSequenceState,
+            AwaitingFinalizationSequenceState,
+        )
+
+        if not isinstance(sequence_state, ActiveSequenceState):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "finalize requires ActiveSequenceState",
+            )
+        if not isinstance(finalized_state, AwaitingFinalizationSequenceState):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "finalize requires AwaitingFinalizationSequenceState",
+            )
+        kind, payload, digest = self.dump_sequence_state(finalized_state)
+        if kind != AWAITING_FINALIZATION_SEQUENCE_STATE_KIND:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "finalize requires awaiting_finalization sequence state",
+            )
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            UPDATE scheduler_sequences
+            SET state_kind = ?, payload = ?, payload_sha256 = ?,
+                version = ?, updated_at = ?
+            WHERE sequence_id = ? AND version = ?
+            """,
+            (
+                kind,
+                payload,
+                digest,
+                finalized_state.version,
+                now_text,
+                sequence_state.sequence_id,
+                sequence_state.version,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "sequence finalize CAS lost",
+            )
+
     def get_run_row(self, conn: sqlite3.Connection, run_id: str) -> sqlite3.Row:
         row = conn.execute(
             "SELECT * FROM scheduler_runs WHERE run_id = ?",
@@ -924,6 +1634,60 @@ class SqliteSchedulerStore:
                 ReservationStatus.ACTIVE.value,
             ),
         )
+
+    def reacquire_released_reservation_for_run(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        worktree_key: str,
+        repository_root: str,
+        now: datetime,
+    ) -> bool:
+        active = self.get_active_reservation(conn, worktree_key)
+        if active is not None and str(active["run_id"]) != run_id:
+            return False
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            UPDATE scheduler_repository_reservations
+            SET status = ?, repository_root = ?, updated_at = ?
+            WHERE worktree_key = ? AND run_id = ? AND status = ?
+            """,
+            (
+                ReservationStatus.ACTIVE.value,
+                repository_root,
+                now_text,
+                worktree_key,
+                run_id,
+                ReservationStatus.RELEASED.value,
+            ),
+        )
+        if cursor.rowcount == 1:
+            return True
+        cursor = conn.execute(
+            """
+            INSERT INTO scheduler_repository_reservations(
+                worktree_key, run_id, repository_root, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(worktree_key) DO UPDATE SET
+                run_id = excluded.run_id,
+                repository_root = excluded.repository_root,
+                status = excluded.status,
+                updated_at = excluded.updated_at
+            WHERE scheduler_repository_reservations.status = 'released'
+              AND scheduler_repository_reservations.run_id = excluded.run_id
+            """,
+            (
+                worktree_key,
+                run_id,
+                repository_root,
+                ReservationStatus.ACTIVE.value,
+                now_text,
+                now_text,
+            ),
+        )
+        return cursor.rowcount == 1
 
     def list_tick_eligible_run_ids(self, conn: sqlite3.Connection) -> list[str]:
         placeholders = ",".join("?" * len(TICK_ELIGIBLE_STATE_KINDS))
@@ -1672,7 +2436,159 @@ class SqliteSchedulerStore:
         ).fetchone()
         return cast(sqlite3.Row | None, row)
 
+    @staticmethod
+    def schema_supports_checkpoint_holds(conn: sqlite3.Connection) -> bool:
+        return SqliteSchedulerStore._user_version(conn) >= CHECKPOINT_HOLD_SCHEMA_VERSION
+
+    def has_abort_requested_for_run(self, conn: sqlite3.Connection, run_id: str) -> bool:
+        row = conn.execute(
+            """
+            SELECT 1 FROM scheduler_events
+            WHERE run_id = ? AND event_kind = 'abort_requested'
+            LIMIT 1
+            """,
+            (run_id,),
+        ).fetchone()
+        return row is not None
+
+    def has_sequence_abort_requested_for_run(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        sequence_id: str,
+    ) -> bool:
+        row = conn.execute(
+            """
+            SELECT 1 FROM scheduler_events
+            WHERE run_id = ?
+              AND event_kind = 'sequence_abort_requested'
+              AND json_extract(event_payload, '$.sequence_id') = ?
+            LIMIT 1
+            """,
+            (run_id, sequence_id),
+        ).fetchone()
+        return row is not None
+
+    def list_reconcilable_sequence_ids(self, conn: sqlite3.Connection) -> list[str]:
+        rows = conn.execute(
+            """
+            SELECT sequence_id
+            FROM scheduler_sequences
+            WHERE state_kind IN ('active', 'abort_pending')
+            ORDER BY prepared_at ASC, sequence_id ASC
+            """
+        ).fetchall()
+        return [str(row["sequence_id"]) for row in rows]
+
+    def list_sequences_pending_report_publication(self, conn: sqlite3.Connection) -> list[str]:
+        rows = conn.execute(
+            """
+            SELECT sequence_id
+            FROM scheduler_sequences
+            WHERE state_kind = 'awaiting_finalization'
+              AND (
+                json_extract(payload, '$.completion_report_sha256') IS NULL
+                OR json_extract(payload, '$.completion_report_sha256') = ''
+              )
+            ORDER BY prepared_at ASC, sequence_id ASC
+            """
+        ).fetchall()
+        return [str(row["sequence_id"]) for row in rows]
+
+    def list_abort_pending_sequence_run_ids(self, conn: sqlite3.Connection) -> list[str]:
+        rows = conn.execute(
+            """
+            SELECT json_extract(payload, '$.current_run_id') AS run_id
+            FROM scheduler_sequences
+            WHERE state_kind = 'abort_pending'
+            ORDER BY prepared_at ASC, sequence_id ASC
+            """
+        ).fetchall()
+        return [str(row["run_id"]) for row in rows if row["run_id"] is not None]
+
+    def get_checkpoint_reconciliation_hold_row(
+        self, conn: sqlite3.Connection, run_id: str
+    ) -> sqlite3.Row | None:
+        if not self.schema_supports_checkpoint_holds(conn):
+            return None
+        row = conn.execute(
+            """
+            SELECT run_id, intent_sha256, hold_reason, ref_may_have_advanced
+            FROM scheduler_checkpoint_holds
+            WHERE run_id = ?
+            LIMIT 1
+            """,
+            (run_id,),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def has_checkpoint_reconciliation_hold(self, conn: sqlite3.Connection, run_id: str) -> bool:
+        return self.get_checkpoint_reconciliation_hold_row(conn, run_id) is not None
+
+    def acquire_checkpoint_reconciliation_hold(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        intent_sha256: str,
+        hold_reason: str,
+        ref_may_have_advanced: bool,
+        now: datetime,
+    ) -> None:
+        if not self.schema_supports_checkpoint_holds(conn):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.SCHEMA,
+                "checkpoint reconciliation holds require scheduler schema version 7",
+            )
+        now_text = encode_utc_instant(now)
+        ref_flag = 1 if ref_may_have_advanced else 0
+        conn.execute(
+            """
+            INSERT INTO scheduler_checkpoint_holds(
+                run_id, intent_sha256, hold_reason, ref_may_have_advanced,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id) DO UPDATE SET
+                intent_sha256 = excluded.intent_sha256,
+                hold_reason = excluded.hold_reason,
+                ref_may_have_advanced = MAX(
+                    scheduler_checkpoint_holds.ref_may_have_advanced,
+                    excluded.ref_may_have_advanced
+                ),
+                updated_at = excluded.updated_at
+            WHERE scheduler_checkpoint_holds.intent_sha256 = excluded.intent_sha256
+            """,
+            (run_id, intent_sha256, hold_reason, ref_flag, now_text, now_text),
+        )
+        if conn.total_changes == 0:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "checkpoint reconciliation hold intent mismatch",
+            )
+
+    def release_checkpoint_reconciliation_hold(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        intent_sha256: str,
+    ) -> None:
+        if not self.schema_supports_checkpoint_holds(conn):
+            return
+        conn.execute(
+            """
+            DELETE FROM scheduler_checkpoint_holds
+            WHERE run_id = ? AND intent_sha256 = ?
+            """,
+            (run_id, intent_sha256),
+        )
+
     def has_unresolved_abort_hold(self, conn: sqlite3.Connection, run_id: str) -> bool:
+        if self.schema_supports_checkpoint_holds(conn) and self.has_checkpoint_reconciliation_hold(
+            conn, run_id
+        ):
+            return True
         row = conn.execute(
             """
             SELECT 1 FROM scheduler_attempts
@@ -2274,6 +3190,61 @@ class SqliteSchedulerStore:
         ).fetchone()
         return cast(sqlite3.Row | None, row)
 
+    def get_latest_recorded_codex_attempt(
+        self, conn: sqlite3.Connection, run_id: str
+    ) -> sqlite3.Row | None:
+        from ai_dev_loop.scheduler.domain.codex_contract import CODEX_ATTEMPT_EFFECT_KINDS
+
+        placeholders = ",".join("?" * len(CODEX_ATTEMPT_EFFECT_KINDS))
+        row = conn.execute(
+            f"""
+            SELECT scheduler_attempts.*
+            FROM scheduler_attempts
+            JOIN scheduler_effects
+              ON scheduler_effects.dispatch_id = scheduler_attempts.dispatch_id
+            WHERE scheduler_attempts.run_id = ?
+              AND scheduler_attempts.status IN (?, ?)
+              AND scheduler_attempts.component = 'codex'
+              AND scheduler_effects.effect_kind IN ({placeholders})
+            ORDER BY scheduler_attempts.completed_at DESC, scheduler_attempts.attempt_id DESC
+            LIMIT 1
+            """,
+            (
+                run_id,
+                ATTEMPT_STATUS_COMPLETED,
+                ATTEMPT_STATUS_FAILED,
+                *CODEX_ATTEMPT_EFFECT_KINDS,
+            ),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def get_codex_bootstrap_attempt(
+        self, conn: sqlite3.Connection, run_id: str
+    ) -> sqlite3.Row | None:
+        from ai_dev_loop.scheduler.domain.codex_contract import BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND
+
+        row = conn.execute(
+            """
+            SELECT scheduler_attempts.*
+            FROM scheduler_attempts
+            JOIN scheduler_effects
+              ON scheduler_effects.dispatch_id = scheduler_attempts.dispatch_id
+            WHERE scheduler_attempts.run_id = ?
+              AND scheduler_attempts.status IN (?, ?)
+              AND scheduler_attempts.component = 'codex'
+              AND scheduler_effects.effect_kind = ?
+            ORDER BY scheduler_attempts.completed_at ASC, scheduler_attempts.attempt_id ASC
+            LIMIT 1
+            """,
+            (
+                run_id,
+                ATTEMPT_STATUS_COMPLETED,
+                ATTEMPT_STATUS_FAILED,
+                BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND,
+            ),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
     def mark_attempt_ingested(
         self,
         conn: sqlite3.Connection,
@@ -2417,7 +3388,8 @@ class SqliteSchedulerStore:
         order = "DESC" if newest_first else "ASC"
         rows = conn.execute(
             f"""
-            SELECT event_id, run_id, sequence, event_kind, event_payload, created_at
+            SELECT event_id, run_id, sequence, event_kind,
+                   event_payload, event_payload_sha256, created_at
             FROM scheduler_events
             WHERE run_id = ?
             ORDER BY sequence {order}
@@ -2477,3 +3449,763 @@ class SqliteSchedulerStore:
             params.append(limit)
         rows = conn.execute(query, tuple(params)).fetchall()
         return [cast(sqlite3.Row, row) for row in rows]
+
+    @staticmethod
+    def dump_sequence_state(state: object) -> tuple[str, str, str]:
+        from ai_dev_loop.scheduler.domain.sequence import (
+            ABORT_PENDING_SEQUENCE_STATE_ADAPTER,
+            ABORT_PENDING_SEQUENCE_STATE_KIND,
+            ABORTED_SEQUENCE_STATE_ADAPTER,
+            ABORTED_SEQUENCE_STATE_KIND,
+            ACTIVE_SEQUENCE_STATE_ADAPTER,
+            ACTIVE_SEQUENCE_STATE_KIND,
+            AWAITING_FINALIZATION_SEQUENCE_STATE_ADAPTER,
+            AWAITING_FINALIZATION_SEQUENCE_STATE_KIND,
+            BLOCKED_SEQUENCE_STATE_ADAPTER,
+            BLOCKED_SEQUENCE_STATE_KIND,
+            PREPARED_SEQUENCE_STATE_ADAPTER,
+            PREPARED_SEQUENCE_STATE_KIND,
+            AbortedSequenceState,
+            AbortPendingSequenceState,
+            ActiveSequenceState,
+            AwaitingFinalizationSequenceState,
+            BlockedSequenceState,
+            PreparedSequenceState,
+        )
+
+        if isinstance(state, PreparedSequenceState):
+            validated = PREPARED_SEQUENCE_STATE_ADAPTER.validate_python(
+                state.model_dump(mode="json")
+            )
+            text = PREPARED_SEQUENCE_STATE_ADAPTER.dump_json(validated).decode("utf-8")
+            return PREPARED_SEQUENCE_STATE_KIND, text, payload_sha256(text)
+        if isinstance(state, ActiveSequenceState):
+            active_validated = ACTIVE_SEQUENCE_STATE_ADAPTER.validate_python(
+                state.model_dump(mode="json")
+            )
+            text = ACTIVE_SEQUENCE_STATE_ADAPTER.dump_json(active_validated).decode("utf-8")
+            return ACTIVE_SEQUENCE_STATE_KIND, text, payload_sha256(text)
+        if isinstance(state, AbortPendingSequenceState):
+            pending_validated = ABORT_PENDING_SEQUENCE_STATE_ADAPTER.validate_python(
+                state.model_dump(mode="json")
+            )
+            text = ABORT_PENDING_SEQUENCE_STATE_ADAPTER.dump_json(pending_validated).decode("utf-8")
+            return ABORT_PENDING_SEQUENCE_STATE_KIND, text, payload_sha256(text)
+        if isinstance(state, BlockedSequenceState):
+            blocked_validated = BLOCKED_SEQUENCE_STATE_ADAPTER.validate_python(
+                state.model_dump(mode="json")
+            )
+            text = BLOCKED_SEQUENCE_STATE_ADAPTER.dump_json(blocked_validated).decode("utf-8")
+            return BLOCKED_SEQUENCE_STATE_KIND, text, payload_sha256(text)
+        if isinstance(state, AbortedSequenceState):
+            aborted_validated = ABORTED_SEQUENCE_STATE_ADAPTER.validate_python(
+                state.model_dump(mode="json")
+            )
+            text = ABORTED_SEQUENCE_STATE_ADAPTER.dump_json(aborted_validated).decode("utf-8")
+            return ABORTED_SEQUENCE_STATE_KIND, text, payload_sha256(text)
+        if isinstance(state, AwaitingFinalizationSequenceState):
+            finalized_validated = AWAITING_FINALIZATION_SEQUENCE_STATE_ADAPTER.validate_python(
+                state.model_dump(mode="json")
+            )
+            text = AWAITING_FINALIZATION_SEQUENCE_STATE_ADAPTER.dump_json(
+                finalized_validated
+            ).decode("utf-8")
+            return AWAITING_FINALIZATION_SEQUENCE_STATE_KIND, text, payload_sha256(text)
+        raise SchedulerEngineError(
+            SchedulerEngineErrorKind.INTERNAL,
+            "sequence state has unexpected type",
+        )
+
+    @staticmethod
+    def dump_sequence_entry(entry: object) -> tuple[str, str]:
+        from ai_dev_loop.scheduler.domain.sequence import (
+            FROZEN_SEQUENCE_ENTRY_ADAPTER,
+            FrozenSequenceEntry,
+        )
+
+        if not isinstance(entry, FrozenSequenceEntry):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.INTERNAL,
+                "sequence entry has unexpected type",
+            )
+        validated = FROZEN_SEQUENCE_ENTRY_ADAPTER.validate_python(entry.model_dump(mode="json"))
+        text = FROZEN_SEQUENCE_ENTRY_ADAPTER.dump_json(validated).decode("utf-8")
+        return text, payload_sha256(text)
+
+    @staticmethod
+    def load_sequence_state(payload: str) -> SequencePersistedState:
+        from ai_dev_loop.scheduler.domain.sequence import (
+            ABORT_PENDING_SEQUENCE_STATE_ADAPTER,
+            ABORTED_SEQUENCE_STATE_ADAPTER,
+            ACTIVE_SEQUENCE_STATE_ADAPTER,
+            AWAITING_FINALIZATION_SEQUENCE_STATE_ADAPTER,
+            BLOCKED_SEQUENCE_STATE_ADAPTER,
+            PREPARED_SEQUENCE_STATE_ADAPTER,
+            AbortedSequenceState,
+            AbortPendingSequenceState,
+            ActiveSequenceState,
+            AwaitingFinalizationSequenceState,
+            BlockedSequenceState,
+            PreparedSequenceState,
+        )
+
+        for adapter in (
+            PREPARED_SEQUENCE_STATE_ADAPTER,
+            ACTIVE_SEQUENCE_STATE_ADAPTER,
+            ABORT_PENDING_SEQUENCE_STATE_ADAPTER,
+            BLOCKED_SEQUENCE_STATE_ADAPTER,
+            ABORTED_SEQUENCE_STATE_ADAPTER,
+            AWAITING_FINALIZATION_SEQUENCE_STATE_ADAPTER,
+        ):
+            try:
+                loaded = adapter.validate_json(payload)
+            except Exception:
+                continue
+            if isinstance(
+                loaded,
+                (
+                    PreparedSequenceState,
+                    ActiveSequenceState,
+                    AbortPendingSequenceState,
+                    BlockedSequenceState,
+                    AbortedSequenceState,
+                    AwaitingFinalizationSequenceState,
+                ),
+            ):
+                return loaded
+        raise SchedulerEngineError(
+            SchedulerEngineErrorKind.CORRUPTION,
+            "sequence payload has unexpected type",
+        )
+
+    def get_sequence_by_idempotency_key(
+        self,
+        conn: sqlite3.Connection,
+        idempotency_key: str,
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            "SELECT * FROM scheduler_sequences WHERE idempotency_key = ?",
+            (idempotency_key,),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def find_existing_prepared_sequence(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        definition: object,
+        resubmission_id: str | None,
+    ) -> sqlite3.Row | None:
+        from ai_dev_loop.scheduler.application.sequence_prepare import _sequence_idempotency_key
+        from ai_dev_loop.scheduler.domain.sequence import (
+            PreparedSequenceDefinition,
+            sequence_identity_payload,
+        )
+
+        if not isinstance(definition, PreparedSequenceDefinition):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.INTERNAL,
+                "sequence definition has unexpected type",
+            )
+        key = _sequence_idempotency_key(definition, resubmission_id=resubmission_id)
+        existing = self.get_sequence_by_idempotency_key(conn, key)
+        if existing is not None:
+            return existing
+        return self.find_sequence_by_matching_identity(
+            conn,
+            worktree_key=definition.repository.worktree_key,
+            identity=sequence_identity_payload(definition),
+            resubmission_id=resubmission_id,
+        )
+
+    def find_sequence_by_matching_identity(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        worktree_key: str,
+        identity: dict[str, object],
+        resubmission_id: str | None,
+    ) -> sqlite3.Row | None:
+        from ai_dev_loop.scheduler.application.sequence_prepare import _sequence_idempotency_key
+        from ai_dev_loop.scheduler.domain.sequence import (
+            sequence_identity_payload,
+        )
+
+        rows = conn.execute(
+            """
+            SELECT sequence_id FROM scheduler_sequences
+            WHERE worktree_key = ?
+            ORDER BY prepared_at ASC, sequence_id ASC
+            """,
+            (worktree_key,),
+        ).fetchall()
+        for row in rows:
+            sequence_id = str(row[0])
+            state = self.load_validated_sequence_state(conn, sequence_id)
+            if sequence_identity_payload(state.definition) != identity:
+                continue
+            stored_key = _sequence_idempotency_key(
+                state.definition,
+                resubmission_id=resubmission_id,
+            )
+            if state.idempotency_key == stored_key:
+                existing = self.get_sequence_by_idempotency_key(conn, state.idempotency_key)
+                if existing is not None:
+                    return existing
+        return None
+
+    def get_sequence_row(self, conn: sqlite3.Connection, sequence_id: str) -> sqlite3.Row:
+        row = conn.execute(
+            "SELECT * FROM scheduler_sequences WHERE sequence_id = ?",
+            (sequence_id,),
+        ).fetchone()
+        if row is None:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.NOT_FOUND,
+                f"prepared sequence not found: {sequence_id}",
+            )
+        return cast(sqlite3.Row, row)
+
+    def load_validated_sequence_state(
+        self,
+        conn: sqlite3.Connection,
+        sequence_id: str,
+    ) -> SequencePersistedState:
+        from ai_dev_loop.scheduler.domain.common import worktree_key
+        from ai_dev_loop.scheduler.domain.sequence import (
+            ABORT_PENDING_SEQUENCE_STATE_KIND,
+            ABORTED_SEQUENCE_STATE_KIND,
+            ACTIVE_SEQUENCE_STATE_KIND,
+            AWAITING_FINALIZATION_SEQUENCE_STATE_KIND,
+            BLOCKED_SEQUENCE_STATE_KIND,
+            FROZEN_SEQUENCE_ENTRY_ADAPTER,
+            PREPARED_SEQUENCE_STATE_KIND,
+            AbortedSequenceState,
+            AbortPendingSequenceState,
+            ActiveSequenceState,
+            AwaitingFinalizationSequenceState,
+            BlockedSequenceState,
+            PreparedSequenceState,
+        )
+
+        row = self.get_sequence_row(conn, sequence_id)
+        state = self.load_sequence_state(row["payload"])
+        row_kind = str(row["state_kind"])
+        kind_to_type = {
+            PREPARED_SEQUENCE_STATE_KIND: PreparedSequenceState,
+            ACTIVE_SEQUENCE_STATE_KIND: ActiveSequenceState,
+            ABORT_PENDING_SEQUENCE_STATE_KIND: AbortPendingSequenceState,
+            BLOCKED_SEQUENCE_STATE_KIND: BlockedSequenceState,
+            ABORTED_SEQUENCE_STATE_KIND: AbortedSequenceState,
+            AWAITING_FINALIZATION_SEQUENCE_STATE_KIND: AwaitingFinalizationSequenceState,
+        }
+        if row_kind not in kind_to_type:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence state_kind is unsupported",
+            )
+        if not isinstance(state, kind_to_type[row_kind]):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence state_kind mismatch",
+            )
+        if payload_sha256(row["payload"]) != row["payload_sha256"]:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence payload hash mismatch",
+            )
+        if state.sequence_id != sequence_id:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence_id disagrees with primary key",
+            )
+        if state.definition.sequence_id != sequence_id:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "definition.sequence_id disagrees with primary key",
+            )
+        if int(row["version"]) != state.version:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence version mismatch",
+            )
+        if str(row["name"]) != state.definition.name:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence name mismatch",
+            )
+        if str(row["project_name"]) != state.definition.project_name:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence project_name mismatch",
+            )
+        if str(row["idempotency_key"]) != state.idempotency_key:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence idempotency_key mismatch",
+            )
+        if int(row["entry_count"]) != len(state.definition.entries):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence entry_count mismatch",
+            )
+        payload_root = str(state.definition.repository.root)
+        if str(row["repository_root"]) != payload_root:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "repository root disagrees with indexed repository_root",
+            )
+        if worktree_key(payload_root) != str(row["worktree_key"]):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "repository identity disagrees with indexed worktree key",
+            )
+        entry_rows = conn.execute(
+            """
+            SELECT ordinal, phase_name, planned_run_id, payload, payload_sha256
+            FROM scheduler_sequence_entries
+            WHERE sequence_id = ?
+            ORDER BY ordinal ASC
+            """,
+            (sequence_id,),
+        ).fetchall()
+        if len(entry_rows) != len(state.definition.entries):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence entry count mismatch",
+            )
+        for index, entry_row in enumerate(entry_rows):
+            entry = state.definition.entries[index]
+            if int(entry_row["ordinal"]) != entry.ordinal:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CORRUPTION,
+                    "sequence entry ordinal mismatch",
+                )
+            if str(entry_row["phase_name"]) != entry.phase_name:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CORRUPTION,
+                    "sequence entry phase_name mismatch",
+                )
+            if str(entry_row["planned_run_id"]) != entry.planned_run_id:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CORRUPTION,
+                    "sequence entry planned_run_id mismatch",
+                )
+            entry_payload = str(entry_row["payload"])
+            if payload_sha256(entry_payload) != str(entry_row["payload_sha256"]):
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CORRUPTION,
+                    "sequence entry payload hash mismatch",
+                )
+            try:
+                parsed_entry = FROZEN_SEQUENCE_ENTRY_ADAPTER.validate_json(entry_payload)
+            except Exception as exc:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CORRUPTION,
+                    "sequence entry payload failed validation",
+                ) from exc
+            if parsed_entry != entry:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CORRUPTION,
+                    "sequence entry payload disagrees with aggregate state",
+                )
+        from ai_dev_loop.scheduler.application.sequence_materializer import frozen_entry_hash
+        from ai_dev_loop.scheduler.domain.sequence_lifecycle_validation import (
+            SequenceLifecycleValidationError,
+            validate_sequence_lifecycle_state,
+        )
+
+        materialized_entries = getattr(state, "materialized_entries", None)
+        if materialized_entries:
+            for materialized in materialized_entries:
+                entry = state.definition.entries[materialized.ordinal - 1]
+                if frozen_entry_hash(entry) != materialized.entry_hash:
+                    raise SchedulerEngineError(
+                        SchedulerEngineErrorKind.CORRUPTION,
+                        "materialized entry_hash disagrees with frozen entry payload",
+                    )
+                if materialized.run_id != entry.planned_run_id:
+                    raise SchedulerEngineError(
+                        SchedulerEngineErrorKind.CORRUPTION,
+                        "materialized run_id disagrees with planned run binding",
+                    )
+        if isinstance(
+            state,
+            (AbortPendingSequenceState, BlockedSequenceState, AbortedSequenceState),
+        ):
+            try:
+                validate_sequence_lifecycle_state(state)
+            except SequenceLifecycleValidationError as exc:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CORRUPTION,
+                    str(exc),
+                ) from exc
+        return state
+
+    def insert_prepared_sequence(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        state: PreparedSequenceState,
+        now: datetime,
+    ) -> None:
+        from ai_dev_loop.scheduler.domain.sequence import PreparedSequenceState
+
+        if not isinstance(state, PreparedSequenceState):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "insert accepts only PreparedSequenceState",
+            )
+        kind, payload, digest = self.dump_sequence_state(state)
+        definition = state.definition
+        now_text = encode_utc_instant(now)
+        try:
+            conn.execute(
+                """
+                INSERT INTO scheduler_sequences(
+                    sequence_id, name, state_kind, project_name, repository_root,
+                    worktree_key, entry_count, idempotency_key, version,
+                    prepared_at, updated_at, payload, payload_sha256
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    state.sequence_id,
+                    definition.name,
+                    kind,
+                    definition.project_name,
+                    definition.repository.root,
+                    definition.repository.worktree_key,
+                    len(definition.entries),
+                    state.idempotency_key,
+                    state.version,
+                    state.prepared_at,
+                    now_text,
+                    payload,
+                    digest,
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "prepared sequence identity already exists",
+            ) from exc
+        for entry in definition.entries:
+            entry_payload, entry_digest = self.dump_sequence_entry(entry)
+            conn.execute(
+                """
+                INSERT INTO scheduler_sequence_entries(
+                    sequence_id, ordinal, phase_name, planned_run_id,
+                    payload, payload_sha256
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    state.sequence_id,
+                    entry.ordinal,
+                    entry.phase_name,
+                    entry.planned_run_id,
+                    entry_payload,
+                    entry_digest,
+                ),
+            )
+
+    def compare_and_swap_sequence_state(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        sequence_id: str,
+        expected_version: int,
+        new_state: SequencePersistedState,
+        now: datetime,
+    ) -> bool:
+        from ai_dev_loop.scheduler.domain.sequence import (
+            AbortedSequenceState,
+            AbortPendingSequenceState,
+            ActiveSequenceState,
+            AwaitingFinalizationSequenceState,
+            BlockedSequenceState,
+            PreparedSequenceState,
+        )
+
+        if not isinstance(
+            new_state,
+            (
+                PreparedSequenceState,
+                ActiveSequenceState,
+                AbortPendingSequenceState,
+                BlockedSequenceState,
+                AbortedSequenceState,
+                AwaitingFinalizationSequenceState,
+            ),
+        ):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "compare_and_swap received unsupported sequence state type",
+            )
+        if new_state.sequence_id != sequence_id:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "replacement sequence_id disagrees with target",
+            )
+        current_row = self.get_sequence_row(conn, sequence_id)
+        current_version = int(current_row["version"])
+        if current_version != expected_version:
+            return False
+        if new_state.version != expected_version + 1:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "replacement version must equal expected_version + 1",
+            )
+        current_state = self.load_validated_sequence_state(conn, sequence_id)
+        if new_state.prepared_at != current_state.prepared_at:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "prepared_at is immutable",
+            )
+        if new_state.idempotency_key != current_state.idempotency_key:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "idempotency_key is immutable",
+            )
+        if new_state.definition != current_state.definition:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "sequence definition is immutable",
+            )
+        from ai_dev_loop.scheduler.domain.sequence_lifecycle_validation import (
+            SequenceLifecycleValidationError,
+            validate_sequence_lifecycle_transition,
+        )
+
+        try:
+            validate_sequence_lifecycle_transition(current_state, new_state)
+        except SequenceLifecycleValidationError as exc:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                str(exc),
+            ) from exc
+        kind, payload, digest = self.dump_sequence_state(new_state)
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            UPDATE scheduler_sequences
+            SET state_kind = ?, payload = ?, payload_sha256 = ?,
+                version = ?, updated_at = ?
+            WHERE sequence_id = ? AND version = ?
+            """,
+            (
+                kind,
+                payload,
+                digest,
+                new_state.version,
+                now_text,
+                sequence_id,
+                expected_version,
+            ),
+        )
+        return cursor.rowcount == 1
+
+    def get_review_retry_generation_row(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        failure_generation: int,
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_review_retry_generations
+            WHERE run_id = ? AND failure_generation = ?
+            """,
+            (run_id, failure_generation),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def insert_review_retry_generation(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        failure_generation: int,
+        now: datetime,
+    ) -> bool:
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            INSERT INTO scheduler_review_retry_generations(
+                run_id, failure_generation, scheduled_at
+            ) VALUES (?, ?, ?)
+            ON CONFLICT(run_id, failure_generation) DO NOTHING
+            """,
+            (run_id, failure_generation, now_text),
+        )
+        return cursor.rowcount == 1
+
+    def get_latest_review_recovery_successor(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_run_id: str,
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_review_recovery_successors
+            WHERE source_run_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (source_run_id,),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def get_cursor_turn_attempt_for_iteration(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        iteration: int,
+    ) -> sqlite3.Row | None:
+        rows = conn.execute(
+            """
+            SELECT scheduler_attempts.*, scheduler_effects.effect_payload
+            FROM scheduler_attempts
+            JOIN scheduler_effects
+              ON scheduler_effects.dispatch_id = scheduler_attempts.dispatch_id
+            WHERE scheduler_attempts.run_id = ?
+              AND scheduler_attempts.component = 'cursor'
+              AND scheduler_attempts.status IN (?, ?)
+              AND scheduler_effects.effect_kind = ?
+            ORDER BY scheduler_attempts.completed_at DESC, scheduler_attempts.attempt_id DESC
+            """,
+            (
+                run_id,
+                ATTEMPT_STATUS_COMPLETED,
+                ATTEMPT_STATUS_FAILED,
+                "cursor.run_turn",
+            ),
+        ).fetchall()
+        for row in rows:
+            payload = row["effect_payload"]
+            if isinstance(payload, str):
+                try:
+                    parsed = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+            elif isinstance(payload, dict):
+                parsed = payload
+            else:
+                continue
+            if int(parsed.get("iteration", 0)) == iteration:
+                return cast(sqlite3.Row, row)
+        return None
+
+    def get_review_recovery_successor(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_run_id: str,
+        recovery_key: str,
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_review_recovery_successors
+            WHERE source_run_id = ? AND recovery_key = ?
+            """,
+            (source_run_id, recovery_key),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def insert_review_recovery_successor(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_run_id: str,
+        recovery_key: str,
+        successor_run_id: str,
+        now: datetime,
+    ) -> bool:
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            INSERT INTO scheduler_review_recovery_successors(
+                source_run_id, recovery_key, successor_run_id, created_at
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(source_run_id, recovery_key) DO NOTHING
+            """,
+            (source_run_id, recovery_key, successor_run_id, now_text),
+        )
+        return cursor.rowcount == 1
+
+    def insert_recovery_review_run(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        state: SchedulerState,
+        event_id: str,
+        event: SchedulerEvent,
+        now: datetime,
+    ) -> None:
+        kind, payload, digest = self.dump_state(state)
+        if kind != "awaiting_codex_review":
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "recovery insert accepts only awaiting_codex_review state",
+            )
+        now_text = encode_utc_instant(now)
+        worktree_key = state.context.repository.worktree_key
+        conn.execute(
+            """
+            INSERT INTO scheduler_runs(
+                run_id, state_kind, state_payload, state_payload_sha256,
+                version, idempotency_key, worktree_key, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                kind,
+                payload,
+                digest,
+                state.version,
+                state.idempotency_key,
+                worktree_key,
+                now_text,
+                now_text,
+            ),
+        )
+        event_kind, event_payload, event_digest = self.dump_event(event)
+        conn.execute(
+            """
+            INSERT INTO scheduler_events(
+                event_id, run_id, sequence, event_kind,
+                event_payload, event_payload_sha256, created_at
+            ) VALUES (?, ?, 1, ?, ?, ?, ?)
+            """,
+            (event_id, run_id, event_kind, event_payload, event_digest, now_text),
+        )
+        reservation = conn.execute(
+            """
+            INSERT INTO scheduler_repository_reservations(
+                worktree_key, run_id, repository_root, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(worktree_key) DO UPDATE SET
+                run_id = excluded.run_id,
+                repository_root = excluded.repository_root,
+                status = excluded.status,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at
+            WHERE scheduler_repository_reservations.status = 'released'
+            """,
+            (
+                worktree_key,
+                run_id,
+                state.context.repository.root,
+                ReservationStatus.ACTIVE.value,
+                now_text,
+                now_text,
+            ),
+        )
+        if reservation.rowcount != 1:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "repository worktree reservation could not be claimed for recovery successor",
+            )
