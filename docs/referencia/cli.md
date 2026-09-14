@@ -65,11 +65,13 @@ ai_dev_loop scheduler submit \
   --output json < docs/plans/prompt_mi-plan.txt
 ```
 
-## `scheduler sequence prepare` / `sequence status`
+## `scheduler sequence prepare` / `start` / `status` / `abort`
 
 ```bash
 ai_dev_loop scheduler sequence prepare --manifest /path/to/sequence.yaml [OPTIONS]
+ai_dev_loop scheduler sequence start <sequence-id> [--output text|json]
 ai_dev_loop scheduler sequence status <sequence-id> [--output text|json]
+ai_dev_loop scheduler sequence abort <sequence-id> [--output text|json]
 ```
 
 Phase 20.1 congela una definicion lineal inmutable de 2 a 32 fases sin reservar el
@@ -92,9 +94,30 @@ liberar el repositorio. La fase final pasa la secuencia a `awaiting_finalization
 commit y libera la reserva con los cambios staged intactos. Los runs standalone no
 crean commits.
 
+Phase 20.4 completa el ciclo de vida de secuencias: estados `active`,
+`abort_pending`, `blocked`, `aborted` y `awaiting_finalization`; reconciliacion de
+outcomes terminales no exitosos del run materializado (`blocked`,
+`max_iterations_reached`, `aborted` por abort de secuencia) sin materializar sucesores;
+`scheduler sequence abort` como control no destructivo (prepared sin runs, active
+delegando al abort de run existente); status enriquecido con conteos agregados,
+marcadores de residual risk y prefijos de checkpoint; y reporte seguro
+`reports/completion-v1.json` al llegar a `awaiting_finalization` (sin commit/push/PR).
+
 Tras `prepare`, la accion segura es `scheduler sequence start <sequence-id>`; tras un
 start exitoso, `scheduler tick` y `scheduler sequence status <sequence-id>`.
-`scheduler abort` durante `checkpoint_pending` impide nuevas mutaciones Git.
+`scheduler sequence abort` persiste la intencion antes de delegar al run activo y
+cancela fases futuras sin crear filas `scheduler_runs` para ellas.
+`scheduler abort <run-id>` durante `checkpoint_pending` impide nuevas mutaciones Git;
+un abort de secuencia despues de un ref CAS ya aplicado reconcilia el checkpoint ya
+aplicado (sin nuevas mutaciones Git ni sucesor) y completa el abort registrado. Mientras
+una secuencia activa o `abort_pending` gobierna el run, o queden holds de
+checkpoint/proceso, `scheduler abort` no libera la reserva del repositorio. Un abort de
+secuencia con el run materializado ya terminal (p. ej. `max_iterations_reached`) finaliza
+la secuencia sin reintentar abort del run. El reporte `reports/completion-v1.json` se publica solo despues de persistir
+`awaiting_finalization` y `finalized_at` en el ledger; `completion_report_sha256` se
+registra en una reconciliacion replayable por `tick` (sin escribir el artefacto dentro de
+la transaccion de finalizacion). Los checkpoints del reporte se verifican contra los
+objetos commit reales del repositorio.
 
 Opciones de repositorio, `--config-path`, `--controller-session-id`, `--resubmission-id`
 y overrides globales siguen el contrato de `scheduler submit`. Cada fase del manifest

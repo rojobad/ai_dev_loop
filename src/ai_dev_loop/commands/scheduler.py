@@ -10,6 +10,7 @@ from ai_dev_loop.scheduler.application.contracts import (
     HistoryResult,
     SchedulerRunSummary,
     SchedulerStatusResult,
+    SequenceAbortResult,
     SequencePrepareResult,
     SequenceStartResult,
     SequenceStatusResult,
@@ -424,11 +425,21 @@ def render_sequence_status_output(result: SequenceStatusResult, *, output: str) 
             "current_run_state_kind": result.current_run_state_kind,
             "current_phase_name": result.current_phase_name,
             "residual_risk": result.residual_risk,
+            "residual_risk_ordinals": list(result.residual_risk_ordinals),
+            "block_reason_kind": result.block_reason_kind,
+            "abort_reason": result.abort_reason,
+            "finalized_at": result.finalized_at,
+            "completion_report_sha256_prefix": result.completion_report_sha256_prefix,
             "prepared_at": result.prepared_at,
             "updated_at": result.updated_at,
             "started_at": result.started_at,
             "idempotency_key_prefix": result.idempotency_key_prefix,
             "entries": [entry.model_dump(mode="json") for entry in result.entries],
+            "aggregate_counts": (
+                result.aggregate_counts.model_dump(mode="json")
+                if result.aggregate_counts is not None
+                else None
+            ),
             "safe_next_action": result.safe_next_action.model_dump(mode="json"),
         }
         return json.dumps(payload, indent=2) + "\n"
@@ -450,6 +461,27 @@ def render_sequence_status_output(result: SequenceStatusResult, *, output: str) 
         lines.append(f"Materialized run state: {result.current_run_state_kind}")
     if result.residual_risk is not None:
         lines.append(f"Residual risk: {result.residual_risk}")
+    if result.residual_risk_ordinals:
+        lines.append(
+            f"Residual-risk phases: {', '.join(str(o) for o in result.residual_risk_ordinals)}"
+        )
+    if result.block_reason_kind:
+        lines.append(f"Block reason: {result.block_reason_kind}")
+    if result.abort_reason:
+        lines.append(f"Abort reason: {result.abort_reason}")
+    if result.finalized_at:
+        lines.append(f"Finalized: {result.finalized_at}")
+    if result.completion_report_sha256_prefix:
+        lines.append(f"Completion report prefix: {result.completion_report_sha256_prefix}")
+    if result.aggregate_counts is not None:
+        counts = result.aggregate_counts
+        lines.append(
+            "Counts: "
+            f"planned={counts.planned} materialized={counts.materialized} "
+            f"accepted={counts.accepted} residual_risk={counts.residual_risk} "
+            f"checkpointed={counts.checkpointed} cancelled={counts.cancelled} "
+            f"remaining={counts.remaining}"
+        )
     lines.extend(
         [
             f"Prepared: {result.prepared_at}",
@@ -461,11 +493,48 @@ def render_sequence_status_output(result: SequenceStatusResult, *, output: str) 
     lines.append(f"Idempotency key prefix: {result.idempotency_key_prefix}")
     for entry in result.entries:
         commit_note = " (checkpoint commit message frozen)" if entry.commit_message_present else ""
+        status_bits: list[str] = []
+        if entry.materialized:
+            status_bits.append("materialized")
+        if entry.accepted_outcome:
+            status_bits.append(entry.accepted_outcome)
+        if entry.residual_risk:
+            status_bits.append("residual_risk")
+        if entry.checkpoint_commit_sha256_prefix:
+            status_bits.append(f"checkpoint={entry.checkpoint_commit_sha256_prefix}")
+        if entry.cancelled:
+            status_bits.append("cancelled")
+        status = f" [{', '.join(status_bits)}]" if status_bits else ""
         lines.append(
             f"- Phase {entry.ordinal:02d}: {entry.phase_name} "
-            f"(planned run prefix {entry.planned_run_id_prefix}){commit_note}"
+            f"(planned run prefix {entry.planned_run_id_prefix}){commit_note}{status}"
         )
     lines.append(f"Next action: {result.safe_next_action.command}")
+    return "\n".join(lines) + "\n"
+
+
+def render_sequence_abort_output(result: SequenceAbortResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "sequence_id": result.sequence_id,
+            "state_kind": result.state_kind,
+            "abort_persisted": result.abort_persisted,
+            "idempotent_replay": result.idempotent_replay,
+            "run_abort_process_action": result.run_abort_process_action.value,
+            "run_termination_pending": result.run_termination_pending,
+            "safe_next_action": result.safe_next_action.model_dump(mode="json"),
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    replay = " (idempotent replay)" if result.idempotent_replay else ""
+    lines = [
+        f"Scheduler sequence abort for {result.sequence_id}{replay}",
+        f"State: {result.state_kind}",
+        f"Abort persisted: {result.abort_persisted}",
+        f"Run abort process action: {result.run_abort_process_action.value}",
+        f"Run termination pending: {result.run_termination_pending}",
+        f"Next action: {result.safe_next_action.command}",
+    ]
     return "\n".join(lines) + "\n"
 
 
@@ -582,6 +651,7 @@ __all__ = [
     "render_scheduler_abort_output",
     "render_scheduler_history_output",
     "render_scheduler_timeline_output",
+    "render_sequence_abort_output",
     "render_sequence_prepare_output",
     "render_sequence_start_output",
     "render_sequence_status_output",

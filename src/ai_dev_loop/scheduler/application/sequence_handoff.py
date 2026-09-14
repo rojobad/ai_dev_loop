@@ -47,9 +47,15 @@ from ai_dev_loop.scheduler.application.cursor_evidence import (
 from ai_dev_loop.scheduler.application.git_checkpoint import (
     CheckpointFenceError,
     CheckpointMutationBoundary,
+    GitCheckpointCommit,
     GitCheckpointPort,
     ProductionGitCheckpointPort,
     checkpoint_result_from_commit,
+)
+from ai_dev_loop.scheduler.application.sequence_checkpoint_evidence import (
+    SequenceCheckpointEvidenceError,
+    authenticate_checkpoint_result_bindings,
+    verify_checkpoint_commit_in_repository,
 )
 from ai_dev_loop.scheduler.application.sequence_materializer import (
     SequenceRunMaterializer,
@@ -88,6 +94,7 @@ from ai_dev_loop.scheduler.domain.reducer import (
     apply_sequence_checkpoint_requested,
 )
 from ai_dev_loop.scheduler.domain.sequence import (
+    AbortPendingSequenceState,
     ActiveSequenceState,
     AwaitingFinalizationSequenceState,
     FrozenSequenceEntry,
@@ -351,6 +358,131 @@ class SequenceHandoffService:
             now=self._now_factory(),
         )
         return False
+
+    def _try_record_applied_checkpoint_reconciliation_only(
+        self,
+        run_id: str,
+        *,
+        intent: SequenceCheckpointIntent,
+        intent_sha256: str,
+        trusted_tree: SequenceCheckpointTrustedTree,
+        trusted_tree_sha256: str,
+        tick_owner_id: str,
+        tick_lease_generation: int,
+    ) -> TickRunReceipt | None:
+        evidence = self._load_checkpoint_evidence(run_id)
+        commit_sha256 = evidence.commit_sha256 if evidence is not None else None
+        inspection = inspect_checkpoint_ref_advancement(intent, commit_sha256)
+        if inspection.outcome != CheckpointRefInspectionOutcome.APPLIED:
+            return None
+        if commit_sha256 is None:
+            return None
+        try:
+            verify_checkpoint_commit_in_repository(
+                intent=intent,
+                trusted_tree=trusted_tree,
+                commit_sha256=commit_sha256,
+                require_head_match=True,
+            )
+        except SequenceCheckpointEvidenceError:
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        result_path = self.artifacts.run_root(run_id) / SEQUENCE_CHECKPOINT_RESULT_ARTIFACT
+        if result_path.is_file():
+            result = SequenceCheckpointResult.model_validate_json(result_path.read_bytes())
+            if result.commit_sha256 != commit_sha256:
+                return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+            if not self._verify_checkpoint_result(
+                intent,
+                result,
+                intent_sha256,
+                trusted_tree_sha256=trusted_tree_sha256,
+            ):
+                return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+            authenticate_checkpoint_result_bindings(
+                result=result,
+                intent=intent,
+                trusted_tree=trusted_tree,
+                intent_sha256=intent_sha256,
+                trusted_tree_file_sha256=trusted_tree_sha256,
+                run_id=run_id,
+                materialized=MaterializedSequenceEntry(
+                    ordinal=intent.predecessor_ordinal,
+                    run_id=run_id,
+                    entry_hash="0" * 64,
+                    materialized_at="1970-01-01T00:00:00.000000Z",
+                ),
+            )
+        else:
+            result = checkpoint_result_from_commit(
+                intent,
+                commit=GitCheckpointCommit(
+                    commit_sha=commit_sha256,
+                    tree_sha=trusted_tree.reviewed_tree_sha256,
+                    parent_head=intent.parent_head,
+                    already_applied=True,
+                    ref_updated=True,
+                ),
+                intent_sha256=intent_sha256,
+                trusted_tree_sha256=trusted_tree_sha256,
+            )
+            if not self._verify_checkpoint_result(
+                intent,
+                result,
+                intent_sha256,
+                trusted_tree_sha256=trusted_tree_sha256,
+            ):
+                return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+            authenticate_checkpoint_result_bindings(
+                result=result,
+                intent=intent,
+                trusted_tree=trusted_tree,
+                intent_sha256=intent_sha256,
+                trusted_tree_file_sha256=trusted_tree_sha256,
+                run_id=run_id,
+                materialized=MaterializedSequenceEntry(
+                    ordinal=intent.predecessor_ordinal,
+                    run_id=run_id,
+                    entry_hash="0" * 64,
+                    materialized_at="1970-01-01T00:00:00.000000Z",
+                ),
+            )
+            result_text = (
+                json.dumps(result.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
+            )
+            self.artifacts.write_text_or_verify(
+                run_id,
+                SEQUENCE_CHECKPOINT_RESULT_ARTIFACT,
+                result_text,
+                max_bytes=16_384,
+            )
+        now = self._now_factory()
+        fence_id = f"fnc-{secrets.token_hex(16)}"
+        with self.store.begin_immediate() as conn:
+            if not tick_lease_is_active(
+                self.store,
+                conn,
+                owner_id=tick_owner_id,
+                generation=tick_lease_generation,
+                now=now,
+            ):
+                return TickRunReceipt(run_id=run_id, action="checkpoint_lease_lost")
+            hold = self.store.get_checkpoint_reconciliation_hold_row(conn, run_id)
+            if hold is not None:
+                self.store.release_checkpoint_reconciliation_hold(
+                    conn,
+                    run_id=run_id,
+                    intent_sha256=str(hold["intent_sha256"]),
+                )
+            if self.store.has_abort_requested_for_run(conn, run_id):
+                complete_recorded_checkpoint_abort_if_ready(
+                    self.store,
+                    conn,
+                    run_id=run_id,
+                    now=now,
+                    event_id_factory=self._event_id_factory,
+                    fence_id=fence_id,
+                )
+        return TickRunReceipt(run_id=run_id, action="checkpoint_reconciliation_completed")
 
     def _ref_may_have_advanced_after_git_error(
         self,
@@ -759,6 +891,19 @@ class SequenceHandoffService:
         if self.store.has_pending_effects_for_run(conn, run_id):
             return TickRunReceipt(run_id=run_id, action="checkpoint_pending_effects")
         sequence_state = self.store.load_validated_sequence_state(conn, intent.sequence_id)
+        if isinstance(sequence_state, AbortPendingSequenceState):
+            if allow_post_cas_reconciliation:
+                if acquire_hold_on_reconciliation:
+                    self.store.acquire_checkpoint_reconciliation_hold(
+                        conn,
+                        run_id=run_id,
+                        intent_sha256=intent_sha256,
+                        hold_reason="checkpoint_reconciliation",
+                        ref_may_have_advanced=ref_may_have_advanced,
+                        now=now,
+                    )
+                return TickRunReceipt(run_id=run_id, action="checkpoint_reconciliation_hold")
+            return TickRunReceipt(run_id=run_id, action="checkpoint_aborted")
         if not isinstance(sequence_state, ActiveSequenceState):
             return TickRunReceipt(run_id=run_id, action="sequence_not_active")
         if sequence_state.version != intent.sequence_version:
@@ -838,6 +983,8 @@ class SequenceHandoffService:
         sequence_state = self.store.load_validated_sequence_state(
             conn, sequence_binding.sequence_id
         )
+        if isinstance(sequence_state, AbortPendingSequenceState):
+            raise ValidationError("sequence abort pending blocks checkpoint")
         if not isinstance(sequence_state, ActiveSequenceState):
             raise ValidationError("sequence must be active for checkpoint pending")
         if sequence_state.current_run_id != state.run_id:
@@ -1100,6 +1247,24 @@ class SequenceHandoffService:
             trusted_tree_sha256=trusted_tree_sha256,
         ):
             return TickRunReceipt(run_id=run_id, action="checkpoint_trusted_tree_invalid")
+        with self.store.begin_read() as conn:
+            sequence_state = self.store.load_validated_sequence_state(conn, intent.sequence_id)
+            abort_reconcile_only = isinstance(sequence_state, AbortPendingSequenceState)
+            abort_reconcile_only = abort_reconcile_only or self.store.has_abort_requested_for_run(
+                conn, run_id
+            )
+        if allow_post_cas or abort_reconcile_only:
+            reconciled = self._try_record_applied_checkpoint_reconciliation_only(
+                run_id,
+                intent=intent,
+                intent_sha256=intent_sha256,
+                trusted_tree=trusted_tree,
+                trusted_tree_sha256=trusted_tree_sha256,
+                tick_owner_id=tick_owner_id,
+                tick_lease_generation=tick_lease_generation,
+            )
+            if reconciled is not None:
+                return reconciled
         patch_path = self.artifacts.run_root(run_id) / intent.staged_patch_artifact_path
         evidence = self._load_checkpoint_evidence(run_id)
         if (
@@ -1247,6 +1412,20 @@ class SequenceHandoffService:
                 allow_post_cas_reconciliation=allow_post_cas,
             )
             if fence is not None:
+                if fence.action == "checkpoint_reconciliation_hold" and (
+                    allow_post_cas or abort_reconcile_only
+                ):
+                    reconciled = self._try_record_applied_checkpoint_reconciliation_only(
+                        run_id,
+                        intent=intent,
+                        intent_sha256=intent_sha256,
+                        trusted_tree=trusted_tree,
+                        trusted_tree_sha256=trusted_tree_sha256,
+                        tick_owner_id=tick_owner_id,
+                        tick_lease_generation=tick_lease_generation,
+                    )
+                    if reconciled is not None:
+                        return reconciled
                 if fence.action == "checkpoint_aborted":
                     return self._finalize_checkpoint_aborted_receipt(run_id)
                 return fence

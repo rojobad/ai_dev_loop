@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import Field, TypeAdapter, field_validator, model_validator
 
-from ai_dev_loop.scheduler.domain.common import DomainModel, NonEmptyStr, Sha256Hex
+from ai_dev_loop.scheduler.domain.common import DomainModel, GitObjectSha, NonEmptyStr, Sha256Hex
 from ai_dev_loop.scheduler.domain.state import (
     ControllerBinding,
     CursorBinding,
@@ -22,7 +22,25 @@ PREPARED_SEQUENCE_SCHEMA_VERSION = 1
 FROZEN_SEQUENCE_ENTRY_SCHEMA_VERSION = 1
 PREPARED_SEQUENCE_STATE_KIND = "prepared"
 ACTIVE_SEQUENCE_STATE_KIND = "active"
+ABORT_PENDING_SEQUENCE_STATE_KIND = "abort_pending"
+BLOCKED_SEQUENCE_STATE_KIND = "blocked"
+ABORTED_SEQUENCE_STATE_KIND = "aborted"
 AWAITING_FINALIZATION_SEQUENCE_STATE_KIND = "awaiting_finalization"
+
+SEQUENCE_TERMINAL_STATE_KINDS = frozenset(
+    {
+        BLOCKED_SEQUENCE_STATE_KIND,
+        ABORTED_SEQUENCE_STATE_KIND,
+        AWAITING_FINALIZATION_SEQUENCE_STATE_KIND,
+    }
+)
+
+SEQUENCE_BLOCKING_RUN_TERMINAL_KINDS = frozenset(
+    {
+        "blocked",
+        "aborted",
+    }
+)
 
 MIN_SEQUENCE_PHASE_COUNT = 2
 MAX_SEQUENCE_PHASE_COUNT = 32
@@ -241,6 +259,145 @@ class ActiveSequenceState(DomainModel):
         return self
 
 
+class AbortPendingSequenceState(DomainModel):
+    """Sequence with a durable abort request; active run abort may still be in flight."""
+
+    schema_version: Literal[1] = 1
+    sequence_id: NonEmptyStr
+    version: int
+    prepared_at: NonEmptyStr
+    updated_at: NonEmptyStr
+    started_at: NonEmptyStr
+    abort_requested_at: NonEmptyStr
+    abort_reason: NonEmptyStr
+    idempotency_key: Sha256Hex
+    definition: PreparedSequenceDefinition
+    current_ordinal: int
+    current_run_id: NonEmptyStr
+    materialized_entries: tuple[MaterializedSequenceEntry, ...] = Field(min_length=1)
+    residual_risk_ordinals: tuple[int, ...] = ()
+    cancelled_ordinals: tuple[int, ...] = ()
+
+    @field_validator("version")
+    @classmethod
+    def version_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("version must be >= 1")
+        return value
+
+    @field_validator("current_ordinal")
+    @classmethod
+    def current_ordinal_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("current_ordinal must be >= 1")
+        return value
+
+
+class BlockedSequenceState(DomainModel):
+    """Sequence stopped after a non-success terminal outcome on the current materialized run."""
+
+    schema_version: Literal[1] = 1
+    sequence_id: NonEmptyStr
+    version: int
+    prepared_at: NonEmptyStr
+    updated_at: NonEmptyStr
+    started_at: NonEmptyStr
+    blocked_at: NonEmptyStr
+    block_reason_kind: NonEmptyStr
+    idempotency_key: Sha256Hex
+    definition: PreparedSequenceDefinition
+    current_ordinal: int
+    current_run_id: NonEmptyStr
+    materialized_entries: tuple[MaterializedSequenceEntry, ...] = Field(min_length=1)
+    residual_risk_ordinals: tuple[int, ...] = ()
+
+    @field_validator("version")
+    @classmethod
+    def version_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("version must be >= 1")
+        return value
+
+    @field_validator("current_ordinal")
+    @classmethod
+    def current_ordinal_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("current_ordinal must be >= 1")
+        return value
+
+
+class AbortedSequenceState(DomainModel):
+    """Sequence aborted by explicit operator request."""
+
+    schema_version: Literal[1] = 1
+    sequence_id: NonEmptyStr
+    version: int
+    prepared_at: NonEmptyStr
+    updated_at: NonEmptyStr
+    started_at: NonEmptyStr | None = None
+    aborted_at: NonEmptyStr
+    abort_reason: NonEmptyStr
+    idempotency_key: Sha256Hex
+    definition: PreparedSequenceDefinition
+    current_ordinal: int | None = None
+    current_run_id: NonEmptyStr | None = None
+    materialized_entries: tuple[MaterializedSequenceEntry, ...] = ()
+    residual_risk_ordinals: tuple[int, ...] = ()
+    cancelled_ordinals: tuple[int, ...] = ()
+
+    @field_validator("version")
+    @classmethod
+    def version_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("version must be >= 1")
+        return value
+
+
+class SequencePhaseReportEntry(DomainModel):
+    ordinal: int
+    phase_name: NonEmptyStr
+    run_id: NonEmptyStr
+    run_id_prefix: NonEmptyStr
+    accepted_outcome: Literal["completed", "completed_with_residual_risk"] | None = None
+    residual_risk: bool = False
+    review_result_sha256: Sha256Hex | None = None
+    review_result_sha256_prefix: NonEmptyStr | None = None
+    checkpoint_commit_sha256: GitObjectSha | None = None
+    checkpoint_commit_sha256_prefix: NonEmptyStr | None = None
+    checkpoint_parent_sha256: GitObjectSha | None = None
+    checkpoint_parent_sha256_prefix: NonEmptyStr | None = None
+    checkpoint_tree_sha256: GitObjectSha | None = None
+    checkpoint_tree_sha256_prefix: NonEmptyStr | None = None
+    checkpoint_intent_sha256: Sha256Hex | None = None
+    checkpoint_trusted_tree_sha256: Sha256Hex | None = None
+
+
+class SequenceCompletionReport(DomainModel):
+    """Safe aggregate completion report for awaiting_finalization sequences."""
+
+    schema_version: Literal[1] = 1
+    sequence_id: NonEmptyStr
+    sequence_name: NonEmptyStr
+    state_kind: Literal["awaiting_finalization"] = "awaiting_finalization"
+    base_head_sha256: GitObjectSha | None = None
+    base_head_sha256_prefix: NonEmptyStr
+    finalized_at: NonEmptyStr
+    final_run_id: NonEmptyStr
+    final_run_id_prefix: NonEmptyStr
+    final_outcome: Literal["completed", "completed_with_residual_risk"]
+    final_staged_patch_sha256: Sha256Hex | None = None
+    final_staged_patch_sha256_prefix: NonEmptyStr | None = None
+    residual_risk_ordinals: tuple[int, ...] = ()
+    residual_risk_phase_names: tuple[str, ...] = ()
+    phases: tuple[SequencePhaseReportEntry, ...]
+    manual_actions_remaining: tuple[str, ...] = (
+        "final_commit",
+        "push",
+        "pr_review",
+        "merge",
+    )
+
+
 class AwaitingFinalizationSequenceState(DomainModel):
     """Sequence whose final phase completed; staged changes await operator finalization."""
 
@@ -255,6 +412,7 @@ class AwaitingFinalizationSequenceState(DomainModel):
     definition: PreparedSequenceDefinition
     final_run_id: NonEmptyStr
     final_outcome: Literal["completed", "completed_with_residual_risk"]
+    completion_report_sha256: Sha256Hex | None = None
     materialized_entries: tuple[MaterializedSequenceEntry, ...] = Field(min_length=1)
     residual_risk_ordinals: tuple[int, ...] = ()
 
@@ -280,6 +438,15 @@ class AwaitingFinalizationSequenceState(DomainModel):
         return self
 
 
+def future_entry_ordinals(
+    definition: PreparedSequenceDefinition, current_ordinal: int
+) -> tuple[int, ...]:
+    total = len(definition.entries)
+    if current_ordinal >= total:
+        return ()
+    return tuple(range(current_ordinal + 1, total + 1))
+
+
 def sequence_identity_payload(definition: PreparedSequenceDefinition) -> dict[str, object]:
     payload = definition.model_dump(mode="json")
     payload.pop("sequence_id", None)
@@ -300,8 +467,20 @@ PREPARED_SEQUENCE_STATE_ADAPTER: TypeAdapter[PreparedSequenceState] = TypeAdapte
     PreparedSequenceState
 )
 ACTIVE_SEQUENCE_STATE_ADAPTER: TypeAdapter[ActiveSequenceState] = TypeAdapter(ActiveSequenceState)
+ABORT_PENDING_SEQUENCE_STATE_ADAPTER: TypeAdapter[AbortPendingSequenceState] = TypeAdapter(
+    AbortPendingSequenceState
+)
+BLOCKED_SEQUENCE_STATE_ADAPTER: TypeAdapter[BlockedSequenceState] = TypeAdapter(
+    BlockedSequenceState
+)
+ABORTED_SEQUENCE_STATE_ADAPTER: TypeAdapter[AbortedSequenceState] = TypeAdapter(
+    AbortedSequenceState
+)
 AWAITING_FINALIZATION_SEQUENCE_STATE_ADAPTER: TypeAdapter[AwaitingFinalizationSequenceState] = (
     TypeAdapter(AwaitingFinalizationSequenceState)
+)
+SEQUENCE_COMPLETION_REPORT_ADAPTER: TypeAdapter[SequenceCompletionReport] = TypeAdapter(
+    SequenceCompletionReport
 )
 FROZEN_SEQUENCE_ENTRY_ADAPTER: TypeAdapter[FrozenSequenceEntry] = TypeAdapter(FrozenSequenceEntry)
 SEQUENCE_MANIFEST_ADAPTER: TypeAdapter[SequenceManifest] = TypeAdapter(SequenceManifest)

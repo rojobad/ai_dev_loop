@@ -504,6 +504,22 @@ class SequenceEntrySummary(AppModel):
     phase_name: str
     planned_run_id_prefix: str
     commit_message_present: bool
+    materialized: bool = False
+    materialized_run_id_prefix: str | None = None
+    accepted_outcome: str | None = None
+    residual_risk: bool = False
+    checkpoint_commit_sha256_prefix: str | None = None
+    cancelled: bool = False
+
+
+class SequenceAggregateCounts(AppModel):
+    planned: int
+    materialized: int
+    accepted: int
+    residual_risk: int
+    checkpointed: int
+    cancelled: int
+    remaining: int
 
 
 class SequencePrepareResult(AppModel):
@@ -527,11 +543,27 @@ class SequenceStatusResult(AppModel):
     current_run_state_kind: str | None = None
     current_phase_name: str | None = None
     residual_risk: bool | None = None
+    residual_risk_ordinals: tuple[int, ...] = ()
+    block_reason_kind: str | None = None
+    abort_reason: str | None = None
+    finalized_at: str | None = None
+    completion_report_sha256_prefix: str | None = None
     prepared_at: str
     updated_at: str
     started_at: str | None = None
     idempotency_key_prefix: str
     entries: tuple[SequenceEntrySummary, ...]
+    aggregate_counts: SequenceAggregateCounts | None = None
+    safe_next_action: SafeNextAction
+
+
+class SequenceAbortResult(AppModel):
+    sequence_id: str
+    state_kind: str
+    abort_persisted: bool
+    idempotent_replay: bool
+    run_abort_process_action: AbortProcessAction
+    run_termination_pending: bool = False
     safe_next_action: SafeNextAction
 
 
@@ -612,5 +644,38 @@ def awaiting_finalization_sequence_safe_next_action(sequence_id: str) -> SafeNex
             f"Sequence {sequence_id} is awaiting finalization. Inspect staged final-phase "
             f"changes with ai_dev_loop scheduler sequence status {sequence_id}. "
             "Final commit, push, and PR remain operator actions."
+        ),
+    )
+
+
+def blocked_sequence_safe_next_action(
+    sequence_id: str, *, block_reason_kind: str | None = None
+) -> SafeNextAction:
+    detail = block_reason_kind or "blocked"
+    return SafeNextAction(
+        kind=SafeNextActionKind.INSPECT_BLOCKED,
+        command=(
+            f"Sequence {sequence_id} is blocked ({detail}). Inspect materialized runs and "
+            "protected artifacts. No automatic retry or successor materialization is available."
+        ),
+    )
+
+
+def aborted_sequence_safe_next_action(sequence_id: str) -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.NONE,
+        command=(
+            f"Sequence {sequence_id} was aborted. Later planned phases were cancelled without "
+            "creating scheduler runs."
+        ),
+    )
+
+
+def abort_pending_sequence_safe_next_action(sequence_id: str) -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.SCHEDULER_TICK,
+        command=(
+            f"Sequence {sequence_id} abort is pending. Run ai_dev_loop scheduler tick to "
+            "reconcile the active run abort."
         ),
     )

@@ -96,8 +96,8 @@ cutover_app = typer.Typer(
 timer_app = typer.Typer(help="Packaged systemd timer asset helpers (no auto-enable).")
 sequence_app = typer.Typer(
     help=(
-        "Prepare, start, and inspect immutable scheduler sequence definitions. "
-        "Phase 20.2 materializes only the first phase run after explicit sequence start."
+        "Prepare, start, abort, and inspect immutable scheduler sequence definitions. "
+        "Sequence start materializes phase 1; later phases materialize after accepted reviews."
     ),
 )
 integrations_app = typer.Typer(help="Global Codex integration commands.")
@@ -565,6 +565,23 @@ def scheduler_sequence_start_command(
 
         result = start_sequence(sequence_id)
         typer.echo(render_sequence_start_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@sequence_app.command("abort")
+def scheduler_sequence_abort_command(
+    sequence_id: Annotated[str, typer.Argument(help="Prepared or active scheduler sequence ID.")],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Abort a prepared or active sequence without destructive Git behavior."""
+
+    def run() -> None:
+        from ai_dev_loop.commands.scheduler import render_sequence_abort_output
+        from ai_dev_loop.scheduler.application.sequence_abort import scheduler_sequence_abort
+
+        result = scheduler_sequence_abort(sequence_id)
+        typer.echo(render_sequence_abort_output(result, output=output.value), nl=False)
 
     _handle(run)
 

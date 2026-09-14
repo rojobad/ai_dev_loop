@@ -47,6 +47,9 @@ SEQUENCE_CHECKPOINT_REQUESTED_EVENT_KIND = "sequence_checkpoint_requested"
 SEQUENCE_CHECKPOINT_COMMITTED_EVENT_KIND = "sequence_checkpoint_committed"
 SEQUENCE_HANDOFF_COMPLETED_EVENT_KIND = "sequence_handoff_completed"
 SEQUENCE_FINALIZED_EVENT_KIND = "sequence_finalized"
+SEQUENCE_ABORT_REQUESTED_EVENT_KIND = "sequence_abort_requested"
+SEQUENCE_ABORTED_EVENT_KIND = "sequence_aborted"
+SEQUENCE_BLOCKED_EVENT_KIND = "sequence_blocked"
 MAX_ITERATIONS_REACHED_EVENT_KIND = "max_iterations_reached"
 REVIEW_BUDGET_EXTENDED_EVENT_KIND = "review_budget_extended"
 ABORT_REQUESTED_EVENT_KIND = "abort_requested"
@@ -603,6 +606,49 @@ class SequenceFinalizedEvent(DomainModel):
         return value
 
 
+class SequenceAbortRequestedEvent(DomainModel):
+    kind: str = Field(default=SEQUENCE_ABORT_REQUESTED_EVENT_KIND)
+    sequence_id: NonEmptyStr
+    reason: NonEmptyStr = "user_requested_abort"
+    current_run_id: str | None = None
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_sequence_abort_requested(cls, value: str) -> str:
+        if value != SEQUENCE_ABORT_REQUESTED_EVENT_KIND:
+            raise ValueError("kind must be sequence_abort_requested")
+        return value
+
+
+class SequenceAbortedEvent(DomainModel):
+    kind: str = Field(default=SEQUENCE_ABORTED_EVENT_KIND)
+    sequence_id: NonEmptyStr
+    reason: NonEmptyStr
+    current_run_id: str | None = None
+    cancelled_ordinal_count: int = 0
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_sequence_aborted(cls, value: str) -> str:
+        if value != SEQUENCE_ABORTED_EVENT_KIND:
+            raise ValueError("kind must be sequence_aborted")
+        return value
+
+
+class SequenceBlockedEvent(DomainModel):
+    kind: str = Field(default=SEQUENCE_BLOCKED_EVENT_KIND)
+    sequence_id: NonEmptyStr
+    current_run_id: str
+    block_reason_kind: NonEmptyStr
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_sequence_blocked(cls, value: str) -> str:
+        if value != SEQUENCE_BLOCKED_EVENT_KIND:
+            raise ValueError("kind must be sequence_blocked")
+        return value
+
+
 class MaxIterationsReachedEvent(DomainModel):
     kind: str = Field(default=MAX_ITERATIONS_REACHED_EVENT_KIND)
     run_id: str
@@ -744,6 +790,9 @@ SchedulerEvent = Annotated[
     | Annotated[SequenceCheckpointCommittedEvent, Tag(SEQUENCE_CHECKPOINT_COMMITTED_EVENT_KIND)]
     | Annotated[SequenceHandoffCompletedEvent, Tag(SEQUENCE_HANDOFF_COMPLETED_EVENT_KIND)]
     | Annotated[SequenceFinalizedEvent, Tag(SEQUENCE_FINALIZED_EVENT_KIND)]
+    | Annotated[SequenceAbortRequestedEvent, Tag(SEQUENCE_ABORT_REQUESTED_EVENT_KIND)]
+    | Annotated[SequenceAbortedEvent, Tag(SEQUENCE_ABORTED_EVENT_KIND)]
+    | Annotated[SequenceBlockedEvent, Tag(SEQUENCE_BLOCKED_EVENT_KIND)]
     | Annotated[MaxIterationsReachedEvent, Tag(MAX_ITERATIONS_REACHED_EVENT_KIND)]
     | Annotated[ReviewBudgetExtendedEvent, Tag(REVIEW_BUDGET_EXTENDED_EVENT_KIND)]
     | Annotated[AbortRequestedEvent, Tag(ABORT_REQUESTED_EVENT_KIND)]

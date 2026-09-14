@@ -41,9 +41,21 @@ from ai_dev_loop.scheduler.domain.state import (
 if TYPE_CHECKING:
     from ai_dev_loop.scheduler.domain.events import SchedulerEvent
     from ai_dev_loop.scheduler.domain.sequence import (
+        AbortedSequenceState,
+        AbortPendingSequenceState,
         ActiveSequenceState,
         AwaitingFinalizationSequenceState,
+        BlockedSequenceState,
         PreparedSequenceState,
+    )
+
+    SequencePersistedState = (
+        PreparedSequenceState
+        | ActiveSequenceState
+        | AbortPendingSequenceState
+        | BlockedSequenceState
+        | AbortedSequenceState
+        | AwaitingFinalizationSequenceState
     )
 
 SCHEMA_VERSION = 7
@@ -2439,6 +2451,62 @@ class SqliteSchedulerStore:
         ).fetchone()
         return row is not None
 
+    def has_sequence_abort_requested_for_run(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        sequence_id: str,
+    ) -> bool:
+        row = conn.execute(
+            """
+            SELECT 1 FROM scheduler_events
+            WHERE run_id = ?
+              AND event_kind = 'sequence_abort_requested'
+              AND json_extract(event_payload, '$.sequence_id') = ?
+            LIMIT 1
+            """,
+            (run_id, sequence_id),
+        ).fetchone()
+        return row is not None
+
+    def list_reconcilable_sequence_ids(self, conn: sqlite3.Connection) -> list[str]:
+        rows = conn.execute(
+            """
+            SELECT sequence_id
+            FROM scheduler_sequences
+            WHERE state_kind IN ('active', 'abort_pending')
+            ORDER BY prepared_at ASC, sequence_id ASC
+            """
+        ).fetchall()
+        return [str(row["sequence_id"]) for row in rows]
+
+    def list_sequences_pending_report_publication(self, conn: sqlite3.Connection) -> list[str]:
+        rows = conn.execute(
+            """
+            SELECT sequence_id
+            FROM scheduler_sequences
+            WHERE state_kind = 'awaiting_finalization'
+              AND (
+                json_extract(payload, '$.completion_report_sha256') IS NULL
+                OR json_extract(payload, '$.completion_report_sha256') = ''
+              )
+            ORDER BY prepared_at ASC, sequence_id ASC
+            """
+        ).fetchall()
+        return [str(row["sequence_id"]) for row in rows]
+
+    def list_abort_pending_sequence_run_ids(self, conn: sqlite3.Connection) -> list[str]:
+        rows = conn.execute(
+            """
+            SELECT json_extract(payload, '$.current_run_id') AS run_id
+            FROM scheduler_sequences
+            WHERE state_kind = 'abort_pending'
+            ORDER BY prepared_at ASC, sequence_id ASC
+            """
+        ).fetchall()
+        return [str(row["run_id"]) for row in rows if row["run_id"] is not None]
+
     def get_checkpoint_reconciliation_hold_row(
         self, conn: sqlite3.Connection, run_id: str
     ) -> sqlite3.Row | None:
@@ -3385,14 +3453,23 @@ class SqliteSchedulerStore:
     @staticmethod
     def dump_sequence_state(state: object) -> tuple[str, str, str]:
         from ai_dev_loop.scheduler.domain.sequence import (
+            ABORT_PENDING_SEQUENCE_STATE_ADAPTER,
+            ABORT_PENDING_SEQUENCE_STATE_KIND,
+            ABORTED_SEQUENCE_STATE_ADAPTER,
+            ABORTED_SEQUENCE_STATE_KIND,
             ACTIVE_SEQUENCE_STATE_ADAPTER,
             ACTIVE_SEQUENCE_STATE_KIND,
             AWAITING_FINALIZATION_SEQUENCE_STATE_ADAPTER,
             AWAITING_FINALIZATION_SEQUENCE_STATE_KIND,
+            BLOCKED_SEQUENCE_STATE_ADAPTER,
+            BLOCKED_SEQUENCE_STATE_KIND,
             PREPARED_SEQUENCE_STATE_ADAPTER,
             PREPARED_SEQUENCE_STATE_KIND,
+            AbortedSequenceState,
+            AbortPendingSequenceState,
             ActiveSequenceState,
             AwaitingFinalizationSequenceState,
+            BlockedSequenceState,
             PreparedSequenceState,
         )
 
@@ -3408,6 +3485,24 @@ class SqliteSchedulerStore:
             )
             text = ACTIVE_SEQUENCE_STATE_ADAPTER.dump_json(active_validated).decode("utf-8")
             return ACTIVE_SEQUENCE_STATE_KIND, text, payload_sha256(text)
+        if isinstance(state, AbortPendingSequenceState):
+            pending_validated = ABORT_PENDING_SEQUENCE_STATE_ADAPTER.validate_python(
+                state.model_dump(mode="json")
+            )
+            text = ABORT_PENDING_SEQUENCE_STATE_ADAPTER.dump_json(pending_validated).decode("utf-8")
+            return ABORT_PENDING_SEQUENCE_STATE_KIND, text, payload_sha256(text)
+        if isinstance(state, BlockedSequenceState):
+            blocked_validated = BLOCKED_SEQUENCE_STATE_ADAPTER.validate_python(
+                state.model_dump(mode="json")
+            )
+            text = BLOCKED_SEQUENCE_STATE_ADAPTER.dump_json(blocked_validated).decode("utf-8")
+            return BLOCKED_SEQUENCE_STATE_KIND, text, payload_sha256(text)
+        if isinstance(state, AbortedSequenceState):
+            aborted_validated = ABORTED_SEQUENCE_STATE_ADAPTER.validate_python(
+                state.model_dump(mode="json")
+            )
+            text = ABORTED_SEQUENCE_STATE_ADAPTER.dump_json(aborted_validated).decode("utf-8")
+            return ABORTED_SEQUENCE_STATE_KIND, text, payload_sha256(text)
         if isinstance(state, AwaitingFinalizationSequenceState):
             finalized_validated = AWAITING_FINALIZATION_SEQUENCE_STATE_ADAPTER.validate_python(
                 state.model_dump(mode="json")
@@ -3438,33 +3533,46 @@ class SqliteSchedulerStore:
         return text, payload_sha256(text)
 
     @staticmethod
-    def load_sequence_state(
-        payload: str,
-    ) -> PreparedSequenceState | ActiveSequenceState | AwaitingFinalizationSequenceState:
+    def load_sequence_state(payload: str) -> SequencePersistedState:
         from ai_dev_loop.scheduler.domain.sequence import (
+            ABORT_PENDING_SEQUENCE_STATE_ADAPTER,
+            ABORTED_SEQUENCE_STATE_ADAPTER,
             ACTIVE_SEQUENCE_STATE_ADAPTER,
             AWAITING_FINALIZATION_SEQUENCE_STATE_ADAPTER,
+            BLOCKED_SEQUENCE_STATE_ADAPTER,
             PREPARED_SEQUENCE_STATE_ADAPTER,
+            AbortedSequenceState,
+            AbortPendingSequenceState,
             ActiveSequenceState,
             AwaitingFinalizationSequenceState,
+            BlockedSequenceState,
             PreparedSequenceState,
         )
 
-        try:
-            prepared_state = PREPARED_SEQUENCE_STATE_ADAPTER.validate_json(payload)
-            if isinstance(prepared_state, PreparedSequenceState):
-                return prepared_state
-        except Exception:
-            pass
-        try:
-            active_state = ACTIVE_SEQUENCE_STATE_ADAPTER.validate_json(payload)
-            if isinstance(active_state, ActiveSequenceState):
-                return active_state
-        except Exception:
-            pass
-        finalized_state = AWAITING_FINALIZATION_SEQUENCE_STATE_ADAPTER.validate_json(payload)
-        if isinstance(finalized_state, AwaitingFinalizationSequenceState):
-            return finalized_state
+        for adapter in (
+            PREPARED_SEQUENCE_STATE_ADAPTER,
+            ACTIVE_SEQUENCE_STATE_ADAPTER,
+            ABORT_PENDING_SEQUENCE_STATE_ADAPTER,
+            BLOCKED_SEQUENCE_STATE_ADAPTER,
+            ABORTED_SEQUENCE_STATE_ADAPTER,
+            AWAITING_FINALIZATION_SEQUENCE_STATE_ADAPTER,
+        ):
+            try:
+                loaded = adapter.validate_json(payload)
+            except Exception:
+                continue
+            if isinstance(
+                loaded,
+                (
+                    PreparedSequenceState,
+                    ActiveSequenceState,
+                    AbortPendingSequenceState,
+                    BlockedSequenceState,
+                    AbortedSequenceState,
+                    AwaitingFinalizationSequenceState,
+                ),
+            ):
+                return loaded
         raise SchedulerEngineError(
             SchedulerEngineErrorKind.CORRUPTION,
             "sequence payload has unexpected type",
@@ -3562,45 +3670,41 @@ class SqliteSchedulerStore:
         self,
         conn: sqlite3.Connection,
         sequence_id: str,
-    ) -> PreparedSequenceState | ActiveSequenceState | AwaitingFinalizationSequenceState:
+    ) -> SequencePersistedState:
         from ai_dev_loop.scheduler.domain.common import worktree_key
         from ai_dev_loop.scheduler.domain.sequence import (
+            ABORT_PENDING_SEQUENCE_STATE_KIND,
+            ABORTED_SEQUENCE_STATE_KIND,
             ACTIVE_SEQUENCE_STATE_KIND,
             AWAITING_FINALIZATION_SEQUENCE_STATE_KIND,
+            BLOCKED_SEQUENCE_STATE_KIND,
             FROZEN_SEQUENCE_ENTRY_ADAPTER,
             PREPARED_SEQUENCE_STATE_KIND,
+            AbortedSequenceState,
+            AbortPendingSequenceState,
             ActiveSequenceState,
             AwaitingFinalizationSequenceState,
+            BlockedSequenceState,
             PreparedSequenceState,
         )
 
         row = self.get_sequence_row(conn, sequence_id)
         state = self.load_sequence_state(row["payload"])
         row_kind = str(row["state_kind"])
-        if row_kind not in {
-            PREPARED_SEQUENCE_STATE_KIND,
-            ACTIVE_SEQUENCE_STATE_KIND,
-            AWAITING_FINALIZATION_SEQUENCE_STATE_KIND,
-        }:
+        kind_to_type = {
+            PREPARED_SEQUENCE_STATE_KIND: PreparedSequenceState,
+            ACTIVE_SEQUENCE_STATE_KIND: ActiveSequenceState,
+            ABORT_PENDING_SEQUENCE_STATE_KIND: AbortPendingSequenceState,
+            BLOCKED_SEQUENCE_STATE_KIND: BlockedSequenceState,
+            ABORTED_SEQUENCE_STATE_KIND: AbortedSequenceState,
+            AWAITING_FINALIZATION_SEQUENCE_STATE_KIND: AwaitingFinalizationSequenceState,
+        }
+        if row_kind not in kind_to_type:
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.CORRUPTION,
                 "sequence state_kind is unsupported",
             )
-        if row_kind == PREPARED_SEQUENCE_STATE_KIND and not isinstance(
-            state, PreparedSequenceState
-        ):
-            raise SchedulerEngineError(
-                SchedulerEngineErrorKind.CORRUPTION,
-                "sequence state_kind mismatch",
-            )
-        if row_kind == ACTIVE_SEQUENCE_STATE_KIND and not isinstance(state, ActiveSequenceState):
-            raise SchedulerEngineError(
-                SchedulerEngineErrorKind.CORRUPTION,
-                "sequence state_kind mismatch",
-            )
-        if row_kind == AWAITING_FINALIZATION_SEQUENCE_STATE_KIND and not isinstance(
-            state, AwaitingFinalizationSequenceState
-        ):
+        if not isinstance(state, kind_to_type[row_kind]):
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.CORRUPTION,
                 "sequence state_kind mismatch",
@@ -3705,6 +3809,37 @@ class SqliteSchedulerStore:
                     SchedulerEngineErrorKind.CORRUPTION,
                     "sequence entry payload disagrees with aggregate state",
                 )
+        from ai_dev_loop.scheduler.application.sequence_materializer import frozen_entry_hash
+        from ai_dev_loop.scheduler.domain.sequence_lifecycle_validation import (
+            SequenceLifecycleValidationError,
+            validate_sequence_lifecycle_state,
+        )
+
+        materialized_entries = getattr(state, "materialized_entries", None)
+        if materialized_entries:
+            for materialized in materialized_entries:
+                entry = state.definition.entries[materialized.ordinal - 1]
+                if frozen_entry_hash(entry) != materialized.entry_hash:
+                    raise SchedulerEngineError(
+                        SchedulerEngineErrorKind.CORRUPTION,
+                        "materialized entry_hash disagrees with frozen entry payload",
+                    )
+                if materialized.run_id != entry.planned_run_id:
+                    raise SchedulerEngineError(
+                        SchedulerEngineErrorKind.CORRUPTION,
+                        "materialized run_id disagrees with planned run binding",
+                    )
+        if isinstance(
+            state,
+            (AbortPendingSequenceState, BlockedSequenceState, AbortedSequenceState),
+        ):
+            try:
+                validate_sequence_lifecycle_state(state)
+            except SequenceLifecycleValidationError as exc:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CORRUPTION,
+                    str(exc),
+                ) from exc
         return state
 
     def insert_prepared_sequence(
@@ -3779,18 +3914,32 @@ class SqliteSchedulerStore:
         *,
         sequence_id: str,
         expected_version: int,
-        new_state: PreparedSequenceState | ActiveSequenceState,
+        new_state: SequencePersistedState,
         now: datetime,
     ) -> bool:
         from ai_dev_loop.scheduler.domain.sequence import (
+            AbortedSequenceState,
+            AbortPendingSequenceState,
             ActiveSequenceState,
+            AwaitingFinalizationSequenceState,
+            BlockedSequenceState,
             PreparedSequenceState,
         )
 
-        if not isinstance(new_state, (PreparedSequenceState, ActiveSequenceState)):
+        if not isinstance(
+            new_state,
+            (
+                PreparedSequenceState,
+                ActiveSequenceState,
+                AbortPendingSequenceState,
+                BlockedSequenceState,
+                AbortedSequenceState,
+                AwaitingFinalizationSequenceState,
+            ),
+        ):
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.VALIDATION,
-                "compare_and_swap accepts only PreparedSequenceState or ActiveSequenceState",
+                "compare_and_swap received unsupported sequence state type",
             )
         if new_state.sequence_id != sequence_id:
             raise SchedulerEngineError(
@@ -3822,6 +3971,18 @@ class SqliteSchedulerStore:
                 SchedulerEngineErrorKind.VALIDATION,
                 "sequence definition is immutable",
             )
+        from ai_dev_loop.scheduler.domain.sequence_lifecycle_validation import (
+            SequenceLifecycleValidationError,
+            validate_sequence_lifecycle_transition,
+        )
+
+        try:
+            validate_sequence_lifecycle_transition(current_state, new_state)
+        except SequenceLifecycleValidationError as exc:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                str(exc),
+            ) from exc
         kind, payload, digest = self.dump_sequence_state(new_state)
         now_text = encode_utc_instant(now)
         cursor = conn.execute(
