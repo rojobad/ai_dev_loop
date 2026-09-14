@@ -1623,6 +1623,60 @@ class SqliteSchedulerStore:
             ),
         )
 
+    def reacquire_released_reservation_for_run(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        worktree_key: str,
+        repository_root: str,
+        now: datetime,
+    ) -> bool:
+        active = self.get_active_reservation(conn, worktree_key)
+        if active is not None and str(active["run_id"]) != run_id:
+            return False
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            UPDATE scheduler_repository_reservations
+            SET status = ?, repository_root = ?, updated_at = ?
+            WHERE worktree_key = ? AND run_id = ? AND status = ?
+            """,
+            (
+                ReservationStatus.ACTIVE.value,
+                repository_root,
+                now_text,
+                worktree_key,
+                run_id,
+                ReservationStatus.RELEASED.value,
+            ),
+        )
+        if cursor.rowcount == 1:
+            return True
+        cursor = conn.execute(
+            """
+            INSERT INTO scheduler_repository_reservations(
+                worktree_key, run_id, repository_root, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(worktree_key) DO UPDATE SET
+                run_id = excluded.run_id,
+                repository_root = excluded.repository_root,
+                status = excluded.status,
+                updated_at = excluded.updated_at
+            WHERE scheduler_repository_reservations.status = 'released'
+              AND scheduler_repository_reservations.run_id = excluded.run_id
+            """,
+            (
+                worktree_key,
+                run_id,
+                repository_root,
+                ReservationStatus.ACTIVE.value,
+                now_text,
+                now_text,
+            ),
+        )
+        return cursor.rowcount == 1
+
     def list_tick_eligible_run_ids(self, conn: sqlite3.Connection) -> list[str]:
         placeholders = ",".join("?" * len(TICK_ELIGIBLE_STATE_KINDS))
         rows = conn.execute(

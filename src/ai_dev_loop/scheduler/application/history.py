@@ -116,6 +116,13 @@ def _safe_detail_for_event(event_kind: str, payload_text: str) -> str:
             f"{event_kind}: source_run_id={payload.get('source_run_id')} "
             f"successor_run_id={payload.get('successor_run_id')}"
         )
+    if event_kind == "review_budget_extended":
+        return (
+            f"{event_kind}: review_iteration={payload.get('review_iteration')} "
+            f"previous_total={payload.get('previous_effective_total')} "
+            f"new_total={payload.get('new_effective_total')} "
+            "(artifact bindings redacted)"
+        )
     if event_kind == "attempt_completed":
         return (
             f"{event_kind}: termination={payload.get('termination_class')} "

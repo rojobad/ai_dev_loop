@@ -25,6 +25,7 @@ from ai_dev_loop.scheduler.domain.events import (
     MaxIterationsReachedEvent,
     PreflightBlockedEvent,
     PreflightCompletedEvent,
+    ReviewBudgetExtendedEvent,
     RunAbortedEvent,
     RunAuthorizedEvent,
     RunCompletedEvent,
@@ -783,12 +784,20 @@ def apply_max_iterations_reached(
 ) -> MaxIterationsReachedState:
     if event.run_id != state.run_id:
         raise ValueError("event run_id disagrees with state")
-    codex = state.codex.model_copy(
-        update={
-            "review_iteration": event.review_iteration,
-            "reviews_completed": state.codex.reviews_completed + 1,
-        }
-    )
+    codex_update: dict[str, object] = {
+        "review_iteration": event.review_iteration,
+        "reviews_completed": state.codex.reviews_completed + 1,
+    }
+    if event.review_result_path and event.review_result_sha256:
+        codex_update["latest_review_result_path"] = event.review_result_path
+        codex_update["latest_review_result_sha256"] = event.review_result_sha256
+    if event.fix_prompt_path and event.fix_prompt_sha256:
+        codex_update["latest_fix_prompt_path"] = event.fix_prompt_path
+        codex_update["latest_fix_prompt_sha256"] = event.fix_prompt_sha256
+    if event.correction_envelope_path and event.correction_envelope_sha256:
+        codex_update["latest_correction_envelope_path"] = event.correction_envelope_path
+        codex_update["latest_correction_envelope_sha256"] = event.correction_envelope_sha256
+    codex = state.codex.model_copy(update=codex_update)
     return MaxIterationsReachedState(
         run_id=state.run_id,
         version=state.version + 1,
@@ -798,6 +807,51 @@ def apply_max_iterations_reached(
         context=state.context,
         checkpoint=state.checkpoint,
         cursor=state.cursor,
+        codex=codex,
+    )
+
+
+def apply_review_budget_extended(
+    state: MaxIterationsReachedState,
+    event: ReviewBudgetExtendedEvent,
+    *,
+    now_text: str,
+) -> WaitingForCursorFixState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    if event.review_iteration != state.codex.review_iteration:
+        raise ValueError("extension review_iteration disagrees with exhausted checkpoint")
+    if event.review_iteration != state.codex.reviews_completed:
+        raise ValueError("extension review_iteration disagrees with completed review count")
+    codex = state.codex.model_copy(
+        update={
+            "latest_review_result_path": event.review_result_path,
+            "latest_review_result_sha256": event.review_result_sha256,
+            "latest_fix_prompt_path": event.fix_prompt_path,
+            "latest_fix_prompt_sha256": event.fix_prompt_sha256,
+            "latest_correction_envelope_path": event.correction_envelope_path,
+            "latest_correction_envelope_sha256": event.correction_envelope_sha256,
+        }
+    )
+    cursor = state.cursor.model_copy(
+        update={
+            "iteration": event.review_iteration + 1,
+            "usage_limit_fingerprint_path": None,
+            "usage_limit_fingerprint_sha256": None,
+            "continuation_envelope_path": None,
+            "continuation_envelope_sha256": None,
+            "wait_until": None,
+        }
+    )
+    return WaitingForCursorFixState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        checkpoint=state.checkpoint,
+        cursor=cursor,
         codex=codex,
     )
 

@@ -72,6 +72,7 @@ class SchedulerRunSummary(AppModel):
     reviewer_session_id_prefix: str | None
     review_iterations_completed: int
     max_review_iterations: int
+    submitted_max_review_iterations: int | None = None
     submitted_at: str
     updated_at: str
     safe_next_action: SafeNextAction
@@ -262,6 +263,17 @@ def terminal_review_safe_next_action() -> SafeNextAction:
     )
 
 
+def max_iterations_reached_safe_next_action(run_id: str) -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.NONE,
+        command=(
+            f"ai_dev_loop scheduler extend {run_id} "
+            "--max-review-iterations <higher-total> "
+            "(authorize a higher review ceiling; tick schedules the correction)."
+        ),
+    )
+
+
 def aborted_safe_next_action() -> SafeNextAction:
     return SafeNextAction(
         kind=SafeNextActionKind.NONE,
@@ -352,7 +364,9 @@ def safe_next_action_for_state_kind(
         return waiting_for_cursor_fix_safe_next_action()
     if state_kind == "checkpoint_pending":
         return checkpoint_pending_safe_next_action()
-    if state_kind in {"completed", "completed_with_residual_risk", "max_iterations_reached"}:
+    if state_kind == "max_iterations_reached":
+        return max_iterations_reached_safe_next_action(run_id)
+    if state_kind in {"completed", "completed_with_residual_risk"}:
         return terminal_review_safe_next_action()
     if state_kind == "aborted":
         return aborted_safe_next_action()
@@ -377,8 +391,14 @@ def review_budget_from_state(
     state: SchedulerState,
     *,
     ledger_reviews_completed: int | None = None,
+    effective_max_review_iterations: int | None = None,
 ) -> tuple[int, int]:
-    max_reviews = state.context.workflow.max_review_iterations
+    submitted_max = state.context.workflow.max_review_iterations
+    max_reviews = (
+        effective_max_review_iterations
+        if effective_max_review_iterations is not None
+        else submitted_max
+    )
     codex = getattr(state, "codex", None)
     if codex is not None:
         return int(getattr(codex, "reviews_completed", 0) or 0), max_reviews
@@ -431,6 +451,7 @@ def summary_from_context(
     bound_reviewer_session_id: str | None = None,
     review_iterations_completed: int | None = None,
     max_review_iterations: int | None = None,
+    submitted_max_review_iterations: int | None = None,
     cursor_wait_until: str | None = None,
     block_reason_kind: str | None = None,
 ) -> SchedulerRunSummary:
@@ -462,6 +483,7 @@ def summary_from_context(
             if max_review_iterations is not None
             else context.workflow.max_review_iterations
         ),
+        submitted_max_review_iterations=submitted_max_review_iterations,
         submitted_at=submitted_at,
         updated_at=updated_at,
         safe_next_action=action,

@@ -48,6 +48,7 @@ SEQUENCE_CHECKPOINT_COMMITTED_EVENT_KIND = "sequence_checkpoint_committed"
 SEQUENCE_HANDOFF_COMPLETED_EVENT_KIND = "sequence_handoff_completed"
 SEQUENCE_FINALIZED_EVENT_KIND = "sequence_finalized"
 MAX_ITERATIONS_REACHED_EVENT_KIND = "max_iterations_reached"
+REVIEW_BUDGET_EXTENDED_EVENT_KIND = "review_budget_extended"
 ABORT_REQUESTED_EVENT_KIND = "abort_requested"
 RUN_ABORTED_EVENT_KIND = "run_aborted"
 ATTEMPT_RESULT_STALE_EVENT_KIND = "attempt_result_stale"
@@ -606,12 +607,46 @@ class MaxIterationsReachedEvent(DomainModel):
     kind: str = Field(default=MAX_ITERATIONS_REACHED_EVENT_KIND)
     run_id: str
     review_iteration: int
+    review_result_path: NonEmptyStr | None = None
+    review_result_sha256: Sha256Hex | None = None
+    fix_prompt_path: NonEmptyStr | None = None
+    fix_prompt_sha256: Sha256Hex | None = None
+    correction_envelope_path: NonEmptyStr | None = None
+    correction_envelope_sha256: Sha256Hex | None = None
 
     @field_validator("kind")
     @classmethod
     def kind_is_max_iterations_reached(cls, value: str) -> str:
         if value != MAX_ITERATIONS_REACHED_EVENT_KIND:
             raise ValueError("kind must be max_iterations_reached")
+        return value
+
+
+class ReviewBudgetExtendedEvent(DomainModel):
+    kind: str = Field(default=REVIEW_BUDGET_EXTENDED_EVENT_KIND)
+    run_id: str
+    review_iteration: int
+    previous_effective_total: int
+    new_effective_total: int
+    review_result_path: NonEmptyStr
+    review_result_sha256: Sha256Hex
+    fix_prompt_path: NonEmptyStr
+    fix_prompt_sha256: Sha256Hex
+    correction_envelope_path: NonEmptyStr
+    correction_envelope_sha256: Sha256Hex
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_review_budget_extended(cls, value: str) -> str:
+        if value != REVIEW_BUDGET_EXTENDED_EVENT_KIND:
+            raise ValueError("kind must be review_budget_extended")
+        return value
+
+    @field_validator("previous_effective_total", "new_effective_total", "review_iteration")
+    @classmethod
+    def positive_integers(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("review budget extension totals must be positive")
         return value
 
 
@@ -710,6 +745,7 @@ SchedulerEvent = Annotated[
     | Annotated[SequenceHandoffCompletedEvent, Tag(SEQUENCE_HANDOFF_COMPLETED_EVENT_KIND)]
     | Annotated[SequenceFinalizedEvent, Tag(SEQUENCE_FINALIZED_EVENT_KIND)]
     | Annotated[MaxIterationsReachedEvent, Tag(MAX_ITERATIONS_REACHED_EVENT_KIND)]
+    | Annotated[ReviewBudgetExtendedEvent, Tag(REVIEW_BUDGET_EXTENDED_EVENT_KIND)]
     | Annotated[AbortRequestedEvent, Tag(ABORT_REQUESTED_EVENT_KIND)]
     | Annotated[RunAbortedEvent, Tag(RUN_ABORTED_EVENT_KIND)]
     | Annotated[AttemptResultStaleEvent, Tag(ATTEMPT_RESULT_STALE_EVENT_KIND)],

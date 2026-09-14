@@ -143,7 +143,10 @@ del backend systemd.
 
 ## Recuperacion y limites (scheduler)
 
-El scheduler no implementa `recover`, `resume` ni `extend` legacy. Los limites
+El scheduler no implementa `recover`, `resume` ni `extend` legacy de runs XDG. Los
+limites congelados en el contexto enviado no cambian; un techo mayor solo puede
+otorgarse con `scheduler extend` mientras el run esta en `max_iterations_reached`.
+Los limites
 operativos documentados son:
 
 - `max_iterations_reached`: el run termina con cambios staged y el ultimo fix

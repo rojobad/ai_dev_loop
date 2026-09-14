@@ -10,9 +10,12 @@ from ai_dev_loop.scheduler.application.contracts import (
     SchedulerEngineError,
     SchedulerEngineErrorKind,
     bound_reviewer_session_id_from_state,
-    review_budget_from_state,
     scheduler_status_projection_from_state,
     summary_from_context,
+)
+from ai_dev_loop.scheduler.application.review_budget import (
+    load_review_budget_extensions,
+    review_budget_projection,
 )
 from ai_dev_loop.scheduler.application.safe_actions import safe_next_action_for_scheduler_state
 from ai_dev_loop.scheduler.domain.state import SchedulerState
@@ -44,8 +47,10 @@ def _candidate_from_state(
 ) -> ControllerSchedulerCandidate:
     projection = scheduler_status_projection_from_state(state)
     ledger_reviews_completed = store.count_review_completion_events(conn, state.run_id)
-    reviews_completed, max_reviews = review_budget_from_state(
+    extension_events = load_review_budget_extensions(store, conn, state.run_id)
+    reviews_completed, max_reviews, submitted_max = review_budget_projection(
         state,
+        extension_events,
         ledger_reviews_completed=ledger_reviews_completed,
     )
     summary = summary_from_context(
@@ -58,6 +63,7 @@ def _candidate_from_state(
         bound_reviewer_session_id=bound_reviewer_session_id_from_state(state),
         review_iterations_completed=reviews_completed,
         max_review_iterations=max_reviews,
+        submitted_max_review_iterations=submitted_max,
         cursor_wait_until=projection["cursor_wait_until"],
         block_reason_kind=projection["block_reason_kind"],
     )

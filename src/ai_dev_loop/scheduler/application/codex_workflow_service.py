@@ -28,6 +28,7 @@ from ai_dev_loop.scheduler.application.codex_evidence import (
     validate_codex_review_outcome_integrity,
 )
 from ai_dev_loop.scheduler.application.contracts import TickRunReceipt
+from ai_dev_loop.scheduler.application.review_budget import effective_review_ceiling_for_run
 from ai_dev_loop.scheduler.application.sequence_handoff import SequenceHandoffService
 from ai_dev_loop.scheduler.application.tick_fencing import tick_lease_is_active
 from ai_dev_loop.scheduler.domain.codex_contract import (
@@ -795,10 +796,37 @@ class CodexWorkflowService:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
             if not isinstance(state, AwaitingCodexReviewState):
                 return TickRunReceipt(run_id=run_id, action="codex_decision_state_changed")
-            max_reviews = state.context.workflow.max_review_iterations
+            max_reviews = effective_review_ceiling_for_run(self.store, conn, state)
 
         if review.has_actionable_findings and review_iteration >= max_reviews:
-            max_event = MaxIterationsReachedEvent(run_id=run_id, review_iteration=review_iteration)
+            fix_path = str(outcome.get("fix_prompt_path", "")).strip()
+            fix_sha = str(outcome.get("fix_prompt_sha256", "")).strip()
+            envelope_path = str(outcome.get("execution_envelope_path", "")).strip()
+            envelope_sha = str(outcome.get("execution_envelope_sha256", "")).strip()
+            if not fix_path or not fix_sha:
+                return self._block_review(
+                    run_id,
+                    attempt_id=attempt_id,
+                    reason_kind="fix_prompt_missing",
+                    summary="exhausted review requires persisted fix prompt",
+                )
+            if not envelope_path or not envelope_sha:
+                return self._block_review(
+                    run_id,
+                    attempt_id=attempt_id,
+                    reason_kind="fix_prompt_missing",
+                    summary="exhausted review requires persisted correction envelope",
+                )
+            max_event = MaxIterationsReachedEvent(
+                run_id=run_id,
+                review_iteration=review_iteration,
+                review_result_path=result_path,
+                review_result_sha256=result_sha,
+                fix_prompt_path=fix_path,
+                fix_prompt_sha256=fix_sha,
+                correction_envelope_path=envelope_path,
+                correction_envelope_sha256=envelope_sha,
+            )
             with self.store.begin_immediate() as conn:
                 state, version, _ = self.store.load_validated_snapshot(conn, run_id)
                 if not isinstance(state, AwaitingCodexReviewState):

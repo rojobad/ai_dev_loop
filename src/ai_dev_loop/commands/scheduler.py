@@ -20,6 +20,10 @@ from ai_dev_loop.scheduler.application.contracts import (
 )
 from ai_dev_loop.scheduler.application.cutover_cleanup import CutoverCleanupResult
 from ai_dev_loop.scheduler.application.history import scheduler_history
+from ai_dev_loop.scheduler.application.review_budget_extend import (
+    ReviewBudgetExtendResult,
+    scheduler_extend_review_budget,
+)
 from ai_dev_loop.scheduler.application.review_retry import ReviewRetryResult, scheduler_review_retry
 from ai_dev_loop.scheduler.application.sequence_prepare import (
     SequencePrepareOptions,
@@ -81,7 +85,15 @@ def _render_summary(summary: SchedulerRunSummary, *, output: str) -> dict[str, o
         f"State: {summary.state_kind}",
         f"Project: {summary.project_name}",
         f"Repository: {summary.repository_root}",
-        f"Reviews completed: {summary.review_iterations_completed}/{summary.max_review_iterations}",
+        (
+            f"Reviews completed: {summary.review_iterations_completed}/"
+            f"{summary.max_review_iterations}"
+            + (
+                f" (submitted limit {summary.submitted_max_review_iterations})"
+                if summary.submitted_max_review_iterations is not None
+                else ""
+            )
+        ),
         *(
             [f"Controller: {summary.controller_session_id_prefix}"]
             if summary.controller_session_id_prefix
@@ -457,6 +469,36 @@ def render_sequence_status_output(result: SequenceStatusResult, *, output: str) 
     return "\n".join(lines) + "\n"
 
 
+def render_review_budget_extend_output(result: ReviewBudgetExtendResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "run_id": result.run_id,
+            "state_kind": result.state_kind,
+            "changed": result.changed,
+            "idempotent_replay": result.idempotent_replay,
+            "previous_effective_total": result.previous_effective_total,
+            "new_effective_total": result.new_effective_total,
+            "safe_next_action": result.safe_next_action.model_dump(mode="json"),
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    lines = [
+        f"Review budget extension run: {result.run_id}",
+        f"State: {result.state_kind}",
+        f"Changed: {result.changed}",
+        f"Idempotent replay: {result.idempotent_replay}",
+        (
+            "Effective review ceiling: "
+            f"{result.previous_effective_total} -> {result.new_effective_total}"
+        ),
+    ]
+    if result.safe_next_action.command:
+        lines.append(f"Next action: {result.safe_next_action.command}")
+    else:
+        lines.append(f"Next action: {result.safe_next_action.kind.value}")
+    return "\n".join(lines) + "\n"
+
+
 def render_review_retry_output(result: ReviewRetryResult, *, output: str) -> str:
     if output == "json":
         payload = {
@@ -546,7 +588,9 @@ __all__ = [
     "scheduler_sequence_status",
     "scheduler_timeline",
     "render_list_output",
+    "render_review_budget_extend_output",
     "render_review_retry_output",
+    "scheduler_extend_review_budget",
     "render_start_output",
     "render_status_output",
     "render_submit_output",
@@ -559,6 +603,7 @@ __all__ = [
     "scheduler_abort_run",
     "scheduler_history",
     "scheduler_list",
+    "scheduler_extend_review_budget",
     "scheduler_review_retry",
     "scheduler_status",
     "start_run",
