@@ -20,6 +20,7 @@ from ai_dev_loop.scheduler.domain.state import (
     AdmittedRunCheckpoint,
     AwaitingCodexReviewState,
     SubmittedRunContext,
+    WaitingCodexCapacityState,
     WaitingCodexReviewRetryState,
 )
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
@@ -91,7 +92,7 @@ def verify_review_retry_repository_checkpoint(
 
 
 def verify_retry_state_repository(
-    state: WaitingCodexReviewRetryState | AwaitingCodexReviewState,
+    state: WaitingCodexReviewRetryState | WaitingCodexCapacityState | AwaitingCodexReviewState,
     *,
     artifacts: ProtectedArtifactStore,
 ) -> None:

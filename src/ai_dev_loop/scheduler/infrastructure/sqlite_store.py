@@ -58,7 +58,7 @@ if TYPE_CHECKING:
         | AwaitingFinalizationSequenceState
     )
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 SEQUENCE_SCHEMA_VERSION = 5
 REVIEW_RETRY_SCHEMA_VERSION = 6
 MIN_READONLY_SCHEMA_VERSION = 4
@@ -69,6 +69,7 @@ MIGRATION_V4_NAME = "0004_cursor_workflow"
 MIGRATION_V5_NAME = "0005_sequence_definitions"
 MIGRATION_V6_NAME = "0006_review_retry"
 MIGRATION_V7_NAME = "0007_checkpoint_holds"
+MIGRATION_V8_NAME = "0008_capacity_retry"
 REQUIRED_TABLES = frozenset(
     {
         "scheduler_schema_migrations",
@@ -87,8 +88,10 @@ REQUIRED_TABLES = frozenset(
         "scheduler_review_retry_generations",
         "scheduler_review_recovery_successors",
         "scheduler_checkpoint_holds",
+        "scheduler_capacity_retry_generations",
     }
 )
+REQUIRED_TABLES_V7 = REQUIRED_TABLES - {"scheduler_capacity_retry_generations"}
 REQUIRED_INDEXES = frozenset(
     {
         "idx_scheduler_runs_state_kind",
@@ -114,7 +117,7 @@ REQUIRED_INDEXES = frozenset(
         "idx_scheduler_checkpoint_holds_intent",
     }
 )
-REQUIRED_TABLES_V6 = REQUIRED_TABLES - {"scheduler_checkpoint_holds"}
+REQUIRED_TABLES_V6 = REQUIRED_TABLES_V7 - {"scheduler_checkpoint_holds"}
 REQUIRED_INDEXES_V6 = REQUIRED_INDEXES - {"idx_scheduler_checkpoint_holds_intent"}
 REQUIRED_TABLES_V5 = REQUIRED_TABLES_V6 - {
     "scheduler_review_retry_generations",
@@ -218,6 +221,10 @@ def _migration_v7_sql() -> str:
     return _migration_sql("0007_checkpoint_holds.sql")
 
 
+def _migration_v8_sql() -> str:
+    return _migration_sql("0008_capacity_retry.sql")
+
+
 def _split_sql_statements(sql: str) -> list[str]:
     statements: list[str] = []
     for chunk in sql.split(";"):
@@ -248,6 +255,8 @@ def migration_checksum(version: int) -> str:
         return hashlib.sha256(_migration_v6_sql().encode("utf-8")).hexdigest()
     if version == 7:
         return hashlib.sha256(_migration_v7_sql().encode("utf-8")).hexdigest()
+    if version == 8:
+        return hashlib.sha256(_migration_v8_sql().encode("utf-8")).hexdigest()
     raise ValueError(f"unsupported migration version {version}")
 
 
@@ -350,6 +359,7 @@ class SqliteSchedulerStore:
                 self._migrate_v4_to_v5(conn)
                 self._migrate_v5_to_v6(conn)
                 self._migrate_v6_to_v7(conn)
+                self._migrate_v7_to_v8(conn)
             elif version == 1:
                 self._verify_migration_checksum(conn, 1)
                 self._migrate_v1_to_v2(conn)
@@ -358,6 +368,7 @@ class SqliteSchedulerStore:
                 self._migrate_v4_to_v5(conn)
                 self._migrate_v5_to_v6(conn)
                 self._migrate_v6_to_v7(conn)
+                self._migrate_v7_to_v8(conn)
             elif version == 2:
                 self._verify_migration_checksum(conn, 1)
                 self._verify_migration_checksum(conn, 2)
@@ -366,6 +377,7 @@ class SqliteSchedulerStore:
                 self._migrate_v4_to_v5(conn)
                 self._migrate_v5_to_v6(conn)
                 self._migrate_v6_to_v7(conn)
+                self._migrate_v7_to_v8(conn)
             elif version == 3:
                 for migration_version in (1, 2, 3):
                     self._verify_migration_checksum(conn, migration_version)
@@ -373,21 +385,29 @@ class SqliteSchedulerStore:
                 self._migrate_v4_to_v5(conn)
                 self._migrate_v5_to_v6(conn)
                 self._migrate_v6_to_v7(conn)
+                self._migrate_v7_to_v8(conn)
             elif version == 4:
                 for migration_version in (1, 2, 3, 4):
                     self._verify_migration_checksum(conn, migration_version)
                 self._migrate_v4_to_v5(conn)
                 self._migrate_v5_to_v6(conn)
                 self._migrate_v6_to_v7(conn)
+                self._migrate_v7_to_v8(conn)
             elif version == 5:
                 for migration_version in (1, 2, 3, 4, 5):
                     self._verify_migration_checksum(conn, migration_version)
                 self._migrate_v5_to_v6(conn)
                 self._migrate_v6_to_v7(conn)
+                self._migrate_v7_to_v8(conn)
             elif version == 6:
                 for migration_version in (1, 2, 3, 4, 5, 6):
                     self._verify_migration_checksum(conn, migration_version)
                 self._migrate_v6_to_v7(conn)
+                self._migrate_v7_to_v8(conn)
+            elif version == 7:
+                for migration_version in (1, 2, 3, 4, 5, 6, 7):
+                    self._verify_migration_checksum(conn, migration_version)
+                self._migrate_v7_to_v8(conn)
             else:
                 self._verify_current_schema(conn)
             self._apply_database_permissions(self.db_path)
@@ -593,6 +613,32 @@ class SqliteSchedulerStore:
             raise
         self._apply_database_permissions(self.db_path)
 
+    def _migrate_v7_to_v8(self, conn: sqlite3.Connection) -> None:
+        if self._user_version(conn) >= 8:
+            self._verify_current_schema(conn)
+            return
+        for migration_version in (1, 2, 3, 4, 5, 6, 7):
+            self._verify_migration_checksum(conn, migration_version)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for statement in _split_sql_statements(_migration_v8_sql()):
+                self._fault_maybe_raise_migration(statement)
+                conn.execute(statement)
+            applied_at = encode_utc_instant(datetime.now(tz=UTC))
+            conn.execute(
+                """
+                INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (8, MIGRATION_V8_NAME, migration_checksum(8), applied_at),
+            )
+            conn.execute("PRAGMA user_version = 8")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        self._apply_database_permissions(self.db_path)
+
     def _fault_maybe_raise_migration(self, statement: str) -> None:
         hook = self._migration_fault_hook
         if hook is not None:
@@ -631,6 +677,9 @@ class SqliteSchedulerStore:
             self._verify_migration_checksum(conn, migration_version)
         if target >= SCHEMA_VERSION:
             tables = REQUIRED_TABLES
+            indexes = REQUIRED_INDEXES
+        elif target >= 7:
+            tables = REQUIRED_TABLES_V7
             indexes = REQUIRED_INDEXES
         elif target >= 6:
             tables = REQUIRED_TABLES_V6
@@ -4037,6 +4086,42 @@ class SqliteSchedulerStore:
             ON CONFLICT(run_id, failure_generation) DO NOTHING
             """,
             (run_id, failure_generation, now_text),
+        )
+        return cursor.rowcount == 1
+
+    def get_capacity_retry_generation_row(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        capacity_wait_generation: int,
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_capacity_retry_generations
+            WHERE run_id = ? AND capacity_wait_generation = ?
+            """,
+            (run_id, capacity_wait_generation),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def insert_capacity_retry_generation(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        capacity_wait_generation: int,
+        now: datetime,
+    ) -> bool:
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            INSERT INTO scheduler_capacity_retry_generations(
+                run_id, capacity_wait_generation, scheduled_at
+            ) VALUES (?, ?, ?)
+            ON CONFLICT(run_id, capacity_wait_generation) DO NOTHING
+            """,
+            (run_id, capacity_wait_generation, now_text),
         )
         return cursor.rowcount == 1
 

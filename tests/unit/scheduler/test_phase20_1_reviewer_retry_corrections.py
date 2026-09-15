@@ -712,7 +712,7 @@ class TestHistoricalRecoveryEligibility:
         _legacy_block_instead_of_retry(tick, monkeypatch)
         monkeypatch.setenv("FAKE_CODEX_CAPACITY", "available")
         blocked = _run_until_blocked(tick, run_id)
-        assert blocked.block_reason_kind == "codex_review_outcome_invalid"
+        assert blocked.block_reason_kind == "codex_usage_limit"
         with tick.store.begin_read() as conn:
             bootstrap = tick.store.get_codex_bootstrap_attempt(conn, run_id)
             latest = tick.store.get_latest_recorded_codex_attempt(conn, run_id)

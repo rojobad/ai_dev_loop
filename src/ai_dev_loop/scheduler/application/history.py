@@ -101,6 +101,11 @@ def _safe_detail_for_event(event_kind: str, payload_text: str) -> str:
         if source:
             return f"{event_kind}: review_iteration={iteration} evidence_source={source}"
         return f"{event_kind}: review_iteration={iteration}"
+    if event_kind == "codex_capacity_retry_authorized":
+        return (
+            f"{event_kind}: capacity_wait_generation={payload.get('capacity_wait_generation')} "
+            f"idempotent_replay={payload.get('idempotent_replay')}"
+        )
     if event_kind == "codex_review_retryable_failure":
         return (
             f"{event_kind}: failure_kind={payload.get('failure_kind')} "

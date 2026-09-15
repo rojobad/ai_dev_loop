@@ -886,19 +886,153 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
             sys.exit(0)
 
         if len(args) >= 2 and args[0] == "app-server" and args[1] == "--stdio":
+            def _parse_probe_line(stripped: str) -> dict | None:
+                try:
+                    payload = json.loads(stripped)
+                except json.JSONDecodeError:
+                    return None
+                if not isinstance(payload, dict):
+                    return None
+                return payload
+
+            def _build_limits_payload(limits_id: object) -> dict | None:
+                capacity = os.environ.get("FAKE_CODEX_CAPACITY", "available").strip().lower()
+                if capacity == "unavailable":
+                    print("probe unavailable", file=sys.stderr)
+                    sys.exit(2)
+                shape = os.environ.get("FAKE_CODEX_CAPACITY_SHAPE", "").strip().lower()
+                custom_limits = os.environ.get("FAKE_CODEX_CAPACITY_LIMITS_JSON", "").strip()
+                if custom_limits:
+                    try:
+                        return json.loads(custom_limits)
+                    except json.JSONDecodeError:
+                        print("invalid FAKE_CODEX_CAPACITY_LIMITS_JSON", file=sys.stderr)
+                        sys.exit(2)
+                if shape == "legacy":
+                    used = 100 if capacity in {{"exhausted", "zero"}} else 0
+                    return {{
+                        "rateLimits": {{
+                            "primary": {{"usedPercent": used}},
+                            "secondary": {{"usedPercent": used}},
+                        }}
+                    }}
+                if shape == "primary_only":
+                    used = 100 if capacity in {{"exhausted", "zero"}} else 10
+                    return {{
+                        "rateLimitsByLimitId": {{
+                            "default": {{"primary": {{"usedPercent": used}}}},
+                        }}
+                    }}
+                if shape == "secondary_only":
+                    used = 100 if capacity in {{"exhausted", "zero"}} else 5
+                    return {{
+                        "rateLimitsByLimitId": {{
+                            "default": {{"secondary": {{"usedPercent": used}}}},
+                        }}
+                    }}
+                if shape == "null_window":
+                    return {{
+                        "rateLimitsByLimitId": {{
+                            "default": {{
+                                "primary": None,
+                                "secondary": {{"usedPercent": 0}},
+                            }}
+                        }}
+                    }}
+                if shape == "invalid":
+                    return {{
+                        "rateLimitsByLimitId": {{
+                            "default": {{"primary": {{"usedPercent": "full"}}}},
+                        }}
+                    }}
+                if shape == "protocol_error":
+                    print(json.dumps({{
+                        "id": limits_id,
+                        "error": {{"code": -1, "message": "probe failed"}},
+                    }}), flush=True)
+                    return None
+                used = 100 if capacity in {{"exhausted", "zero"}} else 0
+                return {{
+                    "rateLimitsByLimitId": {{
+                        "default": {{
+                            "primary": {{"usedPercent": used}},
+                            "secondary": {{"usedPercent": used}},
+                        }}
+                    }}
+                }}
+
+            def _emit_probe_exchange(init_id: object, limits_id: object) -> None:
+                print(json.dumps({{
+                    "id": init_id,
+                    "result": {{"capabilities": {{}}}},
+                }}), flush=True)
+                print(json.dumps({{
+                    "method": "turn/started",
+                    "params": {{"turn": {{"id": "turn_probe"}}}},
+                }}), flush=True)
+                limits_payload = _build_limits_payload(limits_id)
+                if limits_payload is None:
+                    sys.exit(0)
+                print(json.dumps({{
+                    "id": limits_id,
+                    "result": limits_payload,
+                }}), flush=True)
+                sys.exit(0)
+
+            transport = os.environ.get("FAKE_CODEX_CAPACITY_TRANSPORT", "interactive").strip().lower()
+            if transport == "interactive":
+                init_id = None
+                limits_id = None
+                methods: list[str] = []
+                for raw_line in sys.stdin:
+                    stripped = raw_line.strip()
+                    if not stripped:
+                        continue
+                    payload = _parse_probe_line(stripped)
+                    if payload is None:
+                        print("invalid probe stdin json", file=sys.stderr)
+                        sys.exit(2)
+                    method = payload.get("method")
+                    if isinstance(method, str):
+                        methods.append(method)
+                    if method == "notifications/initialized":
+                        print("rejected notifications/initialized handshake", file=sys.stderr)
+                        sys.exit(2)
+                    if method == "initialize":
+                        init_id = payload.get("id")
+                        print(json.dumps({{
+                            "id": init_id,
+                            "result": {{"capabilities": {{}}}},
+                        }}), flush=True)
+                        print(json.dumps({{
+                            "method": "turn/started",
+                            "params": {{"turn": {{"id": "turn_probe"}}}},
+                        }}), flush=True)
+                    elif method == "account/rateLimits/read":
+                        limits_id = payload.get("id")
+                        if init_id is None or limits_id is None:
+                            print("missing probe request ids", file=sys.stderr)
+                            sys.exit(2)
+                        limits_payload = _build_limits_payload(limits_id)
+                        if limits_payload is None:
+                            sys.exit(0)
+                        print(json.dumps({{
+                            "id": limits_id,
+                            "result": limits_payload,
+                        }}), flush=True)
+                        sys.exit(0)
+                print("invalid probe handshake order: " + repr(methods), file=sys.stderr)
+                sys.exit(2)
+
             stdin_payload = sys.stdin.read()
             requests = []
             for line in stdin_payload.splitlines():
                 stripped = line.strip()
                 if not stripped:
                     continue
-                try:
-                    payload = json.loads(stripped)
-                except json.JSONDecodeError:
+                payload = _parse_probe_line(stripped)
+                if payload is None:
                     print("invalid probe stdin json", file=sys.stderr)
-                    sys.exit(2)
-                if not isinstance(payload, dict):
-                    print("invalid probe stdin object", file=sys.stderr)
                     sys.exit(2)
                 requests.append(payload)
             methods = [item.get("method") for item in requests if isinstance(item.get("method"), str)]
@@ -913,84 +1047,7 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
             if init_id is None or limits_id is None:
                 print("missing probe request ids", file=sys.stderr)
                 sys.exit(2)
-            print(json.dumps({{
-                "id": init_id,
-                "result": {{"capabilities": {{}}}},
-            }}), flush=True)
-            print(json.dumps({{
-                "method": "turn/started",
-                "params": {{"turn": {{"id": "turn_probe"}}}},
-            }}), flush=True)
-            capacity = os.environ.get("FAKE_CODEX_CAPACITY", "available").strip().lower()
-            if capacity == "unavailable":
-                print("probe unavailable", file=sys.stderr)
-                sys.exit(2)
-            shape = os.environ.get("FAKE_CODEX_CAPACITY_SHAPE", "").strip().lower()
-            custom_limits = os.environ.get("FAKE_CODEX_CAPACITY_LIMITS_JSON", "").strip()
-            if custom_limits:
-                try:
-                    limits_payload = json.loads(custom_limits)
-                except json.JSONDecodeError:
-                    print("invalid FAKE_CODEX_CAPACITY_LIMITS_JSON", file=sys.stderr)
-                    sys.exit(2)
-            elif shape == "legacy":
-                used = 100 if capacity in {{"exhausted", "zero"}} else 0
-                limits_payload = {{
-                    "rateLimits": {{
-                        "primary": {{"usedPercent": used}},
-                        "secondary": {{"usedPercent": used}},
-                    }}
-                }}
-            elif shape == "primary_only":
-                used = 100 if capacity in {{"exhausted", "zero"}} else 10
-                limits_payload = {{
-                    "rateLimitsByLimitId": {{
-                        "default": {{"primary": {{"usedPercent": used}}}},
-                    }}
-                }}
-            elif shape == "secondary_only":
-                used = 100 if capacity in {{"exhausted", "zero"}} else 5
-                limits_payload = {{
-                    "rateLimitsByLimitId": {{
-                        "default": {{"secondary": {{"usedPercent": used}}}},
-                    }}
-                }}
-            elif shape == "null_window":
-                limits_payload = {{
-                    "rateLimitsByLimitId": {{
-                        "default": {{
-                            "primary": None,
-                            "secondary": {{"usedPercent": 0}},
-                        }}
-                    }}
-                }}
-            elif shape == "invalid":
-                limits_payload = {{
-                    "rateLimitsByLimitId": {{
-                        "default": {{"primary": {{"usedPercent": "full"}}}},
-                    }}
-                }}
-            elif shape == "protocol_error":
-                print(json.dumps({{
-                    "id": limits_id,
-                    "error": {{"code": -1, "message": "probe failed"}},
-                }}), flush=True)
-                sys.exit(0)
-            else:
-                used = 100 if capacity in {{"exhausted", "zero"}} else 0
-                limits_payload = {{
-                    "rateLimitsByLimitId": {{
-                        "default": {{
-                            "primary": {{"usedPercent": used}},
-                            "secondary": {{"usedPercent": used}},
-                        }}
-                    }}
-                }}
-            print(json.dumps({{
-                "id": limits_id,
-                "result": limits_payload,
-            }}), flush=True)
-            sys.exit(0)
+            _emit_probe_exchange(init_id, limits_id)
 
         sys.exit(1)
         """

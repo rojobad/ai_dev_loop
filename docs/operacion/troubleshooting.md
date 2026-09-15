@@ -394,8 +394,23 @@ Codex Desktop, el scheduler omite esas variables solo en subprocesos Codex para 
 review y sonda usen el home WSL nativo. La correccion interactiva del shell del
 usuario sigue siendo manual.
 
-Si la sonda no esta disponible, el run pasa a `blocked` con
-`codex_capacity_probe_unavailable`; no hay reintento automatico ciego.
+Si la sonda no esta disponible durante `waiting_codex_capacity`, el run conserva
+ese checkpoint recuperable y el siguiente tick vuelve a intentar la lectura sin
+lanzar agentes ni crecer el ledger. Puedes autorizar un reintento manual cuando
+creas que la capacidad ya volvio:
+
+```bash
+ai_dev_loop scheduler review retry <run-id>
+ai_dev_loop scheduler tick
+```
+
+La sonda y el reviewer usan la misma politica `sanitize_codex_subprocess_env()`;
+no uses el saldo de Codex Desktop/host como evidencia del scheduler.
+
+El reconocimiento de limites de Codex es deliberadamente permisivo en mensajes
+autenticados de wrappers terminales (`error` / `turn.failed`). Un falso positivo
+solo puede llevar a espera de capacidad y reanudar el mismo reviewer B de solo
+lectura; no crea trabajo Cursor ni muta Git.
 
 ## Codex fallo en review pero el patch staged sigue intacto
 

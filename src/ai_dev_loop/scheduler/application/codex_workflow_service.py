@@ -12,6 +12,7 @@ from ai_dev_loop.iterations import correction_execution_envelope_path
 from ai_dev_loop.review_result import CodexReviewResult, completion_status_for_review
 from ai_dev_loop.runners.codex_failure import (
     FAILURE_CODE_CODEX_USAGE_LIMIT,
+    CodexLimitEvidenceKind,
     is_codex_usage_limit_recovery_eligible,
     is_operational_review_block_kind,
 )
@@ -155,13 +156,7 @@ class CodexWorkflowService:
         if observation.status == CodexCapacityStatus.EXHAUSTED:
             return TickRunReceipt(run_id=run_id, action="codex_capacity_exhausted")
         if observation.status == CodexCapacityStatus.UNAVAILABLE:
-            return self._block_capacity_probe(
-                run_id,
-                tick_owner_id=tick_owner_id,
-                tick_lease_generation=tick_lease_generation,
-                reason_kind="codex_capacity_probe_unavailable",
-                summary="Codex capacity probe is unavailable or unsupported",
-            )
+            return TickRunReceipt(run_id=run_id, action="codex_capacity_probe_unavailable")
 
         event = CodexCapacityAvailableEvent(
             run_id=run_id,
@@ -375,6 +370,27 @@ class CodexWorkflowService:
             )
 
         if is_codex_usage_limit_recovery_eligible(outcome):
+            with self.store.begin_read() as conn:
+                state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            if isinstance(state, AwaitingCodexReviewState):
+                evidence_kind = str(outcome.get("limit_evidence_kind", "")).strip()
+                if evidence_kind == CodexLimitEvidenceKind.STRUCTURED_USAGE_LIMIT.value:
+                    return self._handle_codex_usage_capacity(
+                        run_id,
+                        attempt_id=attempt_id,
+                        outcome=outcome,
+                    )
+                if (
+                    evidence_kind == CodexLimitEvidenceKind.PROVIDER_MESSAGE_LIMIT.value
+                    and self._has_provider_message_repeat_lineage(state)
+                ):
+                    return self._probe_then_route_review_failure(
+                        run_id,
+                        attempt_id=attempt_id,
+                        review_iteration=state.cursor.iteration,
+                        failure_kind=FAILURE_CODE_CODEX_USAGE_LIMIT,
+                        outcome=outcome,
+                    )
             return self._handle_codex_usage_capacity(
                 run_id,
                 attempt_id=attempt_id,
@@ -699,10 +715,11 @@ class CodexWorkflowService:
 
         now = self._now_factory()
         now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        evidence_source = self._capacity_evidence_source_from_outcome(outcome)
         event = CodexUsageCapacityDetectedEvent(
             run_id=run_id,
             review_iteration=review_iteration,
-            evidence_source="structured_error",
+            evidence_source=evidence_source,
         )
         with self.store.begin_immediate() as conn:
             current_state, version, _ = self.store.load_validated_snapshot(conn, run_id)
@@ -1060,6 +1077,23 @@ class CodexWorkflowService:
             summary=summary,
         )
 
+    def _capacity_evidence_source_from_outcome(
+        self,
+        outcome: dict[str, object],
+    ) -> Literal["structured_error", "provider_message_limit", "post_failure_capacity_probe"]:
+        raw = str(outcome.get("limit_evidence_kind", "")).strip()
+        if raw == CodexLimitEvidenceKind.PROVIDER_MESSAGE_LIMIT.value:
+            return "provider_message_limit"
+        return "structured_error"
+
+    def _has_provider_message_repeat_lineage(self, state: AwaitingCodexReviewState) -> bool:
+        if state.codex.inferred_operational_failure_kind:
+            return True
+        return state.codex.capacity_evidence_source in {
+            "provider_message_limit",
+            "post_failure_capacity_probe",
+        }
+
     def _operational_failure_from_outcome(
         self,
         outcome: dict[str, object],
@@ -1107,8 +1141,6 @@ class CodexWorkflowService:
                 return TickRunReceipt(run_id=run_id, action="codex_operational_state_changed")
             review_iteration = state.cursor.iteration
             bound_session = state.codex.reviewer_session_id
-            skip_probe = bool(state.codex.inferred_operational_failure_kind)
-            codex_command = state.context.codex.command
 
         bootstrap_session_id = str(outcome.get("bootstrap_session_id", "")).strip()
         if not bound_session and bootstrap_session_id:
@@ -1141,13 +1173,41 @@ class CodexWorkflowService:
                 outcome=outcome,
             )
 
-        if skip_probe:
-            return self._enter_review_retry_wait(
-                run_id,
-                attempt_id=attempt_id,
-                review_iteration=review_iteration,
-                failure_kind=reason_kind,
-            )
+        return self._probe_then_route_review_failure(
+            run_id,
+            attempt_id=attempt_id,
+            review_iteration=review_iteration,
+            failure_kind=reason_kind,
+            outcome=outcome,
+        )
+
+    def _probe_then_route_review_failure(
+        self,
+        run_id: str,
+        *,
+        attempt_id: str,
+        review_iteration: int,
+        failure_kind: str,
+        outcome: dict[str, object] | None = None,
+    ) -> TickRunReceipt:
+        with self.store.begin_read() as conn:
+            state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            if not isinstance(state, AwaitingCodexReviewState):
+                return TickRunReceipt(run_id=run_id, action="codex_operational_state_changed")
+            codex_command = state.context.codex.command
+
+        if outcome is not None:
+            bound_session = state.codex.reviewer_session_id
+            bootstrap_session_id = str(outcome.get("bootstrap_session_id", "")).strip()
+            if not bound_session and bootstrap_session_id:
+                bound = self._persist_reviewer_binding(
+                    run_id,
+                    state,
+                    bootstrap_session_id=bootstrap_session_id,
+                    outcome=outcome,
+                )
+                if isinstance(bound, TickRunReceipt):
+                    return bound
 
         observation = self._capacity_probe.probe(codex_command)
         if observation.status == CodexCapacityStatus.EXHAUSTED:
@@ -1155,13 +1215,13 @@ class CodexWorkflowService:
                 run_id,
                 attempt_id=attempt_id,
                 review_iteration=review_iteration,
-                operational_failure_kind=reason_kind,
+                operational_failure_kind=failure_kind,
             )
         return self._enter_review_retry_wait(
             run_id,
             attempt_id=attempt_id,
             review_iteration=review_iteration,
-            failure_kind=reason_kind,
+            failure_kind=failure_kind,
         )
 
     def _enter_inferred_capacity_wait(
