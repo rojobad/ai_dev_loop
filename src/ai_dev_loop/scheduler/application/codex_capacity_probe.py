@@ -120,13 +120,15 @@ def _parse_used_percent(value: object) -> float | None:
 
 
 def _reached_marker_status(record: dict[str, Any]) -> bool | None:
-    """Return True when exhausted, False when absent, None when malformed."""
+    """Return True when exhausted, False when absent or explicit null, None when malformed."""
 
     if "rateLimitReachedType" not in record:
         return False
     reached = record.get("rateLimitReachedType")
     if isinstance(reached, str) and reached.strip():
         return True
+    if reached is None:
+        return False
     return None
 
 

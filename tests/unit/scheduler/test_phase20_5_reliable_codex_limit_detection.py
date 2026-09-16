@@ -56,6 +56,14 @@ from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedAr
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
 _ATTEMPT_COUNTER = itertools.count()
+_MARKER_MISSING = object()
+
+
+def _rate_limits_payload(marker: object, *, used_percent: int) -> dict[str, object]:
+    record: dict[str, object] = {"primary": {"usedPercent": used_percent}}
+    if marker is not _MARKER_MISSING:
+        record["rateLimitReachedType"] = marker
+    return {"rateLimitsByLimitId": {"default": record}}
 
 
 class TestProviderMessageMarkers:
@@ -161,7 +169,47 @@ class TestCapacityExhaustionSemantics:
         payload = {"rateLimits": {"primary": {"usedPercent": 0}}}
         assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.AVAILABLE
 
-    def test_malformed_reached_marker_is_unavailable(self) -> None:
+    @pytest.mark.parametrize(
+        ("marker", "used_percent", "expected"),
+        [
+            pytest.param(
+                _MARKER_MISSING, 50, CodexCapacityStatus.AVAILABLE, id="missing_available"
+            ),
+            pytest.param(
+                _MARKER_MISSING, 100, CodexCapacityStatus.EXHAUSTED, id="missing_exhausted"
+            ),
+            pytest.param(None, 50, CodexCapacityStatus.AVAILABLE, id="null_available"),
+            pytest.param(None, 100, CodexCapacityStatus.EXHAUSTED, id="null_exhausted"),
+            pytest.param("", 50, None, id="empty_available"),
+            pytest.param("", 100, CodexCapacityStatus.EXHAUSTED, id="empty_exhausted"),
+            pytest.param("   ", 50, None, id="whitespace_available"),
+            pytest.param("   ", 100, CodexCapacityStatus.EXHAUSTED, id="whitespace_exhausted"),
+            pytest.param("weekly", 50, CodexCapacityStatus.EXHAUSTED, id="nonempty_available"),
+            pytest.param("weekly", 100, CodexCapacityStatus.EXHAUSTED, id="nonempty_exhausted"),
+            pytest.param(True, 50, None, id="boolean_true_available"),
+            pytest.param(True, 100, CodexCapacityStatus.EXHAUSTED, id="boolean_true_exhausted"),
+            pytest.param(False, 50, None, id="boolean_false_available"),
+            pytest.param(False, 100, CodexCapacityStatus.EXHAUSTED, id="boolean_false_exhausted"),
+            pytest.param(0, 50, None, id="numeric_zero_available"),
+            pytest.param(0, 100, CodexCapacityStatus.EXHAUSTED, id="numeric_zero_exhausted"),
+            pytest.param(1, 50, None, id="numeric_one_available"),
+            pytest.param(1, 100, CodexCapacityStatus.EXHAUSTED, id="numeric_one_exhausted"),
+            pytest.param([], 50, None, id="list_available"),
+            pytest.param([], 100, CodexCapacityStatus.EXHAUSTED, id="list_exhausted"),
+            pytest.param({}, 50, None, id="object_available"),
+            pytest.param({}, 100, CodexCapacityStatus.EXHAUSTED, id="object_exhausted"),
+        ],
+    )
+    def test_reached_marker_matrix_with_window_availability(
+        self,
+        marker: object,
+        used_percent: int,
+        expected: CodexCapacityStatus | None,
+    ) -> None:
+        payload = _rate_limits_payload(marker, used_percent=used_percent)
+        assert capacity_from_rate_limits_payload(payload) == expected
+
+    def test_explicit_null_marker_without_windows_is_unavailable(self) -> None:
         payload = {
             "rateLimitsByLimitId": {
                 "default": {"rateLimitReachedType": None},
@@ -169,15 +217,8 @@ class TestCapacityExhaustionSemantics:
         }
         assert capacity_from_rate_limits_payload(payload) is None
 
-    def test_malformed_marker_with_exhausted_window_is_exhausted(self) -> None:
-        payload = {
-            "rateLimitsByLimitId": {
-                "default": {
-                    "rateLimitReachedType": None,
-                    "primary": {"usedPercent": 100},
-                }
-            }
-        }
+    def test_empty_marker_with_exhausted_window_proves_exhaustion_precedence(self) -> None:
+        payload = _rate_limits_payload("", used_percent=100)
         assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.EXHAUSTED
 
     def test_non_object_sibling_with_exhausted_record_is_exhausted(self) -> None:
@@ -1191,6 +1232,121 @@ class TestWorkflowDecisionMatrix:
         assert isinstance(state, WaitingCodexCapacityState)
         assert state.codex.capacity_evidence_source == "post_failure_capacity_probe"
         assert state.codex.inferred_operational_failure_kind is not None
+
+
+_NULL_MARKER_AVAILABLE_LIMITS = json.dumps(
+    {
+        "rateLimitsByLimitId": {
+            "default": {
+                "rateLimitReachedType": None,
+                "primary": {"usedPercent": 50},
+                "secondary": {"usedPercent": 25},
+            }
+        }
+    }
+)
+
+_NULL_MARKER_EXHAUSTED_LIMITS = json.dumps(
+    {
+        "rateLimitsByLimitId": {
+            "default": {
+                "rateLimitReachedType": None,
+                "primary": {"usedPercent": 100},
+            }
+        }
+    }
+)
+
+
+class TestNullMarkerTimerResume:
+    def test_timer_tick_resumes_same_reviewer_with_explicit_null_marker(
+        self,
+        git_repo: Path,
+        scheduler_paths: dict[str, Path],
+        fake_clis: dict[str, Path],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "usage_limit")
+        monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
+        monkeypatch.setenv("FAKE_CODEX_CAPACITY", "exhausted")
+        run_id = _submit(git_repo, scheduler_paths)
+        start_run(run_id, db_path=scheduler_paths["db_path"])
+        tick = _tick_service(
+            git_repo,
+            scheduler_paths,
+            now=datetime(2026, 9, 16, 10, 0, tzinfo=UTC),
+        )
+        _run_until(tick, run_id, target_kind="waiting_codex_capacity")
+        with tick.store.begin_read() as conn:
+            state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
+            reviewer_id = state.codex.reviewer_session_id
+            reviews_completed = state.codex.reviews_completed
+            before_events = len(
+                tick.store.list_events_for_run(conn, run_id, limit=200, newest_first=False)
+            )
+        monkeypatch.setenv("FAKE_CODEX_CAPACITY", "available")
+        monkeypatch.setenv("FAKE_CODEX_CAPACITY_LIMITS_JSON", _NULL_MARKER_AVAILABLE_LIMITS)
+        monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "no_findings")
+        tick.run_once()
+        _run_until(tick, run_id, target_kind="completed", max_ticks=60)
+        with tick.store.begin_read() as conn:
+            state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
+            assert state.codex.reviewer_session_id == reviewer_id
+            assert state.codex.reviews_completed == reviews_completed + 1
+            events = tick.store.list_events_for_run(conn, run_id, limit=200, newest_first=False)
+            kinds = [str(row["event_kind"]) for row in events[before_events:]]
+        assert "codex_capacity_available" in kinds
+        assert "codex_capacity_retry_authorized" not in kinds
+
+    def test_repeated_timer_ticks_stay_waiting_when_null_marker_windows_remain_exhausted(
+        self,
+        git_repo: Path,
+        scheduler_paths: dict[str, Path],
+        fake_clis: dict[str, Path],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "usage_limit")
+        monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
+        monkeypatch.setenv("FAKE_CODEX_CAPACITY", "exhausted")
+        run_id = _submit(git_repo, scheduler_paths)
+        start_run(run_id, db_path=scheduler_paths["db_path"])
+        tick = _tick_service(
+            git_repo,
+            scheduler_paths,
+            now=datetime(2026, 9, 16, 10, 5, tzinfo=UTC),
+        )
+        _run_until(tick, run_id, target_kind="waiting_codex_capacity")
+        with tick.store.begin_read() as conn:
+            state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
+            reviewer_id = state.codex.reviewer_session_id
+            reviews_completed = state.codex.reviews_completed
+            review_iteration = state.codex.review_iteration
+            before_events = len(
+                tick.store.list_events_for_run(conn, run_id, limit=300, newest_first=False)
+            )
+        monkeypatch.setenv("FAKE_CODEX_CAPACITY", "available")
+        monkeypatch.setenv("FAKE_CODEX_CAPACITY_LIMITS_JSON", _NULL_MARKER_EXHAUSTED_LIMITS)
+        monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "no_findings")
+        codex_log_before = Path(fake_clis["codex_log"]).read_text(encoding="utf-8")
+        for _ in range(5):
+            tick.run_once()
+        with tick.store.begin_read() as conn:
+            state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
+            events = tick.store.list_events_for_run(conn, run_id, limit=300, newest_first=False)
+            kinds = [str(row["event_kind"]) for row in events[before_events:]]
+        assert isinstance(state, WaitingCodexCapacityState)
+        assert state.codex.reviewer_session_id == reviewer_id
+        assert state.codex.reviews_completed == reviews_completed
+        assert state.codex.review_iteration == review_iteration
+        forbidden = {
+            "codex_capacity_available",
+            "codex_capacity_retry_authorized",
+            "codex_review_scheduled",
+            "attempt_launch_requested",
+        }
+        assert forbidden.isdisjoint(kinds)
+        codex_log_after = Path(fake_clis["codex_log"]).read_text(encoding="utf-8")
+        assert codex_log_after == codex_log_before
 
 
 class TestCapacityRetryIdempotency:
