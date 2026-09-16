@@ -1,0 +1,5 @@
+Please implement the plan in archive/implementation-history/plans/phase-20-6-5-normal-run-rollover-completion.md. Follow AGENTS.md and every repository-local Cursor rule listed in the plan, preserve all architecture guardrails, and satisfy the complete testing criteria.
+
+Before any repository mutation, verify that /home/rojobad/.local/state/ai_dev_loop/bootstrap-seeds/3efc11696bd3316cd32241bd4411cba82f7249cdbababfecd6106098e79cffe2.patch is exactly 982226 bytes with SHA-256 3efc11696bd3316cd32241bd4411cba82f7249cdbababfecd6106098e79cffe2. Stop on mismatch. Apply that exact binary patch as an untrusted seed, then audit and complete it; do not read or reuse the manual Cursor session or manual worktree.
+
+Pay special attention to fresh agent identities, immutable source lineage, sequence non-final/final handoff, reservation/effect/CAS fencing, pre-CAS abort-hold convergence, fail-closed capacity parsing, and crash-reconciliation coverage. Fix the known Ruff failures, run the full validation suite, stage the intended result for independent Codex review, and do not commit or install it.
