@@ -216,6 +216,37 @@ def apply_preflight_blocked(
     )
 
 
+def apply_cursor_chat_bound_on_waiting_fix(
+    state: WaitingForCursorFixState,
+    event: CursorChatCreatedEvent,
+    *,
+    now_text: str,
+) -> WaitingForCursorFixState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    if state.cursor.chat_id:
+        raise ValueError("waiting_for_cursor_fix already has a Cursor chat ID")
+    cursor = state.cursor.model_copy(
+        update={
+            "chat_id": event.chat_id,
+            "chat_artifact_path": event.chat_artifact_path,
+            "chat_artifact_sha256": event.chat_artifact_sha256,
+        }
+    )
+    return WaitingForCursorFixState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        checkpoint=state.checkpoint,
+        cursor=cursor,
+        codex=state.codex,
+        fresh_recovery=state.fresh_recovery,
+    )
+
+
 def apply_cursor_chat_created(
     state: PreflightCompleteState,
     event: CursorChatCreatedEvent,
@@ -440,6 +471,8 @@ def apply_codex_reviewer_bound(
         checkpoint=state.checkpoint,
         cursor=state.cursor,
         codex=codex,
+        recovery=state.recovery,
+        fresh_recovery=state.fresh_recovery,
     )
 
 
@@ -497,6 +530,7 @@ def apply_codex_usage_capacity_detected(
         checkpoint=state.checkpoint,
         cursor=state.cursor,
         codex=codex,
+        fresh_recovery=state.fresh_recovery,
     )
 
 
@@ -533,6 +567,7 @@ def apply_codex_review_retryable_failure(
         cursor=state.cursor,
         codex=codex,
         recovery=state.recovery,
+        fresh_recovery=state.fresh_recovery,
     )
 
 
@@ -562,6 +597,7 @@ def apply_codex_review_retry_requested(
         cursor=state.cursor,
         codex=codex,
         recovery=state.recovery,
+        fresh_recovery=state.fresh_recovery,
     )
 
 
@@ -590,6 +626,7 @@ def apply_codex_capacity_available(
         cursor=state.cursor,
         codex=codex,
         recovery=getattr(state, "recovery", None),
+        fresh_recovery=getattr(state, "fresh_recovery", None),
     )
 
 
@@ -621,6 +658,7 @@ def apply_codex_capacity_retry_authorized(
         cursor=state.cursor,
         codex=codex,
         recovery=getattr(state, "recovery", None),
+        fresh_recovery=getattr(state, "fresh_recovery", None),
     )
 
 
@@ -674,6 +712,8 @@ def apply_codex_review_completed(
         checkpoint=state.checkpoint,
         cursor=state.cursor,
         codex=codex,
+        recovery=state.recovery,
+        fresh_recovery=state.fresh_recovery,
     )
 
 
@@ -715,6 +755,7 @@ def apply_waiting_for_cursor_fix_entered(
         checkpoint=state.checkpoint,
         cursor=cursor,
         codex=codex,
+        fresh_recovery=state.fresh_recovery,
     )
 
 

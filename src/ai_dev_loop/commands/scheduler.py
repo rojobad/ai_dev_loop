@@ -8,6 +8,10 @@ from ai_dev_loop.scheduler.application.abort import scheduler_abort_run
 from ai_dev_loop.scheduler.application.contracts import (
     AbortResult,
     HistoryResult,
+    RecoveryAbortResult,
+    RecoveryPrepareResult,
+    RecoveryStartResult,
+    RecoveryStatusResult,
     SchedulerRunSummary,
     SchedulerStatusResult,
     SequenceAbortResult,
@@ -21,6 +25,10 @@ from ai_dev_loop.scheduler.application.contracts import (
 )
 from ai_dev_loop.scheduler.application.cutover_cleanup import CutoverCleanupResult
 from ai_dev_loop.scheduler.application.history import scheduler_history
+from ai_dev_loop.scheduler.application.recovery_abort import abort_recovery
+from ai_dev_loop.scheduler.application.recovery_prepare import prepare_recovery
+from ai_dev_loop.scheduler.application.recovery_start import start_recovery
+from ai_dev_loop.scheduler.application.recovery_status import recovery_status
 from ai_dev_loop.scheduler.application.review_budget_extend import (
     ReviewBudgetExtendResult,
     scheduler_extend_review_budget,
@@ -568,6 +576,95 @@ def render_review_budget_extend_output(result: ReviewBudgetExtendResult, *, outp
     return "\n".join(lines) + "\n"
 
 
+def render_recovery_prepare_output(result: RecoveryPrepareResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "recovery_id": result.recovery_id,
+            "source_run_id": result.source_run_id,
+            "state_kind": result.state_kind,
+            "changed": result.changed,
+            "idempotent_replay": result.idempotent_replay,
+            "safe_next_action": result.safe_next_action.model_dump(mode="json"),
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    lines = [
+        f"Prepared fresh-review recovery: {result.recovery_id}",
+        f"Source run: {result.source_run_id}",
+        f"State: {result.state_kind}",
+        f"Changed: {result.changed}",
+        f"Idempotent replay: {result.idempotent_replay}",
+        f"Next action: {result.safe_next_action.command}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def render_recovery_start_output(result: RecoveryStartResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "recovery_id": result.recovery_id,
+            "recovery_run_id": result.recovery_run_id,
+            "source_run_id": result.source_run_id,
+            "state_kind": result.state_kind,
+            "changed": result.changed,
+            "idempotent_replay": result.idempotent_replay,
+            "safe_next_action": result.safe_next_action.model_dump(mode="json"),
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    lines = [
+        f"Started fresh-review recovery: {result.recovery_id}",
+        f"Recovery run: {result.recovery_run_id}",
+        f"Source run: {result.source_run_id}",
+        f"State: {result.state_kind}",
+        f"Changed: {result.changed}",
+        f"Idempotent replay: {result.idempotent_replay}",
+        f"Next action: {result.safe_next_action.command}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def render_recovery_status_output(result: RecoveryStatusResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            **result.model_dump(mode="json"),
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    lines = [
+        f"Recovery: {result.recovery_id_prefix}",
+        f"State: {result.state_kind}",
+        f"Source run prefix: {result.source_run_id_prefix}",
+    ]
+    if result.recovery_run_id_prefix:
+        lines.append(f"Recovery run prefix: {result.recovery_run_id_prefix}")
+    if result.accepted_outcome:
+        lines.append(f"Accepted outcome: {result.accepted_outcome}")
+    lines.append(f"Next action: {result.safe_next_action.command}")
+    return "\n".join(lines) + "\n"
+
+
+def render_recovery_abort_output(result: RecoveryAbortResult, *, output: str) -> str:
+    if output == "json":
+        payload = {
+            "schema_version": 1,
+            "recovery_id": result.recovery_id,
+            "state_kind": result.state_kind,
+            "changed": result.changed,
+            "idempotent_replay": result.idempotent_replay,
+            "safe_next_action": result.safe_next_action.model_dump(mode="json"),
+        }
+        return json.dumps(payload, indent=2) + "\n"
+    lines = [
+        f"Recovery abort: {result.recovery_id}",
+        f"State: {result.state_kind}",
+        f"Changed: {result.changed}",
+        f"Idempotent replay: {result.idempotent_replay}",
+        f"Next action: {result.safe_next_action.command}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def render_review_retry_output(result: ReviewRetryResult, *, output: str) -> str:
     if output == "json":
         payload = {
@@ -659,7 +756,15 @@ __all__ = [
     "scheduler_timeline",
     "render_list_output",
     "render_review_budget_extend_output",
+    "render_recovery_abort_output",
+    "render_recovery_prepare_output",
+    "render_recovery_start_output",
+    "render_recovery_status_output",
     "render_review_retry_output",
+    "abort_recovery",
+    "prepare_recovery",
+    "recovery_status",
+    "start_recovery",
     "scheduler_extend_review_budget",
     "render_start_output",
     "render_status_output",

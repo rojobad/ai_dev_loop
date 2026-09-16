@@ -655,6 +655,16 @@ def awaiting_finalization_sequence_safe_next_action(sequence_id: str) -> SafeNex
     )
 
 
+def recovery_integrated_finalization_sequence_safe_next_action(sequence_id: str) -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.NONE,
+        command=(
+            f"Sequence {sequence_id} completed via authenticated recovery integration. "
+            "Push, PR review, and merge remain manual operator actions."
+        ),
+    )
+
+
 def blocked_sequence_safe_next_action(
     sequence_id: str, *, block_reason_kind: str | None = None
 ) -> SafeNextAction:
@@ -674,6 +684,74 @@ def aborted_sequence_safe_next_action(sequence_id: str) -> SafeNextAction:
         command=(
             f"Sequence {sequence_id} was aborted. Later planned phases were cancelled without "
             "creating scheduler runs."
+        ),
+    )
+
+
+class RecoveryPrepareResult(AppModel):
+    recovery_id: str
+    source_run_id: str
+    state_kind: str
+    changed: bool
+    idempotent_replay: bool
+    safe_next_action: SafeNextAction
+
+
+class RecoveryStartResult(AppModel):
+    recovery_id: str
+    recovery_run_id: str
+    source_run_id: str
+    state_kind: str
+    changed: bool
+    idempotent_replay: bool
+    safe_next_action: SafeNextAction
+
+
+class RecoveryStatusResult(AppModel):
+    recovery_id: str
+    recovery_id_prefix: str
+    source_run_id_prefix: str
+    state_kind: str
+    recovery_run_id_prefix: str | None = None
+    sequence_id_prefix: str | None = None
+    sequence_ordinal: int | None = None
+    accepted_outcome: str | None = None
+    residual_risk: bool | None = None
+    integrated_commit_prefix: str | None = None
+    safe_next_action: SafeNextAction
+
+
+class RecoveryAbortResult(AppModel):
+    recovery_id: str
+    state_kind: str
+    changed: bool
+    idempotent_replay: bool
+    safe_next_action: SafeNextAction
+
+
+def prepared_recovery_start_next_action(recovery_id: str) -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.SCHEDULER_START,
+        command=f"ai_dev_loop scheduler recovery start {recovery_id}",
+    )
+
+
+def active_recovery_tick_next_action(recovery_id: str) -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.SCHEDULER_TICK,
+        command=(
+            f"Fresh recovery {recovery_id} is active. "
+            "Run ai_dev_loop scheduler tick to continue review and integration."
+        ),
+    )
+
+
+def integrated_recovery_safe_next_action(recovery_id: str) -> SafeNextAction:
+    return SafeNextAction(
+        kind=SafeNextActionKind.NONE,
+        command=(
+            f"Recovery {recovery_id} integrated successfully. "
+            "Push, PR review, and merge remain manual operator actions."
         ),
     )
 

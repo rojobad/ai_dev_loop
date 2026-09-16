@@ -575,6 +575,8 @@ class AttemptService:
         scheduled = state.codex.review_retry_scheduled_generation
         if generation > 0 and scheduled == generation:
             binding["operational_review_retry"] = True
+        if getattr(state, "fresh_recovery", None) is not None:
+            binding["review_seed"] = True
         return binding
 
     def _cursor_binding(

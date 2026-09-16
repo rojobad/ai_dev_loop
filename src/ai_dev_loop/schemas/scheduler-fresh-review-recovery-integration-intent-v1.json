@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/scheduler-fresh-review-recovery-integration-intent-v1.json",
+  "title": "RecoveryIntegrationIntent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "recovery_id",
+    "source_run_id",
+    "recovery_run_id",
+    "accepted_outcome",
+    "parent_head",
+    "source_tree_sha256",
+    "accepted_tree_sha256",
+    "reviewed_patch_sha256",
+    "review_result_sha256",
+    "commit_message",
+    "target_branch_ref",
+    "private_ref",
+    "target_repository_root",
+    "target_git_common_dir",
+    "target_git_dir",
+    "managed_repository_root",
+    "managed_git_common_dir",
+    "managed_git_dir",
+    "git_identity",
+    "recorded_at"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "recovery_id": { "type": "string", "minLength": 1 },
+    "source_run_id": { "type": "string", "minLength": 1 },
+    "recovery_run_id": { "type": "string", "minLength": 1 },
+    "sequence_id": { "type": ["string", "null"], "minLength": 1 },
+    "sequence_ordinal": { "type": ["integer", "null"], "minimum": 1 },
+    "accepted_outcome": {
+      "type": "string",
+      "enum": ["completed", "completed_with_residual_risk"]
+    },
+    "parent_head": { "type": "string", "minLength": 1 },
+    "source_tree_sha256": { "type": "string", "minLength": 1 },
+    "accepted_tree_sha256": { "type": "string", "minLength": 1 },
+    "reviewed_patch_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "review_result_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "commit_message": { "type": "string", "minLength": 1 },
+    "target_branch_ref": { "type": "string", "minLength": 1 },
+    "private_ref": { "type": "string", "minLength": 1 },
+    "target_repository_root": { "type": "string", "minLength": 1 },
+    "target_git_common_dir": { "type": "string", "minLength": 1 },
+    "target_git_dir": { "type": "string", "minLength": 1 },
+    "managed_repository_root": { "type": "string", "minLength": 1 },
+    "managed_git_common_dir": { "type": "string", "minLength": 1 },
+    "managed_git_dir": { "type": "string", "minLength": 1 },
+    "git_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "author_name",
+        "author_email",
+        "author_date",
+        "committer_name",
+        "committer_email",
+        "committer_date"
+      ],
+      "properties": {
+        "author_name": { "type": "string", "minLength": 1 },
+        "author_email": { "type": "string", "minLength": 1 },
+        "author_date": { "type": "string", "minLength": 1 },
+        "committer_name": { "type": "string", "minLength": 1 },
+        "committer_email": { "type": "string", "minLength": 1 },
+        "committer_date": { "type": "string", "minLength": 1 }
+      }
+    },
+    "recorded_at": { "type": "string", "minLength": 1 }
+  }
+}

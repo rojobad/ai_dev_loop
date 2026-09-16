@@ -24,6 +24,7 @@ from ai_dev_loop.scheduler.application.contracts import (
 )
 from ai_dev_loop.scheduler.application.cursor_workflow_service import CursorWorkflowService
 from ai_dev_loop.scheduler.application.git_admission import GitAdmissionPort
+from ai_dev_loop.scheduler.application.recovery_reconcile import RecoveryReconcileService
 from ai_dev_loop.scheduler.application.scheduler_preflight import SchedulerPreflightPort
 from ai_dev_loop.scheduler.application.sequence_abort import SequenceAbortService
 from ai_dev_loop.scheduler.application.sequence_handoff import SequenceHandoffService
@@ -98,6 +99,7 @@ class TickService:
         self._codex_workflow: CodexWorkflowService | None = None
         self._sequence_handoff: SequenceHandoffService | None = None
         self._sequence_reconcile: SequenceReconcileService | None = None
+        self._recovery_reconcile: RecoveryReconcileService | None = None
         self._sequence_abort: SequenceAbortService | None = None
         if attempt_backend is not None:
             self._cursor_workflow = CursorWorkflowService(
@@ -119,6 +121,12 @@ class TickService:
                 store,
                 now_factory=self._now_factory,
                 event_id_factory=self._event_id_factory,
+            )
+            self._recovery_reconcile = RecoveryReconcileService(
+                store,
+                artifacts,
+                abort_backend=attempt_backend,
+                now_factory=self._now_factory,
             )
             self._run_abort = SchedulerAbortService(
                 store,
@@ -208,6 +216,25 @@ class TickService:
                     conn
                 )
                 receipts.extend(self._reconcile_pending_sequences(conn))
+                if self._recovery_reconcile is not None:
+                    receipts.extend(self._recovery_reconcile.reconcile_pending_recoveries(conn))
+
+            if self._recovery_reconcile is not None:
+                from ai_dev_loop.scheduler.application.recovery_integration_fencing import (
+                    RecoveryIntegrationTickContext,
+                )
+
+                self._recovery_reconcile.set_integration_tick_context(
+                    RecoveryIntegrationTickContext(
+                        tick_owner_id=owner_id,
+                        tick_lease_generation=generation,
+                    )
+                    if lease_acquired
+                    else None
+                )
+                receipts.extend(self._recovery_reconcile.finalize_deferred_aborts())
+                receipts.extend(self._recovery_reconcile.finalize_deferred_integrations())
+                receipts.extend(self._recovery_reconcile.finalize_deferred_cleanups())
 
             for sequence_id in pending_report_sequence_ids:
                 self._reconcile_completion_report_publication(sequence_id)

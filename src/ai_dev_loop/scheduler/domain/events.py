@@ -41,6 +41,7 @@ CODEX_CAPACITY_RETRY_AUTHORIZED_EVENT_KIND = "codex_capacity_retry_authorized"
 CODEX_REVIEW_RETRYABLE_FAILURE_EVENT_KIND = "codex_review_retryable_failure"
 CODEX_REVIEW_RETRY_REQUESTED_EVENT_KIND = "codex_review_retry_requested"
 CODEX_REVIEW_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND = "codex_review_recovery_successor_created"
+FRESH_REVIEW_RECOVERY_STARTED_EVENT_KIND = "fresh_review_recovery_started"
 WAITING_FOR_CURSOR_FIX_EVENT_KIND = "waiting_for_cursor_fix_entered"
 RUN_COMPLETED_EVENT_KIND = "run_completed"
 RUN_COMPLETED_WITH_RESIDUAL_RISK_EVENT_KIND = "run_completed_with_residual_risk"
@@ -492,6 +493,20 @@ class CodexReviewRecoverySuccessorCreatedEvent(DomainModel):
         return value
 
 
+class FreshReviewRecoveryStartedEvent(DomainModel):
+    kind: str = Field(default=FRESH_REVIEW_RECOVERY_STARTED_EVENT_KIND)
+    recovery_id: NonEmptyStr
+    source_run_id: NonEmptyStr
+    recovery_run_id: NonEmptyStr
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_fresh_review_recovery_started(cls, value: str) -> str:
+        if value != FRESH_REVIEW_RECOVERY_STARTED_EVENT_KIND:
+            raise ValueError("kind must be fresh_review_recovery_started")
+        return value
+
+
 class CodexCapacityAvailableEvent(DomainModel):
     kind: str = Field(default=CODEX_CAPACITY_AVAILABLE_EVENT_KIND)
     run_id: str
@@ -803,6 +818,10 @@ SchedulerEvent = Annotated[
     | Annotated[
         CodexReviewRecoverySuccessorCreatedEvent,
         Tag(CODEX_REVIEW_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND),
+    ]
+    | Annotated[
+        FreshReviewRecoveryStartedEvent,
+        Tag(FRESH_REVIEW_RECOVERY_STARTED_EVENT_KIND),
     ]
     | Annotated[WaitingForCursorFixEnteredEvent, Tag(WAITING_FOR_CURSOR_FIX_EVENT_KIND)]
     | Annotated[RunCompletedEvent, Tag(RUN_COMPLETED_EVENT_KIND)]

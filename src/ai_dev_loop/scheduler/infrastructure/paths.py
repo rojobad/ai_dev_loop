@@ -13,6 +13,7 @@ DEFAULT_DB_FILENAME = "engine.sqlite3"
 ARTIFACTS_DIRNAME = "artifacts"
 RUNS_DIRNAME = "runs"
 SEQUENCES_DIRNAME = "sequences"
+RECOVERY_WORKTREES_DIRNAME = "recovery-worktrees"
 
 _SAFE_RELATIVE_PATH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -189,6 +190,18 @@ def ensure_artifact_parent_directories(root: Path, relative_path: str) -> None:
         candidate.resolve(strict=False).relative_to(root_resolved)
     except ValueError as exc:
         raise ValueError("artifact path escapes the protected artifact root") from exc
+
+
+def recovery_worktree_root(state_root: Path, recovery_id: str) -> Path:
+    return state_root / RECOVERY_WORKTREES_DIRNAME / safe_run_directory_key(recovery_id)
+
+
+def ensure_recovery_worktrees_parent(state_root: Path) -> Path:
+    artifact_resolved = ensure_scheduler_state_dir(state_root)
+    return _ensure_private_directory(
+        artifact_resolved / RECOVERY_WORKTREES_DIRNAME,
+        label="recovery worktrees root",
+    )
 
 
 def resolve_run_relative_path(run_root: Path, relative_path: str) -> Path:

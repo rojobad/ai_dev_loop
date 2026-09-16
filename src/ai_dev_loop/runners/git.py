@@ -727,6 +727,25 @@ class GitIdentity:
     committer_date: str
 
 
+def git_timestamp_from_intent_date(intent_date: str) -> str:
+    """Normalize a frozen ISO intent timestamp to git commit-object form."""
+
+    from datetime import UTC, datetime
+
+    stripped = intent_date.strip()
+    if not stripped:
+        raise ValidationError("intent timestamp is empty")
+    if "T" not in stripped and stripped[0].isdigit() and " " in stripped:
+        return stripped
+    normalized = stripped.replace("Z", "+00:00")
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    unix_ts = int(parsed.timestamp())
+    offset = parsed.strftime("%z") or "+0000"
+    return f"{unix_ts} {offset}"
+
+
 def _parse_git_ident_line(value: str) -> tuple[str, str, str]:
     if " <" not in value or ">" not in value:
         raise ValidationError("unable to parse git identity line")
@@ -778,6 +797,79 @@ def checkpoint_git_write_tree(
         context="git write-tree",
         timeout=timeout,
     ).strip()
+
+
+def compute_ephemeral_staged_tree_sha(
+    repo_root: Path,
+    *,
+    parent_head: str,
+    patch_bytes: bytes,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> str:
+    """Compute staged tree SHA without mutating the repository index or refs."""
+
+    import shutil
+    import tempfile
+
+    alternate_objects = _checkpoint_git_success(
+        ["rev-parse", "--git-path", "objects"],
+        cwd=repo_root,
+        context="ephemeral git-path objects",
+        timeout=timeout,
+    ).strip()
+
+    def ephemeral_git(
+        args: list[str],
+        *,
+        context: str,
+        object_dir: Path,
+    ) -> str:
+        env = checkpoint_git_env()
+        env["GIT_INDEX_FILE"] = str(index_path)
+        env["GIT_OBJECT_DIRECTORY"] = str(object_dir)
+        env["GIT_ALTERNATE_OBJECT_DIRECTORIES"] = alternate_objects
+        result = run_process(
+            ["git", *checkpoint_git_config_args(), *args],
+            cwd=str(repo_root),
+            env=env,
+            timeout=timeout,
+        )
+        if result.timed_out:
+            raise ValidationError(f"{context} timed out during ephemeral tree computation")
+        return require_success(result, context=context)
+
+    with tempfile.NamedTemporaryFile(delete=False) as handle:
+        index_path = Path(handle.name)
+    object_dir = Path(tempfile.mkdtemp(prefix="ai-dev-loop-ephemeral-objects-"))
+    patch_path: Path | None = None
+    try:
+        ephemeral_git(
+            ["read-tree", parent_head],
+            context="ephemeral read-tree",
+            object_dir=object_dir,
+        )
+        with tempfile.NamedTemporaryFile(
+            prefix=".ai-dev-loop-ephemeral-patch-",
+            suffix=".patch",
+            delete=False,
+        ) as patch_handle:
+            patch_path = Path(patch_handle.name)
+            patch_handle.write(patch_bytes)
+        ephemeral_git(
+            ["apply", "--whitespace=nowarn", "--cached", str(patch_path)],
+            context="ephemeral apply --cached",
+            object_dir=object_dir,
+        )
+        return ephemeral_git(
+            ["write-tree"],
+            context="ephemeral write-tree",
+            object_dir=object_dir,
+        ).strip()
+    finally:
+        index_path.unlink(missing_ok=True)
+        if patch_path is not None:
+            patch_path.unlink(missing_ok=True)
+        shutil.rmtree(object_dir, ignore_errors=True)
 
 
 def git_rev_parse(repo_root: Path, ref: str) -> str:
@@ -1158,3 +1250,284 @@ def checkpoint_verify_commit_identity(
     commit_message = "\n".join(lines[5:])
     if commit_message != message:
         raise ValidationError("commit object message does not match checkpoint intent")
+
+
+def recovery_git_private_ref_peek(
+    repo_root: Path,
+    *,
+    ref: str,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> str | None:
+    """Return the ref SHA when present, None when definitively absent, raise on probe failure."""
+
+    if not ref.startswith("refs/ai-dev-loop/recovery/"):
+        raise ValidationError("recovery private ref must use package namespace")
+    result = run_process(
+        ["git", *checkpoint_git_config_args(), "rev-parse", "--verify", ref],
+        cwd=str(repo_root),
+        env=checkpoint_git_env(),
+        timeout=timeout,
+    )
+    if result.timed_out:
+        raise ValidationError("git rev-parse timed out while probing recovery private ref")
+    if result.returncode == 0:
+        return result.stdout.strip()
+    if result.returncode in {1, 128}:
+        return None
+    raise ValidationError("git rev-parse failed while probing recovery private ref")
+
+
+def recovery_git_private_ref_exists(
+    repo_root: Path,
+    *,
+    ref: str,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> bool:
+    return recovery_git_private_ref_peek(repo_root, ref=ref, timeout=timeout) is not None
+
+
+def recovery_git_create_private_ref(
+    repo_root: Path,
+    *,
+    ref: str,
+    parent_head: str,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> None:
+    """Create a package-owned private recovery ref at an exact parent commit."""
+
+    if not ref.startswith("refs/ai-dev-loop/recovery/"):
+        raise ValidationError("recovery private ref must use package namespace")
+    existing = recovery_git_private_ref_peek(repo_root, ref=ref, timeout=timeout)
+    if existing == parent_head:
+        return
+    if existing is not None:
+        raise ValidationError("recovery private ref collision at different commit")
+    null_sha = "0" * 40
+    try:
+        checkpoint_git_update_ref_cas(
+            repo_root,
+            ref=ref,
+            new_sha=parent_head,
+            old_sha=null_sha,
+            timeout=timeout,
+        )
+    except ValidationError:
+        current = recovery_git_private_ref_peek(repo_root, ref=ref, timeout=timeout)
+        if current != parent_head:
+            raise ValidationError("recovery private ref collision during atomic create") from None
+
+
+def recovery_git_update_private_ref_cas(
+    repo_root: Path,
+    *,
+    ref: str,
+    new_sha: str,
+    old_sha: str,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> None:
+    if not ref.startswith("refs/ai-dev-loop/recovery/"):
+        raise ValidationError("recovery private ref must use package namespace")
+    checkpoint_git_update_ref_cas(
+        repo_root,
+        ref=ref,
+        new_sha=new_sha,
+        old_sha=old_sha,
+        timeout=timeout,
+    )
+
+
+def recovery_git_checkout_detach(
+    repo_root: Path,
+    *,
+    commit_sha: str,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> None:
+    """Move a recovery worktree HEAD to an exact commit without branch mutation."""
+
+    _checkpoint_git_success(
+        ["checkout", "--detach", commit_sha],
+        cwd=repo_root,
+        context="recovery checkout detach",
+        timeout=timeout,
+    )
+
+
+def recovery_git_worktree_add(
+    repo_root: Path,
+    *,
+    worktree_path: Path,
+    parent_head: str,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> None:
+    """Create a detached package-managed worktree at an exact parent commit."""
+
+    worktree_path.parent.mkdir(parents=True, exist_ok=True)
+    _checkpoint_git_success(
+        [
+            "worktree",
+            "add",
+            "--detach",
+            str(worktree_path),
+            parent_head,
+        ],
+        cwd=repo_root,
+        context="recovery worktree add",
+        timeout=timeout,
+    )
+
+
+def recovery_git_apply_staged_patch(
+    repo_root: Path,
+    *,
+    patch_bytes: bytes,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> None:
+    """Apply an authenticated staged patch to index and worktree without shell interpolation."""
+
+    import hashlib
+    import tempfile
+
+    expected_patch_sha = hashlib.sha256(patch_bytes).hexdigest()
+    live_cached = checkpoint_git_diff_cached_patch_bytes(repo_root)
+    live_cached_sha = hashlib.sha256(live_cached).hexdigest()
+
+    with tempfile.NamedTemporaryFile(
+        prefix=".ai-dev-loop-recovery-patch-",
+        suffix=".patch",
+        dir=repo_root,
+        delete=False,
+    ) as handle:
+        patch_path = Path(handle.name)
+        handle.write(patch_bytes)
+    try:
+        if live_cached_sha != expected_patch_sha:
+            _checkpoint_git_success(
+                ["apply", "--whitespace=nowarn", "--cached", str(patch_path)],
+                cwd=repo_root,
+                context="recovery git apply",
+                timeout=timeout,
+            )
+        check = _checkpoint_git(
+            ["apply", "--whitespace=nowarn", "--check", str(patch_path)],
+            cwd=repo_root,
+            timeout=timeout,
+        )
+        if check.returncode == 0:
+            _checkpoint_git_success(
+                ["apply", "--whitespace=nowarn", str(patch_path)],
+                cwd=repo_root,
+                context="recovery git apply",
+                timeout=timeout,
+            )
+    finally:
+        patch_path.unlink(missing_ok=True)
+
+
+def recovery_git_apply_worktree_patch(
+    repo_root: Path,
+    *,
+    patch_bytes: bytes,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> None:
+    """Apply a patch to the worktree only without mutating the index."""
+
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(
+        prefix=".ai-dev-loop-recovery-patch-",
+        suffix=".patch",
+        dir=repo_root,
+        delete=False,
+    ) as handle:
+        patch_path = Path(handle.name)
+        handle.write(patch_bytes)
+    try:
+        check = _checkpoint_git(
+            ["apply", "--whitespace=nowarn", "--check", str(patch_path)],
+            cwd=repo_root,
+            timeout=timeout,
+        )
+        if check.returncode != 0:
+            _checkpoint_git_success(
+                ["apply", "--whitespace=nowarn", "--check", str(patch_path)],
+                cwd=repo_root,
+                context="recovery git apply worktree check",
+                timeout=timeout,
+            )
+        _checkpoint_git_success(
+            ["apply", "--whitespace=nowarn", str(patch_path)],
+            cwd=repo_root,
+            context="recovery git apply worktree",
+            timeout=timeout,
+        )
+    finally:
+        patch_path.unlink(missing_ok=True)
+
+
+def recovery_git_worktree_contains(
+    repo_root: Path,
+    *,
+    worktree_path: Path,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> bool:
+    """Return True when the exact worktree path is registered under the target repository."""
+
+    result = _checkpoint_git(
+        ["worktree", "list", "--porcelain"],
+        cwd=repo_root,
+        timeout=timeout,
+    )
+    if result.returncode != 0:
+        raise ValidationError("git worktree list failed during recovery ownership check")
+    normalized = str(worktree_path.resolve())
+    for line in result.stdout.splitlines():
+        if line.startswith("worktree "):
+            listed = line.removeprefix("worktree ").strip()
+            if str(Path(listed).resolve()) == normalized:
+                return True
+    return False
+
+
+def recovery_git_worktree_remove(
+    repo_root: Path,
+    *,
+    worktree_path: Path,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> None:
+    """Remove an exact owned recovery worktree without --force."""
+
+    _checkpoint_git_success(
+        ["worktree", "remove", str(worktree_path)],
+        cwd=repo_root,
+        context="recovery worktree remove",
+        timeout=timeout,
+    )
+
+
+def recovery_git_delete_ref(
+    repo_root: Path,
+    *,
+    ref: str,
+    expected_sha: str,
+    timeout: float = CHECKPOINT_GIT_TIMEOUT_SECONDS,
+) -> None:
+    """Delete a private recovery ref with an atomic expected-old-value update."""
+
+    if not ref.startswith("refs/ai-dev-loop/recovery/"):
+        raise ValidationError("recovery private ref must use package namespace")
+    result = _checkpoint_git(
+        ["update-ref", "-d", ref, expected_sha],
+        cwd=repo_root,
+        timeout=timeout,
+    )
+    if result.timed_out:
+        raise ValidationError("git update-ref timed out during private ref delete")
+    if result.returncode != 0:
+        current = recovery_git_private_ref_peek(repo_root, ref=ref, timeout=timeout)
+        if current is None:
+            return
+        if current != expected_sha:
+            raise ValidationError("private recovery ref SHA drift before deletion")
+        raise ValidationError(
+            f"git update-ref private ref delete failed: {result.stderr.strip() or 'unknown error'}"
+        )

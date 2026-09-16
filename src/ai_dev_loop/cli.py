@@ -30,9 +30,16 @@ from ai_dev_loop.commands.integrations import (
 from ai_dev_loop.commands.scheduler import (
     SequencePrepareOptions,
     SubmitOptions,
+    abort_recovery,
+    prepare_recovery,
     prepare_sequence,
+    recovery_status,
     render_cutover_cleanup_output,
     render_list_output,
+    render_recovery_abort_output,
+    render_recovery_prepare_output,
+    render_recovery_start_output,
+    render_recovery_status_output,
     render_review_budget_extend_output,
     render_review_retry_output,
     render_scheduler_abort_output,
@@ -55,6 +62,7 @@ from ai_dev_loop.commands.scheduler import (
     scheduler_sequence_status,
     scheduler_status,
     scheduler_timeline,
+    start_recovery,
     submit_run,
 )
 from ai_dev_loop.commands.scheduler import (
@@ -108,6 +116,8 @@ scheduler_app.add_typer(timer_app, name="timer")
 scheduler_app.add_typer(sequence_app, name="sequence")
 review_app = typer.Typer(help="Codex review retry and blocked-run recovery.")
 scheduler_app.add_typer(review_app, name="review")
+recovery_app = typer.Typer(help="Authenticated fresh-review recovery.")
+scheduler_app.add_typer(recovery_app, name="recovery")
 app.add_typer(config_app, name="config")
 app.add_typer(controller_app, name="controller")
 app.add_typer(scheduler_app, name="scheduler")
@@ -372,6 +382,66 @@ def scheduler_extend_command(
             target_total=max_review_iterations,
         )
         typer.echo(render_review_budget_extend_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@recovery_app.command("prepare")
+def scheduler_recovery_prepare_command(
+    source_run_id: Annotated[str, typer.Argument(help="Blocked or waiting source run ID.")],
+    commit_message: Annotated[
+        str | None,
+        typer.Option("--commit-message", help="Bounded commit message for standalone/final recovery."),
+    ] = None,
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Prepare an authenticated fresh-review recovery (process-free, Git-read-only)."""
+
+    def run() -> None:
+        result = prepare_recovery(source_run_id, commit_message=commit_message)
+        typer.echo(render_recovery_prepare_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@recovery_app.command("start")
+def scheduler_recovery_start_command(
+    recovery_id: Annotated[str, typer.Argument(help="Prepared recovery ID.")],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Authorize fresh-review recovery start (worktree, seeding, recovery run)."""
+
+    def run() -> None:
+        result = start_recovery(recovery_id)
+        typer.echo(render_recovery_start_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@recovery_app.command("status")
+def scheduler_recovery_status_command(
+    recovery_id: Annotated[str, typer.Argument(help="Recovery ID.")],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Show read-only fresh-review recovery status."""
+
+    def run() -> None:
+        result = recovery_status(recovery_id)
+        typer.echo(render_recovery_status_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@recovery_app.command("abort")
+def scheduler_recovery_abort_command(
+    recovery_id: Annotated[str, typer.Argument(help="Recovery ID.")],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Abort a prepared or active fresh-review recovery."""
+
+    def run() -> None:
+        result = abort_recovery(recovery_id)
+        typer.echo(render_recovery_abort_output(result, output=output.value), nl=False)
 
     _handle(run)
 

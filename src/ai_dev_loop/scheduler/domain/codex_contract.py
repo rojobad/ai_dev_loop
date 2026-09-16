@@ -69,3 +69,9 @@ REVIEW_RETRY_OPERATIONAL_ENVELOPE = (
     "The prior attempt did not yield a valid structured review result. "
     "Return a fresh schema-valid review of the same staged snapshot only.\n\n"
 )
+
+REVIEW_SEED_OPERATIONAL_ENVELOPE = (
+    "This is an automated fresh-review recovery turn. "
+    "No trusted Cursor final response is supplied. "
+    "Review the authenticated staged changes and frozen artifacts only.\n\n"
+)
