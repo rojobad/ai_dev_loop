@@ -1,0 +1,3 @@
+Please implement the plan in archive/implementation-history/plans/phase-20-5-1-capacity-null-marker-hotfix.md. Follow AGENTS.md and every repository-local Cursor rule listed in the plan, preserve the architecture guardrails, add or update the required automated tests, and stop on any new architecture or safety question.
+
+Keep this as a minimal Phase 20.5 hotfix: explicit `rateLimitReachedType: null` must permit the existing fail-closed capacity evaluation and timer-driven same-reviewer resume. Do not import or recreate Phase 20.6 recovery/rollover code, do not touch abandoned worktrees or runs, and do not commit or install the result.
