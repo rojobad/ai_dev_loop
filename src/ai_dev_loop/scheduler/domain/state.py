@@ -386,6 +386,29 @@ class ReviewRecoveryLineage(DomainModel):
         return value
 
 
+class FreshReviewRecoveryLineage(DomainModel):
+    """Immutable lineage for a Phase 20.6 fresh-review recovery run."""
+
+    recovery_id: NonEmptyStr
+    source_run_id: NonEmptyStr
+    source_staged_patch_sha256: Sha256Hex
+    source_parent_head: NonEmptyStr
+    review_seed: Literal[True] = True
+    created_at: NonEmptyStr
+
+
+class AuthenticatedRolloverLineage(DomainModel):
+    """Immutable lineage for a Phase 20.6.5 authenticated rollover run."""
+
+    rollover_id: NonEmptyStr
+    source_run_id: NonEmptyStr
+    source_staged_patch_sha256: Sha256Hex
+    source_parent_head: NonEmptyStr
+    source_final_review_result_sha256: Sha256Hex
+    review_seed: Literal[True] = True
+    created_at: NonEmptyStr
+
+
 class CursorWorkflowCheckpoint(DomainModel):
     """Durable cursor/staging checkpoint carried across Phase 17.4 states."""
 
@@ -489,6 +512,8 @@ class WaitingCodexCapacityState(SchedulerRunBase):
     checkpoint: AdmittedRunCheckpoint
     cursor: CursorWorkflowCheckpoint
     codex: CodexWorkflowCheckpoint
+    fresh_recovery: FreshReviewRecoveryLineage | None = None
+    fresh_rollover: AuthenticatedRolloverLineage | None = None
 
     @field_validator("schema_version")
     @classmethod
@@ -515,6 +540,8 @@ class AwaitingCodexReviewState(SchedulerRunBase):
     cursor: CursorWorkflowCheckpoint
     codex: CodexWorkflowCheckpoint = Field(default_factory=CodexWorkflowCheckpoint)
     recovery: ReviewRecoveryLineage | None = None
+    fresh_recovery: FreshReviewRecoveryLineage | None = None
+    fresh_rollover: AuthenticatedRolloverLineage | None = None
 
     @field_validator("schema_version")
     @classmethod
@@ -539,6 +566,8 @@ class WaitingCodexReviewRetryState(SchedulerRunBase):
     cursor: CursorWorkflowCheckpoint
     codex: CodexWorkflowCheckpoint
     recovery: ReviewRecoveryLineage | None = None
+    fresh_recovery: FreshReviewRecoveryLineage | None = None
+    fresh_rollover: AuthenticatedRolloverLineage | None = None
 
     @field_validator("schema_version")
     @classmethod
@@ -568,6 +597,8 @@ class WaitingForCursorFixState(SchedulerRunBase):
     checkpoint: AdmittedRunCheckpoint
     cursor: CursorWorkflowCheckpoint
     codex: CodexWorkflowCheckpoint
+    fresh_recovery: FreshReviewRecoveryLineage | None = None
+    fresh_rollover: AuthenticatedRolloverLineage | None = None
 
     @field_validator("schema_version")
     @classmethod

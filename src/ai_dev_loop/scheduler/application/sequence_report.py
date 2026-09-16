@@ -2,18 +2,43 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
+from ai_dev_loop.scheduler.application.recovery_artifacts import (
+    load_recovery_integration_intent,
+    load_recovery_integration_trusted_tree,
+)
+from ai_dev_loop.scheduler.application.rollover_artifacts import (
+    load_rollover_integration_intent,
+    load_rollover_integration_trusted_tree,
+)
 from ai_dev_loop.scheduler.application.sequence_checkpoint_evidence import (
     SequenceCheckpointEvidenceError,
     authenticate_checkpoint_evidence,
 )
+from ai_dev_loop.scheduler.domain.recovery import (
+    CLEANUP_PENDING_RECOVERY_STATE_KIND,
+    INTEGRATED_RECOVERY_STATE_KIND,
+    INTEGRATION_PENDING_RECOVERY_STATE_KIND,
+    SequenceRecoveryResolution,
+)
+from ai_dev_loop.scheduler.domain.rollover import (
+    CLEANUP_PENDING_ROLLOVER_STATE_KIND,
+    INTEGRATED_ROLLOVER_STATE_KIND,
+    INTEGRATION_PENDING_ROLLOVER_STATE_KIND,
+    SequenceRolloverResolution,
+)
 from ai_dev_loop.scheduler.domain.sequence import (
     AwaitingFinalizationSequenceState,
+    BlockedSequenceState,
+    RecoveryIntegratedFinalizationSequenceState,
+    RecoveryIntegratedSequenceCompletionReport,
     SequenceCompletionReport,
+    SequenceFinalizationPublicationInputs,
     SequencePhaseReportEntry,
 )
 from ai_dev_loop.scheduler.domain.state import CompletedState, CompletedWithResidualRiskState
@@ -21,6 +46,7 @@ from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedAr
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
 SEQUENCE_COMPLETION_REPORT_ARTIFACT = "reports/completion-v1.json"
+SEQUENCE_FINALIZATION_PUBLICATION_INPUTS_ARTIFACT = "reports/finalization-publication-inputs.json"
 
 _publication_step_hook: Callable[[str], None] | None = None
 
@@ -42,6 +68,264 @@ def _prefix(value: str | None, length: int = 12) -> str | None:
     if value is None:
         return None
     return value[:length]
+
+
+def _rollover_resolution_for_ordinal(
+    store: SqliteSchedulerStore,
+    conn: sqlite3.Connection,
+    *,
+    sequence_id: str,
+    ordinal: int,
+) -> SequenceRolloverResolution | None:
+    resolution = store.get_sequence_rollover_resolution(
+        conn,
+        sequence_id=sequence_id,
+        ordinal=ordinal,
+    )
+    if resolution is None:
+        return None
+    assert isinstance(resolution, SequenceRolloverResolution)
+    return resolution
+
+
+def _recovery_resolution_for_ordinal(
+    store: SqliteSchedulerStore,
+    conn: sqlite3.Connection,
+    *,
+    sequence_id: str,
+    ordinal: int,
+) -> SequenceRecoveryResolution | None:
+    resolution = store.get_sequence_recovery_resolution(
+        conn,
+        sequence_id=sequence_id,
+        ordinal=ordinal,
+    )
+    if resolution is None:
+        return None
+    assert isinstance(resolution, SequenceRecoveryResolution)
+    return resolution
+
+
+def _recovery_artifact_bindings(
+    store: SqliteSchedulerStore,
+    conn: sqlite3.Connection,
+    recovery_id: str,
+) -> tuple[str, str]:
+    row = store.get_fresh_review_recovery(conn, recovery_id)
+    if row is None:
+        raise SequenceCheckpointEvidenceError(
+            f"recovery state missing for checkpoint report ({recovery_id})"
+        )
+    state_kind = str(row["state_kind"])
+    if state_kind not in {
+        INTEGRATION_PENDING_RECOVERY_STATE_KIND,
+        CLEANUP_PENDING_RECOVERY_STATE_KIND,
+        INTEGRATED_RECOVERY_STATE_KIND,
+    }:
+        raise SequenceCheckpointEvidenceError(
+            f"recovery state lacks durable integration bindings ({recovery_id})"
+        )
+    from ai_dev_loop.scheduler.domain.recovery import (
+        CleanupPendingRecoveryState,
+        IntegratedRecoveryState,
+        IntegrationPendingRecoveryState,
+    )
+
+    state: IntegrationPendingRecoveryState | CleanupPendingRecoveryState | IntegratedRecoveryState
+    if state_kind == INTEGRATION_PENDING_RECOVERY_STATE_KIND:
+        state = IntegrationPendingRecoveryState.model_validate_json(str(row["state_payload"]))
+    elif state_kind == CLEANUP_PENDING_RECOVERY_STATE_KIND:
+        state = CleanupPendingRecoveryState.model_validate_json(str(row["state_payload"]))
+    else:
+        state = IntegratedRecoveryState.model_validate_json(str(row["state_payload"]))
+    intent_digest = state.integration_intent_artifact_sha256
+    trusted_digest = state.integration_trusted_tree_artifact_sha256
+    if intent_digest is None or trusted_digest is None:
+        raise SequenceCheckpointEvidenceError(
+            f"recovery integration artifact bindings are incomplete ({recovery_id})"
+        )
+    return intent_digest, trusted_digest
+
+
+def _rollover_artifact_bindings(
+    store: SqliteSchedulerStore,
+    conn: sqlite3.Connection,
+    rollover_id: str,
+) -> tuple[str, str]:
+    row = store.get_authenticated_rollover(conn, rollover_id)
+    if row is None:
+        raise SequenceCheckpointEvidenceError(
+            f"rollover state missing for checkpoint report ({rollover_id})"
+        )
+    state_kind = str(row["state_kind"])
+    if state_kind not in {
+        INTEGRATION_PENDING_ROLLOVER_STATE_KIND,
+        CLEANUP_PENDING_ROLLOVER_STATE_KIND,
+        INTEGRATED_ROLLOVER_STATE_KIND,
+    }:
+        raise SequenceCheckpointEvidenceError(
+            f"rollover state lacks durable integration bindings ({rollover_id})"
+        )
+    from ai_dev_loop.scheduler.domain.rollover import (
+        CleanupPendingRolloverState,
+        IntegratedRolloverState,
+        IntegrationPendingRolloverState,
+    )
+
+    state: IntegrationPendingRolloverState | CleanupPendingRolloverState | IntegratedRolloverState
+    if state_kind == INTEGRATION_PENDING_ROLLOVER_STATE_KIND:
+        state = IntegrationPendingRolloverState.model_validate_json(str(row["state_payload"]))
+    elif state_kind == CLEANUP_PENDING_ROLLOVER_STATE_KIND:
+        state = CleanupPendingRolloverState.model_validate_json(str(row["state_payload"]))
+    else:
+        state = IntegratedRolloverState.model_validate_json(str(row["state_payload"]))
+    intent_digest = state.integration_intent_artifact_sha256
+    trusted_digest = state.integration_trusted_tree_artifact_sha256
+    if intent_digest is None or trusted_digest is None:
+        raise SequenceCheckpointEvidenceError(
+            f"rollover integration artifact bindings are incomplete ({rollover_id})"
+        )
+    return intent_digest, trusted_digest
+
+
+def _rollover_checkpoint_fields(
+    store: SqliteSchedulerStore,
+    artifacts: ProtectedArtifactStore,
+    conn: sqlite3.Connection,
+    resolution: SequenceRolloverResolution,
+) -> tuple[str | None, str | None, str | None, str | None, str | None]:
+    intent_digest, trusted_digest = _rollover_artifact_bindings(
+        store,
+        conn,
+        resolution.rollover_id,
+    )
+    intent = load_rollover_integration_intent(
+        artifacts,
+        resolution.rollover_id,
+        expected_sha256=intent_digest,
+    )
+    trusted, _ = load_rollover_integration_trusted_tree(
+        artifacts,
+        resolution.rollover_id,
+        expected_sha256=trusted_digest,
+    )
+    if trusted.intent_sha256 != intent_digest:
+        raise SequenceCheckpointEvidenceError(
+            "rollover trusted-tree intent binding disagrees with persisted digest"
+        )
+    if trusted.reviewed_tree_sha256 != resolution.reviewed_tree_sha256:
+        raise SequenceCheckpointEvidenceError(
+            "rollover trusted-tree disagrees with sequence resolution tree"
+        )
+    if trusted.reviewed_patch_sha256 != resolution.reviewed_patch_sha256:
+        raise SequenceCheckpointEvidenceError(
+            "rollover trusted-tree disagrees with sequence resolution patch"
+        )
+    if intent.reviewed_patch_sha256 != resolution.reviewed_patch_sha256:
+        raise SequenceCheckpointEvidenceError(
+            "rollover integration intent disagrees with sequence resolution patch"
+        )
+    if intent.accepted_tree_sha256 != resolution.reviewed_tree_sha256:
+        raise SequenceCheckpointEvidenceError(
+            "rollover integration intent disagrees with sequence resolution tree"
+        )
+    if intent.rollover_run_id != resolution.rollover_run_id:
+        raise SequenceCheckpointEvidenceError(
+            "rollover integration intent disagrees with sequence resolution rollover run"
+        )
+    if intent.source_run_id != resolution.source_run_id:
+        raise SequenceCheckpointEvidenceError(
+            "rollover integration intent disagrees with sequence resolution source run"
+        )
+    review_sha: str | None = None
+    run_state, _, _ = store.load_validated_snapshot(conn, resolution.rollover_run_id)
+    if isinstance(run_state, (CompletedState, CompletedWithResidualRiskState)):
+        review_sha = run_state.codex.latest_review_result_sha256
+        if (
+            review_sha is not None
+            and intent.review_result_sha256 is not None
+            and review_sha != intent.review_result_sha256
+        ):
+            raise SequenceCheckpointEvidenceError(
+                "rollover integration intent review binding disagrees with rollover run"
+            )
+    return (
+        resolution.commit_sha256,
+        resolution.reviewed_tree_sha256,
+        intent_digest,
+        trusted_digest,
+        review_sha,
+    )
+
+
+def _recovery_checkpoint_fields(
+    store: SqliteSchedulerStore,
+    artifacts: ProtectedArtifactStore,
+    conn: sqlite3.Connection,
+    resolution: SequenceRecoveryResolution,
+) -> tuple[str | None, str | None, str | None, str | None, str | None]:
+    intent_digest, trusted_digest = _recovery_artifact_bindings(
+        store,
+        conn,
+        resolution.recovery_id,
+    )
+    intent = load_recovery_integration_intent(
+        artifacts,
+        resolution.recovery_id,
+        expected_sha256=intent_digest,
+    )
+    trusted, _ = load_recovery_integration_trusted_tree(
+        artifacts,
+        resolution.recovery_id,
+        expected_sha256=trusted_digest,
+    )
+    if trusted.intent_sha256 != intent_digest:
+        raise SequenceCheckpointEvidenceError(
+            "recovery trusted-tree intent binding disagrees with persisted digest"
+        )
+    if trusted.reviewed_tree_sha256 != resolution.reviewed_tree_sha256:
+        raise SequenceCheckpointEvidenceError(
+            "recovery trusted-tree disagrees with sequence resolution tree"
+        )
+    if trusted.reviewed_patch_sha256 != resolution.reviewed_patch_sha256:
+        raise SequenceCheckpointEvidenceError(
+            "recovery trusted-tree disagrees with sequence resolution patch"
+        )
+    if intent.reviewed_patch_sha256 != resolution.reviewed_patch_sha256:
+        raise SequenceCheckpointEvidenceError(
+            "recovery integration intent disagrees with sequence resolution patch"
+        )
+    if intent.accepted_tree_sha256 != resolution.reviewed_tree_sha256:
+        raise SequenceCheckpointEvidenceError(
+            "recovery integration intent disagrees with sequence resolution tree"
+        )
+    if intent.recovery_run_id != resolution.recovery_run_id:
+        raise SequenceCheckpointEvidenceError(
+            "recovery integration intent disagrees with sequence resolution recovery run"
+        )
+    if intent.source_run_id != resolution.source_run_id:
+        raise SequenceCheckpointEvidenceError(
+            "recovery integration intent disagrees with sequence resolution source run"
+        )
+    review_sha: str | None = None
+    run_state, _, _ = store.load_validated_snapshot(conn, resolution.recovery_run_id)
+    if isinstance(run_state, (CompletedState, CompletedWithResidualRiskState)):
+        review_sha = run_state.codex.latest_review_result_sha256
+        if (
+            review_sha is not None
+            and intent.review_result_sha256 is not None
+            and review_sha != intent.review_result_sha256
+        ):
+            raise SequenceCheckpointEvidenceError(
+                "recovery integration intent review binding disagrees with recovery run"
+            )
+    return (
+        resolution.commit_sha256,
+        resolution.reviewed_tree_sha256,
+        intent_digest,
+        trusted_digest,
+        review_sha,
+    )
 
 
 def build_completion_report(
@@ -74,21 +358,65 @@ def _build_completion_report_inner(
     for materialized in state.materialized_entries:
         entry = definition.entries[materialized.ordinal - 1]
         run_id = materialized.run_id
+        recovery_resolution = _recovery_resolution_for_ordinal(
+            store,
+            conn,
+            sequence_id=definition.sequence_id,
+            ordinal=materialized.ordinal,
+        )
+        rollover_resolution = _rollover_resolution_for_ordinal(
+            store,
+            conn,
+            sequence_id=definition.sequence_id,
+            ordinal=materialized.ordinal,
+        )
         run_state, _, _ = store.load_validated_snapshot(conn, run_id)
         accepted: Literal["completed", "completed_with_residual_risk"] | None = None
         review_sha: str | None = None
-        if isinstance(run_state, (CompletedState, CompletedWithResidualRiskState)):
-            if isinstance(run_state, CompletedWithResidualRiskState):
-                accepted = "completed_with_residual_risk"
-            else:
-                accepted = "completed"
-            review_sha = run_state.codex.latest_review_result_sha256
         checkpoint_commit: str | None = None
         checkpoint_parent: str | None = None
         checkpoint_tree: str | None = None
         checkpoint_intent: str | None = None
         checkpoint_trusted_tree: str | None = None
-        if materialized.ordinal < total_phases:
+        if rollover_resolution is not None:
+            accepted = rollover_resolution.accepted_outcome
+            (
+                checkpoint_commit,
+                checkpoint_tree,
+                checkpoint_intent,
+                checkpoint_trusted_tree,
+                review_sha,
+            ) = _rollover_checkpoint_fields(
+                store,
+                artifacts,
+                conn,
+                rollover_resolution,
+            )
+        elif recovery_resolution is not None:
+            accepted = recovery_resolution.accepted_outcome
+            (
+                checkpoint_commit,
+                checkpoint_tree,
+                checkpoint_intent,
+                checkpoint_trusted_tree,
+                review_sha,
+            ) = _recovery_checkpoint_fields(
+                store,
+                artifacts,
+                conn,
+                recovery_resolution,
+            )
+        elif isinstance(run_state, (CompletedState, CompletedWithResidualRiskState)):
+            if isinstance(run_state, CompletedWithResidualRiskState):
+                accepted = "completed_with_residual_risk"
+            else:
+                accepted = "completed"
+            review_sha = run_state.codex.latest_review_result_sha256
+        if (
+            recovery_resolution is None
+            and rollover_resolution is None
+            and materialized.ordinal < total_phases
+        ):
             authenticated = authenticate_checkpoint_evidence(
                 artifacts,
                 run_id=run_id,
@@ -163,6 +491,303 @@ def _build_completion_report_inner(
     )
 
 
+def build_recovery_integrated_completion_report(
+    store: SqliteSchedulerStore,
+    artifacts: ProtectedArtifactStore,
+    state: RecoveryIntegratedFinalizationSequenceState,
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> RecoveryIntegratedSequenceCompletionReport:
+    if conn is None:
+        with store.begin_read() as read_conn:
+            return _build_recovery_integrated_completion_report_inner(
+                store, artifacts, state, read_conn
+            )
+    return _build_recovery_integrated_completion_report_inner(store, artifacts, state, conn)
+
+
+def _build_recovery_integrated_completion_report_inner(
+    store: SqliteSchedulerStore,
+    artifacts: ProtectedArtifactStore,
+    state: RecoveryIntegratedFinalizationSequenceState,
+    conn: sqlite3.Connection,
+) -> RecoveryIntegratedSequenceCompletionReport:
+    definition = state.definition
+    residual_names = tuple(
+        definition.entries[ordinal - 1].phase_name for ordinal in state.residual_risk_ordinals
+    )
+    phases: list[SequencePhaseReportEntry] = []
+    total_phases = len(definition.entries)
+    for materialized in state.materialized_entries:
+        entry = definition.entries[materialized.ordinal - 1]
+        run_id = materialized.run_id
+        recovery_resolution = _recovery_resolution_for_ordinal(
+            store,
+            conn,
+            sequence_id=definition.sequence_id,
+            ordinal=materialized.ordinal,
+        )
+        rollover_resolution = _rollover_resolution_for_ordinal(
+            store,
+            conn,
+            sequence_id=definition.sequence_id,
+            ordinal=materialized.ordinal,
+        )
+        run_state, _, _ = store.load_validated_snapshot(conn, run_id)
+        accepted: Literal["completed", "completed_with_residual_risk"] | None = None
+        review_sha: str | None = None
+        checkpoint_commit: str | None = None
+        checkpoint_parent: str | None = None
+        checkpoint_tree: str | None = None
+        checkpoint_intent: str | None = None
+        checkpoint_trusted_tree: str | None = None
+        if rollover_resolution is not None:
+            accepted = rollover_resolution.accepted_outcome
+            (
+                checkpoint_commit,
+                checkpoint_tree,
+                checkpoint_intent,
+                checkpoint_trusted_tree,
+                review_sha,
+            ) = _rollover_checkpoint_fields(
+                store,
+                artifacts,
+                conn,
+                rollover_resolution,
+            )
+        elif recovery_resolution is not None:
+            accepted = recovery_resolution.accepted_outcome
+            (
+                checkpoint_commit,
+                checkpoint_tree,
+                checkpoint_intent,
+                checkpoint_trusted_tree,
+                review_sha,
+            ) = _recovery_checkpoint_fields(
+                store,
+                artifacts,
+                conn,
+                recovery_resolution,
+            )
+        elif isinstance(run_state, (CompletedState, CompletedWithResidualRiskState)):
+            accepted = (
+                "completed_with_residual_risk"
+                if isinstance(run_state, CompletedWithResidualRiskState)
+                else "completed"
+            )
+            review_sha = run_state.codex.latest_review_result_sha256
+        if (
+            recovery_resolution is None
+            and rollover_resolution is None
+            and materialized.ordinal < total_phases
+        ):
+            authenticated = authenticate_checkpoint_evidence(
+                artifacts,
+                run_id=run_id,
+                materialized=materialized,
+                total_phases=total_phases,
+            )
+            if authenticated is None:
+                raise SequenceCheckpointEvidenceError(
+                    f"checkpoint evidence required for ordinal {materialized.ordinal}"
+                )
+            checkpoint_commit = authenticated.commit_sha256
+            checkpoint_parent = authenticated.parent_head
+            checkpoint_tree = authenticated.tree_sha256
+            checkpoint_intent = authenticated.intent_sha256
+            checkpoint_trusted_tree = authenticated.trusted_tree_sha256
+        if (
+            materialized.ordinal == total_phases
+            and run_id == state.source_run_id
+            and recovery_resolution is None
+            and rollover_resolution is None
+        ):
+            checkpoint_commit = state.integrated_commit_sha256
+            checkpoint_parent = None
+            checkpoint_tree = None
+        phases.append(
+            SequencePhaseReportEntry(
+                ordinal=materialized.ordinal,
+                phase_name=entry.phase_name,
+                run_id=run_id,
+                run_id_prefix=run_id[:8],
+                accepted_outcome=accepted,
+                residual_risk=materialized.ordinal in state.residual_risk_ordinals,
+                review_result_sha256=review_sha,
+                review_result_sha256_prefix=_prefix(review_sha),
+                checkpoint_commit_sha256=checkpoint_commit,
+                checkpoint_commit_sha256_prefix=_prefix(checkpoint_commit),
+                checkpoint_parent_sha256=checkpoint_parent,
+                checkpoint_parent_sha256_prefix=_prefix(checkpoint_parent),
+                checkpoint_tree_sha256=checkpoint_tree,
+                checkpoint_tree_sha256_prefix=_prefix(checkpoint_tree),
+                checkpoint_intent_sha256=checkpoint_intent,
+                checkpoint_trusted_tree_sha256=checkpoint_trusted_tree,
+            )
+        )
+    return RecoveryIntegratedSequenceCompletionReport(
+        schema_version=1,
+        sequence_id=state.sequence_id,
+        sequence_name=definition.name,
+        finalized_at=state.finalized_at,
+        source_run_id=state.source_run_id,
+        source_run_id_prefix=state.source_run_id[:8],
+        recovery_id=state.recovery_id,
+        recovery_id_prefix=state.recovery_id[:8],
+        recovery_run_id=state.recovery_run_id,
+        recovery_run_id_prefix=state.recovery_run_id[:8],
+        final_outcome=state.final_outcome,
+        integrated_commit_sha256=state.integrated_commit_sha256,
+        integrated_commit_sha256_prefix=state.integrated_commit_sha256_prefix,
+        residual_risk_ordinals=state.residual_risk_ordinals,
+        residual_risk_phase_names=residual_names,
+        phases=tuple(phases),
+    )
+
+
+def persist_recovery_integrated_completion_report_if_absent(
+    artifacts: ProtectedArtifactStore,
+    report: RecoveryIntegratedSequenceCompletionReport,
+) -> str:
+    text = report.model_dump(mode="json", exclude_none=True)
+    serialized = json.dumps(text, indent=2, sort_keys=True) + "\n"
+    stored = artifacts.write_sequence_text_or_verify(
+        report.sequence_id,
+        SEQUENCE_COMPLETION_REPORT_ARTIFACT,
+        serialized,
+        max_bytes=131_072,
+    )
+    return stored.sha256
+
+
+def load_or_freeze_sequence_finalization_publication_inputs(
+    artifacts: ProtectedArtifactStore,
+    sequence_id: str,
+    *,
+    integration_aggregate_id: str,
+    integration_aggregate_kind: Literal["rollover", "recovery"],
+    proposed_finalized_at: str,
+) -> str:
+    """Return stable finalized_at for recovery-integrated final sequence publication."""
+
+    inputs_path = (
+        artifacts.sequence_root(sequence_id) / SEQUENCE_FINALIZATION_PUBLICATION_INPUTS_ARTIFACT
+    )
+    if inputs_path.is_file():
+        existing = SequenceFinalizationPublicationInputs.model_validate_json(
+            inputs_path.read_text(encoding="utf-8")
+        )
+        if (
+            existing.integration_aggregate_id != integration_aggregate_id
+            or existing.integration_aggregate_kind != integration_aggregate_kind
+        ):
+            raise ValueError("sequence finalization inputs disagree with integration aggregate")
+        return existing.finalized_at
+    inputs = SequenceFinalizationPublicationInputs(
+        finalized_at=proposed_finalized_at,
+        integration_aggregate_id=integration_aggregate_id,
+        integration_aggregate_kind=integration_aggregate_kind,
+    )
+    serialized = json.dumps(inputs.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
+    _publication_step("before_finalization_inputs_freeze")
+    artifacts.write_sequence_text_or_verify(
+        sequence_id,
+        SEQUENCE_FINALIZATION_PUBLICATION_INPUTS_ARTIFACT,
+        serialized,
+        max_bytes=4096,
+    )
+    _publication_step("after_finalization_inputs_freeze")
+    return proposed_finalized_at
+
+
+def finalize_recovery_integrated_sequence_publication(
+    store: SqliteSchedulerStore,
+    artifacts: ProtectedArtifactStore,
+    *,
+    sequence_state: BlockedSequenceState,
+    source_run_id: str,
+    aggregate_id: str,
+    aggregate_kind: Literal["rollover", "recovery"],
+    aggregate_run_id: str,
+    final_outcome: Literal["completed", "completed_with_residual_risk"],
+    commit_sha: str,
+    residual_risk_ordinals: tuple[int, ...],
+    proposed_finalized_at: str,
+    conn: sqlite3.Connection,
+    now: datetime,
+) -> RecoveryIntegratedFinalizationSequenceState:
+    """Publish the recovery-integrated completion report and CAS the sequence state."""
+
+    sequence_id = sequence_state.sequence_id
+    current = store.load_validated_sequence_state(conn, sequence_id)
+    if isinstance(current, RecoveryIntegratedFinalizationSequenceState):
+        if (
+            current.integrated_commit_sha256 == commit_sha
+            and current.recovery_id == aggregate_id
+            and current.recovery_run_id == aggregate_run_id
+        ):
+            return current
+        raise ValueError("sequence finalization state disagrees with integration resolution")
+    if not isinstance(current, BlockedSequenceState):
+        raise ValueError("sequence finalization requires blocked sequence state")
+    if current.version != sequence_state.version:
+        raise ValueError("sequence state version changed during finalization")
+    finalized_at = load_or_freeze_sequence_finalization_publication_inputs(
+        artifacts,
+        sequence_id,
+        integration_aggregate_id=aggregate_id,
+        integration_aggregate_kind=aggregate_kind,
+        proposed_finalized_at=proposed_finalized_at,
+    )
+    now_text = finalized_at
+    finalized = RecoveryIntegratedFinalizationSequenceState(
+        schema_version=sequence_state.schema_version,
+        sequence_id=sequence_id,
+        version=sequence_state.version + 1,
+        prepared_at=sequence_state.prepared_at,
+        updated_at=now_text,
+        started_at=sequence_state.started_at,
+        finalized_at=finalized_at,
+        idempotency_key=sequence_state.idempotency_key,
+        definition=sequence_state.definition,
+        source_run_id=source_run_id,
+        recovery_id=aggregate_id,
+        recovery_run_id=aggregate_run_id,
+        final_outcome=final_outcome,
+        integrated_commit_sha256=commit_sha,
+        integrated_commit_sha256_prefix=commit_sha[:8],
+        materialized_entries=sequence_state.materialized_entries,
+        residual_risk_ordinals=residual_risk_ordinals,
+    )
+    _publication_step("before_report_build")
+    report = build_recovery_integrated_completion_report(
+        store,
+        artifacts,
+        finalized,
+        conn=conn,
+    )
+    _publication_step("before_report_write")
+    report_sha = persist_recovery_integrated_completion_report_if_absent(artifacts, report)
+    _publication_step("after_report_write")
+    finalized = finalized.model_copy(update={"completion_report_sha256": report_sha})
+    _publication_step("before_db_record")
+    if not store.compare_and_swap_sequence_state(
+        conn,
+        sequence_id=sequence_id,
+        expected_version=sequence_state.version,
+        new_state=finalized,
+        now=now,
+    ):
+        refreshed = store.load_validated_sequence_state(conn, sequence_id)
+        if (
+            isinstance(refreshed, RecoveryIntegratedFinalizationSequenceState)
+            and refreshed.completion_report_sha256 == report_sha
+        ):
+            return refreshed
+        raise ValueError("sequence recovery finalization CAS failed")
+    return finalized
+
+
 def persist_completion_report_if_absent(
     artifacts: ProtectedArtifactStore,
     report: SequenceCompletionReport,
@@ -203,7 +828,6 @@ def reconcile_completion_report_publication(
     now: datetime | None = None,
 ) -> AwaitingFinalizationSequenceState:
     """Write and durably record the completion report for awaiting_finalization sequences."""
-    from datetime import UTC
     from datetime import datetime as dt
 
     if state.completion_report_sha256 is not None:

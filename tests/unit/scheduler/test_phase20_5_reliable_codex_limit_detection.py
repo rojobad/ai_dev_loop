@@ -58,6 +58,10 @@ from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerSto
 _ATTEMPT_COUNTER = itertools.count()
 
 
+def _explicit_limit_record(**fields: object) -> dict:
+    return {"rateLimitReachedType": None, **fields}
+
+
 class TestProviderMessageMarkers:
     @pytest.mark.parametrize(
         "marker",
@@ -112,7 +116,7 @@ class TestCapacityExhaustionSemantics:
     def test_above_one_hundred_percent_is_exhausted(self) -> None:
         payload = {
             "rateLimitsByLimitId": {
-                "default": {"primary": {"usedPercent": 150}},
+                "default": _explicit_limit_record(primary={"usedPercent": 150}),
             }
         }
         assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.EXHAUSTED
@@ -121,7 +125,7 @@ class TestCapacityExhaustionSemantics:
         payload = {
             "rateLimitsByLimitId": {
                 "invalid": {"primary": {"usedPercent": "full"}},
-                "exhausted": {"primary": {"usedPercent": 100}},
+                "exhausted": _explicit_limit_record(primary={"usedPercent": 100}),
             }
         }
         assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.EXHAUSTED
@@ -133,10 +137,10 @@ class TestCapacityExhaustionSemantics:
     def test_malformed_primary_with_exhausted_secondary_window_is_exhausted(self) -> None:
         payload = {
             "rateLimitsByLimitId": {
-                "default": {
-                    "primary": {"usedPercent": "full"},
-                    "secondary": {"usedPercent": 100},
-                }
+                "default": _explicit_limit_record(
+                    primary={"usedPercent": "full"},
+                    secondary={"usedPercent": 100},
+                ),
             }
         }
         assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.EXHAUSTED
@@ -145,7 +149,7 @@ class TestCapacityExhaustionSemantics:
         payload = {
             "rateLimitsByLimitId": {
                 "invalid": {"primary": {"usedPercent": "full"}},
-                "exhausted": {"primary": {"usedPercent": 100}},
+                "exhausted": _explicit_limit_record(primary={"usedPercent": 100}),
             }
         }
         assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.EXHAUSTED
@@ -161,10 +165,30 @@ class TestCapacityExhaustionSemantics:
         payload = {"rateLimits": {"primary": {"usedPercent": 0}}}
         assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.AVAILABLE
 
-    def test_malformed_reached_marker_is_unavailable(self) -> None:
+    def test_null_reached_marker_without_windows_is_unavailable(self) -> None:
         payload = {
             "rateLimitsByLimitId": {
                 "default": {"rateLimitReachedType": None},
+            }
+        }
+        assert capacity_from_rate_limits_payload(payload) is None
+
+    def test_null_reached_marker_with_available_windows_is_available(self) -> None:
+        payload = {
+            "rateLimitsByLimitId": {
+                "default": {
+                    "rateLimitReachedType": None,
+                    "primary": {"usedPercent": 0},
+                    "secondary": {"usedPercent": 10},
+                }
+            }
+        }
+        assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.AVAILABLE
+
+    def test_empty_string_reached_marker_is_unavailable(self) -> None:
+        payload = {
+            "rateLimitsByLimitId": {
+                "default": {"rateLimitReachedType": ""},
             }
         }
         assert capacity_from_rate_limits_payload(payload) is None
@@ -184,7 +208,7 @@ class TestCapacityExhaustionSemantics:
         payload = {
             "rateLimitsByLimitId": {
                 "bad": "not-a-record",
-                "exhausted": {"primary": {"usedPercent": 100}},
+                "exhausted": _explicit_limit_record(primary={"usedPercent": 100}),
             }
         }
         assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.EXHAUSTED

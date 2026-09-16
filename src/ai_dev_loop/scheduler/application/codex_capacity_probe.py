@@ -119,15 +119,21 @@ def _parse_used_percent(value: object) -> float | None:
     return None
 
 
-def _reached_marker_status(record: dict[str, Any]) -> bool | None:
-    """Return True when exhausted, False when absent, None when malformed."""
+def _reached_marker_status(record: dict[str, Any]) -> tuple[bool | None, bool]:
+    """Return (exhausted, marker_present).
+
+    exhausted: True when exhausted, False when explicitly absent, None when malformed.
+    marker_present: True when rateLimitReachedType key exists (including null).
+    """
 
     if "rateLimitReachedType" not in record:
-        return False
+        return False, False
     reached = record.get("rateLimitReachedType")
+    if reached is None:
+        return False, True
     if isinstance(reached, str) and reached.strip():
-        return True
-    return None
+        return True, True
+    return None, True
 
 
 def _window_is_exhausted(window: object) -> bool | None:
@@ -141,15 +147,24 @@ def _window_is_exhausted(window: object) -> bool | None:
     return used >= 100.0
 
 
-def _record_capacity_status(record: object) -> CodexCapacityStatus | None:
+def _record_capacity_status(
+    record: object,
+    *,
+    require_reached_marker: bool = False,
+) -> CodexCapacityStatus | None:
     """Return record status, or None when the record cannot be interpreted."""
 
     if not isinstance(record, dict):
         return None
-    reached = _reached_marker_status(record)
+    reached, marker_present = _reached_marker_status(record)
     if reached is True:
         return CodexCapacityStatus.EXHAUSTED
     malformed_marker = reached is None
+    if not marker_present:
+        if require_reached_marker:
+            return None
+        marker_present = True
+        reached = False
     window_results: list[bool] = []
     saw_invalid_window = False
     for key in ("primary", "secondary"):
@@ -176,6 +191,7 @@ def _record_capacity_status(record: object) -> CodexCapacityStatus | None:
 class _LimitRecordScan:
     records: list[dict[str, Any]]
     saw_invalid_entry: bool = False
+    require_reached_marker: bool = False
 
 
 def _scan_limit_records(payload: dict[str, Any]) -> _LimitRecordScan | None:
@@ -190,7 +206,11 @@ def _scan_limit_records(payload: dict[str, Any]) -> _LimitRecordScan | None:
                 records.append(record)
             else:
                 saw_invalid_entry = True
-        return _LimitRecordScan(records=records, saw_invalid_entry=saw_invalid_entry)
+        return _LimitRecordScan(
+            records=records,
+            saw_invalid_entry=saw_invalid_entry,
+            require_reached_marker=True,
+        )
     legacy = payload.get("rateLimits")
     if legacy is not None:
         if not isinstance(legacy, dict):
@@ -206,7 +226,10 @@ def capacity_from_rate_limits_payload(payload: dict[str, Any]) -> CodexCapacityS
     saw_invalid = scan.saw_invalid_entry
     saw_available = False
     for record in scan.records:
-        status = _record_capacity_status(record)
+        status = _record_capacity_status(
+            record,
+            require_reached_marker=scan.require_reached_marker,
+        )
         if status == CodexCapacityStatus.EXHAUSTED:
             return CodexCapacityStatus.EXHAUSTED
         if status is None:

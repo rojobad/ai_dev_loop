@@ -895,6 +895,11 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                     return None
                 return payload
 
+            def _explicit_limit_record(record: dict) -> dict:
+                if "rateLimitReachedType" not in record:
+                    return {{"rateLimitReachedType": None, **record}}
+                return record
+
             def _build_limits_payload(limits_id: object) -> dict | None:
                 capacity = os.environ.get("FAKE_CODEX_CAPACITY", "available").strip().lower()
                 if capacity == "unavailable":
@@ -920,29 +925,29 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                     used = 100 if capacity in {{"exhausted", "zero"}} else 10
                     return {{
                         "rateLimitsByLimitId": {{
-                            "default": {{"primary": {{"usedPercent": used}}}},
+                            "default": _explicit_limit_record({{"primary": {{"usedPercent": used}}}}),
                         }}
                     }}
                 if shape == "secondary_only":
                     used = 100 if capacity in {{"exhausted", "zero"}} else 5
                     return {{
                         "rateLimitsByLimitId": {{
-                            "default": {{"secondary": {{"usedPercent": used}}}},
+                            "default": _explicit_limit_record({{"secondary": {{"usedPercent": used}}}}),
                         }}
                     }}
                 if shape == "null_window":
                     return {{
                         "rateLimitsByLimitId": {{
-                            "default": {{
+                            "default": _explicit_limit_record({{
                                 "primary": None,
                                 "secondary": {{"usedPercent": 0}},
-                            }}
+                            }}),
                         }}
                     }}
                 if shape == "invalid":
                     return {{
                         "rateLimitsByLimitId": {{
-                            "default": {{"primary": {{"usedPercent": "full"}}}},
+                            "default": _explicit_limit_record({{"primary": {{"usedPercent": "full"}}}}),
                         }}
                     }}
                 if shape == "protocol_error":
@@ -954,10 +959,10 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                 used = 100 if capacity in {{"exhausted", "zero"}} else 0
                 return {{
                     "rateLimitsByLimitId": {{
-                        "default": {{
+                        "default": _explicit_limit_record({{
                             "primary": {{"usedPercent": used}},
                             "secondary": {{"usedPercent": used}},
-                        }}
+                        }}),
                     }}
                 }}
 

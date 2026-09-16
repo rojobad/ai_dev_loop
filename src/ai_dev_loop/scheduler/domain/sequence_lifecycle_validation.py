@@ -9,6 +9,7 @@ from ai_dev_loop.scheduler.domain.sequence import (
     AwaitingFinalizationSequenceState,
     BlockedSequenceState,
     MaterializedSequenceEntry,
+    RecoveryIntegratedFinalizationSequenceState,
     future_entry_ordinals,
 )
 
@@ -138,8 +139,34 @@ def validate_sequence_lifecycle_transition(
     current: object,
     new: object,
 ) -> None:
+    if isinstance(new, ActiveSequenceState) and isinstance(current, BlockedSequenceState):
+        if new.current_ordinal != current.current_ordinal + 1:
+            raise SequenceLifecycleValidationError(
+                "recovery continuation must advance exactly one ordinal"
+            )
+        return
+    if isinstance(new, AwaitingFinalizationSequenceState) and isinstance(
+        current, BlockedSequenceState
+    ):
+        if current.current_ordinal != len(current.definition.entries):
+            raise SequenceLifecycleValidationError(
+                "recovery finalization requires blocked final ordinal"
+            )
+        return
+    if isinstance(new, RecoveryIntegratedFinalizationSequenceState) and isinstance(
+        current, BlockedSequenceState
+    ):
+        if current.current_ordinal != len(current.definition.entries):
+            raise SequenceLifecycleValidationError(
+                "recovery integrated finalization requires blocked final ordinal"
+            )
+        if new.source_run_id != current.current_run_id:
+            raise SequenceLifecycleValidationError(
+                "recovery integrated finalization must preserve materialized source run"
+            )
+        return
     if isinstance(new, ActiveSequenceState) and isinstance(
-        current, (AbortPendingSequenceState, BlockedSequenceState, AbortedSequenceState)
+        current, (AbortPendingSequenceState, AbortedSequenceState)
     ):
         raise SequenceLifecycleValidationError(
             "terminal sequence state cannot transition back to active"
@@ -179,6 +206,18 @@ def validate_sequence_lifecycle_transition(
         return
     if isinstance(current, AwaitingFinalizationSequenceState):
         raise SequenceLifecycleValidationError("awaiting_finalization sequence state is terminal")
+    if isinstance(current, RecoveryIntegratedFinalizationSequenceState) and isinstance(
+        new, RecoveryIntegratedFinalizationSequenceState
+    ):
+        if current != new:
+            raise SequenceLifecycleValidationError(
+                "recovery_integrated_finalization sequence state is terminal and immutable"
+            )
+        return
+    if isinstance(current, RecoveryIntegratedFinalizationSequenceState):
+        raise SequenceLifecycleValidationError(
+            "recovery_integrated_finalization sequence state is terminal"
+        )
     if isinstance(new, (AbortPendingSequenceState, BlockedSequenceState, AbortedSequenceState)):
         validate_sequence_lifecycle_state(new)
     if isinstance(new, AbortPendingSequenceState) and isinstance(current, ActiveSequenceState):

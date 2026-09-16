@@ -9,6 +9,7 @@ from pathlib import Path
 from tests.unit.scheduler.helpers import sample_submitted_state
 from tests.unit.scheduler.test_v5_migration import _pause_v4_database
 from tests.unit.scheduler.test_v6_migration import _pause_v5_database, _pause_v6_database
+from tests.unit.scheduler.test_v8_migration import _pause_v8_database
 
 from ai_dev_loop.scheduler.application.safe_actions import safe_next_action_for_scheduler_state
 from ai_dev_loop.scheduler.domain.events import RunAbortedEvent, RunSubmittedEvent
@@ -49,6 +50,23 @@ def test_open_readonly_accepts_v6_database_without_migrating(tmp_path: Path) -> 
     readonly = SqliteSchedulerStore.open_readonly(db)
     with readonly.begin_read() as conn:
         assert readonly.schema_supports_checkpoint_holds(conn) is False
+
+
+def test_open_readonly_accepts_v8_database_without_migrating(tmp_path: Path) -> None:
+    db = _pause_v8_database(tmp_path)
+    assert _user_version(db) == 8
+    readonly = SqliteSchedulerStore.open_readonly(db)
+    with readonly.begin_read() as conn:
+        assert readonly.schema_supports_checkpoint_holds(conn) is True
+        assert readonly.schema_supports_recovery_resolutions(conn) is False
+        assert (
+            readonly.get_sequence_recovery_resolution(
+                conn,
+                sequence_id="missing-sequence",
+                ordinal=1,
+            )
+            is None
+        )
 
 
 def test_aborted_run_safe_action_on_v6_readonly_database_does_not_query_checkpoint_holds(

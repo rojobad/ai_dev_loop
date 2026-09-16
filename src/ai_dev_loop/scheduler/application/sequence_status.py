@@ -19,6 +19,7 @@ from ai_dev_loop.scheduler.application.contracts import (
     awaiting_finalization_sequence_safe_next_action,
     blocked_sequence_safe_next_action,
     prepared_sequence_safe_next_action,
+    recovery_integrated_finalization_sequence_safe_next_action,
 )
 from ai_dev_loop.scheduler.application.safe_actions import safe_next_action_for_scheduler_state
 from ai_dev_loop.scheduler.application.sequence_report import SEQUENCE_COMPLETION_REPORT_ARTIFACT
@@ -30,12 +31,14 @@ from ai_dev_loop.scheduler.domain.sequence import (
     AWAITING_FINALIZATION_SEQUENCE_STATE_KIND,
     BLOCKED_SEQUENCE_STATE_KIND,
     PREPARED_SEQUENCE_STATE_KIND,
+    RECOVERY_INTEGRATED_FINALIZATION_SEQUENCE_STATE_KIND,
     AbortedSequenceState,
     AbortPendingSequenceState,
     ActiveSequenceState,
     AwaitingFinalizationSequenceState,
     BlockedSequenceState,
     PreparedSequenceState,
+    RecoveryIntegratedFinalizationSequenceState,
 )
 from ai_dev_loop.scheduler.domain.state import (
     SCHEDULER_TERMINAL_STATE_KINDS,
@@ -74,6 +77,7 @@ class SequenceStatusService:
         | BlockedSequenceState
         | AbortedSequenceState
         | AwaitingFinalizationSequenceState
+        | RecoveryIntegratedFinalizationSequenceState
     ):
         self.store.require_sequence_schema(conn)
         try:
@@ -94,6 +98,7 @@ class SequenceStatusService:
                 BlockedSequenceState,
                 AbortedSequenceState,
                 AwaitingFinalizationSequenceState,
+                RecoveryIntegratedFinalizationSequenceState,
             ),
         ):
             return loaded
@@ -112,6 +117,7 @@ class SequenceStatusService:
             | BlockedSequenceState
             | AbortedSequenceState
             | AwaitingFinalizationSequenceState
+            | RecoveryIntegratedFinalizationSequenceState
         ),
     ) -> tuple[SequenceEntrySummary, ...]:
         definition = state.definition
@@ -130,7 +136,29 @@ class SequenceStatusService:
             materialized = materialized_by_ordinal.get(entry.ordinal)
             accepted: str | None = None
             checkpoint_prefix: str | None = None
-            if materialized is not None:
+            resolution = self.store.get_sequence_recovery_resolution(
+                conn,
+                sequence_id=definition.sequence_id,
+                ordinal=entry.ordinal,
+            )
+            if resolution is not None:
+                from ai_dev_loop.scheduler.domain.recovery import SequenceRecoveryResolution
+
+                assert isinstance(resolution, SequenceRecoveryResolution)
+                accepted = resolution.accepted_outcome
+                checkpoint_prefix = resolution.commit_sha256[:12]
+            rollover_resolution = self.store.get_sequence_rollover_resolution(
+                conn,
+                sequence_id=definition.sequence_id,
+                ordinal=entry.ordinal,
+            )
+            if rollover_resolution is not None:
+                from ai_dev_loop.scheduler.domain.rollover import SequenceRolloverResolution
+
+                assert isinstance(rollover_resolution, SequenceRolloverResolution)
+                accepted = rollover_resolution.accepted_outcome
+                checkpoint_prefix = rollover_resolution.commit_sha256[:12]
+            if materialized is not None and accepted is None:
                 run_state, _, _ = self.store.load_validated_snapshot(conn, materialized.run_id)
                 if isinstance(run_state, CompletedState):
                     accepted = "completed"
@@ -210,11 +238,39 @@ class SequenceStatusService:
             | BlockedSequenceState
             | AbortedSequenceState
             | AwaitingFinalizationSequenceState
+            | RecoveryIntegratedFinalizationSequenceState
         ),
     ) -> SequenceStatusResult:
         definition = state.definition
         entries = self._entry_summaries(conn, state)
         counts = self._aggregate_counts(entries, len(definition.entries))
+
+        if isinstance(state, RecoveryIntegratedFinalizationSequenceState):
+            return SequenceStatusResult(
+                sequence_id=state.sequence_id,
+                name=definition.name,
+                project_name=definition.project_name,
+                repository_root=definition.repository.root,
+                entry_count=len(definition.entries),
+                prepared_at=state.prepared_at,
+                updated_at=state.updated_at,
+                idempotency_key_prefix=state.idempotency_key[:16],
+                entries=entries,
+                aggregate_counts=counts,
+                state_kind=RECOVERY_INTEGRATED_FINALIZATION_SEQUENCE_STATE_KIND,
+                current_ordinal=len(definition.entries),
+                current_run_id=state.recovery_run_id,
+                current_run_state_kind=state.final_outcome,
+                current_phase_name=definition.entries[-1].phase_name,
+                residual_risk=bool(state.residual_risk_ordinals),
+                residual_risk_ordinals=state.residual_risk_ordinals,
+                finalized_at=state.finalized_at,
+                started_at=state.started_at,
+                completion_report_sha256_prefix=self._completion_report_prefix(state.sequence_id),
+                safe_next_action=recovery_integrated_finalization_sequence_safe_next_action(
+                    state.sequence_id
+                ),
+            )
 
         if isinstance(state, AwaitingFinalizationSequenceState):
             return SequenceStatusResult(

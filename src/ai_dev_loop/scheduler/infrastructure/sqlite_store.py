@@ -40,6 +40,8 @@ from ai_dev_loop.scheduler.domain.state import (
 
 if TYPE_CHECKING:
     from ai_dev_loop.scheduler.domain.events import SchedulerEvent
+    from ai_dev_loop.scheduler.domain.recovery import RecoveryState
+    from ai_dev_loop.scheduler.domain.rollover import RolloverState
     from ai_dev_loop.scheduler.domain.sequence import (
         AbortedSequenceState,
         AbortPendingSequenceState,
@@ -47,6 +49,7 @@ if TYPE_CHECKING:
         AwaitingFinalizationSequenceState,
         BlockedSequenceState,
         PreparedSequenceState,
+        RecoveryIntegratedFinalizationSequenceState,
     )
 
     SequencePersistedState = (
@@ -56,9 +59,10 @@ if TYPE_CHECKING:
         | BlockedSequenceState
         | AbortedSequenceState
         | AwaitingFinalizationSequenceState
+        | RecoveryIntegratedFinalizationSequenceState
     )
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 10
 SEQUENCE_SCHEMA_VERSION = 5
 REVIEW_RETRY_SCHEMA_VERSION = 6
 MIN_READONLY_SCHEMA_VERSION = 4
@@ -70,6 +74,8 @@ MIGRATION_V5_NAME = "0005_sequence_definitions"
 MIGRATION_V6_NAME = "0006_review_retry"
 MIGRATION_V7_NAME = "0007_checkpoint_holds"
 MIGRATION_V8_NAME = "0008_capacity_retry"
+MIGRATION_V9_NAME = "0009_fresh_review_recovery"
+MIGRATION_V10_NAME = "0010_authenticated_rollover"
 REQUIRED_TABLES = frozenset(
     {
         "scheduler_schema_migrations",
@@ -89,9 +95,25 @@ REQUIRED_TABLES = frozenset(
         "scheduler_review_recovery_successors",
         "scheduler_checkpoint_holds",
         "scheduler_capacity_retry_generations",
+        "scheduler_fresh_review_recoveries",
+        "scheduler_fresh_review_recovery_idempotency",
+        "scheduler_sequence_recovery_resolutions",
+        "scheduler_authenticated_rollovers",
+        "scheduler_authenticated_rollover_idempotency",
+        "scheduler_sequence_rollover_resolutions",
     }
 )
-REQUIRED_TABLES_V7 = REQUIRED_TABLES - {"scheduler_capacity_retry_generations"}
+REQUIRED_TABLES_V9 = REQUIRED_TABLES - {
+    "scheduler_authenticated_rollovers",
+    "scheduler_authenticated_rollover_idempotency",
+    "scheduler_sequence_rollover_resolutions",
+}
+REQUIRED_TABLES_V8 = REQUIRED_TABLES_V9 - {
+    "scheduler_fresh_review_recoveries",
+    "scheduler_fresh_review_recovery_idempotency",
+    "scheduler_sequence_recovery_resolutions",
+}
+REQUIRED_TABLES_V7 = REQUIRED_TABLES_V8 - {"scheduler_capacity_retry_generations"}
 REQUIRED_INDEXES = frozenset(
     {
         "idx_scheduler_runs_state_kind",
@@ -115,10 +137,22 @@ REQUIRED_INDEXES = frozenset(
         "idx_scheduler_sequence_entries_sequence",
         "idx_scheduler_review_recovery_source",
         "idx_scheduler_checkpoint_holds_intent",
+        "idx_scheduler_recoveries_source",
+        "idx_scheduler_recoveries_run",
+        "idx_scheduler_rollovers_source",
+        "idx_scheduler_rollovers_run",
     }
 )
+REQUIRED_INDEXES_V9 = REQUIRED_INDEXES - {
+    "idx_scheduler_rollovers_source",
+    "idx_scheduler_rollovers_run",
+}
+REQUIRED_INDEXES_V8 = REQUIRED_INDEXES_V9 - {
+    "idx_scheduler_recoveries_source",
+    "idx_scheduler_recoveries_run",
+}
 REQUIRED_TABLES_V6 = REQUIRED_TABLES_V7 - {"scheduler_checkpoint_holds"}
-REQUIRED_INDEXES_V6 = REQUIRED_INDEXES - {"idx_scheduler_checkpoint_holds_intent"}
+REQUIRED_INDEXES_V6 = REQUIRED_INDEXES_V8 - {"idx_scheduler_checkpoint_holds_intent"}
 REQUIRED_TABLES_V5 = REQUIRED_TABLES_V6 - {
     "scheduler_review_retry_generations",
     "scheduler_review_recovery_successors",
@@ -135,6 +169,7 @@ REQUIRED_INDEXES_V4 = REQUIRED_INDEXES_V5 - {
     "idx_scheduler_sequence_entries_sequence",
 }
 CHECKPOINT_HOLD_SCHEMA_VERSION = 7
+RECOVERY_RESOLUTION_SCHEMA_VERSION = 10
 NON_TERMINAL_STATE_KINDS = frozenset(
     {
         "queued",
@@ -225,6 +260,14 @@ def _migration_v8_sql() -> str:
     return _migration_sql("0008_capacity_retry.sql")
 
 
+def _migration_v9_sql() -> str:
+    return _migration_sql("0009_fresh_review_recovery.sql")
+
+
+def _migration_v10_sql() -> str:
+    return _migration_sql("0010_authenticated_rollover.sql")
+
+
 def _split_sql_statements(sql: str) -> list[str]:
     statements: list[str] = []
     for chunk in sql.split(";"):
@@ -257,6 +300,10 @@ def migration_checksum(version: int) -> str:
         return hashlib.sha256(_migration_v7_sql().encode("utf-8")).hexdigest()
     if version == 8:
         return hashlib.sha256(_migration_v8_sql().encode("utf-8")).hexdigest()
+    if version == 9:
+        return hashlib.sha256(_migration_v9_sql().encode("utf-8")).hexdigest()
+    if version == 10:
+        return hashlib.sha256(_migration_v10_sql().encode("utf-8")).hexdigest()
     raise ValueError(f"unsupported migration version {version}")
 
 
@@ -360,6 +407,8 @@ class SqliteSchedulerStore:
                 self._migrate_v5_to_v6(conn)
                 self._migrate_v6_to_v7(conn)
                 self._migrate_v7_to_v8(conn)
+                self._migrate_v8_to_v9(conn)
+                self._migrate_v9_to_v10(conn)
             elif version == 1:
                 self._verify_migration_checksum(conn, 1)
                 self._migrate_v1_to_v2(conn)
@@ -369,6 +418,8 @@ class SqliteSchedulerStore:
                 self._migrate_v5_to_v6(conn)
                 self._migrate_v6_to_v7(conn)
                 self._migrate_v7_to_v8(conn)
+                self._migrate_v8_to_v9(conn)
+                self._migrate_v9_to_v10(conn)
             elif version == 2:
                 self._verify_migration_checksum(conn, 1)
                 self._verify_migration_checksum(conn, 2)
@@ -378,6 +429,8 @@ class SqliteSchedulerStore:
                 self._migrate_v5_to_v6(conn)
                 self._migrate_v6_to_v7(conn)
                 self._migrate_v7_to_v8(conn)
+                self._migrate_v8_to_v9(conn)
+                self._migrate_v9_to_v10(conn)
             elif version == 3:
                 for migration_version in (1, 2, 3):
                     self._verify_migration_checksum(conn, migration_version)
@@ -386,6 +439,8 @@ class SqliteSchedulerStore:
                 self._migrate_v5_to_v6(conn)
                 self._migrate_v6_to_v7(conn)
                 self._migrate_v7_to_v8(conn)
+                self._migrate_v8_to_v9(conn)
+                self._migrate_v9_to_v10(conn)
             elif version == 4:
                 for migration_version in (1, 2, 3, 4):
                     self._verify_migration_checksum(conn, migration_version)
@@ -393,21 +448,38 @@ class SqliteSchedulerStore:
                 self._migrate_v5_to_v6(conn)
                 self._migrate_v6_to_v7(conn)
                 self._migrate_v7_to_v8(conn)
+                self._migrate_v8_to_v9(conn)
+                self._migrate_v9_to_v10(conn)
             elif version == 5:
                 for migration_version in (1, 2, 3, 4, 5):
                     self._verify_migration_checksum(conn, migration_version)
                 self._migrate_v5_to_v6(conn)
                 self._migrate_v6_to_v7(conn)
                 self._migrate_v7_to_v8(conn)
+                self._migrate_v8_to_v9(conn)
+                self._migrate_v9_to_v10(conn)
             elif version == 6:
                 for migration_version in (1, 2, 3, 4, 5, 6):
                     self._verify_migration_checksum(conn, migration_version)
                 self._migrate_v6_to_v7(conn)
                 self._migrate_v7_to_v8(conn)
+                self._migrate_v8_to_v9(conn)
+                self._migrate_v9_to_v10(conn)
             elif version == 7:
                 for migration_version in (1, 2, 3, 4, 5, 6, 7):
                     self._verify_migration_checksum(conn, migration_version)
                 self._migrate_v7_to_v8(conn)
+                self._migrate_v8_to_v9(conn)
+                self._migrate_v9_to_v10(conn)
+            elif version == 8:
+                for migration_version in (1, 2, 3, 4, 5, 6, 7, 8):
+                    self._verify_migration_checksum(conn, migration_version)
+                self._migrate_v8_to_v9(conn)
+                self._migrate_v9_to_v10(conn)
+            elif version == 9:
+                for migration_version in (1, 2, 3, 4, 5, 6, 7, 8, 9):
+                    self._verify_migration_checksum(conn, migration_version)
+                self._migrate_v9_to_v10(conn)
             else:
                 self._verify_current_schema(conn)
             self._apply_database_permissions(self.db_path)
@@ -639,6 +711,58 @@ class SqliteSchedulerStore:
             raise
         self._apply_database_permissions(self.db_path)
 
+    def _migrate_v8_to_v9(self, conn: sqlite3.Connection) -> None:
+        if self._user_version(conn) >= 9:
+            self._verify_current_schema(conn)
+            return
+        for migration_version in (1, 2, 3, 4, 5, 6, 7, 8):
+            self._verify_migration_checksum(conn, migration_version)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for statement in _split_sql_statements(_migration_v9_sql()):
+                self._fault_maybe_raise_migration(statement)
+                conn.execute(statement)
+            applied_at = encode_utc_instant(datetime.now(tz=UTC))
+            conn.execute(
+                """
+                INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (9, MIGRATION_V9_NAME, migration_checksum(9), applied_at),
+            )
+            conn.execute("PRAGMA user_version = 9")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        self._apply_database_permissions(self.db_path)
+
+    def _migrate_v9_to_v10(self, conn: sqlite3.Connection) -> None:
+        if self._user_version(conn) >= 10:
+            self._verify_current_schema(conn)
+            return
+        for migration_version in (1, 2, 3, 4, 5, 6, 7, 8, 9):
+            self._verify_migration_checksum(conn, migration_version)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for statement in _split_sql_statements(_migration_v10_sql()):
+                self._fault_maybe_raise_migration(statement)
+                conn.execute(statement)
+            applied_at = encode_utc_instant(datetime.now(tz=UTC))
+            conn.execute(
+                """
+                INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (10, MIGRATION_V10_NAME, migration_checksum(10), applied_at),
+            )
+            conn.execute("PRAGMA user_version = 10")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        self._apply_database_permissions(self.db_path)
+
     def _fault_maybe_raise_migration(self, statement: str) -> None:
         hook = self._migration_fault_hook
         if hook is not None:
@@ -678,9 +802,15 @@ class SqliteSchedulerStore:
         if target >= SCHEMA_VERSION:
             tables = REQUIRED_TABLES
             indexes = REQUIRED_INDEXES
+        elif target >= 9:
+            tables = REQUIRED_TABLES_V9
+            indexes = REQUIRED_INDEXES_V9
+        elif target >= 8:
+            tables = REQUIRED_TABLES_V8
+            indexes = REQUIRED_INDEXES_V8
         elif target >= 7:
             tables = REQUIRED_TABLES_V7
-            indexes = REQUIRED_INDEXES
+            indexes = REQUIRED_INDEXES_V8
         elif target >= 6:
             tables = REQUIRED_TABLES_V6
             indexes = REQUIRED_INDEXES_V6
@@ -1684,6 +1814,98 @@ class SqliteSchedulerStore:
             ),
         )
 
+    def ensure_recovery_target_reservation(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_run_id: str,
+        worktree_key: str,
+        repository_root: str,
+        now: datetime,
+    ) -> None:
+        """Reacquire a released target reservation for an eligible blocked source run."""
+
+        active = self.get_active_reservation(conn, worktree_key)
+        if active is not None:
+            if str(active["run_id"]) != source_run_id:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CONFLICT,
+                    "target worktree reservation is held by another run",
+                )
+            return
+        reservation = self.get_reservation_for_run(conn, source_run_id)
+        if (
+            reservation is not None
+            and str(reservation["status"]) == ReservationStatus.ACTIVE.value
+            and str(reservation["worktree_key"]) == worktree_key
+        ):
+            return
+        if not self.reacquire_released_reservation_for_run(
+            conn,
+            run_id=source_run_id,
+            worktree_key=worktree_key,
+            repository_root=repository_root,
+            now=now,
+        ):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "target worktree reservation could not be reacquired for recovery",
+            )
+
+    def verify_recovery_target_reservation(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_run_id: str,
+        worktree_key: str,
+    ) -> None:
+        reservation = self.get_reservation_for_run(conn, source_run_id)
+        if reservation is None:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "target worktree reservation is missing",
+            )
+        if str(reservation["status"]) != ReservationStatus.ACTIVE.value:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "target worktree reservation is not active",
+            )
+        if str(reservation["worktree_key"]) != worktree_key:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "target worktree reservation worktree_key mismatch",
+            )
+
+    def ensure_rollover_target_reservation(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_run_id: str,
+        worktree_key: str,
+        repository_root: str,
+        now: datetime,
+    ) -> None:
+        self.ensure_recovery_target_reservation(
+            conn,
+            source_run_id=source_run_id,
+            worktree_key=worktree_key,
+            repository_root=repository_root,
+            now=now,
+        )
+
+    def verify_rollover_target_reservation(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_run_id: str,
+        worktree_key: str,
+    ) -> None:
+        self.verify_recovery_target_reservation(
+            conn,
+            source_run_id=source_run_id,
+            worktree_key=worktree_key,
+        )
+
     def reacquire_released_reservation_for_run(
         self,
         conn: sqlite3.Connection,
@@ -2489,6 +2711,10 @@ class SqliteSchedulerStore:
     def schema_supports_checkpoint_holds(conn: sqlite3.Connection) -> bool:
         return SqliteSchedulerStore._user_version(conn) >= CHECKPOINT_HOLD_SCHEMA_VERSION
 
+    @staticmethod
+    def schema_supports_recovery_resolutions(conn: sqlite3.Connection) -> bool:
+        return SqliteSchedulerStore._user_version(conn) >= RECOVERY_RESOLUTION_SCHEMA_VERSION
+
     def has_abort_requested_for_run(self, conn: sqlite3.Connection, run_id: str) -> bool:
         row = conn.execute(
             """
@@ -2633,11 +2859,7 @@ class SqliteSchedulerStore:
             (run_id, intent_sha256),
         )
 
-    def has_unresolved_abort_hold(self, conn: sqlite3.Connection, run_id: str) -> bool:
-        if self.schema_supports_checkpoint_holds(conn) and self.has_checkpoint_reconciliation_hold(
-            conn, run_id
-        ):
-            return True
+    def has_pending_abort_attempts(self, conn: sqlite3.Connection, run_id: str) -> bool:
         row = conn.execute(
             """
             SELECT 1 FROM scheduler_attempts
@@ -2661,6 +2883,100 @@ class SqliteSchedulerStore:
             ),
         ).fetchone()
         return row is not None
+
+    def foreign_abort_hold_blocks_run(
+        self,
+        conn: sqlite3.Connection,
+        run_id: str,
+        *,
+        allowed_checkpoint_intent_sha256: str | None = None,
+    ) -> bool:
+        if self.schema_supports_checkpoint_holds(conn):
+            hold = self.get_checkpoint_reconciliation_hold_row(conn, run_id)
+            if hold is not None:
+                if (
+                    allowed_checkpoint_intent_sha256 is not None
+                    and str(hold["intent_sha256"]) == allowed_checkpoint_intent_sha256
+                ):
+                    pass
+                else:
+                    return True
+        return self.has_pending_abort_attempts(conn, run_id)
+
+    def has_unresolved_abort_hold(self, conn: sqlite3.Connection, run_id: str) -> bool:
+        if self.schema_supports_checkpoint_holds(conn) and self.has_checkpoint_reconciliation_hold(
+            conn, run_id
+        ):
+            return True
+        return self.has_pending_abort_attempts(conn, run_id)
+
+    def get_sequence_recovery_resolution(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        sequence_id: str,
+        ordinal: int,
+    ) -> object | None:
+        from ai_dev_loop.scheduler.domain.recovery import SequenceRecoveryResolution
+
+        if not self.schema_supports_recovery_resolutions(conn):
+            return None
+        row = conn.execute(
+            """
+            SELECT resolution_payload, resolution_payload_sha256
+            FROM scheduler_sequence_recovery_resolutions
+            WHERE sequence_id = ? AND ordinal = ?
+            ORDER BY recorded_at DESC
+            LIMIT 1
+            """,
+            (sequence_id, ordinal),
+        ).fetchone()
+        if row is None:
+            return None
+        payload = str(row["resolution_payload"])
+        from ai_dev_loop.scheduler.domain.common import payload_sha256
+
+        digest = payload_sha256(payload)
+        if digest != str(row["resolution_payload_sha256"]):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence recovery resolution digest mismatch",
+            )
+        return SequenceRecoveryResolution.model_validate_json(payload)
+
+    def get_sequence_rollover_resolution(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        sequence_id: str,
+        ordinal: int,
+    ) -> object | None:
+        from ai_dev_loop.scheduler.domain.rollover import SequenceRolloverResolution
+
+        if not self.schema_supports_recovery_resolutions(conn):
+            return None
+        row = conn.execute(
+            """
+            SELECT resolution_payload, resolution_payload_sha256
+            FROM scheduler_sequence_rollover_resolutions
+            WHERE sequence_id = ? AND ordinal = ?
+            ORDER BY recorded_at DESC
+            LIMIT 1
+            """,
+            (sequence_id, ordinal),
+        ).fetchone()
+        if row is None:
+            return None
+        payload = str(row["resolution_payload"])
+        from ai_dev_loop.scheduler.domain.common import payload_sha256
+
+        digest = payload_sha256(payload)
+        if digest != str(row["resolution_payload_sha256"]):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence rollover resolution digest mismatch",
+            )
+        return SequenceRolloverResolution.model_validate_json(payload)
 
     def has_unreleased_abort_resources(self, conn: sqlite3.Connection, run_id: str) -> bool:
         capacity = self.get_capacity_row(conn)
@@ -3514,12 +3830,15 @@ class SqliteSchedulerStore:
             BLOCKED_SEQUENCE_STATE_KIND,
             PREPARED_SEQUENCE_STATE_ADAPTER,
             PREPARED_SEQUENCE_STATE_KIND,
+            RECOVERY_INTEGRATED_FINALIZATION_SEQUENCE_STATE_ADAPTER,
+            RECOVERY_INTEGRATED_FINALIZATION_SEQUENCE_STATE_KIND,
             AbortedSequenceState,
             AbortPendingSequenceState,
             ActiveSequenceState,
             AwaitingFinalizationSequenceState,
             BlockedSequenceState,
             PreparedSequenceState,
+            RecoveryIntegratedFinalizationSequenceState,
         )
 
         if isinstance(state, PreparedSequenceState):
@@ -3560,6 +3879,20 @@ class SqliteSchedulerStore:
                 finalized_validated
             ).decode("utf-8")
             return AWAITING_FINALIZATION_SEQUENCE_STATE_KIND, text, payload_sha256(text)
+        if isinstance(state, RecoveryIntegratedFinalizationSequenceState):
+            recovery_final_validated = (
+                RECOVERY_INTEGRATED_FINALIZATION_SEQUENCE_STATE_ADAPTER.validate_python(
+                    state.model_dump(mode="json")
+                )
+            )
+            text = RECOVERY_INTEGRATED_FINALIZATION_SEQUENCE_STATE_ADAPTER.dump_json(
+                recovery_final_validated
+            ).decode("utf-8")
+            return (
+                RECOVERY_INTEGRATED_FINALIZATION_SEQUENCE_STATE_KIND,
+                text,
+                payload_sha256(text),
+            )
         raise SchedulerEngineError(
             SchedulerEngineErrorKind.INTERNAL,
             "sequence state has unexpected type",
@@ -3590,12 +3923,14 @@ class SqliteSchedulerStore:
             AWAITING_FINALIZATION_SEQUENCE_STATE_ADAPTER,
             BLOCKED_SEQUENCE_STATE_ADAPTER,
             PREPARED_SEQUENCE_STATE_ADAPTER,
+            RECOVERY_INTEGRATED_FINALIZATION_SEQUENCE_STATE_ADAPTER,
             AbortedSequenceState,
             AbortPendingSequenceState,
             ActiveSequenceState,
             AwaitingFinalizationSequenceState,
             BlockedSequenceState,
             PreparedSequenceState,
+            RecoveryIntegratedFinalizationSequenceState,
         )
 
         for adapter in (
@@ -3605,6 +3940,7 @@ class SqliteSchedulerStore:
             BLOCKED_SEQUENCE_STATE_ADAPTER,
             ABORTED_SEQUENCE_STATE_ADAPTER,
             AWAITING_FINALIZATION_SEQUENCE_STATE_ADAPTER,
+            RECOVERY_INTEGRATED_FINALIZATION_SEQUENCE_STATE_ADAPTER,
         ):
             try:
                 loaded = adapter.validate_json(payload)
@@ -3619,6 +3955,7 @@ class SqliteSchedulerStore:
                     BlockedSequenceState,
                     AbortedSequenceState,
                     AwaitingFinalizationSequenceState,
+                    RecoveryIntegratedFinalizationSequenceState,
                 ),
             ):
                 return loaded
@@ -3729,12 +4066,14 @@ class SqliteSchedulerStore:
             BLOCKED_SEQUENCE_STATE_KIND,
             FROZEN_SEQUENCE_ENTRY_ADAPTER,
             PREPARED_SEQUENCE_STATE_KIND,
+            RECOVERY_INTEGRATED_FINALIZATION_SEQUENCE_STATE_KIND,
             AbortedSequenceState,
             AbortPendingSequenceState,
             ActiveSequenceState,
             AwaitingFinalizationSequenceState,
             BlockedSequenceState,
             PreparedSequenceState,
+            RecoveryIntegratedFinalizationSequenceState,
         )
 
         row = self.get_sequence_row(conn, sequence_id)
@@ -3747,6 +4086,9 @@ class SqliteSchedulerStore:
             BLOCKED_SEQUENCE_STATE_KIND: BlockedSequenceState,
             ABORTED_SEQUENCE_STATE_KIND: AbortedSequenceState,
             AWAITING_FINALIZATION_SEQUENCE_STATE_KIND: AwaitingFinalizationSequenceState,
+            RECOVERY_INTEGRATED_FINALIZATION_SEQUENCE_STATE_KIND: (
+                RecoveryIntegratedFinalizationSequenceState
+            ),
         }
         if row_kind not in kind_to_type:
             raise SchedulerEngineError(
@@ -3973,6 +4315,7 @@ class SqliteSchedulerStore:
             AwaitingFinalizationSequenceState,
             BlockedSequenceState,
             PreparedSequenceState,
+            RecoveryIntegratedFinalizationSequenceState,
         )
 
         if not isinstance(
@@ -3984,6 +4327,7 @@ class SqliteSchedulerStore:
                 BlockedSequenceState,
                 AbortedSequenceState,
                 AwaitingFinalizationSequenceState,
+                RecoveryIntegratedFinalizationSequenceState,
             ),
         ):
             raise SchedulerEngineError(
@@ -4293,4 +4637,606 @@ class SqliteSchedulerStore:
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.CONFLICT,
                 "repository worktree reservation could not be claimed for recovery successor",
+            )
+
+    def dump_recovery_state(self, state: RecoveryState) -> tuple[str, str, str]:
+        from ai_dev_loop.scheduler.domain.recovery import RECOVERY_STATE_ADAPTERS
+
+        kind = str(state.kind)
+        adapter = RECOVERY_STATE_ADAPTERS.get(kind)
+        if adapter is None:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                f"unsupported recovery state kind {kind}",
+            )
+        payload = adapter.dump_json(state).decode("utf-8")
+        digest = payload_sha256(payload)
+        return kind, payload, digest
+
+    def list_fresh_review_recovery_ids_by_state_kinds(
+        self,
+        conn: sqlite3.Connection,
+        state_kinds: frozenset[str] | set[str],
+    ) -> list[str]:
+        if not state_kinds:
+            return []
+        placeholders = ",".join("?" * len(state_kinds))
+        rows = conn.execute(
+            f"""
+            SELECT recovery_id FROM scheduler_fresh_review_recoveries
+            WHERE state_kind IN ({placeholders})
+            ORDER BY created_at ASC, recovery_id ASC
+            """,
+            tuple(sorted(state_kinds)),
+        ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def get_fresh_review_recovery(
+        self, conn: sqlite3.Connection, recovery_id: str
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            "SELECT * FROM scheduler_fresh_review_recoveries WHERE recovery_id = ?",
+            (recovery_id,),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def get_fresh_review_recovery_by_idempotency(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_run_id: str,
+        definition_sha256: str,
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            """
+            SELECT recovery_id FROM scheduler_fresh_review_recovery_idempotency
+            WHERE source_run_id = ? AND definition_sha256 = ?
+            """,
+            (source_run_id, definition_sha256),
+        ).fetchone()
+        if row is None:
+            return None
+        return self.get_fresh_review_recovery(conn, str(row["recovery_id"]))
+
+    def insert_fresh_review_recovery(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        recovery_id: str,
+        state: RecoveryState,
+        now: datetime,
+    ) -> None:
+        kind, payload, digest = self.dump_recovery_state(state)
+        now_text = encode_utc_instant(now)
+        conn.execute(
+            """
+            INSERT INTO scheduler_fresh_review_recoveries(
+                recovery_id, state_kind, state_payload, state_payload_sha256,
+                version, source_run_id, definition_sha256, recovery_run_id,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                recovery_id,
+                kind,
+                payload,
+                digest,
+                int(state.version),
+                str(state.source_run_id),
+                str(state.definition_sha256),
+                getattr(state, "recovery_run_id", None),
+                now_text,
+                now_text,
+            ),
+        )
+
+    def update_fresh_review_recovery(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        recovery_id: str,
+        state: RecoveryState,
+        expected_version: int,
+        now: datetime,
+    ) -> None:
+        kind, payload, digest = self.dump_recovery_state(state)
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            UPDATE scheduler_fresh_review_recoveries
+            SET state_kind = ?, state_payload = ?, state_payload_sha256 = ?,
+                version = ?, recovery_run_id = ?, updated_at = ?
+            WHERE recovery_id = ? AND version = ?
+            """,
+            (
+                kind,
+                payload,
+                digest,
+                int(state.version),
+                getattr(state, "recovery_run_id", None),
+                now_text,
+                recovery_id,
+                expected_version,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "recovery state version conflict",
+            )
+
+    def insert_fresh_review_recovery_idempotency(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_run_id: str,
+        definition_sha256: str,
+        recovery_id: str,
+        now: datetime,
+    ) -> None:
+        now_text = encode_utc_instant(now)
+        conn.execute(
+            """
+            INSERT INTO scheduler_fresh_review_recovery_idempotency(
+                source_run_id, definition_sha256, recovery_id, created_at
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(source_run_id, definition_sha256) DO NOTHING
+            """,
+            (source_run_id, definition_sha256, recovery_id, now_text),
+        )
+
+    def insert_sequence_recovery_resolution(
+        self,
+        conn: sqlite3.Connection,
+        resolution: object,
+        *,
+        now: datetime,
+    ) -> None:
+        from ai_dev_loop.scheduler.domain.common import payload_sha256
+        from ai_dev_loop.scheduler.domain.recovery import SequenceRecoveryResolution
+
+        if not isinstance(resolution, SequenceRecoveryResolution):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "sequence recovery resolution has unexpected type",
+            )
+        payload = resolution.model_dump_json()
+        digest = payload_sha256(payload)
+        now_text = encode_utc_instant(now)
+        conn.execute(
+            """
+            INSERT INTO scheduler_sequence_recovery_resolutions(
+                sequence_id, ordinal, recovery_id, source_run_id, recovery_run_id,
+                resolution_payload, resolution_payload_sha256, recorded_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(sequence_id, ordinal, recovery_id) DO NOTHING
+            """,
+            (
+                resolution.sequence_id,
+                resolution.ordinal,
+                resolution.recovery_id,
+                resolution.source_run_id,
+                resolution.recovery_run_id,
+                payload,
+                digest,
+                now_text,
+            ),
+        )
+
+    def insert_fresh_review_recovery_run(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        state: SchedulerState,
+        event_id: str,
+        event: SchedulerEvent,
+        now: datetime,
+    ) -> None:
+        """Insert a review-seed recovery run at awaiting_codex_review without initial Cursor."""
+
+        kind, payload, digest = self.dump_state(state)
+        if kind != "awaiting_codex_review":
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "fresh recovery run insert accepts only awaiting_codex_review state",
+            )
+        now_text = encode_utc_instant(now)
+        worktree_key = state.context.repository.worktree_key
+        conn.execute(
+            """
+            INSERT INTO scheduler_runs(
+                run_id, state_kind, state_payload, state_payload_sha256,
+                version, idempotency_key, worktree_key, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                kind,
+                payload,
+                digest,
+                state.version,
+                state.idempotency_key,
+                worktree_key,
+                now_text,
+                now_text,
+            ),
+        )
+        event_kind, event_payload, event_digest = self.dump_event(event)
+        conn.execute(
+            """
+            INSERT INTO scheduler_events(
+                event_id, run_id, sequence, event_kind,
+                event_payload, event_payload_sha256, created_at
+            ) VALUES (?, ?, 1, ?, ?, ?, ?)
+            """,
+            (event_id, run_id, event_kind, event_payload, event_digest, now_text),
+        )
+        reservation = conn.execute(
+            """
+            INSERT INTO scheduler_repository_reservations(
+                worktree_key, run_id, repository_root, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(worktree_key) DO UPDATE SET
+                run_id = excluded.run_id,
+                repository_root = excluded.repository_root,
+                status = excluded.status,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at
+            WHERE scheduler_repository_reservations.status = 'released'
+            """,
+            (
+                worktree_key,
+                run_id,
+                state.context.repository.root,
+                ReservationStatus.ACTIVE.value,
+                now_text,
+                now_text,
+            ),
+        )
+        if reservation.rowcount != 1:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "recovery worktree reservation could not be claimed",
+            )
+
+    def dump_rollover_state(self, state: RolloverState) -> tuple[str, str, str]:
+        from ai_dev_loop.scheduler.domain.rollover import ROLLOVER_STATE_ADAPTERS
+
+        kind = str(state.kind)
+        adapter = ROLLOVER_STATE_ADAPTERS.get(kind)
+        if adapter is None:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                f"unsupported rollover state kind {kind}",
+            )
+        payload = adapter.dump_json(state).decode("utf-8")
+        digest = payload_sha256(payload)
+        return kind, payload, digest
+
+    def find_conflicting_live_recovery_authority(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_run_id: str,
+        exclude_recovery_id: str | None = None,
+    ) -> str | None:
+        from ai_dev_loop.scheduler.domain.recovery import (
+            ABORT_PENDING_RECOVERY_STATE_KIND,
+            ACTIVE_RECOVERY_STATE_KIND,
+            CLEANUP_PENDING_RECOVERY_STATE_KIND,
+            INTEGRATION_PENDING_RECOVERY_STATE_KIND,
+            PREPARED_RECOVERY_STATE_KIND,
+        )
+
+        live_kinds = (
+            PREPARED_RECOVERY_STATE_KIND,
+            ACTIVE_RECOVERY_STATE_KIND,
+            INTEGRATION_PENDING_RECOVERY_STATE_KIND,
+            CLEANUP_PENDING_RECOVERY_STATE_KIND,
+            ABORT_PENDING_RECOVERY_STATE_KIND,
+        )
+        placeholders = ",".join("?" * len(live_kinds))
+        params: list[object] = [source_run_id, *live_kinds]
+        exclude_clause = ""
+        if exclude_recovery_id is not None:
+            exclude_clause = "AND recovery_id != ?"
+            params.append(exclude_recovery_id)
+        row = conn.execute(
+            f"""
+            SELECT recovery_id FROM scheduler_fresh_review_recoveries
+            WHERE source_run_id = ? AND state_kind IN ({placeholders})
+            {exclude_clause}
+            ORDER BY created_at ASC, recovery_id ASC
+            LIMIT 1
+            """,
+            tuple(params),
+        ).fetchone()
+        return str(row[0]) if row is not None else None
+
+    def find_conflicting_live_rollover_authority(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_run_id: str,
+        exclude_rollover_id: str | None = None,
+    ) -> str | None:
+        from ai_dev_loop.scheduler.domain.rollover import (
+            ABORT_PENDING_ROLLOVER_STATE_KIND,
+            ACTIVE_ROLLOVER_STATE_KIND,
+            CLEANUP_PENDING_ROLLOVER_STATE_KIND,
+            INTEGRATION_PENDING_ROLLOVER_STATE_KIND,
+            PREPARED_ROLLOVER_STATE_KIND,
+        )
+
+        live_kinds = (
+            PREPARED_ROLLOVER_STATE_KIND,
+            ACTIVE_ROLLOVER_STATE_KIND,
+            INTEGRATION_PENDING_ROLLOVER_STATE_KIND,
+            CLEANUP_PENDING_ROLLOVER_STATE_KIND,
+            ABORT_PENDING_ROLLOVER_STATE_KIND,
+        )
+        placeholders = ",".join("?" * len(live_kinds))
+        params: list[object] = [source_run_id, *live_kinds]
+        exclude_clause = ""
+        if exclude_rollover_id is not None:
+            exclude_clause = "AND rollover_id != ?"
+            params.append(exclude_rollover_id)
+        row = conn.execute(
+            f"""
+            SELECT rollover_id FROM scheduler_authenticated_rollovers
+            WHERE source_run_id = ? AND state_kind IN ({placeholders})
+            {exclude_clause}
+            ORDER BY created_at ASC, rollover_id ASC
+            LIMIT 1
+            """,
+            tuple(params),
+        ).fetchone()
+        return str(row[0]) if row is not None else None
+
+    def list_authenticated_rollover_ids_by_state_kinds(
+        self,
+        conn: sqlite3.Connection,
+        state_kinds: frozenset[str] | set[str],
+    ) -> list[str]:
+        if not state_kinds:
+            return []
+        placeholders = ",".join("?" * len(state_kinds))
+        rows = conn.execute(
+            f"""
+            SELECT rollover_id FROM scheduler_authenticated_rollovers
+            WHERE state_kind IN ({placeholders})
+            ORDER BY created_at ASC, rollover_id ASC
+            """,
+            tuple(sorted(state_kinds)),
+        ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def get_authenticated_rollover(
+        self, conn: sqlite3.Connection, rollover_id: str
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            "SELECT * FROM scheduler_authenticated_rollovers WHERE rollover_id = ?",
+            (rollover_id,),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def get_authenticated_rollover_by_idempotency(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_run_id: str,
+        definition_sha256: str,
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            """
+            SELECT rollover_id FROM scheduler_authenticated_rollover_idempotency
+            WHERE source_run_id = ? AND definition_sha256 = ?
+            """,
+            (source_run_id, definition_sha256),
+        ).fetchone()
+        if row is None:
+            return None
+        return self.get_authenticated_rollover(conn, str(row["rollover_id"]))
+
+    def insert_authenticated_rollover(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        rollover_id: str,
+        state: RolloverState,
+        now: datetime,
+    ) -> None:
+        kind, payload, digest = self.dump_rollover_state(state)
+        now_text = encode_utc_instant(now)
+        conn.execute(
+            """
+            INSERT INTO scheduler_authenticated_rollovers(
+                rollover_id, state_kind, state_payload, state_payload_sha256,
+                version, source_run_id, definition_sha256, rollover_run_id,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                rollover_id,
+                kind,
+                payload,
+                digest,
+                int(state.version),
+                str(state.source_run_id),
+                str(state.definition_sha256),
+                getattr(state, "rollover_run_id", None),
+                now_text,
+                now_text,
+            ),
+        )
+
+    def update_authenticated_rollover(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        rollover_id: str,
+        state: RolloverState,
+        expected_version: int,
+        now: datetime,
+    ) -> None:
+        kind, payload, digest = self.dump_rollover_state(state)
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            UPDATE scheduler_authenticated_rollovers
+            SET state_kind = ?, state_payload = ?, state_payload_sha256 = ?,
+                version = ?, rollover_run_id = ?, updated_at = ?
+            WHERE rollover_id = ? AND version = ?
+            """,
+            (
+                kind,
+                payload,
+                digest,
+                int(state.version),
+                getattr(state, "rollover_run_id", None),
+                now_text,
+                rollover_id,
+                expected_version,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "rollover state version conflict",
+            )
+
+    def insert_authenticated_rollover_idempotency(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_run_id: str,
+        definition_sha256: str,
+        rollover_id: str,
+        now: datetime,
+    ) -> None:
+        now_text = encode_utc_instant(now)
+        conn.execute(
+            """
+            INSERT INTO scheduler_authenticated_rollover_idempotency(
+                source_run_id, definition_sha256, rollover_id, created_at
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(source_run_id, definition_sha256) DO NOTHING
+            """,
+            (source_run_id, definition_sha256, rollover_id, now_text),
+        )
+
+    def insert_sequence_rollover_resolution(
+        self,
+        conn: sqlite3.Connection,
+        resolution: object,
+        *,
+        now: datetime,
+    ) -> None:
+        from ai_dev_loop.scheduler.domain.common import payload_sha256
+        from ai_dev_loop.scheduler.domain.rollover import SequenceRolloverResolution
+
+        if not isinstance(resolution, SequenceRolloverResolution):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "sequence recovery resolution has unexpected type",
+            )
+        payload = resolution.model_dump_json()
+        digest = payload_sha256(payload)
+        now_text = encode_utc_instant(now)
+        conn.execute(
+            """
+            INSERT INTO scheduler_sequence_rollover_resolutions(
+                sequence_id, ordinal, rollover_id, source_run_id, rollover_run_id,
+                resolution_payload, resolution_payload_sha256, recorded_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(sequence_id, ordinal, rollover_id) DO NOTHING
+            """,
+            (
+                resolution.sequence_id,
+                resolution.ordinal,
+                resolution.rollover_id,
+                resolution.source_run_id,
+                resolution.rollover_run_id,
+                payload,
+                digest,
+                now_text,
+            ),
+        )
+
+    def insert_authenticated_rollover_run(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        state: SchedulerState,
+        event_id: str,
+        event: SchedulerEvent,
+        now: datetime,
+    ) -> None:
+        """Insert a review-seed recovery run at awaiting_codex_review without initial Cursor."""
+
+        kind, payload, digest = self.dump_state(state)
+        if kind != "awaiting_codex_review":
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "authenticated rollover run insert accepts only awaiting_codex_review state",
+            )
+        now_text = encode_utc_instant(now)
+        worktree_key = state.context.repository.worktree_key
+        conn.execute(
+            """
+            INSERT INTO scheduler_runs(
+                run_id, state_kind, state_payload, state_payload_sha256,
+                version, idempotency_key, worktree_key, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                kind,
+                payload,
+                digest,
+                state.version,
+                state.idempotency_key,
+                worktree_key,
+                now_text,
+                now_text,
+            ),
+        )
+        event_kind, event_payload, event_digest = self.dump_event(event)
+        conn.execute(
+            """
+            INSERT INTO scheduler_events(
+                event_id, run_id, sequence, event_kind,
+                event_payload, event_payload_sha256, created_at
+            ) VALUES (?, ?, 1, ?, ?, ?, ?)
+            """,
+            (event_id, run_id, event_kind, event_payload, event_digest, now_text),
+        )
+        reservation = conn.execute(
+            """
+            INSERT INTO scheduler_repository_reservations(
+                worktree_key, run_id, repository_root, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(worktree_key) DO UPDATE SET
+                run_id = excluded.run_id,
+                repository_root = excluded.repository_root,
+                status = excluded.status,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at
+            WHERE scheduler_repository_reservations.status = 'released'
+            """,
+            (
+                worktree_key,
+                run_id,
+                state.context.repository.root,
+                ReservationStatus.ACTIVE.value,
+                now_text,
+                now_text,
+            ),
+        )
+        if reservation.rowcount != 1:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CONFLICT,
+                "rollover worktree reservation could not be claimed",
             )

@@ -36,6 +36,36 @@ class AbortTerminationSummary:
     attempts_finalized: int
 
 
+SCHEDULER_TERMINAL_FOR_SUCCESSOR_ABORT = frozenset(
+    {
+        "aborted",
+        "failed",
+        "completed",
+        "completed_with_residual_risk",
+        "max_iterations_reached",
+        "blocked",
+    }
+)
+
+
+def successor_abort_ownership_release_allowed(
+    store: SqliteSchedulerStore,
+    conn: sqlite3.Connection,
+    *,
+    successor_run_id: str,
+) -> bool:
+    """Return True only when successor termination is conclusive for source release."""
+
+    state, _, _ = store.load_validated_snapshot(conn, successor_run_id)
+    if state.kind not in SCHEDULER_TERMINAL_FOR_SUCCESSOR_ABORT:
+        return False
+    if store.get_nonterminal_attempt_for_run(conn, successor_run_id) is not None:
+        return False
+    if store.has_pending_effects_for_run(conn, successor_run_id):
+        return False
+    return not store.has_unresolved_abort_hold(conn, successor_run_id)
+
+
 def unit_observation_stopped(observation: ObserveResult) -> bool:
     if observation.lifecycle_state in {
         UnitLifecycleState.INACTIVE,

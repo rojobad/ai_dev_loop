@@ -59,6 +59,10 @@ from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerSto
 _ATTEMPT_COUNTER = itertools.count()
 
 
+def _explicit_limit_record(**fields: object) -> dict:
+    return {"rateLimitReachedType": None, **fields}
+
+
 def _api_envelope(*, code: str, message: str) -> dict:
     return {
         "type": "error",
@@ -223,10 +227,10 @@ class TestCapacityProbeParsing:
     def test_primary_and_secondary_must_both_have_capacity(self) -> None:
         payload = {
             "rateLimitsByLimitId": {
-                "default": {
-                    "primary": {"usedPercent": 0},
-                    "secondary": {"usedPercent": 100},
-                }
+                "default": _explicit_limit_record(
+                    primary={"usedPercent": 0},
+                    secondary={"usedPercent": 100},
+                ),
             }
         }
         assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.EXHAUSTED
@@ -242,7 +246,7 @@ class TestCapacityProbeParsing:
     def test_primary_only_window(self) -> None:
         payload = {
             "rateLimitsByLimitId": {
-                "default": {"primary": {"usedPercent": 5}},
+                "default": _explicit_limit_record(primary={"usedPercent": 5}),
             }
         }
         assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.AVAILABLE
@@ -250,7 +254,7 @@ class TestCapacityProbeParsing:
     def test_secondary_only_window(self) -> None:
         payload = {
             "rateLimitsByLimitId": {
-                "default": {"secondary": {"usedPercent": 100}},
+                "default": _explicit_limit_record(secondary={"usedPercent": 100}),
             }
         }
         assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.EXHAUSTED
@@ -258,10 +262,10 @@ class TestCapacityProbeParsing:
     def test_null_window_is_absent(self) -> None:
         payload = {
             "rateLimitsByLimitId": {
-                "default": {
-                    "primary": None,
-                    "secondary": {"usedPercent": 0},
-                }
+                "default": _explicit_limit_record(
+                    primary=None,
+                    secondary={"usedPercent": 0},
+                ),
             }
         }
         assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.AVAILABLE
@@ -276,10 +280,10 @@ class TestCapacityProbeParsing:
     def test_exhausted_then_invalid_record_is_exhausted(self) -> None:
         payload = {
             "rateLimitsByLimitId": {
-                "exhausted": {
-                    "primary": {"usedPercent": 100},
-                    "secondary": {"usedPercent": 100},
-                },
+                "exhausted": _explicit_limit_record(
+                    primary={"usedPercent": 100},
+                    secondary={"usedPercent": 100},
+                ),
                 "invalid": {"primary": {"usedPercent": "full"}},
             }
         }
@@ -289,10 +293,10 @@ class TestCapacityProbeParsing:
         payload = {
             "rateLimitsByLimitId": {
                 "invalid": {"primary": {"usedPercent": "full"}},
-                "exhausted": {
-                    "primary": {"usedPercent": 100},
-                    "secondary": {"usedPercent": 100},
-                },
+                "exhausted": _explicit_limit_record(
+                    primary={"usedPercent": 100},
+                    secondary={"usedPercent": 100},
+                ),
             }
         }
         assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.EXHAUSTED
@@ -300,10 +304,10 @@ class TestCapacityProbeParsing:
     def test_exhausted_then_empty_record_is_exhausted(self) -> None:
         payload = {
             "rateLimitsByLimitId": {
-                "exhausted": {
-                    "primary": {"usedPercent": 100},
-                    "secondary": {"usedPercent": 100},
-                },
+                "exhausted": _explicit_limit_record(
+                    primary={"usedPercent": 100},
+                    secondary={"usedPercent": 100},
+                ),
                 "empty": {},
             }
         }
@@ -312,14 +316,25 @@ class TestCapacityProbeParsing:
     def test_available_then_exhausted_record_is_exhausted(self) -> None:
         payload = {
             "rateLimitsByLimitId": {
-                "available": {"primary": {"usedPercent": 0}},
-                "exhausted": {
-                    "primary": {"usedPercent": 100},
-                    "secondary": {"usedPercent": 100},
-                },
+                "available": _explicit_limit_record(primary={"usedPercent": 0}),
+                "exhausted": _explicit_limit_record(
+                    primary={"usedPercent": 100},
+                    secondary={"usedPercent": 100},
+                ),
             }
         }
         assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.EXHAUSTED
+
+    def test_missing_reached_marker_is_unavailable(self) -> None:
+        payload = {
+            "rateLimitsByLimitId": {
+                "default": {
+                    "primary": {"usedPercent": 0},
+                    "secondary": {"usedPercent": 0},
+                }
+            }
+        }
+        assert capacity_from_rate_limits_payload(payload) is None
 
     def test_oversized_used_percent_is_unavailable(self) -> None:
         payload = {
@@ -347,10 +362,10 @@ class TestCapacityProbeExchange:
                         "id": 2,
                         "result": {
                             "rateLimitsByLimitId": {
-                                "default": {
-                                    "primary": {"usedPercent": 0},
-                                    "secondary": {"usedPercent": 0},
-                                }
+                                "default": _explicit_limit_record(
+                                    primary={"usedPercent": 0},
+                                    secondary={"usedPercent": 0},
+                                ),
                             }
                         },
                     }
@@ -389,7 +404,7 @@ class TestCapacityProbeExchange:
                         "id": 2,
                         "result": {
                             "rateLimitsByLimitId": {
-                                "default": {"primary": {"usedPercent": 0}},
+                                "default": _explicit_limit_record(primary={"usedPercent": 0}),
                             }
                         },
                     }
@@ -409,10 +424,10 @@ class TestCapacityProbeExchange:
                         "id": 2,
                         "result": {
                             "rateLimitsByLimitId": {
-                                "default": {
-                                    "primary": {"usedPercent": 0},
-                                    "secondary": {"usedPercent": 0},
-                                }
+                                "default": _explicit_limit_record(
+                                    primary={"usedPercent": 0},
+                                    secondary={"usedPercent": 0},
+                                ),
                             }
                         },
                     }
@@ -432,7 +447,7 @@ class TestCapacityProbeExchange:
                         "id": 2,
                         "result": {
                             "rateLimitsByLimitId": {
-                                "default": {"primary": {"usedPercent": 0}},
+                                "default": _explicit_limit_record(primary={"usedPercent": 0}),
                             }
                         },
                     }

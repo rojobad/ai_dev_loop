@@ -914,27 +914,45 @@ class CodexWorkflowService:
                     return TickRunReceipt(run_id=run_id, action="codex_decision_cas_lost")
                 self.store.mark_attempt_ingested(conn, attempt_id=attempt_id, now=now)
                 from ai_dev_loop.scheduler.domain.cursor_contract import (
+                    CREATE_CHAT_EFFECT_ID,
+                    CREATE_CHAT_EFFECT_KIND,
                     RUN_CURSOR_TURN_EFFECT_ID,
                     RUN_CURSOR_TURN_EFFECT_KIND,
                 )
 
                 next_dispatch = self._dispatch_id_factory()
                 envelope_path = correction_execution_envelope_path(review_iteration)
-                self.store.insert_effect(
-                    conn,
-                    dispatch_id=next_dispatch,
-                    source_event_id=event_id,
-                    run_id=run_id,
-                    effect_id=RUN_CURSOR_TURN_EFFECT_ID,
-                    effect_kind=RUN_CURSOR_TURN_EFFECT_KIND,
-                    effect_payload={
-                        "iteration": review_iteration + 1,
-                        "prompt_path": envelope_path,
-                    },
-                    available_at=now,
-                    claimed_run_version=fix_state.version,
-                    now=now,
-                )
+                if (
+                    fix_state.fresh_recovery is not None or fix_state.fresh_rollover is not None
+                ) and not fix_state.cursor.chat_id:
+                    self.store.insert_effect(
+                        conn,
+                        dispatch_id=next_dispatch,
+                        source_event_id=event_id,
+                        run_id=run_id,
+                        effect_id=CREATE_CHAT_EFFECT_ID,
+                        effect_kind=CREATE_CHAT_EFFECT_KIND,
+                        effect_payload={"iteration": review_iteration + 1},
+                        available_at=now,
+                        claimed_run_version=fix_state.version,
+                        now=now,
+                    )
+                else:
+                    self.store.insert_effect(
+                        conn,
+                        dispatch_id=next_dispatch,
+                        source_event_id=event_id,
+                        run_id=run_id,
+                        effect_id=RUN_CURSOR_TURN_EFFECT_ID,
+                        effect_kind=RUN_CURSOR_TURN_EFFECT_KIND,
+                        effect_payload={
+                            "iteration": review_iteration + 1,
+                            "prompt_path": envelope_path,
+                        },
+                        available_at=now,
+                        claimed_run_version=fix_state.version,
+                        now=now,
+                    )
             return TickRunReceipt(run_id=run_id, action="waiting_for_cursor_fix")
 
         if completion == "completed_with_residual_risk":
@@ -974,7 +992,14 @@ class CodexWorkflowService:
             if not isinstance(state, AwaitingCodexReviewState):
                 return TickRunReceipt(run_id=run_id, action="codex_decision_state_changed")
             sequence_binding = state.context.sequence
-            if sequence_binding is not None and self._sequence_handoff is not None:
+            uses_fresh_agent_integration = (
+                state.fresh_recovery is not None or state.fresh_rollover is not None
+            )
+            if (
+                sequence_binding is not None
+                and self._sequence_handoff is not None
+                and not uses_fresh_agent_integration
+            ):
                 if sequence_binding.ordinal < sequence_binding.total_phases:
                     self._sequence_handoff.enter_checkpoint_pending(
                         conn,

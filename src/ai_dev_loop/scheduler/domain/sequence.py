@@ -26,12 +26,14 @@ ABORT_PENDING_SEQUENCE_STATE_KIND = "abort_pending"
 BLOCKED_SEQUENCE_STATE_KIND = "blocked"
 ABORTED_SEQUENCE_STATE_KIND = "aborted"
 AWAITING_FINALIZATION_SEQUENCE_STATE_KIND = "awaiting_finalization"
+RECOVERY_INTEGRATED_FINALIZATION_SEQUENCE_STATE_KIND = "recovery_integrated_finalization"
 
 SEQUENCE_TERMINAL_STATE_KINDS = frozenset(
     {
         BLOCKED_SEQUENCE_STATE_KIND,
         ABORTED_SEQUENCE_STATE_KIND,
         AWAITING_FINALIZATION_SEQUENCE_STATE_KIND,
+        RECOVERY_INTEGRATED_FINALIZATION_SEQUENCE_STATE_KIND,
     }
 )
 
@@ -353,6 +355,15 @@ class AbortedSequenceState(DomainModel):
         return value
 
 
+class SequenceFinalizationPublicationInputs(DomainModel):
+    """Frozen timestamp and integration binding for final-sequence report publication."""
+
+    schema_version: Literal[1] = 1
+    finalized_at: NonEmptyStr
+    integration_aggregate_id: NonEmptyStr
+    integration_aggregate_kind: Literal["rollover", "recovery"]
+
+
 class SequencePhaseReportEntry(DomainModel):
     ordinal: int
     phase_name: NonEmptyStr
@@ -396,6 +407,77 @@ class SequenceCompletionReport(DomainModel):
         "pr_review",
         "merge",
     )
+
+
+class RecoveryIntegratedSequenceCompletionReport(DomainModel):
+    """Safe aggregate completion report for recovery-integrated final sequences."""
+
+    schema_version: Literal[1] = 1
+    sequence_id: NonEmptyStr
+    sequence_name: NonEmptyStr
+    state_kind: Literal["recovery_integrated_finalization"] = "recovery_integrated_finalization"
+    finalized_at: NonEmptyStr
+    source_run_id: NonEmptyStr
+    source_run_id_prefix: NonEmptyStr
+    recovery_id: NonEmptyStr
+    recovery_id_prefix: NonEmptyStr
+    recovery_run_id: NonEmptyStr
+    recovery_run_id_prefix: NonEmptyStr
+    final_outcome: Literal["completed", "completed_with_residual_risk"]
+    integrated_commit_sha256: GitObjectSha
+    integrated_commit_sha256_prefix: NonEmptyStr
+    residual_risk_ordinals: tuple[int, ...] = ()
+    residual_risk_phase_names: tuple[str, ...] = ()
+    phases: tuple[SequencePhaseReportEntry, ...]
+    manual_actions_remaining: tuple[str, ...] = (
+        "push",
+        "pr_review",
+        "merge",
+    )
+
+
+class RecoveryIntegratedFinalizationSequenceState(DomainModel):
+    """Sequence whose final phase completed via explicit recovery integration."""
+
+    schema_version: Literal[1] = 1
+    sequence_id: NonEmptyStr
+    version: int
+    prepared_at: NonEmptyStr
+    updated_at: NonEmptyStr
+    started_at: NonEmptyStr
+    finalized_at: NonEmptyStr
+    idempotency_key: Sha256Hex
+    definition: PreparedSequenceDefinition
+    source_run_id: NonEmptyStr
+    recovery_id: NonEmptyStr
+    recovery_run_id: NonEmptyStr
+    final_outcome: Literal["completed", "completed_with_residual_risk"]
+    integrated_commit_sha256: GitObjectSha
+    integrated_commit_sha256_prefix: NonEmptyStr
+    completion_report_sha256: Sha256Hex | None = None
+    materialized_entries: tuple[MaterializedSequenceEntry, ...] = Field(min_length=1)
+    residual_risk_ordinals: tuple[int, ...] = ()
+
+    @field_validator("version")
+    @classmethod
+    def version_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("version must be >= 1")
+        return value
+
+    @model_validator(mode="after")
+    def validate_recovery_final_projection(self) -> RecoveryIntegratedFinalizationSequenceState:
+        total = len(self.definition.entries)
+        final_entry = self.definition.entries[-1]
+        if final_entry.ordinal != total:
+            raise ValueError("final entry ordinal must equal entry count")
+        source_materialized = next(
+            (entry for entry in self.materialized_entries if entry.run_id == self.source_run_id),
+            None,
+        )
+        if source_materialized is None or source_materialized.ordinal != total:
+            raise ValueError("source_run_id must match materialized final entry")
+        return self
 
 
 class AwaitingFinalizationSequenceState(DomainModel):
@@ -479,6 +561,9 @@ ABORTED_SEQUENCE_STATE_ADAPTER: TypeAdapter[AbortedSequenceState] = TypeAdapter(
 AWAITING_FINALIZATION_SEQUENCE_STATE_ADAPTER: TypeAdapter[AwaitingFinalizationSequenceState] = (
     TypeAdapter(AwaitingFinalizationSequenceState)
 )
+RECOVERY_INTEGRATED_FINALIZATION_SEQUENCE_STATE_ADAPTER: TypeAdapter[
+    RecoveryIntegratedFinalizationSequenceState
+] = TypeAdapter(RecoveryIntegratedFinalizationSequenceState)
 SEQUENCE_COMPLETION_REPORT_ADAPTER: TypeAdapter[SequenceCompletionReport] = TypeAdapter(
     SequenceCompletionReport
 )
