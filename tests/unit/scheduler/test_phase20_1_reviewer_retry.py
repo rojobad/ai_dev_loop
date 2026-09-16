@@ -123,15 +123,30 @@ class TestMessageOnlyUsageLimitClassifier:
 class TestSchemaMigration:
     def test_v6_migration_adds_review_retry_tables(self, tmp_path: Path) -> None:
         db = tmp_path / "engine.sqlite3"
-        store = SqliteSchedulerStore(db)
-        assert SCHEMA_VERSION == 8
-        with store.begin_read() as conn:
+        paused = False
+
+        def pause_v7(statement: str) -> None:
+            nonlocal paused
+            if not paused and "CREATE TABLE scheduler_checkpoint_holds" in statement:
+                paused = True
+                raise RuntimeError("pause-v7")
+
+        with pytest.raises(RuntimeError, match="pause-v7"):
+            SqliteSchedulerStore(db, migration_fault_hook=pause_v7)
+        import sqlite3
+
+        conn = sqlite3.connect(db)
+        try:
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            assert version == 6
             tables = {
                 row[0]
                 for row in conn.execute(
                     "SELECT name FROM sqlite_master WHERE type = 'table'"
                 ).fetchall()
             }
+        finally:
+            conn.close()
         assert "scheduler_review_retry_generations" in tables
         assert "scheduler_review_recovery_successors" in tables
 

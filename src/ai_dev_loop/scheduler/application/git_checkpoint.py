@@ -24,6 +24,7 @@ from ai_dev_loop.runners.git import (
     checkpoint_validate_repository_layout,
     checkpoint_validate_staged_patch_matches_artifact,
     checkpoint_verify_commit_identity,
+    git_timestamp_from_intent_date,
     paths_with_unstaged_changes,
     paths_with_untracked,
     validate_checkpoint_postconditions,
@@ -99,10 +100,10 @@ class ProductionGitCheckpointPort:
         identity = GitIdentity(
             author_name=intent.git_identity.author_name,
             author_email=intent.git_identity.author_email,
-            author_date=intent.git_identity.author_date,
+            author_date=git_timestamp_from_intent_date(intent.git_identity.author_date),
             committer_name=intent.git_identity.committer_name,
             committer_email=intent.git_identity.committer_email,
-            committer_date=intent.git_identity.committer_date,
+            committer_date=git_timestamp_from_intent_date(intent.git_identity.committer_date),
         )
         timeout = deadline.remaining_timeout(now_factory())
         checkpoint_validate_repository_layout(

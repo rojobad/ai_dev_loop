@@ -161,10 +161,30 @@ class TestCapacityExhaustionSemantics:
         payload = {"rateLimits": {"primary": {"usedPercent": 0}}}
         assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.AVAILABLE
 
-    def test_malformed_reached_marker_is_unavailable(self) -> None:
+    def test_null_reached_marker_without_windows_is_unavailable(self) -> None:
         payload = {
             "rateLimitsByLimitId": {
                 "default": {"rateLimitReachedType": None},
+            }
+        }
+        assert capacity_from_rate_limits_payload(payload) is None
+
+    def test_null_reached_marker_with_available_windows_is_available(self) -> None:
+        payload = {
+            "rateLimitsByLimitId": {
+                "default": {
+                    "rateLimitReachedType": None,
+                    "primary": {"usedPercent": 0},
+                    "secondary": {"usedPercent": 10},
+                }
+            }
+        }
+        assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.AVAILABLE
+
+    def test_empty_string_reached_marker_is_unavailable(self) -> None:
+        payload = {
+            "rateLimitsByLimitId": {
+                "default": {"rateLimitReachedType": ""},
             }
         }
         assert capacity_from_rate_limits_payload(payload) is None

@@ -125,6 +125,8 @@ def _reached_marker_status(record: dict[str, Any]) -> bool | None:
     if "rateLimitReachedType" not in record:
         return False
     reached = record.get("rateLimitReachedType")
+    if reached is None:
+        return False
     if isinstance(reached, str) and reached.strip():
         return True
     return None

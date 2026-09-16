@@ -39,7 +39,12 @@ These contracts preserve the product's safety model across implementation phases
 - Never commit, tag, push, reset, clean, stash, or unstage user work, except the
   narrow Phase 20.3 sequence checkpoint: an explicitly started multi-phase sequence
   may create one local unsigned/no-hook checkpoint commit per accepted non-final
-  phase after exact staged review validation.
+  phase after exact staged review validation; and the narrow Phase 20.6 exception:
+  an explicitly started authenticated fresh-review recovery (`scheduler recovery start`)
+  may create one local unsigned/no-hook commit and compare-and-swap the frozen target
+  branch to integrate the exact accepted reviewed tree after authenticated review in a
+  package-managed worktree. Phase 20.6 does not authorize remotes, reset, force, conflict
+  resolution, or ordinary run/sequence commits outside that explicit recovery authorization.
 - Use direct Git argument arrays with explicit working directories.
 - Fail safely on ambiguous status, symlink escapes, unrelated dirty work, or baseline drift.
 - Staged diff artifacts are part of the audit trail. Capture them durably before any review phase consumes them.

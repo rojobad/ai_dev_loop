@@ -58,6 +58,7 @@ from ai_dev_loop.scheduler.domain.events import (
 from ai_dev_loop.scheduler.domain.reducer import (
     apply_awaiting_codex_review_entered,
     apply_cursor_chat_blocked,
+    apply_cursor_chat_bound_on_waiting_fix,
     apply_cursor_chat_created,
     apply_cursor_turn_blocked,
     apply_cursor_turn_completed,
@@ -768,6 +769,77 @@ class CursorWorkflowService:
                     )
                 self.store.mark_attempt_ingested(conn, attempt_id=attempt_id, now=now)
                 return TickRunReceipt(run_id=run_id, action="cursor_chat_already_ready")
+            if isinstance(state, WaitingForCursorFixState):
+                if state.fresh_recovery is None and state.fresh_rollover is None:
+                    return TickRunReceipt(run_id=run_id, action="ingest_state_changed")
+                if state.cursor.chat_id:
+                    if state.cursor.chat_id != chat_id:
+                        return self._block_from_ingest(
+                            run_id,
+                            dispatch_id=dispatch_id,
+                            attempt_id=attempt_id,
+                            kind="cursor_chat_blocked",
+                            reason_kind="chat_artifact_conflict",
+                            summary="run already has a different Cursor chat ID",
+                        )
+                    self.store.mark_attempt_ingested(conn, attempt_id=attempt_id, now=now)
+                    return TickRunReceipt(run_id=run_id, action="cursor_chat_already_ready")
+                envelope_path = state.codex.latest_correction_envelope_path
+                if not envelope_path:
+                    return self._block_from_ingest(
+                        run_id,
+                        dispatch_id=dispatch_id,
+                        attempt_id=attempt_id,
+                        kind="cursor_chat_blocked",
+                        reason_kind="missing_correction_envelope",
+                        summary="fresh recovery correction requires persisted envelope",
+                    )
+                event = CursorChatCreatedEvent(
+                    run_id=run_id,
+                    chat_id=chat_id,
+                    chat_artifact_path=stored_path,
+                    chat_artifact_sha256=stored_sha,
+                )
+                now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                waiting_fix_state = apply_cursor_chat_bound_on_waiting_fix(
+                    state, event, now_text=now_text
+                )
+                fix_event_id = self._event_id_factory()
+                sequence = self.store.next_event_sequence(conn, run_id)
+                self.store.append_event(
+                    conn,
+                    event_id=fix_event_id,
+                    run_id=run_id,
+                    sequence=sequence,
+                    event=event,
+                    now=now,
+                )
+                if not self.store.compare_and_swap_state(
+                    conn,
+                    run_id=run_id,
+                    expected_version=version,
+                    new_state=waiting_fix_state,
+                    now=now,
+                ):
+                    return TickRunReceipt(run_id=run_id, action="ingest_cas_lost")
+                self.store.mark_attempt_ingested(conn, attempt_id=attempt_id, now=now)
+                next_dispatch = self._dispatch_id_factory()
+                self.store.insert_effect(
+                    conn,
+                    dispatch_id=next_dispatch,
+                    source_event_id=fix_event_id,
+                    run_id=run_id,
+                    effect_id=RUN_CURSOR_TURN_EFFECT_ID,
+                    effect_kind=RUN_CURSOR_TURN_EFFECT_KIND,
+                    effect_payload={
+                        "iteration": waiting_fix_state.cursor.iteration,
+                        "prompt_path": envelope_path,
+                    },
+                    available_at=now,
+                    claimed_run_version=waiting_fix_state.version,
+                    now=now,
+                )
+                return TickRunReceipt(run_id=run_id, action="cursor_chat_created")
             if not isinstance(state, PreflightCompleteState):
                 return TickRunReceipt(run_id=run_id, action="ingest_state_changed")
             event = CursorChatCreatedEvent(

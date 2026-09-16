@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/scheduler-authenticated-rollover-definition-v1.json",
+  "title": "AuthenticatedRolloverDefinition",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "rollover_id",
+    "definition_sha256",
+    "source_run_id",
+    "source_run_id_prefix",
+    "repository",
+    "target_branch_ref",
+    "parent_head",
+    "source_staged_patch_path",
+    "source_staged_patch_sha256",
+    "source_staged_tree_sha256",
+    "source_final_review_result_path",
+    "source_final_review_result_sha256",
+    "plan_prompt",
+    "effective_config",
+    "codex",
+    "cursor",
+    "workflow",
+    "controller",
+    "integration",
+    "managed_worktree_path_token",
+    "private_ref",
+    "rollover_worktree_key",
+    "prepared_at"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "rollover_id": { "type": "string", "minLength": 1 },
+    "definition_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "source_run_id": { "type": "string", "minLength": 1 },
+    "source_run_id_prefix": { "type": "string", "minLength": 1 },
+    "sequence": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["sequence_id", "ordinal", "total_phases", "is_final_phase"],
+      "properties": {
+        "sequence_id": { "type": "string", "minLength": 1 },
+        "ordinal": { "type": "integer", "minimum": 1 },
+        "total_phases": { "type": "integer", "minimum": 1 },
+        "is_final_phase": { "type": "boolean" }
+      }
+    },
+    "repository": {
+      "$ref": "scheduler-submitted-run-context-v2.json#/$defs/repository_binding"
+    },
+    "target_branch_ref": { "type": "string", "minLength": 1 },
+    "parent_head": { "type": "string", "minLength": 1 },
+    "source_staged_patch_path": { "type": "string", "minLength": 1 },
+    "source_staged_patch_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "source_staged_tree_sha256": { "type": "string", "minLength": 1 },
+    "source_final_review_result_path": { "type": "string", "minLength": 1 },
+    "source_final_review_result_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "plan_prompt": { "$ref": "scheduler-submitted-run-context-v3.json#/$defs/plan_prompt_binding" },
+    "effective_config": {
+      "$ref": "scheduler-submitted-run-context-v3.json#/$defs/effective_config_binding"
+    },
+    "codex": { "$ref": "scheduler-submitted-run-context-v3.json#/$defs/fresh_codex_reviewer_binding" },
+    "cursor": { "$ref": "scheduler-submitted-run-context-v3.json#/$defs/cursor_binding" },
+    "workflow": { "$ref": "scheduler-submitted-run-context-v3.json#/$defs/workflow_limits" },
+    "controller": { "$ref": "scheduler-submitted-run-context-v3.json#/$defs/controller_binding" },
+    "integration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit_message"],
+      "properties": {
+        "commit_message": { "type": "string", "minLength": 1 },
+        "accepted_outcomes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["completed", "completed_with_residual_risk"]
+          }
+        }
+      }
+    },
+    "managed_worktree_path_token": { "type": "string", "minLength": 1 },
+    "private_ref": { "type": "string", "minLength": 1 },
+    "rollover_worktree_key": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "prepared_at": { "type": "string", "minLength": 1 }
+  }
+}

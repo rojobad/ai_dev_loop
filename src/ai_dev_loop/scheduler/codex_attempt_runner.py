@@ -51,6 +51,7 @@ from ai_dev_loop.scheduler.domain.codex_contract import (
     MAX_CODEX_EVENTS_ARTIFACT_BYTES,
     MAX_CODEX_REVIEW_RESULT_BYTES,
     REVIEW_RETRY_OPERATIONAL_ENVELOPE,
+    REVIEW_SEED_OPERATIONAL_ENVELOPE,
     codex_attempt_events_rel,
     codex_attempt_stderr_rel,
     codex_review_metadata_rel,
@@ -290,14 +291,19 @@ def _run_codex_review(
     )
 
     run_state = _run_state_from_binding(evidence, run_id)
-    cursor_final = _read_cursor_final(run_root, iteration_label)
+    if evidence.get("review_seed"):
+        cursor_final = None
+    else:
+        cursor_final = _read_cursor_final(run_root, iteration_label)
     prompt = build_review_wrapper_prompt(
         run_state,
         run_root,
         iteration=iteration_label,
         cursor_final_response=cursor_final,
     )
-    if evidence.get("operational_review_retry"):
+    if evidence.get("review_seed"):
+        prompt = REVIEW_SEED_OPERATIONAL_ENVELOPE + prompt
+    elif evidence.get("operational_review_retry"):
         prompt = REVIEW_RETRY_OPERATIONAL_ENVELOPE + prompt
 
     if effect_kind == BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND:

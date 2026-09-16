@@ -24,6 +24,8 @@ nav:
       - Confianza de hooks: integraciones/confianza-hooks.md
   - Operación:
       - Ejecutar runs: operacion/prepare-start-resume-abort.md
+      - Recuperación fresh-review: operacion/fresh-review-recovery.md
+      - Rollover authenticated: operacion/authenticated-rollover.md
       - Timer del scheduler en WSL: operacion/timer-systemd-wsl.md
       - Estado, logs e inspección: operacion/observabilidad.md
       - Estado y artefactos: operacion/estado-artefactos.md
