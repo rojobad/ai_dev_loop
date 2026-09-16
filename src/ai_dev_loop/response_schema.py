@@ -17,6 +17,17 @@ _API_ERROR_TEXT_FIELDS = frozenset({"message", "param", "detail", "details"})
 # Codex exec --json wrappers that may carry a JSON-serialized API error envelope.
 _RECOGNIZED_FAILURE_WRAPPER_TYPES = frozenset({"error", "turn.failed"})
 
+# Bounded, case-folded markers for provider-message usage/rate-limit evidence.
+_PROVIDER_LIMIT_MESSAGE_MARKERS = (
+    "usage limit",
+    "usage_limit_exceeded",
+    "rate limit",
+    "rate_limit_exceeded",
+    "quota exceeded",
+    "insufficient_quota",
+    "too many requests",
+)
+
 
 def find_incompatible_response_format_keywords(
     node: Any,
@@ -60,6 +71,39 @@ def validate_codex_response_schema(schema_file: Path, *, schema_name: str | None
     raise ValidationError(
         f"Codex response schema {name} contains incompatible keyword(s): {rendered}"
     )
+
+
+def _normalize_provider_message(text: str) -> str:
+    return " ".join(text.casefold().split())
+
+
+def provider_message_indicates_usage_limit(message: str) -> bool:
+    """Return True when a bounded provider message contains an allowlisted limit marker."""
+
+    normalized = _normalize_provider_message(message)
+    return any(marker in normalized for marker in _PROVIDER_LIMIT_MESSAGE_MARKERS)
+
+
+def events_text_indicates_provider_message_limit(text: str) -> bool:
+    """Return True when a recognized terminal wrapper carries a limit marker in message."""
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        top_type = payload.get("type")
+        if top_type not in _RECOGNIZED_FAILURE_WRAPPER_TYPES:
+            continue
+        for message in _wrapper_message_candidates(payload):
+            if provider_message_indicates_usage_limit(message):
+                return True
+    return False
 
 
 def events_text_indicates_usage_limit_exceeded(text: str) -> bool:

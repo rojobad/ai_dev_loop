@@ -37,6 +37,7 @@ CODEX_REVIEW_COMPLETED_EVENT_KIND = "codex_review_completed"
 CODEX_REVIEW_BLOCKED_EVENT_KIND = "codex_review_blocked"
 CODEX_USAGE_CAPACITY_DETECTED_EVENT_KIND = "codex_usage_capacity_detected"
 CODEX_CAPACITY_AVAILABLE_EVENT_KIND = "codex_capacity_available"
+CODEX_CAPACITY_RETRY_AUTHORIZED_EVENT_KIND = "codex_capacity_retry_authorized"
 CODEX_REVIEW_RETRYABLE_FAILURE_EVENT_KIND = "codex_review_retryable_failure"
 CODEX_REVIEW_RETRY_REQUESTED_EVENT_KIND = "codex_review_retry_requested"
 CODEX_REVIEW_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND = "codex_review_recovery_successor_created"
@@ -430,7 +431,11 @@ class CodexUsageCapacityDetectedEvent(DomainModel):
     kind: str = Field(default=CODEX_USAGE_CAPACITY_DETECTED_EVENT_KIND)
     run_id: str
     review_iteration: int
-    evidence_source: Literal["structured_error", "post_failure_capacity_probe"] = "structured_error"
+    evidence_source: Literal[
+        "structured_error",
+        "provider_message_limit",
+        "post_failure_capacity_probe",
+    ] = "structured_error"
     operational_failure_kind: NonEmptyStr | None = None
 
     @field_validator("kind")
@@ -497,6 +502,21 @@ class CodexCapacityAvailableEvent(DomainModel):
     def kind_is_codex_capacity_available(cls, value: str) -> str:
         if value != CODEX_CAPACITY_AVAILABLE_EVENT_KIND:
             raise ValueError("kind must be codex_capacity_available")
+        return value
+
+
+class CodexCapacityRetryAuthorizedEvent(DomainModel):
+    kind: str = Field(default=CODEX_CAPACITY_RETRY_AUTHORIZED_EVENT_KIND)
+    run_id: str
+    review_iteration: int
+    capacity_wait_generation: int
+    idempotent_replay: bool
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_codex_capacity_retry_authorized(cls, value: str) -> str:
+        if value != CODEX_CAPACITY_RETRY_AUTHORIZED_EVENT_KIND:
+            raise ValueError("kind must be codex_capacity_retry_authorized")
         return value
 
 
@@ -777,6 +797,7 @@ SchedulerEvent = Annotated[
     | Annotated[CodexReviewBlockedEvent, Tag(CODEX_REVIEW_BLOCKED_EVENT_KIND)]
     | Annotated[CodexUsageCapacityDetectedEvent, Tag(CODEX_USAGE_CAPACITY_DETECTED_EVENT_KIND)]
     | Annotated[CodexCapacityAvailableEvent, Tag(CODEX_CAPACITY_AVAILABLE_EVENT_KIND)]
+    | Annotated[CodexCapacityRetryAuthorizedEvent, Tag(CODEX_CAPACITY_RETRY_AUTHORIZED_EVENT_KIND)]
     | Annotated[CodexReviewRetryableFailureEvent, Tag(CODEX_REVIEW_RETRYABLE_FAILURE_EVENT_KIND)]
     | Annotated[CodexReviewRetryRequestedEvent, Tag(CODEX_REVIEW_RETRY_REQUESTED_EVENT_KIND)]
     | Annotated[

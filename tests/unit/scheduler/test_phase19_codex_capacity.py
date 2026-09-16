@@ -34,6 +34,7 @@ from ai_dev_loop.runners.codex_failure import (
 from ai_dev_loop.scheduler.application.codex_capacity_probe import (
     CodexAppServerCapacityProbe,
     CodexCapacityStatus,
+    build_capacity_probe_lines,
     build_capacity_probe_stdin,
     capacity_from_rate_limits_payload,
     parse_capacity_probe_stdout,
@@ -150,15 +151,17 @@ class TestUsageLimitClassifier:
         )
         assert classify_codex_review_events_text(text).is_usage_limit
 
-    def test_rate_limit_exceeded_is_not_classified(self) -> None:
+    def test_rate_limit_exceeded_marker_is_classified_permissively(self) -> None:
         text = json.dumps(
             _codex_error_wrapper(_api_envelope(code="rate_limit_exceeded", message="slow down"))
         )
-        assert not classify_codex_review_events_text(text).is_usage_limit
+        classification = classify_codex_review_events_text(text)
+        assert classification.is_usage_limit
+        assert classification.is_provider_message_limit
 
-    def test_prose_usage_limit_is_not_classified(self) -> None:
+    def test_prose_with_allowlisted_marker_is_classified_permissively(self) -> None:
         text = json.dumps({"type": "error", "message": "usage_limit_exceeded in prose"})
-        assert not classify_codex_review_events_text(text).is_usage_limit
+        assert classify_codex_review_events_text(text).is_provider_message_limit
 
     def test_split_facts_fail_closed(self) -> None:
         text = "\n".join(
@@ -270,7 +273,7 @@ class TestCapacityProbeParsing:
     def test_empty_records_are_unavailable(self) -> None:
         assert capacity_from_rate_limits_payload({"rateLimitsByLimitId": {}}) is None
 
-    def test_exhausted_then_invalid_record_is_unavailable(self) -> None:
+    def test_exhausted_then_invalid_record_is_exhausted(self) -> None:
         payload = {
             "rateLimitsByLimitId": {
                 "exhausted": {
@@ -280,9 +283,9 @@ class TestCapacityProbeParsing:
                 "invalid": {"primary": {"usedPercent": "full"}},
             }
         }
-        assert capacity_from_rate_limits_payload(payload) is None
+        assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.EXHAUSTED
 
-    def test_invalid_then_exhausted_record_is_unavailable(self) -> None:
+    def test_invalid_then_exhausted_record_is_exhausted(self) -> None:
         payload = {
             "rateLimitsByLimitId": {
                 "invalid": {"primary": {"usedPercent": "full"}},
@@ -292,9 +295,9 @@ class TestCapacityProbeParsing:
                 },
             }
         }
-        assert capacity_from_rate_limits_payload(payload) is None
+        assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.EXHAUSTED
 
-    def test_exhausted_then_empty_record_is_unavailable(self) -> None:
+    def test_exhausted_then_empty_record_is_exhausted(self) -> None:
         payload = {
             "rateLimitsByLimitId": {
                 "exhausted": {
@@ -304,7 +307,7 @@ class TestCapacityProbeParsing:
                 "empty": {},
             }
         }
-        assert capacity_from_rate_limits_payload(payload) is None
+        assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.EXHAUSTED
 
     def test_available_then_exhausted_record_is_exhausted(self) -> None:
         payload = {
@@ -354,7 +357,7 @@ class TestCapacityProbeExchange:
                 ),
             ]
         )
-        parsed = parse_capacity_probe_stdout(stdout, init_id=1, limits_id=2)
+        parsed = parse_capacity_probe_stdout(stdout, init_id=1, limits_id=2, outbound_complete=True)
         assert parsed is not None
         assert capacity_from_rate_limits_payload(parsed) == CodexCapacityStatus.AVAILABLE
 
@@ -393,7 +396,7 @@ class TestCapacityProbeExchange:
                 ),
             ]
         )
-        parsed = parse_capacity_probe_stdout(stdout, init_id=1, limits_id=2)
+        parsed = parse_capacity_probe_stdout(stdout, init_id=1, limits_id=2, outbound_complete=True)
         assert parsed is not None
 
     def test_parse_headerless_wire_format(self) -> None:
@@ -416,7 +419,7 @@ class TestCapacityProbeExchange:
                 ),
             ]
         )
-        parsed = parse_capacity_probe_stdout(stdout, init_id=1, limits_id=2)
+        parsed = parse_capacity_probe_stdout(stdout, init_id=1, limits_id=2, outbound_complete=True)
         assert parsed is not None
         assert capacity_from_rate_limits_payload(parsed) == CodexCapacityStatus.AVAILABLE
 
@@ -516,13 +519,20 @@ class TestCapacityProbeRunner:
             json.dumps({"rateLimitsByLimitId": {"default": {"primary": {"usedPercent": 0}}}}),
         )
 
-        def bad_stdin(*, init_id: int, limits_id: int) -> str:
-            initialize = build_capacity_probe_stdin(init_id=init_id, limits_id=limits_id)
-            return initialize.replace('"initialized"', '"notifications/initialized"', 1)
+        def bad_lines(*, init_id: int, limits_id: int) -> tuple[bytes, bytes, bytes]:
+            init_line, initialized_line, limits_line = build_capacity_probe_lines(
+                init_id=init_id,
+                limits_id=limits_id,
+            )
+            return (
+                init_line,
+                initialized_line.replace(b'"initialized"', b'"notifications/initialized"', 1),
+                limits_line,
+            )
 
         monkeypatch.setattr(
-            "ai_dev_loop.scheduler.application.codex_capacity_probe.build_capacity_probe_stdin",
-            bad_stdin,
+            "ai_dev_loop.scheduler.application.codex_capacity_probe.build_capacity_probe_lines",
+            bad_lines,
         )
         probe = CodexAppServerCapacityProbe()
         assert probe.probe("codex").status == CodexCapacityStatus.UNAVAILABLE
@@ -681,7 +691,7 @@ def test_unbound_bootstrap_quota_blocks(
         assert state.block_reason_kind == "codex_bootstrap_uncertain"
 
 
-def test_probe_malformed_response_blocks_from_waiting(
+def test_probe_malformed_response_preserves_capacity_wait(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
     fake_clis: dict[str, Path],
@@ -705,11 +715,10 @@ def test_probe_malformed_response_blocks_from_waiting(
     tick.run_once()
     with tick.store.begin_read() as conn:
         state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
-        assert state.kind == "blocked"
-        assert state.block_reason_kind == "codex_capacity_probe_unavailable"
+        assert state.kind == "waiting_codex_capacity"
 
 
-def test_probe_unavailable_blocks_from_waiting(
+def test_probe_unavailable_preserves_capacity_wait(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
     fake_clis: dict[str, Path],
@@ -733,8 +742,7 @@ def test_probe_unavailable_blocks_from_waiting(
     tick.run_once()
     with tick.store.begin_read() as conn:
         state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
-        assert state.kind == "blocked"
-        assert state.block_reason_kind == "codex_capacity_probe_unavailable"
+        assert state.kind == "waiting_codex_capacity"
 
 
 def test_stale_tick_lease_skips_capacity_probe_block(

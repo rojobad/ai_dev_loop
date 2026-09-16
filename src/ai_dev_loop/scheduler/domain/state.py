@@ -339,16 +339,28 @@ class CodexWorkflowCheckpoint(DomainModel):
     latest_review_result_path: NonEmptyStr | None = None
     latest_review_result_sha256: Sha256Hex | None = None
     codex_capacity_wait_started_at: NonEmptyStr | None = None
-    capacity_evidence_source: Literal["structured_error", "post_failure_capacity_probe"] | None = (
-        None
-    )
+    capacity_evidence_source: (
+        Literal[
+            "structured_error",
+            "provider_message_limit",
+            "post_failure_capacity_probe",
+        ]
+        | None
+    ) = None
     inferred_operational_failure_kind: NonEmptyStr | None = None
+    capacity_wait_generation: int = Field(default=0)
+    capacity_retry_scheduled_generation: int | None = None
     review_retry_failure_kind: NonEmptyStr | None = None
     review_retry_generation: int = Field(default=0)
     review_retry_scheduled_generation: int | None = None
     last_failed_attempt_id: NonEmptyStr | None = None
 
-    @field_validator("review_iteration", "reviews_completed", "review_retry_generation")
+    @field_validator(
+        "review_iteration",
+        "reviews_completed",
+        "review_retry_generation",
+        "capacity_wait_generation",
+    )
     @classmethod
     def non_negative_review_counters(cls, value: int) -> int:
         if value < 0:

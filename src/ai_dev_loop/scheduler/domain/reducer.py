@@ -11,6 +11,7 @@ from ai_dev_loop.scheduler.domain.events import (
     AwaitingCodexReviewEnteredEvent,
     CodexBootstrapUncertainEvent,
     CodexCapacityAvailableEvent,
+    CodexCapacityRetryAuthorizedEvent,
     CodexReviewBlockedEvent,
     CodexReviewCompletedEvent,
     CodexReviewerBoundEvent,
@@ -475,12 +476,15 @@ def apply_codex_usage_capacity_detected(
         raise ValueError("event run_id disagrees with state")
     if not state.codex.reviewer_session_id:
         raise ValueError("codex usage capacity wait requires bound reviewer identity")
+    next_wait_generation = max(state.codex.capacity_wait_generation, 0) + 1
     codex = state.codex.model_copy(
         update={
             "review_iteration": event.review_iteration,
             "codex_capacity_wait_started_at": now_text,
             "capacity_evidence_source": event.evidence_source,
             "inferred_operational_failure_kind": event.operational_failure_kind,
+            "capacity_wait_generation": next_wait_generation,
+            "capacity_retry_scheduled_generation": None,
         }
     )
     return WaitingCodexCapacityState(
@@ -573,6 +577,37 @@ def apply_codex_capacity_available(
         update={
             "review_iteration": event.review_iteration,
             "codex_capacity_wait_started_at": None,
+        }
+    )
+    return AwaitingCodexReviewState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        checkpoint=state.checkpoint,
+        cursor=state.cursor,
+        codex=codex,
+        recovery=getattr(state, "recovery", None),
+    )
+
+
+def apply_codex_capacity_retry_authorized(
+    state: WaitingCodexCapacityState,
+    event: CodexCapacityRetryAuthorizedEvent,
+    *,
+    now_text: str,
+) -> AwaitingCodexReviewState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    if event.capacity_wait_generation != state.codex.capacity_wait_generation:
+        raise ValueError("capacity wait generation mismatch")
+    codex = state.codex.model_copy(
+        update={
+            "review_iteration": event.review_iteration,
+            "codex_capacity_wait_started_at": None,
+            "capacity_retry_scheduled_generation": event.capacity_wait_generation,
         }
     )
     return AwaitingCodexReviewState(

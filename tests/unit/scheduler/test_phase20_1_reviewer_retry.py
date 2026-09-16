@@ -107,14 +107,16 @@ def _run_until(
 
 
 class TestMessageOnlyUsageLimitClassifier:
-    def test_message_only_events_are_not_structured_usage_limit(self) -> None:
+    def test_message_only_events_are_provider_message_limit(self) -> None:
         text = "\n".join(
             [
                 json.dumps({"type": "error", "message": "usage_limit_exceeded"}),
                 json.dumps({"type": "turn.failed", "error": {"message": "usage_limit_exceeded"}}),
             ]
         )
-        assert not classify_codex_review_events_text(text).is_usage_limit
+        classification = classify_codex_review_events_text(text)
+        assert classification.is_usage_limit
+        assert classification.is_provider_message_limit
         assert not events_text_indicates_usage_limit_exceeded(text)
 
 
@@ -122,7 +124,7 @@ class TestSchemaMigration:
     def test_v6_migration_adds_review_retry_tables(self, tmp_path: Path) -> None:
         db = tmp_path / "engine.sqlite3"
         store = SqliteSchedulerStore(db)
-        assert SCHEMA_VERSION == 7
+        assert SCHEMA_VERSION == 8
         with store.begin_read() as conn:
             tables = {
                 row[0]
@@ -158,9 +160,8 @@ class TestOperationalFailureRouting:
         with tick.store.begin_read() as conn:
             state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
             assert state.codex.reviewer_session_id == BOOTSTRAP_ID
-            assert state.codex.capacity_evidence_source == "post_failure_capacity_probe"
-            assert state.codex.inferred_operational_failure_kind is not None
-            assert is_operational_review_block_kind(state.codex.inferred_operational_failure_kind)
+            assert state.codex.capacity_evidence_source == "provider_message_limit"
+            assert state.codex.inferred_operational_failure_kind is None
 
     def test_operational_failure_with_available_probe_enters_manual_retry(
         self,

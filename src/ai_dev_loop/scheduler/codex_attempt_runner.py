@@ -431,8 +431,10 @@ def _run_codex_review(
     usage_limit = classify_codex_review_events_path(events_path)
     if usage_limit.is_usage_limit:
         outcome["failure_code"] = FAILURE_CODE_CODEX_USAGE_LIMIT
+        outcome["limit_evidence_kind"] = usage_limit.evidence.value
         if not is_codex_usage_limit_recovery_eligible(outcome):
             outcome.pop("failure_code", None)
+            outcome.pop("limit_evidence_kind", None)
     return outcome
 
 

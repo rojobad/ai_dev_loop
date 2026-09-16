@@ -111,7 +111,7 @@ def test_blocked_run_recovery_successor_completes_without_cursor(
             if state.kind == "blocked":
                 break
     assert isinstance(state, BlockedState)
-    assert state.block_reason_kind == "codex_review_outcome_invalid"
+    assert state.block_reason_kind == "codex_usage_limit"
 
     store = SqliteSchedulerStore(scheduler_paths["db_path"])
     artifacts = ProtectedArtifactStore(scheduler_paths["artifact_root"])

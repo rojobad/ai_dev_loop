@@ -6,7 +6,10 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from ai_dev_loop.response_schema import events_indicate_usage_limit_exceeded
+from ai_dev_loop.response_schema import (
+    events_text_indicates_provider_message_limit,
+    events_text_indicates_usage_limit_exceeded,
+)
 
 FAILURE_CODE_CODEX_USAGE_LIMIT = "codex_usage_limit"
 SAFE_CODEX_USAGE_LIMIT_SUMMARY = "Codex reached the account usage limit for review."
@@ -36,6 +39,12 @@ OPERATIONAL_REVIEW_BLOCK_KINDS = frozenset(
 HISTORICAL_REVIEW_RECOVERY_BLOCK_KINDS = OPERATIONAL_REVIEW_BLOCK_KINDS
 
 
+class CodexLimitEvidenceKind(StrEnum):
+    STRUCTURED_USAGE_LIMIT = "structured_usage_limit"
+    PROVIDER_MESSAGE_LIMIT = "provider_message_limit"
+    UNKNOWN = "unknown"
+
+
 class CodexFailureCode(StrEnum):
     USAGE_LIMIT = FAILURE_CODE_CODEX_USAGE_LIMIT
     UNKNOWN = "unknown"
@@ -43,6 +52,7 @@ class CodexFailureCode(StrEnum):
 
 @dataclass(frozen=True)
 class CodexFailureClassification:
+    evidence: CodexLimitEvidenceKind
     code: CodexFailureCode
     safe_summary: str | None = None
 
@@ -50,18 +60,34 @@ class CodexFailureClassification:
     def is_usage_limit(self) -> bool:
         return self.code == CodexFailureCode.USAGE_LIMIT
 
+    @property
+    def is_structured_usage_limit(self) -> bool:
+        return self.evidence == CodexLimitEvidenceKind.STRUCTURED_USAGE_LIMIT
+
+    @property
+    def is_provider_message_limit(self) -> bool:
+        return self.evidence == CodexLimitEvidenceKind.PROVIDER_MESSAGE_LIMIT
+
 
 def classify_codex_review_events_text(text: str) -> CodexFailureClassification:
     """Classify captured Codex review JSONL events for usage-limit eligibility."""
 
-    from ai_dev_loop.response_schema import events_text_indicates_usage_limit_exceeded
-
     if events_text_indicates_usage_limit_exceeded(text):
         return CodexFailureClassification(
+            evidence=CodexLimitEvidenceKind.STRUCTURED_USAGE_LIMIT,
             code=CodexFailureCode.USAGE_LIMIT,
             safe_summary=SAFE_CODEX_USAGE_LIMIT_SUMMARY,
         )
-    return CodexFailureClassification(code=CodexFailureCode.UNKNOWN)
+    if events_text_indicates_provider_message_limit(text):
+        return CodexFailureClassification(
+            evidence=CodexLimitEvidenceKind.PROVIDER_MESSAGE_LIMIT,
+            code=CodexFailureCode.USAGE_LIMIT,
+            safe_summary=SAFE_CODEX_USAGE_LIMIT_SUMMARY,
+        )
+    return CodexFailureClassification(
+        evidence=CodexLimitEvidenceKind.UNKNOWN,
+        code=CodexFailureCode.UNKNOWN,
+    )
 
 
 def is_codex_usage_limit_recovery_eligible(outcome: dict[str, object]) -> bool:
@@ -99,9 +125,16 @@ def is_historical_review_recovery_block_kind(reason_kind: str) -> bool:
 def classify_codex_review_events_path(events_path: Path) -> CodexFailureClassification:
     """Classify a persisted Codex review events artifact."""
 
-    if events_indicate_usage_limit_exceeded(events_path):
+    if not events_path.is_file():
         return CodexFailureClassification(
-            code=CodexFailureCode.USAGE_LIMIT,
-            safe_summary=SAFE_CODEX_USAGE_LIMIT_SUMMARY,
+            evidence=CodexLimitEvidenceKind.UNKNOWN,
+            code=CodexFailureCode.UNKNOWN,
         )
-    return CodexFailureClassification(code=CodexFailureCode.UNKNOWN)
+    try:
+        text = events_path.read_text(encoding="utf-8")
+    except OSError:
+        return CodexFailureClassification(
+            evidence=CodexLimitEvidenceKind.UNKNOWN,
+            code=CodexFailureCode.UNKNOWN,
+        )
+    return classify_codex_review_events_text(text)
