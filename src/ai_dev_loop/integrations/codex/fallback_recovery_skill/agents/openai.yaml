@@ -1,0 +1,4 @@
+interface:
+  display_name: "ai_dev_loop Fallback Recovery"
+  short_description: "Recover a staged run in an isolated worktree"
+  default_prompt: "Use $ai-dev-loop-fallback-recovery to recover this blocked ai_dev_loop implementation in one bounded fresh run."

@@ -176,6 +176,86 @@ def _install_text_file(
     return action
 
 
+def _install_owned_skill(
+    descriptor: assets.SkillDescriptor,
+    skill_home: Path,
+) -> SkillAssetResult:
+    resources = assets.load_skill_resources(descriptor)
+    destinations = {
+        resource_path: paths.skill_resource_path_for(descriptor, resource_path, skill_home)
+        for resource_path in descriptor.resource_paths
+    }
+    existed = any(destination.exists() for destination in destinations.values())
+    actions = [
+        _install_text_file(destinations[resource_path], content)
+        for resource_path, content in resources.items()
+    ]
+    if all(action == AssetAction.CURRENT for action in actions):
+        action = AssetAction.CURRENT
+    elif existed:
+        action = AssetAction.UPDATED
+    else:
+        action = AssetAction.CREATED
+    return SkillAssetResult(
+        directory_name=descriptor.directory_name,
+        path=paths.skill_path_for(descriptor, skill_home),
+        action=action,
+        matches_package=True,
+    )
+
+
+def _uninstall_owned_skill(
+    descriptor: assets.SkillDescriptor,
+    skill_home: Path,
+) -> SkillAssetResult:
+    skill_root = paths.skill_path_for(descriptor, skill_home).parent
+    removable_directories = {skill_root}
+    removed = False
+    for resource_path in descriptor.resource_paths:
+        destination = paths.skill_resource_path_for(descriptor, resource_path, skill_home)
+        parent = destination.parent
+        while parent != skill_root:
+            removable_directories.add(parent)
+            parent = parent.parent
+        if destination.is_file() or destination.is_symlink():
+            destination.unlink()
+            removed = True
+    for directory in sorted(
+        removable_directories,
+        key=lambda item: len(item.parts),
+        reverse=True,
+    ):
+        with suppress(OSError):
+            directory.rmdir()
+    return SkillAssetResult(
+        directory_name=descriptor.directory_name,
+        path=paths.skill_path_for(descriptor, skill_home),
+        action=AssetAction.REMOVED if removed else AssetAction.NOT_FOUND,
+    )
+
+
+def _owned_skill_status(
+    descriptor: assets.SkillDescriptor,
+    skill_home: Path,
+) -> SkillAssetResult:
+    expected = assets.load_skill_resources(descriptor)
+    destinations = {
+        resource_path: paths.skill_resource_path_for(descriptor, resource_path, skill_home)
+        for resource_path in descriptor.resource_paths
+    }
+    installed = all(destination.is_file() for destination in destinations.values())
+    matches = installed and all(
+        assets.content_matches_package(destinations[resource_path], expected_text=content)
+        for resource_path, content in expected.items()
+    )
+    return SkillAssetResult(
+        directory_name=descriptor.directory_name,
+        path=paths.skill_path_for(descriptor, skill_home),
+        action=AssetAction.CURRENT if installed else AssetAction.NOT_FOUND,
+        matches_package=matches,
+    )
+
+
 def _expected_hook_command(context: IntegrationTargetContext) -> str | None:
     if context.target == CodexIntegrationTarget.WSL_CLI:
         if not context.hook_script_path.is_file():
@@ -224,17 +304,7 @@ def install_integrations(
 
     skill_results: list[SkillAssetResult] = []
     for descriptor in assets.OWNED_SKILLS:
-        destination = paths.skill_path_for(descriptor, context.skill_home)
-        content = assets.load_skill_content(descriptor)
-        action = _install_text_file(destination, content)
-        skill_results.append(
-            SkillAssetResult(
-                directory_name=descriptor.directory_name,
-                path=destination,
-                action=action,
-                matches_package=True,
-            )
-        )
+        skill_results.append(_install_owned_skill(descriptor, context.skill_home))
     handoff_skill = next(
         item for item in skill_results if item.directory_name == assets.SKILL_DIRECTORY_NAME
     )
@@ -357,26 +427,7 @@ def uninstall_integrations(
             hooks_action = AssetAction.UPDATED
 
     for descriptor in assets.OWNED_SKILLS:
-        destination = paths.skill_path_for(descriptor, context.skill_home)
-        if destination.is_file():
-            destination.unlink()
-            with suppress(OSError):
-                destination.parent.rmdir()
-            skill_results.append(
-                SkillAssetResult(
-                    directory_name=descriptor.directory_name,
-                    path=destination,
-                    action=AssetAction.REMOVED,
-                )
-            )
-        else:
-            skill_results.append(
-                SkillAssetResult(
-                    directory_name=descriptor.directory_name,
-                    path=destination,
-                    action=AssetAction.NOT_FOUND,
-                )
-            )
+        skill_results.append(_uninstall_owned_skill(descriptor, context.skill_home))
     handoff_skill = next(
         item for item in skill_results if item.directory_name == assets.SKILL_DIRECTORY_NAME
     )
@@ -500,10 +551,9 @@ def collect_integration_status(
     skill_statuses: list[SkillAssetResult] = []
     any_skill_missing = False
     for descriptor in assets.OWNED_SKILLS:
-        destination = paths.skill_path_for(descriptor, context.skill_home)
-        expected = assets.load_skill_content(descriptor)
-        installed = destination.is_file()
-        matches = assets.content_matches_package(destination, expected_text=expected)
+        skill_status = _owned_skill_status(descriptor, context.skill_home)
+        installed = skill_status.action != AssetAction.NOT_FOUND
+        matches = skill_status.matches_package
         if not installed:
             any_skill_missing = True
         if installed and not matches:
@@ -511,14 +561,7 @@ def collect_integration_status(
                 f"Skill {descriptor.directory_name} differs from package content; "
                 "reinstall to update."
             )
-        skill_statuses.append(
-            SkillAssetResult(
-                directory_name=descriptor.directory_name,
-                path=destination,
-                action=AssetAction.CURRENT if installed else AssetAction.NOT_FOUND,
-                matches_package=matches,
-            )
-        )
+        skill_statuses.append(skill_status)
 
     skill_installed = skill_destination.is_file()
     hook_installed = hook_destination.is_file()
