@@ -59,6 +59,9 @@ def test_built_wheel_includes_integration_assets(tmp_path: Path) -> None:
     assert wheels
     with zipfile.ZipFile(wheels[-1]) as archive:
         names = archive.namelist()
+        metadata_name = next(name for name in names if name.endswith(".dist-info/METADATA"))
+        metadata = archive.read(metadata_name).decode("utf-8")
+    assert "Requires-Dist: jsonschema>=4.0" in metadata
     assert any("integrations/codex/skill/SKILL.md" in name for name in names)
     assert any("integrations/codex/controller_skill/SKILL.md" in name for name in names)
     assert any("integrations/codex/fallback_recovery_skill/SKILL.md" in name for name in names)

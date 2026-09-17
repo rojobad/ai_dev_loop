@@ -11,6 +11,7 @@ name = "ai-dev-loop"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "jsonschema" },
     { name = "platformdirs" },
     { name = "pydantic" },
     { name = "pyyaml" },
@@ -20,7 +21,6 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "build" },
-    { name = "jsonschema" },
     { name = "mkdocs" },
     { name = "mkdocs-material" },
     { name = "mypy" },
@@ -32,7 +32,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.0" },
-    { name = "jsonschema", marker = "extra == 'dev'", specifier = ">=4.0" },
+    { name = "jsonschema", specifier = ">=4.0" },
     { name = "mkdocs", marker = "extra == 'dev'", specifier = ">=1.6,<2.0" },
     { name = "mkdocs-material", marker = "extra == 'dev'", specifier = ">=9.0,<10.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8" },
