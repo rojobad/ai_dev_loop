@@ -24,6 +24,10 @@ from ai_dev_loop.scheduler.application.review_recovery import (
     analyze_blocked_review_recovery,
     materialize_review_recovery_successor,
 )
+from ai_dev_loop.scheduler.application.safe_actions import safe_next_action_for_scheduler_state
+from ai_dev_loop.scheduler.application.sequence_review_recovery import (
+    recover_blocked_sequence_review_run,
+)
 from ai_dev_loop.scheduler.domain.events import (
     CodexCapacityRetryAuthorizedEvent,
     CodexReviewRetryRequestedEvent,
@@ -120,6 +124,45 @@ class ReviewRetryService:
 
     def _recover_blocked_source(self, source_run_id: str, *, now: datetime) -> ReviewRetryResult:
         with self.store.begin_read() as conn:
+            state, _, _ = self.store.load_validated_snapshot(conn, source_run_id)
+            sequence_binding = state.context.sequence
+        if sequence_binding is not None:
+            return self._recover_blocked_sequence_source(source_run_id, now=now)
+        return self._recover_standalone_blocked_source(source_run_id, now=now)
+
+    def _recover_blocked_sequence_source(
+        self,
+        source_run_id: str,
+        *,
+        now: datetime,
+    ) -> ReviewRetryResult:
+        outcome = recover_blocked_sequence_review_run(
+            self.store,
+            self.artifacts,
+            source_run_id,
+            now=now,
+            run_id_factory=self._run_id_factory,
+            event_id_factory=self._event_id_factory,
+        )
+        return self._recovery_replay_result(
+            source_run_id=source_run_id,
+            successor_run_id=outcome.successor_run_id,
+            changed=outcome.changed,
+        )
+
+    def _recover_standalone_blocked_source(
+        self,
+        source_run_id: str,
+        *,
+        now: datetime,
+    ) -> ReviewRetryResult:
+        with self.store.begin_read() as conn:
+            state, _, _ = self.store.load_validated_snapshot(conn, source_run_id)
+            if state.context.sequence is not None:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.VALIDATION,
+                    "sequence-bound blocked run must use sequence review recovery",
+                )
             existing_successor = self._find_existing_recovery_successor(conn, source_run_id)
         if existing_successor is not None:
             return self._recovery_replay_result(
@@ -178,6 +221,11 @@ class ReviewRetryService:
     ) -> ReviewRetryResult:
         with self.store.begin_read() as conn:
             successor, _, _ = self.store.load_validated_snapshot(conn, successor_run_id)
+            safe_action = safe_next_action_for_scheduler_state(
+                self.store,
+                conn,
+                successor,
+            )
         if isinstance(successor, AwaitingCodexReviewState):
             replay = self._replay_awaiting_codex_review(successor)
             if replay is not None:
@@ -188,6 +236,7 @@ class ReviewRetryService:
                         "changed": changed,
                         "idempotent_replay": not changed,
                         "recovery_successor": True,
+                        "safe_next_action": safe_action,
                     }
                 )
         return ReviewRetryResult(
@@ -197,7 +246,7 @@ class ReviewRetryService:
             changed=changed,
             idempotent_replay=not changed,
             recovery_successor=True,
-            safe_next_action=awaiting_codex_review_safe_next_action(),
+            safe_next_action=safe_action,
         )
 
     def _retry_capacity_wait_state(

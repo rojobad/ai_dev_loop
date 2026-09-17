@@ -506,6 +506,33 @@ class WaitingCodexCapacityState(SchedulerRunBase):
         return self
 
 
+class PendingSequenceReviewRecoveryState(SchedulerRunBase):
+    """Sequence recovery successor materialized but not yet adopted as the sequence leaf."""
+
+    kind: Literal["pending_sequence_review_recovery"] = "pending_sequence_review_recovery"
+    schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
+    checkpoint: AdmittedRunCheckpoint
+    cursor: CursorWorkflowCheckpoint
+    codex: CodexWorkflowCheckpoint = Field(default_factory=CodexWorkflowCheckpoint)
+    recovery: ReviewRecoveryLineage | None = None
+    sequence_replacement_sequence_id: NonEmptyStr
+    sequence_replacement_recovery_key: NonEmptyStr
+    sequence_replacement_source_run_id: NonEmptyStr
+
+    @field_validator("schema_version")
+    @classmethod
+    def schema_version_is_four(cls, value: int) -> int:
+        return _schema_version_is_four(value)
+
+    @model_validator(mode="after")
+    def pending_sequence_recovery_fields_required(self) -> PendingSequenceReviewRecoveryState:
+        if not self.cursor.staged_patch_path or not self.cursor.staged_patch_sha256:
+            raise ValueError("pending_sequence_review_recovery requires staged patch artifacts")
+        if not self.codex.reviewer_session_id:
+            raise ValueError("pending_sequence_review_recovery requires bound reviewer identity")
+        return self
+
+
 class AwaitingCodexReviewState(SchedulerRunBase):
     """Run staged and waiting for Phase 17.5 Codex review bootstrap or resume."""
 
@@ -716,6 +743,7 @@ SchedulerState = Annotated[
     | Annotated[CursorReadyState, Tag("cursor_ready")]
     | Annotated[WaitingUsageLimitState, Tag("waiting_usage_limit")]
     | Annotated[WaitingCodexCapacityState, Tag("waiting_codex_capacity")]
+    | Annotated[PendingSequenceReviewRecoveryState, Tag("pending_sequence_review_recovery")]
     | Annotated[AwaitingCodexReviewState, Tag("awaiting_codex_review")]
     | Annotated[WaitingCodexReviewRetryState, Tag("waiting_codex_review_retry")]
     | Annotated[WaitingForCursorFixState, Tag("waiting_for_cursor_fix")]
@@ -773,6 +801,7 @@ def parse_scheduler_state(
     | CursorReadyState
     | WaitingUsageLimitState
     | WaitingCodexCapacityState
+    | PendingSequenceReviewRecoveryState
     | AwaitingCodexReviewState
     | WaitingCodexReviewRetryState
     | WaitingForCursorFixState
@@ -793,6 +822,7 @@ def parse_scheduler_state(
             CursorReadyState,
             WaitingUsageLimitState,
             WaitingCodexCapacityState,
+            PendingSequenceReviewRecoveryState,
             AwaitingCodexReviewState,
             WaitingCodexReviewRetryState,
             WaitingForCursorFixState,

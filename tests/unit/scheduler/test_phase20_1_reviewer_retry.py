@@ -124,7 +124,7 @@ class TestSchemaMigration:
     def test_v6_migration_adds_review_retry_tables(self, tmp_path: Path) -> None:
         db = tmp_path / "engine.sqlite3"
         store = SqliteSchedulerStore(db)
-        assert SCHEMA_VERSION == 9
+        assert SCHEMA_VERSION == 11
         with store.begin_read() as conn:
             tables = {
                 row[0]

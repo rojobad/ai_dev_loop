@@ -139,11 +139,73 @@ def validate_sequence_lifecycle_transition(
     new: object,
 ) -> None:
     if isinstance(new, ActiveSequenceState) and isinstance(
-        current, (AbortPendingSequenceState, BlockedSequenceState, AbortedSequenceState)
+        current, (AbortPendingSequenceState, AbortedSequenceState)
     ):
         raise SequenceLifecycleValidationError(
             "terminal sequence state cannot transition back to active"
         )
+    if isinstance(new, AbortedSequenceState) and isinstance(current, BlockedSequenceState):
+        if new.current_run_id != current.current_run_id:
+            raise SequenceLifecycleValidationError("blocked abort must preserve current_run_id")
+        if new.current_ordinal != current.current_ordinal:
+            raise SequenceLifecycleValidationError("blocked abort must preserve current_ordinal")
+        if new.materialized_entries != current.materialized_entries:
+            raise SequenceLifecycleValidationError(
+                "blocked abort must preserve materialized_entries"
+            )
+        if new.preserved_current_leaf_terminal != "blocked":
+            raise SequenceLifecycleValidationError(
+                "blocked abort must preserve blocked leaf terminal outcome"
+            )
+        if new.preserved_current_leaf_resolved_at != current.blocked_at:
+            raise SequenceLifecycleValidationError(
+                "blocked abort must preserve blocked leaf resolution timestamp"
+            )
+        return
+    if isinstance(new, ActiveSequenceState) and isinstance(current, BlockedSequenceState):
+        if new.sequence_id != current.sequence_id:
+            raise SequenceLifecycleValidationError("review recovery must preserve sequence_id")
+        if new.definition != current.definition:
+            raise SequenceLifecycleValidationError("review recovery must preserve definition")
+        if new.current_ordinal != current.current_ordinal:
+            raise SequenceLifecycleValidationError("review recovery must preserve current_ordinal")
+        if new.residual_risk_ordinals != current.residual_risk_ordinals:
+            raise SequenceLifecycleValidationError(
+                "review recovery must preserve residual_risk_ordinals"
+            )
+        if new.version != current.version + 1:
+            raise SequenceLifecycleValidationError("review recovery must increment version")
+        blocked_entry = next(
+            (
+                entry
+                for entry in current.materialized_entries
+                if entry.ordinal == current.current_ordinal
+            ),
+            None,
+        )
+        active_entry = next(
+            (entry for entry in new.materialized_entries if entry.ordinal == new.current_ordinal),
+            None,
+        )
+        if blocked_entry is None or active_entry is None:
+            raise SequenceLifecycleValidationError(
+                "review recovery must retain materialized current ordinal"
+            )
+        if blocked_entry.entry_hash != active_entry.entry_hash:
+            raise SequenceLifecycleValidationError("review recovery must preserve entry_hash")
+        if blocked_entry.run_id != current.current_run_id:
+            raise SequenceLifecycleValidationError(
+                "blocked sequence current_run_id disagrees with materialized entry"
+            )
+        if active_entry.run_id != new.current_run_id:
+            raise SequenceLifecycleValidationError(
+                "active sequence current_run_id disagrees with materialized entry"
+            )
+        if active_entry.run_id == blocked_entry.run_id:
+            raise SequenceLifecycleValidationError(
+                "review recovery must advance the materialized current run"
+            )
+        return
     if (
         isinstance(current, AbortedSequenceState)
         and isinstance(new, AbortedSequenceState)

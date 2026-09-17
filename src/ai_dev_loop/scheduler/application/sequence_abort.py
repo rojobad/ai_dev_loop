@@ -20,7 +20,7 @@ from ai_dev_loop.scheduler.application.contracts import (
 )
 from ai_dev_loop.scheduler.application.sequence_reconcile import SequenceReconcileService
 from ai_dev_loop.scheduler.application.systemd_backend import SystemdUserBackend
-from ai_dev_loop.scheduler.domain.events import SequenceAbortRequestedEvent
+from ai_dev_loop.scheduler.domain.events import SequenceAbortedEvent, SequenceAbortRequestedEvent
 from ai_dev_loop.scheduler.domain.sequence import (
     ABORT_PENDING_SEQUENCE_STATE_KIND,
     ABORTED_SEQUENCE_STATE_KIND,
@@ -77,10 +77,7 @@ class SequenceAbortService:
                 "cannot abort sequence awaiting finalization",
             )
         if isinstance(state, BlockedSequenceState):
-            raise SchedulerEngineError(
-                SchedulerEngineErrorKind.CONFLICT,
-                f"cannot abort blocked sequence ({state.block_reason_kind})",
-            )
+            return self._abort_blocked(state, reason=reason, now=now)
         if isinstance(state, AbortPendingSequenceState):
             return self._reconcile_pending_abort(state, now=now)
 
@@ -189,6 +186,113 @@ class SequenceAbortService:
             db_path=self.store.db_path,
         )
         return AbortProcessAction.NONE
+
+    def _abort_blocked(
+        self,
+        state: BlockedSequenceState,
+        *,
+        reason: str,
+        now: datetime,
+    ) -> SequenceAbortResult:
+        now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        source_run_id = state.current_run_id
+        cancelled = future_entry_ordinals(state.definition, state.current_ordinal)
+        aborted = AbortedSequenceState(
+            schema_version=state.schema_version,
+            sequence_id=state.sequence_id,
+            version=state.version + 1,
+            prepared_at=state.prepared_at,
+            updated_at=now_text,
+            started_at=state.started_at,
+            aborted_at=now_text,
+            abort_reason=reason,
+            idempotency_key=state.idempotency_key,
+            definition=state.definition,
+            current_ordinal=state.current_ordinal,
+            current_run_id=source_run_id,
+            materialized_entries=state.materialized_entries,
+            residual_risk_ordinals=state.residual_risk_ordinals,
+            cancelled_ordinals=cancelled,
+            preserved_current_leaf_terminal="blocked",
+            preserved_current_leaf_resolved_at=state.blocked_at,
+        )
+        abort_request = SequenceAbortRequestedEvent(
+            sequence_id=state.sequence_id,
+            reason=reason,
+            current_run_id=source_run_id,
+        )
+        aborted_event = SequenceAbortedEvent(
+            sequence_id=state.sequence_id,
+            reason=reason,
+            current_run_id=source_run_id,
+            cancelled_ordinal_count=len(cancelled),
+        )
+        idempotent = False
+        with self.store.begin_immediate() as conn:
+            self.store.cancel_outstanding_sequence_execution_replacements(
+                conn,
+                sequence_id=state.sequence_id,
+                source_run_id=source_run_id,
+                now=now,
+            )
+            if not self.store.has_sequence_abort_requested_for_run(
+                conn,
+                run_id=source_run_id,
+                sequence_id=state.sequence_id,
+            ):
+                event_id = self._event_id_factory()
+                sequence_num = self.store.next_event_sequence(conn, source_run_id)
+                self.store.append_event(
+                    conn,
+                    event_id=event_id,
+                    run_id=source_run_id,
+                    sequence=sequence_num,
+                    event=abort_request,
+                    now=now,
+                )
+            if not self.store.compare_and_swap_sequence_state(
+                conn,
+                sequence_id=state.sequence_id,
+                expected_version=state.version,
+                new_state=aborted,
+                now=now,
+            ):
+                refreshed = self.store.load_validated_sequence_state(
+                    conn,
+                    state.sequence_id,
+                    validate_lineage=False,
+                )
+                if isinstance(refreshed, AbortedSequenceState):
+                    return self._idempotent_aborted(refreshed)
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CONFLICT,
+                    "sequence changed during blocked abort",
+                )
+            event_id = self._event_id_factory()
+            sequence_num = self.store.next_event_sequence(conn, source_run_id)
+            self.store.append_event(
+                conn,
+                event_id=event_id,
+                run_id=source_run_id,
+                sequence=sequence_num,
+                event=aborted_event,
+                now=now,
+            )
+            worktree_key = state.definition.repository.worktree_key
+            reservation = self.store.get_reservation_for_run(conn, source_run_id)
+            if reservation is not None and str(reservation["worktree_key"]) == worktree_key:
+                self.store.release_reservation(conn, worktree_key=worktree_key, now=now)
+        with self.store.begin_read() as conn:
+            self.store.load_validated_sequence_state(conn, state.sequence_id)
+        return SequenceAbortResult(
+            sequence_id=state.sequence_id,
+            state_kind=ABORTED_SEQUENCE_STATE_KIND,
+            abort_persisted=True,
+            idempotent_replay=idempotent,
+            run_abort_process_action=AbortProcessAction.NONE,
+            run_termination_pending=False,
+            safe_next_action=aborted_sequence_safe_next_action(state.sequence_id),
+        )
 
     def _abort_active(
         self,

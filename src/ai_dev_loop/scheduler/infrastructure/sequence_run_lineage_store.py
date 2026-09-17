@@ -452,7 +452,9 @@ def compare_and_swap_sequence_execution_leaf(
     superseded_terminal_outcome: SequenceTerminalOutcome = "blocked",
 ) -> bool:
     current = store.load_sequence_state_only(conn, sequence_id)
-    if not isinstance(current, ActiveSequenceState):
+    from ai_dev_loop.scheduler.domain.sequence import BlockedSequenceState
+
+    if not isinstance(current, (ActiveSequenceState, BlockedSequenceState)):
         return False
     if not isinstance(updated_sequence_state, ActiveSequenceState):
         raise SchedulerEngineError(
@@ -508,14 +510,15 @@ def compare_and_swap_sequence_execution_leaf(
         validate_lineage=False,
     ):
         return False
-    resolve_sequence_attempt_terminal(
-        conn,
-        sequence_id=sequence_id,
-        ordinal=ordinal,
-        run_id=expected_current_run_id,
-        terminal_outcome=superseded_terminal_outcome,
-        resolved_at=now,
-    )
+    if isinstance(current, ActiveSequenceState):
+        resolve_sequence_attempt_terminal(
+            conn,
+            sequence_id=sequence_id,
+            ordinal=ordinal,
+            run_id=expected_current_run_id,
+            terminal_outcome=superseded_terminal_outcome,
+            resolved_at=now,
+        )
     insert_sequence_run_attempt(
         conn,
         sequence_id=sequence_id,

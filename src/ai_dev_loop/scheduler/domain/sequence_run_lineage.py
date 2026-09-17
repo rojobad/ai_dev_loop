@@ -471,6 +471,8 @@ def _expected_terminal_for_phase(
     if isinstance(state, BlockedSequenceState):
         return "blocked"
     if isinstance(state, AbortedSequenceState):
+        if ordinal == current_ordinal and state.preserved_current_leaf_terminal is not None:
+            return state.preserved_current_leaf_terminal
         return "aborted"
     return None
 
@@ -494,6 +496,13 @@ def _expected_resolved_at_for_phase(
     current_ordinal = state.current_ordinal
     if current_ordinal is None:
         raise SequenceRunLineageValidationError("materialized sequence missing current ordinal")
+    if (
+        isinstance(state, AbortedSequenceState)
+        and ordinal == current_ordinal
+        and state.preserved_current_leaf_resolved_at is not None
+        and expected == state.preserved_current_leaf_terminal
+    ):
+        return state.preserved_current_leaf_resolved_at
     return _historical_resolved_at_for_phase(
         state.materialized_entries,
         ordinal,

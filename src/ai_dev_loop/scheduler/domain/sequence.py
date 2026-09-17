@@ -344,6 +344,8 @@ class AbortedSequenceState(DomainModel):
     materialized_entries: tuple[MaterializedSequenceEntry, ...] = ()
     residual_risk_ordinals: tuple[int, ...] = ()
     cancelled_ordinals: tuple[int, ...] = ()
+    preserved_current_leaf_terminal: Literal["blocked"] | None = None
+    preserved_current_leaf_resolved_at: NonEmptyStr | None = None
 
     @field_validator("version")
     @classmethod
@@ -351,6 +353,22 @@ class AbortedSequenceState(DomainModel):
         if value < 1:
             raise ValueError("version must be >= 1")
         return value
+
+    @model_validator(mode="after")
+    def preserved_leaf_fields_consistent(self) -> AbortedSequenceState:
+        if self.preserved_current_leaf_terminal is None:
+            if self.preserved_current_leaf_resolved_at is not None:
+                raise ValueError(
+                    "preserved_current_leaf_resolved_at requires preserved_current_leaf_terminal"
+                )
+            return self
+        if self.preserved_current_leaf_resolved_at is None:
+            raise ValueError(
+                "preserved_current_leaf_terminal requires preserved_current_leaf_resolved_at"
+            )
+        if self.current_ordinal is None or self.current_run_id is None:
+            raise ValueError("preserved blocked leaf abort requires current run pointers")
+        return self
 
 
 class SequencePhaseReportEntry(DomainModel):

@@ -282,6 +282,7 @@ class SequenceStatusService:
 
         if isinstance(state, BlockedSequenceState):
             run_state, _, _ = self.store.load_validated_snapshot(conn, state.current_run_id)
+            run_block_kind = getattr(run_state, "block_reason_kind", None)
             return SequenceStatusResult(
                 sequence_id=state.sequence_id,
                 name=definition.name,
@@ -305,6 +306,8 @@ class SequenceStatusService:
                 safe_next_action=blocked_sequence_safe_next_action(
                     state.sequence_id,
                     block_reason_kind=state.block_reason_kind,
+                    current_run_id=state.current_run_id,
+                    run_block_reason_kind=run_block_kind,
                 ),
             )
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -554,7 +555,8 @@ def _authenticate_bootstrap_and_resume_identity(
     store: SqliteSchedulerStore,
     artifacts: ProtectedArtifactStore,
     *,
-    source_run_id: str,
+    evidence_run_id: str,
+    blocked_run_id: str,
     reviewer_bound_event: CodexReviewerBoundEvent,
     staging_iteration: int,
     bootstrap_attempt: object,
@@ -564,7 +566,7 @@ def _authenticate_bootstrap_and_resume_identity(
 ) -> tuple[str, str, RecoveryCopyManifestEntry]:
     try:
         binding_bytes = artifacts.read_verified_bytes(
-            source_run_id,
+            evidence_run_id,
             reviewer_bound_event.binding_artifact_path,
             expected_sha256=reviewer_bound_event.binding_artifact_sha256,
         )
@@ -601,7 +603,7 @@ def _authenticate_bootstrap_and_resume_identity(
     bootstrap_outcome, bootstrap_effect_kind = _authenticate_codex_attempt(
         store,
         artifacts,
-        source_run_id=source_run_id,
+        source_run_id=evidence_run_id,
         attempt=bootstrap_attempt,
     )
     if bootstrap_effect_kind != BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND:
@@ -623,7 +625,7 @@ def _authenticate_bootstrap_and_resume_identity(
         )
     _verify_bounded_artifact_digest(
         artifacts,
-        source_run_id,
+        evidence_run_id,
         bootstrap_events_rel,
         expected_events_sha,
         max_bytes=MAX_CODEX_EVENTS_ARTIFACT_BYTES,
@@ -675,6 +677,46 @@ def _dedupe_manifest(
     return tuple(deduped.values())
 
 
+def _run_has_cursor_staging_ledger_evidence(
+    store: SqliteSchedulerStore,
+    conn: sqlite3.Connection,
+    run_id: str,
+) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1 FROM scheduler_events
+        WHERE run_id = ?
+          AND event_kind IN (?, ?, ?)
+        LIMIT 1
+        """,
+        (
+            run_id,
+            CURSOR_CHAT_CREATED_EVENT_KIND,
+            STAGING_COMPLETED_EVENT_KIND,
+            CURSOR_TURN_COMPLETED_EVENT_KIND,
+        ),
+    ).fetchone()
+    return row is not None
+
+
+def resolve_recovery_ledger_evidence_run_id(
+    store: SqliteSchedulerStore,
+    conn: sqlite3.Connection,
+    source_run_id: str,
+) -> str:
+    current = source_run_id
+    visited: set[str] = set()
+    while current not in visited:
+        visited.add(current)
+        if _run_has_cursor_staging_ledger_evidence(store, conn, current):
+            return current
+        row = store.get_review_recovery_source_for_successor(conn, successor_run_id=current)
+        if row is None:
+            break
+        current = str(row["source_run_id"])
+    return source_run_id
+
+
 def analyze_blocked_review_recovery(
     store: SqliteSchedulerStore,
     artifacts: ProtectedArtifactStore,
@@ -697,7 +739,8 @@ def analyze_blocked_review_recovery(
                 SchedulerEngineErrorKind.CONFLICT,
                 "source run still has a nonterminal attempt",
             )
-        events = store.list_events_for_run(conn, source_run_id, limit=500, newest_first=False)
+        evidence_run_id = resolve_recovery_ledger_evidence_run_id(store, conn, source_run_id)
+        events = store.list_events_for_run(conn, evidence_run_id, limit=500, newest_first=False)
 
     chat_event: CursorChatCreatedEvent | None = None
     staging_event: StagingCompletedEvent | None = None
@@ -745,10 +788,10 @@ def analyze_blocked_review_recovery(
 
     with store.begin_read() as conn:
         attempt = store.get_latest_recorded_codex_attempt(conn, source_run_id)
-        bootstrap_attempt = store.get_codex_bootstrap_attempt(conn, source_run_id)
+        bootstrap_attempt = store.get_codex_bootstrap_attempt(conn, evidence_run_id)
         cursor_attempt = store.get_cursor_turn_attempt_for_iteration(
             conn,
-            run_id=source_run_id,
+            run_id=evidence_run_id,
             iteration=staging_event.iteration,
         )
     if attempt is None:
@@ -768,7 +811,6 @@ def analyze_blocked_review_recovery(
         )
 
     failed_attempt_id = str(attempt["attempt_id"])
-    run_root = artifacts.run_root(source_run_id)
     failed_outcome, failed_effect_kind = _authenticate_codex_attempt(
         store,
         artifacts,
@@ -801,7 +843,8 @@ def analyze_blocked_review_recovery(
         _authenticate_bootstrap_and_resume_identity(
             store,
             artifacts,
-            source_run_id=source_run_id,
+            evidence_run_id=evidence_run_id,
+            blocked_run_id=source_run_id,
             reviewer_bound_event=reviewer_bound_event,
             staging_iteration=staging_event.iteration,
             bootstrap_attempt=bootstrap_attempt,
@@ -810,8 +853,9 @@ def analyze_blocked_review_recovery(
             failed_effect_kind=failed_effect_kind,
         )
     )
+    failed_run_root = artifacts.run_root(source_run_id)
     _verify_operational_recovery_eligibility(
-        run_root=run_root,
+        run_root=failed_run_root,
         outcome=failed_outcome,
         review_iteration=review_iteration,
         effect_kind=failed_effect_kind,
@@ -843,15 +887,15 @@ def analyze_blocked_review_recovery(
 
     manifest_entries: list[RecoveryCopyManifestEntry] = []
     manifest_entries.extend(
-        _authenticate_frozen_context_artifacts(state.context, artifacts, source_run_id)
+        _authenticate_frozen_context_artifacts(state.context, artifacts, evidence_run_id)
     )
     manifest_entries.append(
-        _manifest_entry(artifacts, source_run_id, admission_path, admission_sha)
+        _manifest_entry(artifacts, evidence_run_id, admission_path, admission_sha)
     )
     manifest_entries.append(
         _manifest_entry(
             artifacts,
-            source_run_id,
+            evidence_run_id,
             chat_event.chat_artifact_path,
             chat_event.chat_artifact_sha256,
         )
@@ -859,7 +903,7 @@ def analyze_blocked_review_recovery(
     manifest_entries.append(
         _require_cursor_fingerprint_artifact(
             artifacts,
-            source_run_id,
+            evidence_run_id,
             turn_event.cursor_output_fingerprint_path,
             turn_event.cursor_output_fingerprint_sha256,
         )
@@ -867,7 +911,7 @@ def analyze_blocked_review_recovery(
     manifest_entries.append(
         _manifest_entry(
             artifacts,
-            source_run_id,
+            evidence_run_id,
             staging_event.staged_patch_path,
             staging_event.staged_patch_sha256,
         )
@@ -875,7 +919,7 @@ def analyze_blocked_review_recovery(
     manifest_entries.append(
         _manifest_entry(
             artifacts,
-            source_run_id,
+            evidence_run_id,
             reviewer_bound_event.binding_artifact_path,
             reviewer_bound_event.binding_artifact_sha256,
         )
@@ -883,7 +927,7 @@ def analyze_blocked_review_recovery(
     cursor_outcome = _authenticate_cursor_turn_attempt(
         store,
         artifacts,
-        source_run_id=source_run_id,
+        source_run_id=evidence_run_id,
         attempt=cursor_attempt,
         expected_iteration=staging_event.iteration,
     )
@@ -891,7 +935,7 @@ def analyze_blocked_review_recovery(
     manifest_entries.extend(
         _authenticate_cursor_final_response(
             artifacts,
-            source_run_id=source_run_id,
+            source_run_id=evidence_run_id,
             cursor_attempt_id=cursor_attempt_id,
             iteration=staging_event.iteration,
             cursor_outcome=cursor_outcome,
@@ -955,13 +999,13 @@ def analyze_blocked_review_recovery(
 def _copy_recovery_artifacts(
     artifacts: ProtectedArtifactStore,
     *,
-    source_run_id: str,
+    artifact_source_run_id: str,
     successor_run_id: str,
     manifest: tuple[RecoveryCopyManifestEntry, ...],
 ) -> None:
     for entry in manifest:
         content = artifacts.read_verified_bytes(
-            source_run_id,
+            artifact_source_run_id,
             entry.relative_path,
             expected_sha256=entry.expected_sha256,
         )
@@ -970,7 +1014,7 @@ def _copy_recovery_artifacts(
                 SchedulerEngineErrorKind.VALIDATION,
                 f"recovery artifact exceeds size bound: {entry.relative_path}",
             )
-        artifacts.write_bytes(
+        artifacts.publish_or_verify_bytes(
             successor_run_id,
             entry.relative_path,
             content,
@@ -1041,9 +1085,11 @@ def materialize_review_recovery_successor(
         if existing is not None:
             return str(existing["successor_run_id"])
 
+    with store.begin_read() as conn:
+        artifact_source_run_id = resolve_recovery_ledger_evidence_run_id(store, conn, source_run_id)
     _copy_recovery_artifacts(
         artifacts,
-        source_run_id=source_run_id,
+        artifact_source_run_id=artifact_source_run_id,
         successor_run_id=successor_run_id,
         manifest=evidence.copy_manifest,
     )
