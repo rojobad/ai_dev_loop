@@ -419,6 +419,51 @@ def _current_leaf_run_id(
     return str(row["run_id"])
 
 
+def authenticate_checkpoint_successor_replacement_chain(
+    conn: sqlite3.Connection,
+    *,
+    sequence_id: str,
+    ordinal: int,
+    recorded_successor_run_id: str,
+    current_leaf_run_id: str,
+) -> None:
+    """Verify checkpointed successor links to the current leaf through lineage attempts."""
+
+    from ai_dev_loop.errors import ValidationError as AppValidationError
+
+    rows = conn.execute(
+        """
+        SELECT generation, run_id, source_run_id, attempt_kind
+        FROM scheduler_sequence_run_attempts
+        WHERE sequence_id = ? AND ordinal = ?
+        ORDER BY generation ASC
+        """,
+        (sequence_id, ordinal),
+    ).fetchall()
+    if not rows:
+        raise AppValidationError("checkpoint successor lineage missing for ordinal")
+    root_run_id = str(rows[0]["run_id"])
+    if root_run_id != recorded_successor_run_id:
+        raise AppValidationError(
+            "checkpoint recorded successor disagrees with lineage root attempt"
+        )
+    leaf_run_id = str(rows[-1]["run_id"])
+    if leaf_run_id != current_leaf_run_id:
+        raise AppValidationError(
+            "checkpoint successor replacement chain does not reach current leaf"
+        )
+    for index in range(1, len(rows)):
+        row = rows[index]
+        previous_run_id = str(rows[index - 1]["run_id"])
+        source_run_id = row["source_run_id"]
+        if source_run_id is None or str(source_run_id) != previous_run_id:
+            raise AppValidationError("checkpoint successor replacement chain is broken")
+        if str(row["attempt_kind"]) != SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY:
+            raise AppValidationError(
+                "checkpoint successor replacement requires same_reviewer_retry"
+            )
+
+
 def _max_generation(
     conn: sqlite3.Connection,
     *,

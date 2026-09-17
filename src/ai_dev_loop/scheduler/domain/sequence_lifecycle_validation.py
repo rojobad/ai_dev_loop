@@ -254,3 +254,140 @@ def validate_sequence_lifecycle_transition(
             raise SequenceLifecycleValidationError(
                 "abort_pending must preserve residual_risk_ordinals"
             )
+        return
+    if isinstance(new, ActiveSequenceState) and isinstance(current, ActiveSequenceState):
+        if new.sequence_id != current.sequence_id:
+            raise SequenceLifecycleValidationError("handoff must preserve sequence_id")
+        if new.definition != current.definition:
+            raise SequenceLifecycleValidationError("handoff must preserve definition")
+        if new.version != current.version + 1:
+            raise SequenceLifecycleValidationError("handoff must increment version")
+        if new.current_ordinal == current.current_ordinal:
+            if new.residual_risk_ordinals != current.residual_risk_ordinals:
+                raise SequenceLifecycleValidationError(
+                    "execution-leaf replacement must preserve residual_risk_ordinals"
+                )
+            if len(new.materialized_entries) != len(current.materialized_entries):
+                raise SequenceLifecycleValidationError(
+                    "execution-leaf replacement must preserve materialized entry count"
+                )
+            if new.current_run_id == current.current_run_id:
+                raise SequenceLifecycleValidationError(
+                    "execution-leaf replacement must change current_run_id"
+                )
+            current_entry = new.materialized_entries[new.current_ordinal - 1]
+            if new.current_run_id != current_entry.run_id:
+                raise SequenceLifecycleValidationError(
+                    "execution-leaf current_run_id must match materialized current ordinal"
+                )
+            for index, (before, after) in enumerate(
+                zip(current.materialized_entries, new.materialized_entries, strict=True)
+            ):
+                if index == new.current_ordinal - 1:
+                    if before.ordinal != after.ordinal or before.entry_hash != after.entry_hash:
+                        raise SequenceLifecycleValidationError(
+                            "execution-leaf replacement must preserve entry identity"
+                        )
+                    if before.run_id == after.run_id:
+                        raise SequenceLifecycleValidationError(
+                            "execution-leaf replacement must advance materialized run_id"
+                        )
+                    continue
+                if before != after:
+                    raise SequenceLifecycleValidationError(
+                        "execution-leaf replacement must preserve unrelated materialized entries"
+                    )
+            return
+        if new.residual_risk_ordinals != current.residual_risk_ordinals:
+            previous = set(current.residual_risk_ordinals)
+            updated = set(new.residual_risk_ordinals)
+            if not previous.issubset(updated):
+                raise SequenceLifecycleValidationError(
+                    "handoff must not remove residual_risk ordinals"
+                )
+            added = updated - previous
+            if added != {current.current_ordinal}:
+                raise SequenceLifecycleValidationError(
+                    "handoff may only record residual risk for the predecessor ordinal"
+                )
+        if new.current_ordinal != current.current_ordinal + 1:
+            raise SequenceLifecycleValidationError("handoff must advance current_ordinal")
+        if len(new.materialized_entries) != len(current.materialized_entries) + 1:
+            raise SequenceLifecycleValidationError("handoff must append one materialized entry")
+        if (
+            new.materialized_entries[: len(current.materialized_entries)]
+            != current.materialized_entries
+        ):
+            raise SequenceLifecycleValidationError(
+                "handoff must preserve prior materialized entries"
+            )
+        if new.current_run_id != new.materialized_entries[-1].run_id:
+            raise SequenceLifecycleValidationError(
+                "handoff current_run_id must match new materialized leaf"
+            )
+        if current.current_run_id != current.materialized_entries[-1].run_id:
+            raise SequenceLifecycleValidationError(
+                "handoff requires authenticated predecessor leaf on current state"
+            )
+        return
+    if isinstance(new, BlockedSequenceState) and isinstance(current, ActiveSequenceState):
+        if new.sequence_id != current.sequence_id:
+            raise SequenceLifecycleValidationError("blocking must preserve sequence_id")
+        if new.definition != current.definition:
+            raise SequenceLifecycleValidationError("blocking must preserve definition")
+        if new.version != current.version + 1:
+            raise SequenceLifecycleValidationError("blocking must increment version")
+        if new.current_ordinal != current.current_ordinal:
+            raise SequenceLifecycleValidationError("blocking must preserve current_ordinal")
+        if new.current_run_id != current.current_run_id:
+            raise SequenceLifecycleValidationError("blocking must preserve current_run_id")
+        if new.materialized_entries != current.materialized_entries:
+            raise SequenceLifecycleValidationError("blocking must preserve materialized_entries")
+        if new.residual_risk_ordinals != current.residual_risk_ordinals:
+            raise SequenceLifecycleValidationError("blocking must preserve residual_risk_ordinals")
+        return
+    if isinstance(new, AwaitingFinalizationSequenceState) and isinstance(
+        current, ActiveSequenceState
+    ):
+        if new.sequence_id != current.sequence_id:
+            raise SequenceLifecycleValidationError("finalization must preserve sequence_id")
+        if new.definition != current.definition:
+            raise SequenceLifecycleValidationError("finalization must preserve definition")
+        if new.version != current.version + 1:
+            raise SequenceLifecycleValidationError("finalization must increment version")
+        if new.materialized_entries != current.materialized_entries:
+            raise SequenceLifecycleValidationError(
+                "finalization must preserve materialized entries"
+            )
+        final_ordinal = len(current.definition.entries)
+        if current.current_ordinal != final_ordinal:
+            raise SequenceLifecycleValidationError(
+                "finalization requires current ordinal at final phase"
+            )
+        if current.current_run_id != new.final_run_id:
+            raise SequenceLifecycleValidationError(
+                "finalization must accept the authenticated current leaf"
+            )
+        final_entry = next(
+            (entry for entry in current.materialized_entries if entry.ordinal == final_ordinal),
+            None,
+        )
+        if final_entry is None or final_entry.run_id != new.final_run_id:
+            raise SequenceLifecycleValidationError(
+                "final_run_id must match authenticated final materialized leaf"
+            )
+        if new.final_outcome == "completed_with_residual_risk":
+            expected_residual = tuple(
+                sorted(set(current.residual_risk_ordinals + (final_ordinal,)))
+            )
+            if new.residual_risk_ordinals != expected_residual:
+                raise SequenceLifecycleValidationError(
+                    "finalization residual_risk_ordinals must include final ordinal"
+                )
+        elif new.residual_risk_ordinals != current.residual_risk_ordinals:
+            raise SequenceLifecycleValidationError(
+                "finalization must preserve residual_risk_ordinals"
+            )
+        if new.final_outcome not in {"completed", "completed_with_residual_risk"}:
+            raise SequenceLifecycleValidationError("finalization requires accepted final outcome")
+        return

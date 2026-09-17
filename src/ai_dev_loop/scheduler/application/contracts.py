@@ -527,6 +527,10 @@ class SequenceEntrySummary(AppModel):
     residual_risk: bool = False
     checkpoint_commit_sha256_prefix: str | None = None
     cancelled: bool = False
+    attempt_count: int = 0
+    accepted_run_id_prefix: str | None = None
+    accepted_attempt_kind: str | None = None
+    attempt_kind_labels: tuple[str, ...] = ()
 
 
 class SequenceAggregateCounts(AppModel):
@@ -537,6 +541,7 @@ class SequenceAggregateCounts(AppModel):
     checkpointed: int
     cancelled: int
     remaining: int
+    attempts: int = 0
 
 
 class SequencePrepareResult(AppModel):

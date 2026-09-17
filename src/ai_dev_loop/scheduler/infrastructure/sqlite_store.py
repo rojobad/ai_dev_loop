@@ -39,7 +39,10 @@ from ai_dev_loop.scheduler.domain.state import (
 )
 
 if TYPE_CHECKING:
-    from ai_dev_loop.scheduler.domain.events import SchedulerEvent
+    from ai_dev_loop.scheduler.domain.events import (
+        SchedulerEvent,
+        SequenceCheckpointRequestedEvent,
+    )
     from ai_dev_loop.scheduler.domain.sequence import (
         AbortedSequenceState,
         AbortPendingSequenceState,
@@ -2743,6 +2746,63 @@ class SqliteSchedulerStore:
         ).fetchall()
         return [str(row["sequence_id"]) for row in rows]
 
+    def list_sequence_terminal_current_run_ids(self, conn: sqlite3.Connection) -> list[str]:
+        """Current materialized runs that are terminal but may still need sequence work."""
+        rows = conn.execute(
+            """
+            SELECT DISTINCT json_extract(s.payload, '$.current_run_id') AS run_id
+            FROM scheduler_sequences s
+            INNER JOIN scheduler_runs r
+              ON r.run_id = json_extract(s.payload, '$.current_run_id')
+            WHERE s.state_kind = 'active'
+              AND r.state_kind IN ('completed', 'completed_with_residual_risk')
+            ORDER BY r.created_at ASC, run_id ASC
+            """
+        ).fetchall()
+        return [str(row["run_id"]) for row in rows if row["run_id"] is not None]
+
+    def load_authoritative_sequence_checkpoint_requested_event(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+    ) -> SequenceCheckpointRequestedEvent | None:
+        from ai_dev_loop.scheduler.domain.events import (
+            SEQUENCE_CHECKPOINT_REQUESTED_EVENT_KIND,
+            SequenceCheckpointRequestedEvent,
+        )
+
+        row = conn.execute(
+            """
+            SELECT event_payload, event_payload_sha256
+            FROM scheduler_events
+            WHERE run_id = ? AND event_kind = ?
+            ORDER BY sequence DESC
+            LIMIT 1
+            """,
+            (run_id, SEQUENCE_CHECKPOINT_REQUESTED_EVENT_KIND),
+        ).fetchone()
+        if row is None:
+            return None
+        payload = str(row["event_payload"])
+        if payload_sha256(payload) != str(row["event_payload_sha256"]):
+            return None
+        event = SequenceCheckpointRequestedEvent.model_validate_json(payload)
+        if event.run_id != run_id:
+            return None
+        return event
+
+    def list_pending_sequence_review_recovery_run_ids(self, conn: sqlite3.Connection) -> list[str]:
+        rows = conn.execute(
+            """
+            SELECT run_id
+            FROM scheduler_runs
+            WHERE state_kind = 'pending_sequence_review_recovery'
+            ORDER BY created_at ASC, run_id ASC
+            """
+        ).fetchall()
+        return [str(row["run_id"]) for row in rows]
+
     def list_sequences_pending_report_publication(self, conn: sqlite3.Connection) -> list[str]:
         rows = conn.execute(
             """
@@ -4484,6 +4544,21 @@ class SqliteSchedulerStore:
             (source_run_id, recovery_key, successor_run_id, now_text),
         )
         return cursor.rowcount == 1
+
+    def list_unpublished_sequence_execution_replacement_intents(
+        self,
+        conn: sqlite3.Connection,
+    ) -> list[sqlite3.Row]:
+        rows = conn.execute(
+            """
+            SELECT source_run_id, recovery_key, successor_run_id, sequence_id
+            FROM scheduler_sequence_execution_replacements
+            WHERE published_at IS NULL
+              AND cancelled_at IS NULL
+            ORDER BY created_at ASC, source_run_id ASC, recovery_key ASC
+            """
+        ).fetchall()
+        return [cast(sqlite3.Row, row) for row in rows]
 
     def list_sequence_execution_replacement_intents_for_source(
         self,

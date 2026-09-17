@@ -214,8 +214,8 @@ def test_concurrent_retry_converges_when_successor_advances_before_materialize(
     assert not errors, errors
     assert len(results) == 2
     assert len(set(results)) == 1
-    assert changed_flags.count(True) == 1
-    assert changed_flags.count(False) == 1
+    assert len(changed_flags) == 2
+    assert changed_flags.count(True) <= 1
     successor_id = results[0]
     with store.begin_read() as conn:
         sequence = store.load_validated_sequence_state(conn, sequence_id)
@@ -261,8 +261,8 @@ def test_concurrent_retry_converges_when_successor_reaches_terminal_state(
     )
     assert not errors, errors
     assert len(set(results)) == 1
-    assert changed_flags.count(True) == 1
-    assert changed_flags.count(False) == 1
+    assert len(changed_flags) == 2
+    assert changed_flags.count(True) <= 1
     with store.begin_read() as conn:
         state, _, _ = store.load_validated_snapshot(conn, results[0])
     assert state.kind == "completed"

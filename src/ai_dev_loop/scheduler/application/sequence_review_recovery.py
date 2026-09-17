@@ -12,6 +12,7 @@ from typing import cast
 from ai_dev_loop.scheduler.application.contracts import (
     SchedulerEngineError,
     SchedulerEngineErrorKind,
+    TickRunReceipt,
 )
 from ai_dev_loop.scheduler.application.review_recovery import (
     BlockedReviewRecoveryEvidence,
@@ -258,6 +259,91 @@ def _sequence_recovery_publication_is_complete(
     )
 
 
+def resume_sequence_execution_replacement_intent(
+    store: SqliteSchedulerStore,
+    artifacts: ProtectedArtifactStore,
+    *,
+    conn: sqlite3.Connection,
+    source_run_id: str,
+    recovery_key: str,
+    now: datetime,
+    event_id_factory: Callable[[], str] | None = None,
+) -> TickRunReceipt | None:
+    validated = load_validated_sequence_execution_replacement_intent(
+        store,
+        conn,
+        source_run_id=source_run_id,
+        recovery_key=recovery_key,
+    )
+    if validated is None or validated.is_published or validated.is_cancelled:
+        return None
+    if store.has_sequence_abort_requested_for_run(
+        conn,
+        run_id=source_run_id,
+        sequence_id=validated.intent.sequence_id,
+    ):
+        return TickRunReceipt(
+            run_id=source_run_id,
+            action="sequence_recovery_intent_cancelled",
+        )
+    blocked_sequence = find_blocked_sequence_for_run(store, conn, source_run_id)
+    if blocked_sequence is None:
+        return None
+    try:
+        evidence = analyze_blocked_review_recovery(store, artifacts, source_run_id)
+    except SchedulerEngineError:
+        return TickRunReceipt(
+            run_id=source_run_id,
+            action="sequence_recovery_evidence_invalid",
+        )
+    recovery_binding = authenticate_sequence_review_recovery_binding(
+        store,
+        conn,
+        source_run_id=source_run_id,
+        context=evidence.context,
+        blocked_sequence=blocked_sequence,
+    )
+    successor_run_id = validated.intent.successor_run_id
+    run_row = conn.execute(
+        "SELECT run_id, state_kind FROM scheduler_runs WHERE run_id = ?",
+        (successor_run_id,),
+    ).fetchone()
+    factory = event_id_factory or (lambda: f"evt-{secrets.token_hex(16)}")
+    if run_row is None:
+        _materialize_pending_successor(
+            store,
+            artifacts,
+            evidence,
+            source_run_id=source_run_id,
+            successor_run_id=successor_run_id,
+            recovery_key=recovery_key,
+            sequence_id=blocked_sequence.sequence_id,
+            now=now,
+            event_id_factory=factory,
+            conn=conn,
+        )
+    adopted = _adopt_sequence_recovery_successor(
+        store,
+        evidence=evidence,
+        source_run_id=source_run_id,
+        blocked_sequence=blocked_sequence,
+        recovery_binding=recovery_binding,
+        successor_run_id=successor_run_id,
+        recovery_key=recovery_key,
+        now=now,
+        conn=conn,
+    )
+    if adopted:
+        return TickRunReceipt(
+            run_id=successor_run_id,
+            action="sequence_recovery_adoption_reconciled",
+        )
+    return TickRunReceipt(
+        run_id=successor_run_id,
+        action="sequence_recovery_adoption_complete",
+    )
+
+
 def _materialize_pending_successor(
     store: SqliteSchedulerStore,
     artifacts: ProtectedArtifactStore,
@@ -269,14 +355,15 @@ def _materialize_pending_successor(
     sequence_id: str,
     now: datetime,
     event_id_factory: Callable[[], str],
+    conn: sqlite3.Connection | None = None,
 ) -> bool:
     from ai_dev_loop.scheduler.application.review_recovery import (
         resolve_recovery_ledger_evidence_run_id,
     )
 
-    with store.begin_read() as conn:
+    def _preflight(active_conn: sqlite3.Connection) -> str:
         existing_row = store.get_review_recovery_successor(
-            conn,
+            active_conn,
             source_run_id=source_run_id,
             recovery_key=recovery_key,
         )
@@ -285,11 +372,25 @@ def _materialize_pending_successor(
                 SchedulerEngineErrorKind.CONFLICT,
                 "review recovery successor identity disagrees with replacement intent",
             )
+        active_conn.execute(
+            "SELECT run_id FROM scheduler_runs WHERE run_id = ?",
+            (successor_run_id,),
+        ).fetchone()
+        return resolve_recovery_ledger_evidence_run_id(store, active_conn, source_run_id)
+
+    if conn is not None:
+        artifact_source_run_id = _preflight(conn)
         run_row = conn.execute(
             "SELECT run_id FROM scheduler_runs WHERE run_id = ?",
             (successor_run_id,),
         ).fetchone()
-        artifact_source_run_id = resolve_recovery_ledger_evidence_run_id(store, conn, source_run_id)
+    else:
+        with store.begin_read() as read_conn:
+            artifact_source_run_id = _preflight(read_conn)
+            run_row = read_conn.execute(
+                "SELECT run_id FROM scheduler_runs WHERE run_id = ?",
+                (successor_run_id,),
+            ).fetchone()
     if run_row is None:
         artifacts.run_root(successor_run_id)
         _copy_recovery_artifacts(
@@ -330,32 +431,33 @@ def _materialize_pending_successor(
         review_iteration=evidence.cursor.iteration,
     )
     event_id = event_id_factory()
-    with store.begin_immediate() as conn:
+
+    def _materialize_on_conn(active_conn: sqlite3.Connection) -> bool:
         _reject_cancelled_replacement_intent(
             store,
-            conn,
+            active_conn,
             source_run_id=source_run_id,
             recovery_key=recovery_key,
         )
-        if store.get_nonterminal_attempt_for_run(conn, source_run_id) is not None:
+        if store.get_nonterminal_attempt_for_run(active_conn, source_run_id) is not None:
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.CONFLICT,
                 "cannot materialize sequence recovery while a Codex attempt is active",
             )
         existing_row = store.get_review_recovery_successor(
-            conn,
+            active_conn,
             source_run_id=source_run_id,
             recovery_key=recovery_key,
         )
-        run_row = conn.execute(
+        local_run_row = active_conn.execute(
             "SELECT run_id, state_kind FROM scheduler_runs WHERE run_id = ?",
             (successor_run_id,),
         ).fetchone()
         if existing_row is None:
-            if run_row is not None:
+            if local_run_row is not None:
                 if _sequence_recovery_publication_is_complete(
                     store,
-                    conn,
+                    active_conn,
                     source_run_id=source_run_id,
                     recovery_key=recovery_key,
                     successor_run_id=successor_run_id,
@@ -366,7 +468,7 @@ def _materialize_pending_successor(
                     "successor run exists in unexpected state for sequence recovery",
                 )
             store.insert_sequence_recovery_pending_run(
-                conn,
+                active_conn,
                 run_id=successor_run_id,
                 state=pending_state,
                 event_id=event_id,
@@ -374,34 +476,38 @@ def _materialize_pending_successor(
                 now=now,
             )
             store.insert_review_recovery_successor(
-                conn,
+                active_conn,
                 source_run_id=source_run_id,
                 recovery_key=recovery_key,
                 successor_run_id=successor_run_id,
                 now=now,
             )
             return True
-        elif run_row is None:
+        if local_run_row is None:
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.CORRUPTION,
                 "review recovery successor row exists without scheduler run",
             )
-        elif str(run_row["state_kind"]) in {
+        if str(local_run_row["state_kind"]) in {
             "pending_sequence_review_recovery",
             "awaiting_codex_review",
         } or _sequence_recovery_publication_is_complete(
             store,
-            conn,
+            active_conn,
             source_run_id=source_run_id,
             recovery_key=recovery_key,
             successor_run_id=successor_run_id,
         ):
             return False
-        else:
-            raise SchedulerEngineError(
-                SchedulerEngineErrorKind.CONFLICT,
-                "successor run exists in unexpected state for sequence recovery",
-            )
+        raise SchedulerEngineError(
+            SchedulerEngineErrorKind.CONFLICT,
+            "successor run exists in unexpected state for sequence recovery",
+        )
+
+    if conn is not None:
+        return _materialize_on_conn(conn)
+    with store.begin_immediate() as writer_conn:
+        return _materialize_on_conn(writer_conn)
 
 
 def _adopt_sequence_recovery_successor(
@@ -414,15 +520,21 @@ def _adopt_sequence_recovery_successor(
     successor_run_id: str,
     recovery_key: str,
     now: datetime,
+    conn: sqlite3.Connection | None = None,
 ) -> bool:
     now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    current_materialized_at = next(
+        entry.materialized_at
+        for entry in blocked_sequence.materialized_entries
+        if entry.ordinal == recovery_binding.ordinal
+    )
     replacement_attempt = SequenceRunAttempt(
         schema_version=1,
         generation=recovery_binding.source_generation + 1,
         run_id=successor_run_id,
         source_run_id=source_run_id,
         attempt_kind=cast(SequenceAttemptKind, SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY),
-        materialized_at=now_text,
+        materialized_at=current_materialized_at,
         terminal_outcome=None,
         resolved_at=None,
     )
@@ -430,7 +542,7 @@ def _adopt_sequence_recovery_successor(
         ordinal=recovery_binding.ordinal,
         run_id=successor_run_id,
         entry_hash=recovery_binding.entry_hash,
-        materialized_at=now_text,
+        materialized_at=current_materialized_at,
     )
     materialized_entries = tuple(
         updated_materialized if entry.ordinal == recovery_binding.ordinal else entry
@@ -457,16 +569,17 @@ def _adopt_sequence_recovery_successor(
         current_ordinal=blocked_sequence.current_ordinal,
         current_run_id=source_run_id,
     )
-    with store.begin_immediate() as conn:
+
+    def _adopt_on_conn(active_conn: sqlite3.Connection) -> bool:
         _reject_cancelled_replacement_intent(
             store,
-            conn,
+            active_conn,
             source_run_id=source_run_id,
             recovery_key=recovery_key,
         )
         validated = load_validated_sequence_execution_replacement_intent(
             store,
-            conn,
+            active_conn,
             source_run_id=source_run_id,
             recovery_key=recovery_key,
         )
@@ -480,13 +593,13 @@ def _adopt_sequence_recovery_successor(
                 SchedulerEngineErrorKind.CORRUPTION,
                 "sequence replacement intent successor disagrees with adoption target",
             )
-        if sequence_recovery_publication_complete(store, conn, validated=validated):
+        if sequence_recovery_publication_complete(store, active_conn, validated=validated):
             return False
-        pending, pending_version, _ = store.load_validated_snapshot(conn, successor_run_id)
+        pending, pending_version, _ = store.load_validated_snapshot(active_conn, successor_run_id)
         if not isinstance(pending, PendingSequenceReviewRecoveryState):
             if _sequence_recovery_publication_is_complete(
                 store,
-                conn,
+                active_conn,
                 source_run_id=source_run_id,
                 recovery_key=recovery_key,
                 successor_run_id=successor_run_id,
@@ -509,20 +622,20 @@ def _adopt_sequence_recovery_successor(
             recovery=pending.recovery,
         )
         current_sequence = store.load_validated_sequence_state(
-            conn,
+            active_conn,
             blocked_sequence.sequence_id,
         )
         if isinstance(current_sequence, ActiveSequenceState):
             if current_sequence.current_run_id == successor_run_id:
                 store.activate_sequence_recovery_successor_run(
-                    conn,
+                    active_conn,
                     run_id=successor_run_id,
                     pending_state=pending,
                     active_state=active,
                     now=now,
                 )
                 store.mark_sequence_execution_replacement_published(
-                    conn,
+                    active_conn,
                     source_run_id=source_run_id,
                     recovery_key=recovery_key,
                     now=now,
@@ -543,7 +656,7 @@ def _adopt_sequence_recovery_successor(
                 "blocked sequence version changed during review recovery",
             )
         if not store.compare_and_swap_sequence_execution_leaf(
-            conn,
+            active_conn,
             sequence_id=blocked_sequence.sequence_id,
             ordinal=recovery_binding.ordinal,
             expectation=expectation,
@@ -552,20 +665,22 @@ def _adopt_sequence_recovery_successor(
             updated_sequence_state=updated_sequence,
             now=now,
         ):
-            refreshed = store.load_validated_sequence_state(conn, blocked_sequence.sequence_id)
+            refreshed = store.load_validated_sequence_state(
+                active_conn, blocked_sequence.sequence_id
+            )
             if (
                 isinstance(refreshed, ActiveSequenceState)
                 and refreshed.current_run_id == successor_run_id
             ):
                 store.activate_sequence_recovery_successor_run(
-                    conn,
+                    active_conn,
                     run_id=successor_run_id,
                     pending_state=pending,
                     active_state=active,
                     now=now,
                 )
                 store.mark_sequence_execution_replacement_published(
-                    conn,
+                    active_conn,
                     source_run_id=source_run_id,
                     recovery_key=recovery_key,
                     now=now,
@@ -576,19 +691,24 @@ def _adopt_sequence_recovery_successor(
                 "sequence execution-leaf replacement lost a concurrent update",
             )
         store.activate_sequence_recovery_successor_run(
-            conn,
+            active_conn,
             run_id=successor_run_id,
             pending_state=pending,
             active_state=active,
             now=now,
         )
         store.mark_sequence_execution_replacement_published(
-            conn,
+            active_conn,
             source_run_id=source_run_id,
             recovery_key=recovery_key,
             now=now,
         )
         return True
+
+    if conn is not None:
+        return _adopt_on_conn(conn)
+    with store.begin_immediate() as writer_conn:
+        return _adopt_on_conn(writer_conn)
 
 
 def complete_sequence_review_recovery(

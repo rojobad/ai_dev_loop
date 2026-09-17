@@ -31,6 +31,9 @@ from ai_dev_loop.scheduler.application.sequence_reconcile import SequenceReconci
 from ai_dev_loop.scheduler.application.sequence_report import (
     reconcile_completion_report_publication,
 )
+from ai_dev_loop.scheduler.application.sequence_restart_reconcile import (
+    SequenceRestartReconcileService,
+)
 from ai_dev_loop.scheduler.application.tick_fencing import (
     admission_claim_matches,
     tick_lease_is_active,
@@ -98,6 +101,7 @@ class TickService:
         self._codex_workflow: CodexWorkflowService | None = None
         self._sequence_handoff: SequenceHandoffService | None = None
         self._sequence_reconcile: SequenceReconcileService | None = None
+        self._sequence_restart_reconcile: SequenceRestartReconcileService | None = None
         self._sequence_abort: SequenceAbortService | None = None
         if attempt_backend is not None:
             self._cursor_workflow = CursorWorkflowService(
@@ -119,6 +123,12 @@ class TickService:
                 store,
                 now_factory=self._now_factory,
                 event_id_factory=self._event_id_factory,
+            )
+            self._sequence_restart_reconcile = SequenceRestartReconcileService(
+                store,
+                artifacts,
+                handoff=self._sequence_handoff,
+                now_factory=self._now_factory,
             )
             self._run_abort = SchedulerAbortService(
                 store,
@@ -203,11 +213,21 @@ class TickService:
                     now=now,
                 )
                 run_ids = self.store.list_tick_eligible_run_ids(conn)
+                for extra_run_id in self.store.list_sequence_terminal_current_run_ids(conn):
+                    if extra_run_id not in run_ids:
+                        run_ids.append(extra_run_id)
+                for extra_run_id in self.store.list_pending_sequence_review_recovery_run_ids(conn):
+                    if extra_run_id not in run_ids:
+                        run_ids.append(extra_run_id)
                 pending_abort_run_ids = self.store.list_abort_pending_sequence_run_ids(conn)
                 pending_report_sequence_ids = self.store.list_sequences_pending_report_publication(
                     conn
                 )
                 receipts.extend(self._reconcile_pending_sequences(conn))
+                if self._sequence_restart_reconcile is not None:
+                    receipts.extend(
+                        self._sequence_restart_reconcile.reconcile_pending_restart_work(conn)
+                    )
 
             for sequence_id in pending_report_sequence_ids:
                 self._reconcile_completion_report_publication(sequence_id)

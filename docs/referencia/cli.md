@@ -103,6 +103,13 @@ delegando al abort de run existente); status enriquecido con conteos agregados,
 marcadores de residual risk y prefijos de checkpoint; y reporte seguro
 `reports/completion-v1.json` al llegar a `awaiting_finalization` (sin commit/push/PR).
 
+Phase 20.7 y 20.8 anaden lineage de intentos por fase y reintentos manuales
+`scheduler review retry` con sucesor same-reviewer. Phase 20.9 hace de esa lineage la
+proyeccion de status/report (`attempt_count`, `accepted_run_id_prefix`,
+`attempt_kind_labels`, conteo agregado `attempts`) y amplia la reconciliacion para
+secuencias con holds de checkpoint en el run actual. La autoridad sigue siendo el ledger
+validado mas la lineage autenticada; no hay commit/push/PR/merge automaticos.
+
 Tras `prepare`, la accion segura es `scheduler sequence start <sequence-id>`; tras un
 start exitoso, `scheduler tick` y `scheduler sequence status <sequence-id>`.
 `scheduler sequence abort` persiste la intencion antes de delegar al run activo y

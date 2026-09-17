@@ -823,10 +823,18 @@ def test_v9_migration_backfills_finalized_multi_phase_sequence_with_distinct_tim
         entry_hash=frozen_entry_hash(final_entry),
         materialized_at=handoff_at,
     )
+    active_at_final = active.model_copy(
+        update={
+            "version": active.version + 1,
+            "current_ordinal": 2,
+            "current_run_id": phase_two.run_id,
+            "materialized_entries": (phase_one, phase_two),
+        }
+    )
     awaiting = AwaitingFinalizationSequenceState(
         schema_version=active.schema_version,
         sequence_id=sequence_id,
-        version=active.version + 1,
+        version=active_at_final.version + 1,
         prepared_at=active.prepared_at,
         updated_at=finalized_at,
         started_at=active.started_at,
@@ -842,6 +850,14 @@ def test_v9_migration_backfills_finalized_multi_phase_sequence_with_distinct_tim
             conn,
             sequence_id=sequence_id,
             expected_version=active.version,
+            new_state=active_at_final,
+            now=FIXED_NOW,
+            validate_lineage=False,
+        )
+        store.compare_and_swap_sequence_state(
+            conn,
+            sequence_id=sequence_id,
+            expected_version=active_at_final.version,
             new_state=awaiting,
             now=FIXED_NOW,
         )
@@ -903,10 +919,24 @@ def test_partial_lineage_rows_are_rejected(
         active = store.load_validated_sequence_state(conn, sequence_id)
         assert isinstance(active, ActiveSequenceState)
         final_entry = active.definition.entries[1]
+        phase_two = MaterializedSequenceEntry(
+            ordinal=2,
+            run_id=final_entry.planned_run_id,
+            entry_hash=frozen_entry_hash(final_entry),
+            materialized_at=FIXED_NOW.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        )
+        active_at_final = active.model_copy(
+            update={
+                "version": active.version + 1,
+                "current_ordinal": 2,
+                "current_run_id": phase_two.run_id,
+                "materialized_entries": (active.materialized_entries[0], phase_two),
+            }
+        )
         awaiting = AwaitingFinalizationSequenceState(
             schema_version=1,
             sequence_id=sequence_id,
-            version=active.version + 1,
+            version=active_at_final.version + 1,
             prepared_at=active.prepared_at,
             updated_at=FIXED_NOW.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             started_at=active.started_at,
@@ -915,22 +945,23 @@ def test_partial_lineage_rows_are_rejected(
             definition=active.definition,
             final_run_id=final_entry.planned_run_id,
             final_outcome="completed",
-            materialized_entries=(
-                active.materialized_entries[0],
-                MaterializedSequenceEntry(
-                    ordinal=2,
-                    run_id=final_entry.planned_run_id,
-                    entry_hash=frozen_entry_hash(final_entry),
-                    materialized_at=FIXED_NOW.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                ),
-            ),
+            materialized_entries=active_at_final.materialized_entries,
         )
         store.compare_and_swap_sequence_state(
             conn,
             sequence_id=sequence_id,
             expected_version=active.version,
+            new_state=active_at_final,
+            now=FIXED_NOW,
+            validate_lineage=False,
+        )
+        store.compare_and_swap_sequence_state(
+            conn,
+            sequence_id=sequence_id,
+            expected_version=active_at_final.version,
             new_state=awaiting,
             now=FIXED_NOW,
+            validate_lineage=False,
         )
         with pytest.raises(SchedulerEngineError, match="missing materialized phase rows"):
             store.load_validated_sequence_state(conn, sequence_id)

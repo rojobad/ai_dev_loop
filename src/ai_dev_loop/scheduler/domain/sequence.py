@@ -376,6 +376,10 @@ class SequencePhaseReportEntry(DomainModel):
     phase_name: NonEmptyStr
     run_id: NonEmptyStr
     run_id_prefix: NonEmptyStr
+    accepted_run_id_prefix: NonEmptyStr | None = None
+    accepted_attempt_kind: NonEmptyStr | None = None
+    attempt_count: int = 1
+    attempt_kind_labels: tuple[str, ...] = ()
     accepted_outcome: Literal["completed", "completed_with_residual_risk"] | None = None
     residual_risk: bool = False
     review_result_sha256: Sha256Hex | None = None
