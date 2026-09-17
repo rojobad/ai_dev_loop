@@ -426,10 +426,24 @@ def test_completion_report_publication_recovers_after_interrupted_write(
                 materialized_at=finalized_at,
             ),
         )
+        final_active = ActiveSequenceState(
+            schema_version=active.schema_version,
+            sequence_id=active.sequence_id,
+            version=active.version + 1,
+            prepared_at=active.prepared_at,
+            updated_at=finalized_at,
+            started_at=active.started_at,
+            idempotency_key=active.idempotency_key,
+            definition=active.definition,
+            current_ordinal=final_entry.ordinal,
+            current_run_id=final_run_id,
+            materialized_entries=materialized_entries,
+            residual_risk_ordinals=active.residual_risk_ordinals,
+        )
         awaiting = AwaitingFinalizationSequenceState(
             schema_version=1,
             sequence_id=sequence_id,
-            version=active.version + 1,
+            version=final_active.version + 1,
             prepared_at=active.prepared_at,
             updated_at=finalized_at,
             started_at=active.started_at,
@@ -445,9 +459,22 @@ def test_completion_report_publication_recovers_after_interrupted_write(
             conn,
             sequence_id=sequence_id,
             expected_version=active.version,
+            new_state=final_active,
+            now=FIXED_NOW,
+        )
+        from ai_dev_loop.scheduler.application.sequence_lineage_ops import (
+            sync_authoritative_lineage_from_state,
+        )
+
+        sync_authoritative_lineage_from_state(store, conn, final_active)
+        assert store.compare_and_swap_sequence_state(
+            conn,
+            sequence_id=sequence_id,
+            expected_version=final_active.version,
             new_state=awaiting,
             now=FIXED_NOW,
         )
+        sync_authoritative_lineage_from_state(store, conn, awaiting)
     report = SequenceCompletionReport(
         sequence_id=sequence_id,
         sequence_name=active.definition.name,

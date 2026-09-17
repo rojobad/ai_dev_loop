@@ -34,12 +34,16 @@ review. A nunca se pasa a `codex exec resume`.
 ```text
 ai-dev-loop-handoff
 ai-dev-loop-controller
+ai-dev-loop-fallback-recovery
 ```
 
 `ai-dev-loop-handoff` guia el submit controller A con modelo/reasoning congelados.
 
 `ai-dev-loop-controller` es solo para A: `controller status`, `scheduler start`,
 `scheduler abort` e inspeccion read-only del scheduler.
+
+`ai-dev-loop-fallback-recovery` guia un unico fallback acotado en un worktree
+aislado cuando el retry normal no puede reutilizar de forma segura el run fuente.
 
 Nunca adivine session IDs ni use `--last`.
 

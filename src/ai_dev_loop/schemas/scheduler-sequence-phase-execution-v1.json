@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/scheduler-sequence-phase-execution-v1.json",
+  "title": "SequencePhaseExecution",
+  "type": "object",
+  "format": "scheduler-sequence-phase-execution-v1",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "ordinal",
+    "planned_run_id",
+    "attempts",
+    "current_run_id",
+    "accepted_run_id"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "ordinal": { "$ref": "#/$defs/positiveInteger" },
+    "planned_run_id": { "$ref": "#/$defs/nonEmptyString" },
+    "attempts": {
+      "type": "array",
+      "minItems": 1,
+      "prefixItems": [
+        {
+          "allOf": [
+            {
+              "$ref": "https://ai-dev-loop.local/schemas/scheduler-sequence-run-attempt-v1.json"
+            },
+            {
+              "properties": {
+                "generation": { "const": 1 },
+                "source_run_id": { "type": "null" },
+                "attempt_kind": { "const": "planned_run" }
+              },
+              "required": ["generation", "source_run_id", "attempt_kind"]
+            }
+          ]
+        }
+      ],
+      "items": {
+        "allOf": [
+          {
+            "$ref": "https://ai-dev-loop.local/schemas/scheduler-sequence-run-attempt-v1.json"
+          },
+          {
+            "properties": {
+              "attempt_kind": { "const": "same_reviewer_retry" },
+              "generation": { "$ref": "#/$defs/positiveInteger", "minimum": 2 },
+              "source_run_id": { "$ref": "#/$defs/nonEmptyString" }
+            },
+            "required": ["attempt_kind", "generation", "source_run_id"]
+          }
+        ]
+      }
+    },
+    "current_run_id": { "$ref": "#/$defs/nonEmptyString" },
+    "accepted_run_id": { "$ref": "#/$defs/nullableNonEmptyString" }
+  },
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": ".*\\S.*"
+    },
+    "nullableNonEmptyString": {
+      "anyOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/nonEmptyString" }
+      ]
+    },
+    "positiveInteger": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "attempts": { "minItems": 1, "maxItems": 1 }
+        },
+        "required": ["attempts"]
+      },
+      "then": {
+        "properties": {
+          "attempts": {
+            "items": {
+              "properties": {
+                "run_id": { "$ref": "#/$defs/nonEmptyString" }
+              },
+              "required": ["run_id"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "attempts": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1,
+            "items": {
+              "properties": {
+                "terminal_outcome": {
+                  "enum": ["completed", "completed_with_residual_risk"]
+                }
+              },
+              "required": ["terminal_outcome"]
+            }
+          }
+        },
+        "required": ["attempts"]
+      },
+      "then": {
+        "properties": {
+          "accepted_run_id": { "$ref": "#/$defs/nonEmptyString" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "attempts": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1,
+            "items": {
+              "properties": {
+                "terminal_outcome": { "type": "null" }
+              },
+              "required": ["terminal_outcome"]
+            }
+          }
+        },
+        "required": ["attempts"]
+      },
+      "then": {
+        "properties": {
+          "accepted_run_id": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "attempts": {
+            "type": "array",
+            "minItems": 2
+          }
+        },
+        "required": ["attempts"]
+      },
+      "then": {
+        "properties": {
+          "attempts": {
+            "prefixItems": [
+              {
+                "properties": {
+                  "terminal_outcome": { "type": "string" },
+                  "resolved_at": { "$ref": "#/$defs/nonEmptyString" }
+                },
+                "required": ["terminal_outcome", "resolved_at"]
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

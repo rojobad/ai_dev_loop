@@ -12,6 +12,10 @@ Instala o actualiza:
 
 ```text
 ~/.agents/skills/ai-dev-loop-handoff/SKILL.md
+~/.agents/skills/ai-dev-loop-controller/SKILL.md
+~/.agents/skills/ai-dev-loop-fallback-recovery/SKILL.md
+~/.agents/skills/ai-dev-loop-fallback-recovery/references/workflow.md
+~/.agents/skills/ai-dev-loop-fallback-recovery/agents/openai.yaml
 ~/.codex/hooks/ai_dev_loop_session_start.py
 ~/.codex/hooks.json
 ```

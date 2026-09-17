@@ -17,6 +17,7 @@ HOOK_MATCHER = "startup|resume|clear|compact"
 # Backward-compatible alias for the primary handoff skill directory.
 SKILL_DIRECTORY_NAME = "ai-dev-loop-handoff"
 CONTROLLER_SKILL_DIRECTORY_NAME = "ai-dev-loop-controller"
+FALLBACK_RECOVERY_SKILL_DIRECTORY_NAME = "ai-dev-loop-fallback-recovery"
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,7 @@ class SkillDescriptor:
     directory_name: str
     package_subdir: str
     frontmatter_name: str
+    resource_paths: tuple[str, ...] = (SKILL_RESOURCE,)
 
     @property
     def package_resource_root(self) -> str:
@@ -43,10 +45,17 @@ OWNED_SKILLS: tuple[SkillDescriptor, ...] = (
         package_subdir="controller_skill",
         frontmatter_name="ai-dev-loop-controller",
     ),
+    SkillDescriptor(
+        directory_name=FALLBACK_RECOVERY_SKILL_DIRECTORY_NAME,
+        package_subdir="fallback_recovery_skill",
+        frontmatter_name="ai-dev-loop-fallback-recovery",
+        resource_paths=(SKILL_RESOURCE, "references/workflow.md", "agents/openai.yaml"),
+    ),
 )
 
 HANDOFF_SKILL = OWNED_SKILLS[0]
 CONTROLLER_SKILL = OWNED_SKILLS[1]
+FALLBACK_RECOVERY_SKILL = OWNED_SKILLS[2]
 
 
 @lru_cache(maxsize=1)
@@ -66,6 +75,10 @@ def skill_package_path(descriptor: SkillDescriptor | None = None) -> Path:
     return package_root() / chosen.package_subdir / SKILL_RESOURCE
 
 
+def skill_package_resource_path(descriptor: SkillDescriptor, resource_path: str) -> Path:
+    return package_root() / descriptor.package_subdir / resource_path
+
+
 def hook_script_package_path() -> Path:
     return package_root() / HOOK_SOURCE_NAME
 
@@ -77,6 +90,16 @@ def load_skill_content(descriptor: SkillDescriptor | None = None) -> str:
         .joinpath(SKILL_RESOURCE)
         .read_text(encoding="utf-8")
     )
+
+
+def load_skill_resources(descriptor: SkillDescriptor) -> dict[str, str]:
+    resource_root = resources.files(descriptor.package_resource_root)
+    return {
+        resource_path: resource_root.joinpath(*Path(resource_path).parts).read_text(
+            encoding="utf-8"
+        )
+        for resource_path in descriptor.resource_paths
+    }
 
 
 def load_all_skill_contents() -> dict[str, str]:

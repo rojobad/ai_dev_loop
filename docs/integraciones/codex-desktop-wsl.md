@@ -26,6 +26,9 @@ El target desktop instala:
 ```text
 /mnt/c/Users/<usuario>/.agents/skills/ai-dev-loop-handoff/SKILL.md
 /mnt/c/Users/<usuario>/.agents/skills/ai-dev-loop-controller/SKILL.md
+/mnt/c/Users/<usuario>/.agents/skills/ai-dev-loop-fallback-recovery/SKILL.md
+/mnt/c/Users/<usuario>/.agents/skills/ai-dev-loop-fallback-recovery/references/workflow.md
+/mnt/c/Users/<usuario>/.agents/skills/ai-dev-loop-fallback-recovery/agents/openai.yaml
 /home/<usuario>/.codex/hooks/ai_dev_loop_session_start.py
 /mnt/c/Users/<usuario>/.codex/hooks.json
 ```
@@ -113,7 +116,8 @@ ai_dev_loop integrations uninstall --target codex-desktop-wsl --wsl-distro Ubunt
 
 La desinstalacion desktop:
 
-- elimina ambos `SKILL.md` owned (`ai-dev-loop-handoff`, `ai-dev-loop-controller`);
+- elimina los assets owned de `ai-dev-loop-handoff`, `ai-dev-loop-controller` y
+  `ai-dev-loop-fallback-recovery`;
 - elimina la entrada de hook desktop en `hooks.json` de Windows;
 - preserva el hook script WSL cuando puede ser usado por otro target;
 - preserva el puente `from-desktop`;

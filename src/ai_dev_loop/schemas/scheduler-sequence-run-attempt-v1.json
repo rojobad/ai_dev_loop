@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/scheduler-sequence-run-attempt-v1.json",
+  "title": "SequenceRunAttempt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generation",
+    "run_id",
+    "source_run_id",
+    "attempt_kind",
+    "materialized_at",
+    "terminal_outcome",
+    "resolved_at"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "generation": { "$ref": "#/$defs/positiveInteger" },
+    "run_id": { "$ref": "#/$defs/nonEmptyString" },
+    "source_run_id": { "$ref": "#/$defs/nullableNonEmptyString" },
+    "attempt_kind": {
+      "type": "string",
+      "enum": ["planned_run", "same_reviewer_retry"]
+    },
+    "materialized_at": { "$ref": "#/$defs/nonEmptyString" },
+    "terminal_outcome": {
+      "type": ["string", "null"],
+      "enum": [
+        "completed",
+        "completed_with_residual_risk",
+        "blocked",
+        "aborted",
+        null
+      ]
+    },
+    "resolved_at": { "$ref": "#/$defs/nullableNonEmptyString" }
+  },
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": ".*\\S.*"
+    },
+    "nullableNonEmptyString": {
+      "anyOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/nonEmptyString" }
+      ]
+    },
+    "positiveInteger": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "terminal_outcome": { "type": "null" } } },
+      "then": { "properties": { "resolved_at": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "terminal_outcome": { "type": "string" } } },
+      "then": {
+        "properties": {
+          "resolved_at": { "$ref": "#/$defs/nonEmptyString" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "generation": { "const": 1 } } },
+      "then": {
+        "properties": {
+          "source_run_id": { "type": "null" },
+          "attempt_kind": { "const": "planned_run" }
+        },
+        "required": ["source_run_id", "attempt_kind"]
+      }
+    },
+    {
+      "if": { "properties": { "generation": { "minimum": 2 } } },
+      "then": {
+        "properties": {
+          "source_run_id": { "$ref": "#/$defs/nonEmptyString" },
+          "attempt_kind": { "const": "same_reviewer_retry" }
+        },
+        "required": ["source_run_id", "attempt_kind"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "attempt_kind": { "const": "same_reviewer_retry" }
+        }
+      },
+      "then": {
+        "properties": {
+          "generation": { "$ref": "#/$defs/positiveInteger", "minimum": 2 }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "attempt_kind": { "const": "planned_run" }
+        }
+      },
+      "then": {
+        "properties": {
+          "generation": { "const": 1 }
+        }
+      }
+    }
+  ]
+}

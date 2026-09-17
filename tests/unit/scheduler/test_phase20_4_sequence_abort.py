@@ -200,10 +200,38 @@ def test_abort_refuses_awaiting_finalization(
 
     entry_hash = frozen_entry_hash(active.definition.entries[0])
     final_entry_hash = frozen_entry_hash(active.definition.entries[1])
+    materialized_entries = (
+        MaterializedSequenceEntry(
+            ordinal=1,
+            run_id=start.run_id,
+            entry_hash=entry_hash,
+            materialized_at=active.materialized_entries[0].materialized_at,
+        ),
+        MaterializedSequenceEntry(
+            ordinal=2,
+            run_id=active.definition.entries[1].planned_run_id,
+            entry_hash=final_entry_hash,
+            materialized_at="2026-09-13T12:00:00.000000Z",
+        ),
+    )
+    final_active = ActiveSequenceState(
+        schema_version=active.schema_version,
+        sequence_id=active.sequence_id,
+        version=active.version + 1,
+        prepared_at=active.prepared_at,
+        updated_at="2026-09-13T12:00:00.000000Z",
+        started_at=active.started_at,
+        idempotency_key=active.idempotency_key,
+        definition=active.definition,
+        current_ordinal=2,
+        current_run_id=active.definition.entries[1].planned_run_id,
+        materialized_entries=materialized_entries,
+        residual_risk_ordinals=active.residual_risk_ordinals,
+    )
     finalized = AwaitingFinalizationSequenceState(
         schema_version=1,
         sequence_id=sequence_id,
-        version=active.version + 1,
+        version=final_active.version + 1,
         prepared_at=active.prepared_at,
         updated_at="2026-09-13T12:00:00.000000Z",
         started_at=active.started_at,
@@ -212,29 +240,29 @@ def test_abort_refuses_awaiting_finalization(
         definition=active.definition,
         final_run_id=active.definition.entries[1].planned_run_id,
         final_outcome="completed",
-        materialized_entries=(
-            MaterializedSequenceEntry(
-                ordinal=1,
-                run_id=start.run_id,
-                entry_hash=entry_hash,
-                materialized_at="2026-09-13T12:00:00.000000Z",
-            ),
-            MaterializedSequenceEntry(
-                ordinal=2,
-                run_id=active.definition.entries[1].planned_run_id,
-                entry_hash=final_entry_hash,
-                materialized_at="2026-09-13T12:00:00.000000Z",
-            ),
-        ),
+        materialized_entries=materialized_entries,
     )
+    from ai_dev_loop.scheduler.application.sequence_lineage_ops import (
+        sync_authoritative_lineage_from_state,
+    )
+
     with store.begin_immediate() as conn:
-        store.compare_and_swap_sequence_state(
+        assert store.compare_and_swap_sequence_state(
             conn,
             sequence_id=sequence_id,
             expected_version=active.version,
+            new_state=final_active,
+            now=FIXED_NOW,
+        )
+        sync_authoritative_lineage_from_state(store, conn, final_active)
+        store.compare_and_swap_sequence_state(
+            conn,
+            sequence_id=sequence_id,
+            expected_version=final_active.version,
             new_state=finalized,
             now=FIXED_NOW,
         )
+        sync_authoritative_lineage_from_state(store, conn, finalized)
     service = SequenceAbortService(store, now_factory=lambda: FIXED_NOW)
     with pytest.raises(SchedulerEngineError, match="awaiting finalization"):
         service.abort_sequence(sequence_id)

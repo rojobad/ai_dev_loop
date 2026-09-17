@@ -28,6 +28,17 @@ def skill_path_for(descriptor: SkillDescriptor, home: Path | None = None) -> Pat
     return skill_path(home, directory_name=descriptor.directory_name)
 
 
+def skill_resource_path_for(
+    descriptor: SkillDescriptor,
+    resource_path: str,
+    home: Path | None = None,
+) -> Path:
+    relative = Path(resource_path)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"invalid package-owned skill resource: {resource_path}")
+    return skill_path_for(descriptor, home).parent / relative
+
+
 def owned_skill_paths(home: Path | None = None) -> dict[str, Path]:
     from ai_dev_loop.integrations.codex.assets import OWNED_SKILLS
 

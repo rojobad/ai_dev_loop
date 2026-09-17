@@ -158,6 +158,59 @@ class ProtectedArtifactStore:
             if temp_path.exists():
                 temp_path.unlink(missing_ok=True)
 
+    def publish_or_verify_bytes(
+        self,
+        run_id: str,
+        relative_path: str,
+        content: bytes,
+        *,
+        max_bytes: int,
+    ) -> StoredArtifact:
+        if not content:
+            raise ProtectedArtifactError("artifact content is empty")
+        if len(content) > max_bytes:
+            raise ProtectedArtifactError("artifact exceeds size limit")
+        digest = hashlib.sha256(content).hexdigest()
+        root = self.run_root(run_id)
+        destination = resolve_run_relative_path(root, relative_path)
+        if destination.exists():
+            verified = self.read_verified_bytes(
+                run_id,
+                relative_path,
+                expected_sha256=digest,
+            )
+            if verified != content:
+                raise ProtectedArtifactError("artifact content mismatch on concurrent publish")
+            return StoredArtifact(
+                relative_path=relative_path,
+                sha256=digest,
+                size_bytes=len(content),
+            )
+        try:
+            return self.write_bytes(
+                run_id,
+                relative_path,
+                content,
+                max_bytes=max_bytes,
+            )
+        except ProtectedArtifactError as exc:
+            if "already exists" not in str(exc):
+                raise
+            verified = self.read_verified_bytes(
+                run_id,
+                relative_path,
+                expected_sha256=digest,
+            )
+            if verified != content:
+                raise ProtectedArtifactError(
+                    "artifact content mismatch on concurrent publish"
+                ) from exc
+            return StoredArtifact(
+                relative_path=relative_path,
+                sha256=digest,
+                size_bytes=len(content),
+            )
+
     def write_text(
         self,
         run_id: str,

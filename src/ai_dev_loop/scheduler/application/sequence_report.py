@@ -11,6 +11,9 @@ from ai_dev_loop.scheduler.application.sequence_checkpoint_evidence import (
     SequenceCheckpointEvidenceError,
     authenticate_checkpoint_evidence,
 )
+from ai_dev_loop.scheduler.application.sequence_lineage_projection import (
+    load_phase_lineage_projections,
+)
 from ai_dev_loop.scheduler.domain.sequence import (
     AwaitingFinalizationSequenceState,
     SequenceCompletionReport,
@@ -71,6 +74,13 @@ def _build_completion_report_inner(
     base_head: str | None = None
     final_patch: str | None = None
     total_phases = len(definition.entries)
+    lineage_by_ordinal = load_phase_lineage_projections(
+        store,
+        conn,
+        sequence_id=state.sequence_id,
+        definition=definition,
+        sequence_state=state,
+    )
     for materialized in state.materialized_entries:
         entry = definition.entries[materialized.ordinal - 1]
         run_id = materialized.run_id
@@ -112,12 +122,20 @@ def _build_completion_report_inner(
             run_state, (CompletedState, CompletedWithResidualRiskState)
         ):
             final_patch = run_state.cursor.staged_patch_sha256
+        lineage = lineage_by_ordinal.get(materialized.ordinal)
+        accepted_prefix = lineage.accepted_run_id_prefix if lineage is not None else run_id[:8]
         phases.append(
             SequencePhaseReportEntry(
                 ordinal=materialized.ordinal,
                 phase_name=entry.phase_name,
                 run_id=run_id,
                 run_id_prefix=run_id[:8],
+                accepted_run_id_prefix=accepted_prefix,
+                accepted_attempt_kind=(
+                    lineage.accepted_attempt_kind if lineage is not None else None
+                ),
+                attempt_count=lineage.attempt_count if lineage is not None else 1,
+                attempt_kind_labels=(lineage.attempt_kind_labels if lineage is not None else ()),
                 accepted_outcome=accepted,
                 residual_risk=materialized.ordinal in state.residual_risk_ordinals,
                 review_result_sha256=review_sha,

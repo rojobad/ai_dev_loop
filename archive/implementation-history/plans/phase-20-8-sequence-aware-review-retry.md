@@ -10,8 +10,9 @@
   every terminal source run and the Phase 20.7 lineage.
 - Preserve same-reviewer, same-worktree, same-staged-snapshot semantics and all
   Phase 20.5 capacity/retry behavior.
-- Interoperate with, but do not reimplement, the Phase 20.6 fresh-review recovery
-  workflow and its specialized Git/worktree integration authority.
+- Operate entirely on the current accepted baseline. Phase 20.6 is intentionally
+  absent and must not be restored, imported, reimplemented, or treated as a
+  compatibility target.
 
 ## Non-Goals
 
@@ -20,8 +21,8 @@
 - Do not make arbitrary run failures recoverable, restart Cursor, create a new
   Cursor chat, choose another reviewer, change model/reasoning, or copy an
   unauthenticated artifact.
-- Do not replace Phase 20.6 `scheduler recovery prepare/start/status/abort` or its
-  fresh-review managed-worktree path.
+- Do not add fresh-review recovery commands, managed recovery worktrees, automatic
+  target integration, or any replacement for the abandoned Phase 20.6 design.
 - Do not add a new public sequence-recovery command when the existing review-retry
   command expresses the operator decision.
 - Do not change review ceilings, capacity-wait semantics, sequence phase order,
@@ -50,8 +51,8 @@
 ## Out of Scope
 
 - Fresh reviewer creation, managed recovery worktrees/private refs, patch seeding,
-  automatic target integration, correction-delta application, and cleanup owned
-  by Phase 20.6.
+  automatic target integration, correction-delta application, and recovery-owned
+  cleanup.
 - Recovery of incomplete Cursor turns, integrity failures, arbitrary failed runs,
   older/non-current sequence ordinals, aborted sequences, terminal accepted
   phases, or worktrees that no longer match the authenticated staged snapshot.
@@ -66,8 +67,8 @@
 Before editing, read:
 
 - `AGENTS.md`, every `.cursor/rules/*.mdc`, and current relevant `/docs`.
-- The committed Phase 20.5–20.7 implementations, plans, findings, schemas, and
-  migrations.
+- The committed Phase 20.5 and Phase 20.7 implementations, plans, findings,
+  schemas, and migrations.
 - Phase 20.1.1 reviewer-recovery plan/findings, especially authenticated evidence,
   immutable source runs, replay order, same reviewer identity, exact copied
   artifacts, and multi-generation recovery.
@@ -81,9 +82,9 @@ Before editing, read:
 - Sequence domain/lifecycle/store APIs from Phase 20.7 plus sequence reconcile,
   handoff, materializer, checkpoint evidence, reservation, abort, status, and
   report services.
-- Phase 20.6 recovery aggregate boundaries so this phase never treats a managed
-  fresh-review recovery as an ordinary same-worktree retry without its owner's
-  authorization.
+- The Phase 20.6 abandonment history only to ensure no abandoned recovery
+  aggregate, migration, command, managed-worktree path, or Git authority is
+  imported into this implementation.
 - Existing Phase 20.1.1 and Phase 20 sequence tests, fake-agent fixtures,
   disposable repository helpers, and historical schema tests.
 
@@ -177,8 +178,9 @@ committed Phase 20.7 implementation.
 - `completed` and `completed_with_residual_risk` are advancing outcomes; the latter
   records the ordinal once without duplication. Findings, retry waits, capacity
   waits, max-iteration exhaustion, failures, and aborts do not advance.
-- Preserve Phase 20.5 same-run capacity waiting/manual retry and Phase 20.6
-  fresh-review ownership. Do not convert either into an implicit new successor.
+- Preserve Phase 20.5 same-run capacity waiting/manual retry. Do not convert
+  capacity availability or a generic operational failure into an implicit new
+  successor.
 - Abort intent wins before successor authorization. Once the successor is current,
   sequence abort targets that leaf and preserves staged content and artifacts.
 
@@ -195,7 +197,7 @@ committed Phase 20.7 implementation.
 ## Implementation Plan
 
 1. Add regression characterization for standalone review retry, blocked sequence
-   behavior, Phase 20.6 fresh recovery, and Phase 20.7 lineage before changing
+   behavior, Phase 20.5 capacity handling, and Phase 20.7 lineage before changing
    transitions.
 2. Define the sequence replacement intent/claim and exact eligibility/result/safe-
    action contracts, schemas, lifecycle invariants, and store CAS operations.
@@ -240,7 +242,7 @@ committed Phase 20.7 implementation.
 - **Sequence tests:** accepted recovered non-final phase creates one ordinary
   checkpoint and next planned run; final recovered phase reaches ordinary
   `awaiting_finalization`; residual risk advances once; non-accepted outcomes do
-  not advance; Phase 20.6 specialized recovery remains unchanged.
+  not advance; no fresh-review or managed-worktree recovery path exists.
 - **Abort tests:** abort before intent, during materialization, after rebind, during
   attempt, and before handoff; current leaf is targeted; no staged content,
   artifacts, holds, or unrelated reservations are lost.
@@ -275,8 +277,8 @@ uv run mkdocs build --strict
 git diff --check
 ```
 
-Use actual committed Phase 20.5–20.7 test filenames when they differ and record
-every exact command/result in the findings artifact.
+Use actual committed Phase 20.5 and Phase 20.7 test filenames when they differ
+and record every exact command/result in the findings artifact.
 
 ## Risks Or Recovery Notes
 
@@ -285,9 +287,9 @@ every exact command/result in the findings artifact.
   CAS, and crash replay must make that window convergent.
 - A false capacity classification is intentionally recoverable under Phase 20.5,
   but it must not bypass authentication or create a successor automatically.
-- Do not treat the specialized Phase 20.6 managed recovery run as an ordinary
-  target-worktree run. Its aggregate remains the authority for its worktree,
-  integration, and cleanup lifecycle.
+- Do not revive the abandoned Phase 20.6 managed recovery design to handle an
+  unsupported case. This phase supports only the authenticated same-reviewer,
+  same-worktree successor already defined by `scheduler review retry`.
 - If the target worktree changed after the sequence released its reservation,
   explicit review retry must refuse safely. It must not reset, stage, or repair
   the user's tree.

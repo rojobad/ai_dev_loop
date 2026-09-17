@@ -11,6 +11,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from pydantic import ValidationError as PydanticValidationError
+
 from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.runners.git import (
     CheckpointGitDeadline,
@@ -675,9 +677,9 @@ class SequenceHandoffService:
 
     def _authenticate_predecessor_checkpoint_result(
         self,
+        conn: sqlite3.Connection,
         *,
         prev_run_id: str,
-        current_predecessor_run_id: str,
         sequence_state: ActiveSequenceState,
         current_ordinal: int,
     ) -> str:
@@ -697,16 +699,42 @@ class SequenceHandoffService:
         expected_prev_ordinal = current_ordinal - 1
         if result.predecessor_ordinal != expected_prev_ordinal:
             raise ValidationError("previous checkpoint result predecessor_ordinal mismatch")
-        if result.successor_run_id != current_predecessor_run_id:
-            raise ValidationError("previous checkpoint result successor_run_id mismatch")
         if result.accepted_outcome not in {"completed", "completed_with_residual_risk"}:
             raise ValidationError("previous checkpoint result accepted_outcome invalid")
         intent_path = self.artifacts.run_root(prev_run_id) / SEQUENCE_CHECKPOINT_INTENT_ARTIFACT
         if not intent_path.is_file():
             raise ValidationError("previous checkpoint intent artifact missing")
-        prev_intent_sha = hashlib.sha256(intent_path.read_bytes()).hexdigest()
+        prev_intent_bytes = intent_path.read_bytes()
+        try:
+            prev_intent = SequenceCheckpointIntent.model_validate_json(prev_intent_bytes)
+        except PydanticValidationError as exc:
+            raise ValidationError("previous checkpoint intent payload is invalid") from exc
+        if result.successor_run_id != prev_intent.successor_run_id:
+            raise ValidationError("previous checkpoint result successor_run_id mismatch")
+        prev_intent_sha = hashlib.sha256(prev_intent_bytes).hexdigest()
         if result.intent_sha256 != prev_intent_sha:
             raise ValidationError("previous checkpoint result intent binding mismatch")
+        successor_materialized = next(
+            (
+                entry.run_id
+                for entry in sequence_state.materialized_entries
+                if entry.ordinal == current_ordinal
+            ),
+            None,
+        )
+        if successor_materialized is None:
+            raise ValidationError("checkpoint parent successor materialization missing")
+        from ai_dev_loop.scheduler.infrastructure.sequence_run_lineage_store import (
+            authenticate_checkpoint_successor_replacement_chain,
+        )
+
+        authenticate_checkpoint_successor_replacement_chain(
+            conn,
+            sequence_id=sequence_state.sequence_id,
+            ordinal=current_ordinal,
+            recorded_successor_run_id=prev_intent.successor_run_id,
+            current_leaf_run_id=successor_materialized,
+        )
         trusted_tree = self._load_trusted_tree(
             prev_run_id,
             expected_sha256=result.trusted_tree_sha256,
@@ -717,7 +745,6 @@ class SequenceHandoffService:
             raise ValidationError("previous checkpoint trusted tree mismatch")
         if trusted_tree.intent_sha256 != prev_intent_sha:
             raise ValidationError("previous checkpoint trusted tree intent mismatch")
-        prev_intent = SequenceCheckpointIntent.model_validate_json(intent_path.read_bytes())
         if result.parent_head != prev_intent.parent_head:
             raise ValidationError("previous checkpoint result parent_head mismatch")
         if result.parent_head != trusted_tree.parent_head:
@@ -753,18 +780,18 @@ class SequenceHandoffService:
 
     def _expected_checkpoint_parent_head(
         self,
+        conn: sqlite3.Connection,
         *,
         sequence_state: ActiveSequenceState,
         ordinal: int,
         identity: FrozenRepositoryIdentity,
-        current_run_id: str,
     ) -> str:
         if ordinal == 1:
             return identity.initial_head
         prev_run_id = sequence_state.materialized_entries[ordinal - 2].run_id
         return self._authenticate_predecessor_checkpoint_result(
+            conn,
             prev_run_id=prev_run_id,
-            current_predecessor_run_id=current_run_id,
             sequence_state=sequence_state,
             current_ordinal=ordinal,
         )
@@ -1003,10 +1030,10 @@ class SequenceHandoffService:
         git_deadline = self._git_deadline(conn)
         expected_branch_ref = self._expected_branch_ref(identity)
         expected_parent = self._expected_checkpoint_parent_head(
+            conn,
             sequence_state=sequence_state,
             ordinal=sequence_binding.ordinal,
             identity=identity,
-            current_run_id=state.run_id,
         )
         now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         intent_path = self.artifacts.run_root(state.run_id) / SEQUENCE_CHECKPOINT_INTENT_ARTIFACT
@@ -1815,3 +1842,465 @@ class SequenceHandoffService:
             now=now,
         )
         return terminal_state
+
+    def reconcile_interrupted_sequence_advancement(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        sequence_state: ActiveSequenceState,
+        run_state: CompletedState | CompletedWithResidualRiskState,
+        now: datetime,
+    ) -> TickRunReceipt:
+        run_id = run_state.run_id
+        total = len(sequence_state.definition.entries)
+        accepted_outcome: Literal["completed", "completed_with_residual_risk"] = (
+            "completed_with_residual_risk"
+            if isinstance(run_state, CompletedWithResidualRiskState)
+            else "completed"
+        )
+        if sequence_state.current_ordinal == total:
+            refreshed = self.store.load_validated_sequence_state(conn, sequence_state.sequence_id)
+            if isinstance(refreshed, AwaitingFinalizationSequenceState):
+                return TickRunReceipt(run_id=run_id, action="sequence_finalization_complete")
+            if not isinstance(refreshed, ActiveSequenceState):
+                return TickRunReceipt(run_id=run_id, action="sequence_finalization_state_changed")
+            sequence_state = refreshed
+            now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            residual_ordinals = tuple(sequence_state.residual_risk_ordinals)
+            if accepted_outcome == "completed_with_residual_risk":
+                residual_ordinals = tuple(
+                    sorted(set(residual_ordinals + (sequence_state.current_ordinal,)))
+                )
+            finalized_sequence = AwaitingFinalizationSequenceState(
+                schema_version=sequence_state.schema_version,
+                sequence_id=sequence_state.sequence_id,
+                version=sequence_state.version + 1,
+                prepared_at=sequence_state.prepared_at,
+                updated_at=now_text,
+                started_at=sequence_state.started_at,
+                finalized_at=now_text,
+                idempotency_key=sequence_state.idempotency_key,
+                definition=sequence_state.definition,
+                final_run_id=run_id,
+                final_outcome=accepted_outcome,
+                materialized_entries=sequence_state.materialized_entries,
+                residual_risk_ordinals=residual_ordinals,
+            )
+            finalized_event = SequenceFinalizedEvent(
+                sequence_id=sequence_state.sequence_id,
+                final_run_id=run_id,
+                final_outcome=accepted_outcome,
+            )
+            return self._reconcile_interrupted_finalization_on_savepoint(
+                conn,
+                sequence_state=sequence_state,
+                run_state=run_state,
+                finalized_sequence=finalized_sequence,
+                finalized_event=finalized_event,
+                now=now,
+            )
+        hold_receipt = self._reconcile_terminal_checkpoint_hold_for_restart(
+            conn,
+            run_id=run_id,
+            now=now,
+        )
+        if hold_receipt is not None:
+            return hold_receipt
+        intent_path = self.artifacts.run_root(run_id) / SEQUENCE_CHECKPOINT_INTENT_ARTIFACT
+        result_path = self.artifacts.run_root(run_id) / SEQUENCE_CHECKPOINT_RESULT_ARTIFACT
+        if not intent_path.is_file() or not result_path.is_file():
+            return TickRunReceipt(run_id=run_id, action="sequence_handoff_artifacts_missing")
+        try:
+            intent = SequenceCheckpointIntent.model_validate_json(intent_path.read_bytes())
+            result = SequenceCheckpointResult.model_validate_json(result_path.read_bytes())
+        except (PydanticValidationError, OSError):
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        if intent.predecessor_run_id != run_id:
+            return TickRunReceipt(run_id=run_id, action="sequence_handoff_intent_mismatch")
+        auth_failure = self._authenticate_terminal_checkpoint_for_replay(
+            conn,
+            run_id=run_id,
+            sequence_state=sequence_state,
+            run_state=run_state,
+            intent=intent,
+            result=result,
+        )
+        if auth_failure is not None:
+            return auth_failure
+        return self._replay_handoff_from_terminal_predecessor(
+            conn,
+            sequence_state=sequence_state,
+            run_state=run_state,
+            intent=intent,
+            result=result,
+            now=now,
+        )
+
+    def _reconcile_interrupted_finalization_on_savepoint(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        sequence_state: ActiveSequenceState,
+        run_state: CompletedState | CompletedWithResidualRiskState,
+        finalized_sequence: AwaitingFinalizationSequenceState,
+        finalized_event: SequenceFinalizedEvent,
+        now: datetime,
+    ) -> TickRunReceipt:
+        from ai_dev_loop.scheduler.application.contracts import SchedulerEngineError
+
+        run_id = run_state.run_id
+        conn.execute("SAVEPOINT sequence_finalization_replay")
+        try:
+            self.store.finalize_sequence_state(
+                conn,
+                sequence_state=sequence_state,
+                finalized_state=finalized_sequence,
+                finalized_event=finalized_event,
+                event_id_factory=self._event_id_factory,
+                now=now,
+            )
+            self.store.release_reservation(
+                conn,
+                worktree_key=run_state.context.repository.worktree_key,
+                now=now,
+            )
+            conn.execute("RELEASE sequence_finalization_replay")
+            return TickRunReceipt(run_id=run_id, action="sequence_finalization_reconciled")
+        except SchedulerEngineError:
+            conn.execute("ROLLBACK TO sequence_finalization_replay")
+            conn.execute("RELEASE sequence_finalization_replay")
+            again = self.store.load_validated_sequence_state(conn, sequence_state.sequence_id)
+            if isinstance(again, AwaitingFinalizationSequenceState):
+                return TickRunReceipt(run_id=run_id, action="sequence_finalization_complete")
+            return TickRunReceipt(run_id=run_id, action="sequence_finalization_cas_lost")
+
+    def _reconcile_terminal_checkpoint_hold_for_restart(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        now: datetime,
+    ) -> TickRunReceipt | None:
+        if not self.store.has_checkpoint_reconciliation_hold(conn, run_id):
+            return None
+        intent_path = self.artifacts.run_root(run_id) / SEQUENCE_CHECKPOINT_INTENT_ARTIFACT
+        result_path = self.artifacts.run_root(run_id) / SEQUENCE_CHECKPOINT_RESULT_ARTIFACT
+        if not intent_path.is_file() or not result_path.is_file():
+            return TickRunReceipt(run_id=run_id, action="sequence_handoff_hold_pending")
+        from ai_dev_loop.scheduler.infrastructure.protected_artifacts import (
+            ProtectedArtifactError,
+        )
+
+        try:
+            trusted = self._load_trusted_tree(run_id, expected_sha256=None)
+        except (PydanticValidationError, OSError, ProtectedArtifactError):
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        if trusted is None:
+            return TickRunReceipt(run_id=run_id, action="sequence_handoff_hold_pending")
+        return None
+
+    def _authenticate_terminal_checkpoint_for_replay(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        sequence_state: ActiveSequenceState,
+        run_state: CompletedState | CompletedWithResidualRiskState,
+        intent: SequenceCheckpointIntent,
+        result: SequenceCheckpointResult,
+    ) -> TickRunReceipt | None:
+        if sequence_state.current_run_id != run_id:
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        authorization = self.store.load_authoritative_sequence_checkpoint_requested_event(
+            conn,
+            run_id=run_id,
+        )
+        if authorization is None:
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        if authorization.sequence_id != sequence_state.sequence_id:
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        if authorization.review_iteration != run_state.codex.review_iteration:
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        if authorization.accepted_outcome != intent.accepted_outcome:
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        if intent.sequence_id != sequence_state.sequence_id:
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        if intent.predecessor_ordinal != sequence_state.current_ordinal:
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        if intent.sequence_version != sequence_state.version:
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        if intent.successor_ordinal != sequence_state.current_ordinal + 1:
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        if intent.accepted_outcome == "completed" and not isinstance(run_state, CompletedState):
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        if intent.accepted_outcome == "completed_with_residual_risk" and not isinstance(
+            run_state, CompletedWithResidualRiskState
+        ):
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        materialized = next(
+            (
+                entry
+                for entry in sequence_state.materialized_entries
+                if entry.ordinal == intent.predecessor_ordinal
+            ),
+            None,
+        )
+        if materialized is None or materialized.run_id != run_id:
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        successor_planned = sequence_state.definition.entries[
+            intent.successor_ordinal - 1
+        ].planned_run_id
+        if intent.successor_run_id != successor_planned:
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        try:
+            from ai_dev_loop.scheduler.infrastructure.protected_artifacts import (
+                ProtectedArtifactError,
+            )
+
+            identity = frozen_repository_identity(
+                run_state.context,
+                run_id=run_id,
+                artifacts=self.artifacts,
+                checkpoint=run_state.checkpoint,
+            )
+        except (ValidationError, OSError, ProtectedArtifactError):
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        if (
+            intent.repository_root != identity.root
+            or intent.git_common_dir != identity.git_common_dir
+            or intent.git_dir != identity.git_dir
+        ):
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        patch_rel = run_state.cursor.staged_patch_path
+        patch_sha256 = run_state.cursor.staged_patch_sha256
+        if patch_rel is None or patch_sha256 is None:
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        if (
+            intent.reviewed_patch_sha256 != patch_sha256
+            or intent.staged_patch_artifact_path != patch_rel
+        ):
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        review_path = run_state.codex.latest_review_result_path
+        review_sha = run_state.codex.latest_review_result_sha256
+        if review_path is None or review_sha is None:
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        if (
+            intent.review_result_artifact_path != review_path
+            or intent.review_result_sha256 != review_sha
+        ):
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        try:
+            self.artifacts.read_verified_bytes(
+                run_id,
+                patch_rel,
+                expected_sha256=patch_sha256,
+            )
+            self.artifacts.read_verified_bytes(
+                run_id,
+                review_path,
+                expected_sha256=review_sha,
+            )
+        except (PydanticValidationError, OSError, ProtectedArtifactError):
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        intent_sha256 = authorization.checkpoint_intent_sha256
+        trusted_tree_file_sha256 = authorization.checkpoint_trusted_tree_sha256
+        try:
+            self.artifacts.read_verified_bytes(
+                run_id,
+                authorization.checkpoint_intent_artifact_path,
+                expected_sha256=intent_sha256,
+            )
+        except (PydanticValidationError, OSError, ProtectedArtifactError):
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        if result.trusted_tree_sha256 != trusted_tree_file_sha256:
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        try:
+            trusted_tree = self._load_trusted_tree(
+                run_id,
+                expected_sha256=trusted_tree_file_sha256,
+            )
+        except (PydanticValidationError, OSError, ProtectedArtifactError):
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        if trusted_tree is None:
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        if not self._verify_checkpoint_result(
+            intent,
+            result,
+            intent_sha256,
+            trusted_tree_sha256=trusted_tree_file_sha256,
+        ):
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        try:
+            authenticate_checkpoint_result_bindings(
+                result=result,
+                intent=intent,
+                trusted_tree=trusted_tree,
+                intent_sha256=intent_sha256,
+                trusted_tree_file_sha256=trusted_tree_file_sha256,
+                run_id=run_id,
+                materialized=materialized,
+            )
+            verify_checkpoint_commit_in_repository(
+                intent=intent,
+                trusted_tree=trusted_tree,
+                commit_sha256=result.commit_sha256,
+                require_head_match=True,
+            )
+        except SequenceCheckpointEvidenceError:
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        predecessor_entry = sequence_state.definition.entries[intent.predecessor_ordinal - 1]
+        if (
+            predecessor_entry.commit_message is not None
+            and intent.commit_message != predecessor_entry.commit_message
+        ):
+            return TickRunReceipt(run_id=run_id, action="checkpoint_result_invalid")
+        return None
+
+    def _replay_handoff_from_terminal_predecessor(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        sequence_state: ActiveSequenceState,
+        run_state: CompletedState | CompletedWithResidualRiskState,
+        intent: SequenceCheckpointIntent,
+        result: SequenceCheckpointResult,
+        now: datetime,
+    ) -> TickRunReceipt:
+        from ai_dev_loop.scheduler.application.contracts import SchedulerEngineError
+
+        run_id = run_state.run_id
+        conn.execute("SAVEPOINT sequence_checkpoint_replay")
+        try:
+            return self._replay_handoff_from_terminal_predecessor_on_savepoint(
+                conn,
+                sequence_state=sequence_state,
+                run_state=run_state,
+                intent=intent,
+                result=result,
+                now=now,
+            )
+        except SchedulerEngineError:
+            conn.execute("ROLLBACK TO sequence_checkpoint_replay")
+            conn.execute("RELEASE sequence_checkpoint_replay")
+            sequence_id = intent.sequence_id
+            again = self.store.load_validated_sequence_state(conn, sequence_id)
+            successor_run_id = intent.successor_run_id
+            if isinstance(again, ActiveSequenceState) and again.current_run_id == successor_run_id:
+                return TickRunReceipt(run_id=run_id, action="sequence_handoff_complete")
+            return TickRunReceipt(run_id=run_id, action="sequence_handoff_reconcile_failed")
+
+    def _replay_handoff_from_terminal_predecessor_on_savepoint(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        sequence_state: ActiveSequenceState,
+        run_state: CompletedState | CompletedWithResidualRiskState,
+        intent: SequenceCheckpointIntent,
+        result: SequenceCheckpointResult,
+        now: datetime,
+    ) -> TickRunReceipt:
+        run_id = run_state.run_id
+        _, predecessor_version, _ = self.store.load_validated_snapshot(conn, run_id)
+        sequence_id = intent.sequence_id
+        refreshed = self.store.load_validated_sequence_state(conn, sequence_id)
+        if not isinstance(refreshed, ActiveSequenceState):
+            conn.execute("RELEASE sequence_checkpoint_replay")
+            return TickRunReceipt(run_id=run_id, action="sequence_not_active")
+        sequence_state = refreshed
+        successor_entry = sequence_state.definition.entries[intent.successor_ordinal - 1]
+        context, entry_hash = self._materializer.materialize_next_entry(
+            sequence_id=sequence_id,
+            definition=sequence_state.definition,
+            entry=successor_entry,
+        )
+        now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        successor_run_id = intent.successor_run_id
+        idempotency_key = sequence_run_idempotency_key(context)
+        submitted_state = SubmittedState(
+            run_id=successor_run_id,
+            version=1,
+            submitted_at=now_text,
+            updated_at=now_text,
+            idempotency_key=idempotency_key,
+            context=context,
+        )
+        submitted_event = RunSubmittedEvent(
+            run_id=successor_run_id,
+            idempotency_key=idempotency_key,
+            worktree_key=context.repository.worktree_key,
+            reused_existing=False,
+        )
+        authorized_event = RunAuthorizedEvent(
+            run_id=successor_run_id,
+            controller_session_id=context.controller.controller_session_id,
+            idempotent_replay=False,
+        )
+        authorized_state = apply_run_authorized(
+            submitted_state, authorized_event, now_text=now_text
+        )
+        residual_ordinals = tuple(sequence_state.residual_risk_ordinals)
+        if intent.accepted_outcome == "completed_with_residual_risk":
+            residual_ordinals = tuple(
+                sorted(set(residual_ordinals + (intent.predecessor_ordinal,)))
+            )
+        updated_sequence = ActiveSequenceState(
+            schema_version=sequence_state.schema_version,
+            sequence_id=sequence_state.sequence_id,
+            version=sequence_state.version + 1,
+            prepared_at=sequence_state.prepared_at,
+            updated_at=now_text,
+            started_at=sequence_state.started_at,
+            idempotency_key=sequence_state.idempotency_key,
+            definition=sequence_state.definition,
+            current_ordinal=intent.successor_ordinal,
+            current_run_id=successor_run_id,
+            materialized_entries=(
+                *sequence_state.materialized_entries,
+                MaterializedSequenceEntry(
+                    ordinal=intent.successor_ordinal,
+                    run_id=successor_run_id,
+                    entry_hash=entry_hash,
+                    materialized_at=now_text,
+                ),
+            ),
+            residual_risk_ordinals=residual_ordinals,
+        )
+        committed_event = SequenceCheckpointCommittedEvent(
+            run_id=run_id,
+            sequence_id=sequence_id,
+            commit_sha256_prefix=result.commit_sha256[:12],
+            tree_sha256_prefix=result.tree_sha256[:12],
+        )
+        handoff_event = SequenceHandoffCompletedEvent(
+            predecessor_run_id=run_id,
+            successor_run_id=successor_run_id,
+            sequence_id=sequence_id,
+            predecessor_ordinal=intent.predecessor_ordinal,
+            successor_ordinal=intent.successor_ordinal,
+        )
+        self.store.complete_sequence_checkpoint_handoff(
+            conn,
+            intent=intent,
+            result=result,
+            predecessor_state=run_state,
+            predecessor_version=predecessor_version,
+            successor_submitted=submitted_state,
+            successor_authorized=authorized_state,
+            submitted_event=submitted_event,
+            authorized_event=authorized_event,
+            committed_event=committed_event,
+            handoff_event=handoff_event,
+            updated_sequence=updated_sequence,
+            event_id_factory=self._event_id_factory,
+            now=now,
+        )
+        intent_path = self.artifacts.run_root(run_id) / SEQUENCE_CHECKPOINT_INTENT_ARTIFACT
+        intent_sha256 = hashlib.sha256(intent_path.read_bytes()).hexdigest()
+        if self.store.has_checkpoint_reconciliation_hold(conn, run_id):
+            self.store.release_checkpoint_reconciliation_hold(
+                conn,
+                run_id=run_id,
+                intent_sha256=intent_sha256,
+            )
+        conn.execute("RELEASE sequence_checkpoint_replay")
+        return TickRunReceipt(run_id=run_id, action="sequence_handoff_reconciled")

@@ -313,7 +313,17 @@ def aborted_pending_resource_cleanup_safe_next_action(run_id: str) -> SafeNextAc
 def blocked_safe_next_action(
     run_id: str, *, block_reason_kind: str | None = None
 ) -> SafeNextAction:
+    from ai_dev_loop.runners.codex_failure import is_operational_review_block_kind
+
     detail = block_reason_kind or "blocked"
+    if block_reason_kind and is_operational_review_block_kind(block_reason_kind):
+        return SafeNextAction(
+            kind=SafeNextActionKind.SCHEDULER_TICK,
+            command=(
+                f"ai_dev_loop scheduler review retry {run_id} "
+                "(authorize same-reviewer review recovery; tick launches the attempt)."
+            ),
+        )
     return SafeNextAction(
         kind=SafeNextActionKind.INSPECT_BLOCKED,
         command=(
@@ -517,6 +527,10 @@ class SequenceEntrySummary(AppModel):
     residual_risk: bool = False
     checkpoint_commit_sha256_prefix: str | None = None
     cancelled: bool = False
+    attempt_count: int = 0
+    accepted_run_id_prefix: str | None = None
+    accepted_attempt_kind: str | None = None
+    attempt_kind_labels: tuple[str, ...] = ()
 
 
 class SequenceAggregateCounts(AppModel):
@@ -527,6 +541,7 @@ class SequenceAggregateCounts(AppModel):
     checkpointed: int
     cancelled: int
     remaining: int
+    attempts: int = 0
 
 
 class SequencePrepareResult(AppModel):
@@ -656,9 +671,27 @@ def awaiting_finalization_sequence_safe_next_action(sequence_id: str) -> SafeNex
 
 
 def blocked_sequence_safe_next_action(
-    sequence_id: str, *, block_reason_kind: str | None = None
+    sequence_id: str,
+    *,
+    block_reason_kind: str | None = None,
+    current_run_id: str | None = None,
+    run_block_reason_kind: str | None = None,
 ) -> SafeNextAction:
+    from ai_dev_loop.runners.codex_failure import is_operational_review_block_kind
+
     detail = block_reason_kind or "blocked"
+    operational_kind = run_block_reason_kind or (
+        block_reason_kind if is_operational_review_block_kind(block_reason_kind or "") else None
+    )
+    if current_run_id and operational_kind and is_operational_review_block_kind(operational_kind):
+        return SafeNextAction(
+            kind=SafeNextActionKind.SCHEDULER_TICK,
+            command=(
+                f"Sequence {sequence_id} is blocked on an operational review failure "
+                f"({operational_kind}). Run ai_dev_loop scheduler review retry {current_run_id} "
+                "to authorize same-reviewer recovery for the current phase, then tick."
+            ),
+        )
     return SafeNextAction(
         kind=SafeNextActionKind.INSPECT_BLOCKED,
         command=(

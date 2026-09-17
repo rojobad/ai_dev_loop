@@ -11,9 +11,18 @@ from ai_dev_loop.integrations.codex import assets
 def test_load_skill_and_hook_assets() -> None:
     skill = assets.load_skill_content()
     controller = assets.load_skill_content(assets.CONTROLLER_SKILL)
+    fallback = assets.load_skill_content(assets.FALLBACK_RECOVERY_SKILL)
+    fallback_resources = assets.load_skill_resources(assets.FALLBACK_RECOVERY_SKILL)
     hook = assets.load_hook_script_content()
     assert "name: ai-dev-loop-handoff" in skill
     assert "name: ai-dev-loop-controller" in controller
+    assert "name: ai-dev-loop-fallback-recovery" in fallback
+    assert "references/workflow.md" in fallback_resources
+    assert "agents/openai.yaml" in fallback_resources
+    assert (
+        "Never launch another fallback automatically"
+        in fallback_resources["references/workflow.md"]
+    )
     assert "scheduler submit" in skill
     assert "--codex-review-model" in skill
     assert "--codex-review-reasoning-effort" in skill
@@ -29,6 +38,10 @@ def test_load_skill_and_hook_assets() -> None:
 def test_package_assets_exist_on_disk() -> None:
     assert assets.skill_package_path().is_file()
     assert assets.skill_package_path(assets.CONTROLLER_SKILL).is_file()
+    assert assets.skill_package_path(assets.FALLBACK_RECOVERY_SKILL).is_file()
+    assert assets.skill_package_resource_path(
+        assets.FALLBACK_RECOVERY_SKILL, "references/workflow.md"
+    ).is_file()
     assert assets.hook_script_package_path().is_file()
 
 
@@ -48,12 +61,21 @@ def test_built_wheel_includes_integration_assets(tmp_path: Path) -> None:
         names = archive.namelist()
     assert any("integrations/codex/skill/SKILL.md" in name for name in names)
     assert any("integrations/codex/controller_skill/SKILL.md" in name for name in names)
+    assert any("integrations/codex/fallback_recovery_skill/SKILL.md" in name for name in names)
+    assert any(
+        "integrations/codex/fallback_recovery_skill/references/workflow.md" in name
+        for name in names
+    )
+    assert any(
+        "integrations/codex/fallback_recovery_skill/agents/openai.yaml" in name for name in names
+    )
     assert any("integrations/codex/session_start.py" in name for name in names)
 
 
 def test_skill_guardrail_text_regression() -> None:
     handoff = assets.load_skill_content()
     controller = assets.load_skill_content(assets.CONTROLLER_SKILL)
+    fallback = assets.load_skill_content(assets.FALLBACK_RECOVERY_SKILL)
     for text in (handoff, controller):
         assert "--last" in text
         assert "exact" in text.lower()
@@ -64,3 +86,6 @@ def test_skill_guardrail_text_regression() -> None:
     assert "scheduler start" in controller
     assert "scheduler submit" in handoff
     assert "scheduler abort" in controller
+    assert "one fresh ordinary run" in fallback
+    assert "Do not recursively create another worktree/run" in fallback
+    assert "scheduler recovery" in fallback

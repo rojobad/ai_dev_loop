@@ -125,6 +125,8 @@ El instalador coloca:
 
 - `ai-dev-loop-handoff/SKILL.md`
 - `ai-dev-loop-controller/SKILL.md`
+- `ai-dev-loop-fallback-recovery/SKILL.md`, su referencia
+  `references/workflow.md` y metadata `agents/openai.yaml`
 - el script `SessionStart` `ai_dev_loop_session_start.py`
 - el registro del hook en el `hooks.json` visible para ese target
 

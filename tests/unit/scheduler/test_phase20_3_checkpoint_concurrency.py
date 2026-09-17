@@ -954,13 +954,23 @@ def test_tampered_predecessor_commit_sha256_blocks_phase_two_checkpoint_parent(
     )
     sequence_state = SimpleNamespace(
         sequence_id=intent.sequence_id,
-        materialized_entries=(SimpleNamespace(run_id=prev_run, ordinal=1),),
+        materialized_entries=(
+            SimpleNamespace(run_id=prev_run, ordinal=1),
+            SimpleNamespace(run_id=cur_run, ordinal=2),
+        ),
         definition=SimpleNamespace(entries=(predecessor_entry, SimpleNamespace())),
     )
-    with pytest.raises(ValidationError, match="commit object tree does not match"):
+    with (
+        store.begin_read() as conn,
+        patch(
+            "ai_dev_loop.scheduler.infrastructure.sequence_run_lineage_store."
+            "authenticate_checkpoint_successor_replacement_chain"
+        ),
+        pytest.raises(ValidationError, match="commit object tree does not match"),
+    ):
         service._authenticate_predecessor_checkpoint_result(
+            conn,
             prev_run_id=prev_run,
-            current_predecessor_run_id=cur_run,
             sequence_state=sequence_state,
             current_ordinal=2,
         )
@@ -1120,7 +1130,21 @@ def _active_sequence_for_intent(
     *,
     repo_root: str,
 ) -> ActiveSequenceState:
+    from ai_dev_loop.scheduler.application.sequence_materializer import frozen_entry_hash
+
     now_text = "2026-09-13T12:00:00.000000Z"
+    first_entry = _frozen_sequence_entry(
+        ordinal=1,
+        phase_name="phase-one",
+        planned_run_id=intent.predecessor_run_id,
+        commit_message=intent.commit_message,
+    )
+    second_entry = _frozen_sequence_entry(
+        ordinal=2,
+        phase_name="phase-two",
+        planned_run_id=intent.successor_run_id,
+        commit_message=None,
+    )
     definition = PreparedSequenceDefinition(
         sequence_id=intent.sequence_id,
         name="two-phase",
@@ -1134,20 +1158,7 @@ def _active_sequence_for_intent(
         manifest_resolved_artifact_path="sequence/manifest.resolved.yaml",
         manifest_resolved_sha256=DIGEST,
         controller=ControllerBinding(controller_session_id=CONTROLLER_SESSION),
-        entries=(
-            _frozen_sequence_entry(
-                ordinal=1,
-                phase_name="phase-one",
-                planned_run_id=intent.predecessor_run_id,
-                commit_message=intent.commit_message,
-            ),
-            _frozen_sequence_entry(
-                ordinal=2,
-                phase_name="phase-two",
-                planned_run_id=intent.successor_run_id,
-                commit_message=None,
-            ),
-        ),
+        entries=(first_entry, second_entry),
     )
     return ActiveSequenceState(
         schema_version=1,
@@ -1164,12 +1175,148 @@ def _active_sequence_for_intent(
             MaterializedSequenceEntry(
                 ordinal=1,
                 run_id=intent.predecessor_run_id,
-                entry_hash=DIGEST,
+                entry_hash=frozen_entry_hash(first_entry),
                 materialized_at=now_text,
             ),
         ),
         residual_risk_ordinals=(),
     )
+
+
+def _bootstrap_run_on_store(
+    store: SqliteSchedulerStore,
+    *,
+    repo: Path,
+    run_id: str,
+    now: datetime | None = None,
+) -> str:
+    from ai_dev_loop.scheduler.application.start import StartService
+    from ai_dev_loop.scheduler.domain.events import RunSubmittedEvent
+
+    started_at = now or datetime(2026, 9, 13, 12, 0, tzinfo=UTC)
+    state = sample_submitted_state(run_id=run_id, repo_root=str(repo.resolve()))
+    state = state.model_copy(
+        update={
+            "context": state.context.model_copy(
+                update={
+                    "workflow": state.context.workflow.model_copy(
+                        update={"require_clean_worktree": False}
+                    )
+                }
+            )
+        }
+    )
+    event = RunSubmittedEvent(
+        run_id=run_id,
+        idempotency_key=state.idempotency_key,
+        worktree_key=state.context.repository.worktree_key,
+        reused_existing=False,
+    )
+    with store.begin_immediate() as conn:
+        store.insert_submitted_run(
+            conn,
+            run_id=run_id,
+            state=state,
+            event_id=f"evt-submit-{run_id}",
+            event=event,
+            now=started_at,
+        )
+    StartService(store, now_factory=lambda: started_at).start(run_id)
+    return run_id
+
+
+def _promote_run_to_terminal_completed(
+    store: SqliteSchedulerStore,
+    *,
+    run_id: str,
+    now: datetime,
+) -> None:
+    from ai_dev_loop.scheduler.domain.events import RunCompletedEvent
+    from ai_dev_loop.scheduler.domain.reducer import apply_run_completed
+    from ai_dev_loop.scheduler.domain.state import CheckpointPendingState
+
+    _promote_to_checkpoint_pending(store, run_id, now=now)
+    now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    with store.begin_immediate() as conn:
+        state, version, _ = store.load_validated_snapshot(conn, run_id)
+        assert isinstance(state, CheckpointPendingState)
+        completed = apply_run_completed(
+            state,
+            RunCompletedEvent(run_id=run_id, review_iteration=state.codex.review_iteration),
+            now_text=now_text,
+        )
+        store.compare_and_swap_state(
+            conn,
+            run_id=run_id,
+            expected_version=version,
+            new_state=completed,
+            now=now,
+        )
+
+
+def _persist_active_sequence_for_fixture(
+    store: SqliteSchedulerStore,
+    active: ActiveSequenceState,
+    *,
+    now: datetime,
+) -> None:
+    kind, payload, digest = store.dump_sequence_state(active)
+    definition = active.definition
+    now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    from ai_dev_loop.scheduler.infrastructure.sequence_run_lineage_store import (
+        persist_authoritative_lineage_from_state,
+    )
+
+    with store.begin_immediate() as conn:
+        existing = conn.execute(
+            "SELECT 1 FROM scheduler_sequences WHERE sequence_id = ?",
+            (active.sequence_id,),
+        ).fetchone()
+        if existing is not None:
+            return
+        conn.execute(
+            """
+            INSERT INTO scheduler_sequences(
+                sequence_id, name, state_kind, project_name, repository_root,
+                worktree_key, entry_count, idempotency_key, version,
+                prepared_at, updated_at, payload, payload_sha256
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                active.sequence_id,
+                definition.name,
+                kind,
+                definition.project_name,
+                definition.repository.root,
+                definition.repository.worktree_key,
+                len(definition.entries),
+                active.idempotency_key,
+                active.version,
+                active.prepared_at,
+                now_text,
+                payload,
+                digest,
+            ),
+        )
+        for entry in definition.entries:
+            entry_payload, entry_digest = store.dump_sequence_entry(entry)
+            conn.execute(
+                """
+                INSERT INTO scheduler_sequence_entries(
+                    sequence_id, ordinal, phase_name, planned_run_id,
+                    payload, payload_sha256
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    active.sequence_id,
+                    entry.ordinal,
+                    entry.phase_name,
+                    entry.planned_run_id,
+                    entry_payload,
+                    entry_digest,
+                ),
+            )
+        persist_authoritative_lineage_from_state(conn, active)
 
 
 def _clear_pending_effects(store: SqliteSchedulerStore, run_id: str) -> None:
@@ -1274,8 +1421,15 @@ def _promote_checkpoint_pending_with_artifacts(
     trusted_tree_sha256: str,
     now: datetime,
 ) -> None:
+    review_bytes = json.dumps({"has_actionable_findings": False}).encode()
+    review_sha = hashlib.sha256(review_bytes).hexdigest()
+    if review_sha != intent.review_result_sha256:
+        intent = intent.model_copy(update={"review_result_sha256": review_sha})
     intent_text = json.dumps(intent.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
+    intent_sha256 = hashlib.sha256(intent_text.encode()).hexdigest()
+    trusted_tree = trusted_tree.model_copy(update={"intent_sha256": intent_sha256})
     trusted_text = json.dumps(trusted_tree.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
+    trusted_tree_sha256 = hashlib.sha256(trusted_text.encode()).hexdigest()
     artifacts.write_text(run_id, SEQUENCE_CHECKPOINT_INTENT_ARTIFACT, intent_text, max_bytes=32_768)
     artifacts.write_text(
         run_id,
@@ -1289,26 +1443,70 @@ def _promote_checkpoint_pending_with_artifacts(
         patch_bytes,
         max_bytes=1_048_576,
     )
+    artifacts.write_bytes(
+        run_id,
+        intent.review_result_artifact_path,
+        review_bytes,
+        max_bytes=1_048_576,
+    )
     with store.begin_immediate() as conn:
         loaded, version, _ = store.load_validated_snapshot(conn, run_id)
-    awaiting = _checkpoint_pending_state(run_id).model_copy(
+    repo = Path(intent.repository_root)
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    branch = subprocess.check_output(
+        ["git", "symbolic-ref", "--short", "HEAD"], cwd=repo, text=True
+    ).strip()
+    admission_path = "git/status/01-admission.txt"
+    admission_text = (
+        f"branch={branch}\n"
+        f"head={head}\n"
+        f"git_common_dir={intent.git_common_dir}\n"
+        f"git_dir={intent.git_dir}\n"
+    )
+    admission_sha = hashlib.sha256(admission_text.encode()).hexdigest()
+    artifacts.write_text(run_id, admission_path, admission_text, max_bytes=8_192)
+    from ai_dev_loop.scheduler.domain.state import AdmittedRunCheckpoint
+
+    admitted_checkpoint = AdmittedRunCheckpoint(
+        authorized_at=getattr(loaded, "authorized_at", loaded.submitted_at),
+        authorized_controller_session_id=getattr(loaded, "authorized_controller_session_id", None),
+        admitted_at=getattr(loaded, "authorized_at", loaded.submitted_at),
+        admission_status_artifact_path=admission_path,
+        admission_status_sha256=admission_sha,
+    )
+    template = _checkpoint_pending_state(run_id)
+    awaiting = template.model_copy(
         update={
-            "context": _checkpoint_pending_state(run_id).context.model_copy(
+            "context": template.context.model_copy(
                 update={"repository": loaded.context.repository}
-            )
+            ),
+            "checkpoint": admitted_checkpoint,
+            "cursor": template.cursor.model_copy(
+                update={
+                    "staged_patch_path": intent.staged_patch_artifact_path,
+                    "staged_patch_sha256": intent.reviewed_patch_sha256,
+                }
+            ),
+            "codex": template.codex.model_copy(
+                update={
+                    "latest_review_result_path": intent.review_result_artifact_path,
+                    "latest_review_result_sha256": intent.review_result_sha256,
+                }
+            ),
         }
+    )
+    checkpoint_event = SequenceCheckpointRequestedEvent(
+        run_id=run_id,
+        sequence_id=intent.sequence_id,
+        accepted_outcome="completed",
+        review_iteration=awaiting.codex.review_iteration,
+        checkpoint_intent_artifact_path=SEQUENCE_CHECKPOINT_INTENT_ARTIFACT,
+        checkpoint_intent_sha256=intent_sha256,
+        checkpoint_trusted_tree_sha256=trusted_tree_sha256,
     )
     pending = apply_sequence_checkpoint_requested(
         awaiting,
-        SequenceCheckpointRequestedEvent(
-            run_id=run_id,
-            sequence_id=intent.sequence_id,
-            accepted_outcome="completed",
-            review_iteration=1,
-            checkpoint_intent_artifact_path=SEQUENCE_CHECKPOINT_INTENT_ARTIFACT,
-            checkpoint_intent_sha256=intent_sha256,
-            checkpoint_trusted_tree_sha256=trusted_tree_sha256,
-        ),
+        checkpoint_event,
         now_text=now.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
     )
     with store.begin_immediate() as conn:
@@ -1317,6 +1515,14 @@ def _promote_checkpoint_pending_with_artifacts(
             run_id=run_id,
             expected_version=version,
             new_state=pending,
+            now=now,
+        )
+        store.append_event(
+            conn,
+            event_id=f"evt-checkpoint-requested-{run_id}",
+            run_id=run_id,
+            sequence=store.next_event_sequence(conn, run_id),
+            event=checkpoint_event,
             now=now,
         )
 
@@ -1370,6 +1576,13 @@ def _prepare_handoff_reconcile(
     store.load_validated_sequence_state = patched_load  # type: ignore[method-assign]
     _clear_pending_effects(store, run_id)
     service = _handoff_service(store, artifacts, git_checkpoint=git_checkpoint)
+    intent_bytes = (artifacts.run_root(run_id) / SEQUENCE_CHECKPOINT_INTENT_ARTIFACT).read_bytes()
+    intent = SequenceCheckpointIntent.model_validate_json(intent_bytes)
+    intent_sha = hashlib.sha256(intent_bytes).hexdigest()
+    trusted_tree_bytes = (
+        artifacts.run_root(run_id) / SEQUENCE_CHECKPOINT_TRUSTED_TREE_ARTIFACT
+    ).read_bytes()
+    trusted_tree = SequenceCheckpointTrustedTree.model_validate_json(trusted_tree_bytes)
     return {
         "repo": repo,
         "store": store,
@@ -1382,6 +1595,8 @@ def _prepare_handoff_reconcile(
         "tick_owner": tick_owner,
         "tick_generation": generation,
         "parent_head": intent.parent_head,
+        "load_sequence_state_original": original_load,
+        "active_sequence": active_sequence,
     }
 
 

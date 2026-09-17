@@ -21,10 +21,11 @@ runner = CliRunner()
 def test_first_time_install(isolated_integrations: Path, isolated_xdg: Path) -> None:
     result = integration_install.install_integrations(home=isolated_integrations)
     assert result.skill.action.value == "created"
-    assert len(result.skills) == 2
+    assert len(result.skills) == 3
     assert {skill.directory_name for skill in result.skills} == {
         "ai-dev-loop-handoff",
         "ai-dev-loop-controller",
+        "ai-dev-loop-fallback-recovery",
     }
     assert all(skill.action.value == "created" for skill in result.skills)
     assert result.hook_script.action.value == "created"
@@ -32,6 +33,19 @@ def test_first_time_install(isolated_integrations: Path, isolated_xdg: Path) -> 
     assert integration_paths.skill_path(isolated_integrations).is_file()
     assert integration_paths.skill_path(
         isolated_integrations, directory_name="ai-dev-loop-controller"
+    ).is_file()
+    assert integration_paths.skill_path(
+        isolated_integrations, directory_name="ai-dev-loop-fallback-recovery"
+    ).is_file()
+    assert integration_paths.skill_resource_path_for(
+        assets.FALLBACK_RECOVERY_SKILL,
+        "references/workflow.md",
+        isolated_integrations,
+    ).is_file()
+    assert integration_paths.skill_resource_path_for(
+        assets.FALLBACK_RECOVERY_SKILL,
+        "agents/openai.yaml",
+        isolated_integrations,
     ).is_file()
     assert integration_paths.hook_script_path(isolated_integrations).is_file()
     assert integration_paths.hooks_json_path(isolated_integrations).is_file()
@@ -95,6 +109,14 @@ def test_invalid_hooks_json_uninstall_leaves_installed_files(
     controller_path = integration_paths.skill_path(
         isolated_integrations, directory_name="ai-dev-loop-controller"
     )
+    fallback_path = integration_paths.skill_path(
+        isolated_integrations, directory_name="ai-dev-loop-fallback-recovery"
+    )
+    fallback_reference = integration_paths.skill_resource_path_for(
+        assets.FALLBACK_RECOVERY_SKILL,
+        "references/workflow.md",
+        isolated_integrations,
+    )
     hook_path = integration_paths.hook_script_path(isolated_integrations)
     hooks_path.write_text("{bad", encoding="utf-8")
 
@@ -103,6 +125,8 @@ def test_invalid_hooks_json_uninstall_leaves_installed_files(
 
     assert skill_path.is_file()
     assert controller_path.is_file()
+    assert fallback_path.is_file()
+    assert fallback_reference.is_file()
     assert hook_path.is_file()
     assert hooks_path.read_text(encoding="utf-8") == "{bad"
 
@@ -127,6 +151,14 @@ def test_uninstall_preserves_unrelated_hooks(
     assert not integration_paths.skill_path(
         isolated_integrations, directory_name="ai-dev-loop-controller"
     ).is_file()
+    assert not integration_paths.skill_path(
+        isolated_integrations, directory_name="ai-dev-loop-fallback-recovery"
+    ).is_file()
+    assert not integration_paths.skill_resource_path_for(
+        assets.FALLBACK_RECOVERY_SKILL,
+        "references/workflow.md",
+        isolated_integrations,
+    ).is_file()
     assert not integration_paths.hook_script_path(isolated_integrations).is_file()
     remaining = hooks_json.load_hooks_document(hooks_path)
     assert "PreToolUse" in remaining["hooks"]
@@ -142,7 +174,7 @@ def test_status_json_after_install_and_uninstall(
     payload = json.loads(installed.stdout)
     assert payload["target"] == "wsl-cli"
     assert payload["skill_installed"] is True
-    assert len(payload["skills"]) == 2
+    assert len(payload["skills"]) == 3
     assert payload["hook_registration_present"] is True
     assert payload["hook_trust_status"] == "unknown"
 
@@ -185,9 +217,16 @@ def test_installed_file_permissions(
         pytest.skip("permission test root does not enforce modes")
     integration_install.install_integrations(home=isolated_integrations)
     skill = integration_paths.skill_path(isolated_integrations)
+    fallback_reference = integration_paths.skill_resource_path_for(
+        assets.FALLBACK_RECOVERY_SKILL,
+        "references/workflow.md",
+        isolated_integrations,
+    )
     hook = integration_paths.hook_script_path(isolated_integrations)
     hooks = integration_paths.hooks_json_path(isolated_integrations)
     assert stat.S_IMODE(skill.stat().st_mode) == 0o600
+    assert stat.S_IMODE(fallback_reference.stat().st_mode) == 0o600
+    assert stat.S_IMODE(fallback_reference.parent.stat().st_mode) == 0o700
     assert stat.S_IMODE(hook.stat().st_mode) == 0o600
     assert stat.S_IMODE(hooks.stat().st_mode) == 0o600
     assert stat.S_IMODE(skill.parent.stat().st_mode) == 0o700
@@ -198,6 +237,15 @@ def test_skill_content_matches_package(isolated_integrations: Path, isolated_xdg
     integration_install.install_integrations(home=isolated_integrations)
     skill = integration_paths.skill_path(isolated_integrations)
     assert assets.content_matches_package(skill, expected_text=assets.load_skill_content())
+    for resource_path, content in assets.load_skill_resources(
+        assets.FALLBACK_RECOVERY_SKILL
+    ).items():
+        installed = integration_paths.skill_resource_path_for(
+            assets.FALLBACK_RECOVERY_SKILL,
+            resource_path,
+            isolated_integrations,
+        )
+        assert assets.content_matches_package(installed, expected_text=content)
 
 
 def test_uninstall_preserves_user_files_in_skill_directory(
@@ -213,3 +261,45 @@ def test_uninstall_preserves_user_files_in_skill_directory(
     assert not integration_paths.skill_path(isolated_integrations).is_file()
     assert extra_file.is_file()
     assert extra_file.read_text(encoding="utf-8") == "keep me"
+
+
+def test_uninstall_removes_owned_reference_and_preserves_user_reference_file(
+    isolated_integrations: Path, isolated_xdg: Path
+) -> None:
+    integration_install.install_integrations(home=isolated_integrations)
+    owned_reference = integration_paths.skill_resource_path_for(
+        assets.FALLBACK_RECOVERY_SKILL,
+        "references/workflow.md",
+        isolated_integrations,
+    )
+    extra_file = owned_reference.parent / "notes.txt"
+    extra_file.write_text("keep me", encoding="utf-8")
+
+    integration_install.uninstall_integrations(home=isolated_integrations)
+
+    assert not owned_reference.exists()
+    assert extra_file.is_file()
+    assert extra_file.read_text(encoding="utf-8") == "keep me"
+
+
+def test_status_detects_missing_owned_skill_reference(
+    isolated_integrations: Path, isolated_xdg: Path
+) -> None:
+    integration_install.install_integrations(home=isolated_integrations)
+    owned_reference = integration_paths.skill_resource_path_for(
+        assets.FALLBACK_RECOVERY_SKILL,
+        "references/workflow.md",
+        isolated_integrations,
+    )
+    owned_reference.unlink()
+
+    status = integration_install.collect_integration_status(home=isolated_integrations)
+    fallback = next(
+        skill
+        for skill in status.skills
+        if skill.directory_name == assets.FALLBACK_RECOVERY_SKILL_DIRECTORY_NAME
+    )
+
+    assert fallback.action == integration_install.AssetAction.NOT_FOUND
+    assert fallback.matches_package is False
+    assert any("integrations install" in item for item in status.remediation)

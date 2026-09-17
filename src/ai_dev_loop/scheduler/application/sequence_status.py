@@ -21,6 +21,9 @@ from ai_dev_loop.scheduler.application.contracts import (
     prepared_sequence_safe_next_action,
 )
 from ai_dev_loop.scheduler.application.safe_actions import safe_next_action_for_scheduler_state
+from ai_dev_loop.scheduler.application.sequence_lineage_projection import (
+    load_phase_lineage_projections,
+)
 from ai_dev_loop.scheduler.application.sequence_report import SEQUENCE_COMPLETION_REPORT_ARTIFACT
 from ai_dev_loop.scheduler.domain.checkpoint import SEQUENCE_CHECKPOINT_RESULT_ARTIFACT
 from ai_dev_loop.scheduler.domain.sequence import (
@@ -125,6 +128,13 @@ class SequenceStatusService:
         residual_ordinals: set[int] = set()
         if hasattr(state, "residual_risk_ordinals"):
             residual_ordinals = set(state.residual_risk_ordinals)
+        lineage_by_ordinal = load_phase_lineage_projections(
+            self.store,
+            conn,
+            sequence_id=state.sequence_id,
+            definition=definition,
+            sequence_state=state,
+        )
         summaries: list[SequenceEntrySummary] = []
         for entry in definition.entries:
             materialized = materialized_by_ordinal.get(entry.ordinal)
@@ -149,6 +159,7 @@ class SequenceStatusService:
                                 checkpoint_prefix = commit_sha[:12]
                         except (json.JSONDecodeError, OSError):
                             checkpoint_prefix = None
+            lineage = lineage_by_ordinal.get(entry.ordinal)
             summaries.append(
                 SequenceEntrySummary(
                     ordinal=entry.ordinal,
@@ -163,6 +174,16 @@ class SequenceStatusService:
                     residual_risk=entry.ordinal in residual_ordinals,
                     checkpoint_commit_sha256_prefix=checkpoint_prefix,
                     cancelled=entry.ordinal in cancelled,
+                    attempt_count=lineage.attempt_count if lineage is not None else 0,
+                    accepted_run_id_prefix=(
+                        lineage.accepted_run_id_prefix if lineage is not None else None
+                    ),
+                    accepted_attempt_kind=(
+                        lineage.accepted_attempt_kind if lineage is not None else None
+                    ),
+                    attempt_kind_labels=(
+                        lineage.attempt_kind_labels if lineage is not None else ()
+                    ),
                 )
             )
         return tuple(summaries)
@@ -180,6 +201,7 @@ class SequenceStatusService:
         )
         cancelled = sum(1 for entry in entries if entry.cancelled)
         remaining = entry_count - materialized - cancelled
+        attempts = sum(entry.attempt_count for entry in entries)
         return SequenceAggregateCounts(
             planned=entry_count,
             materialized=materialized,
@@ -188,6 +210,7 @@ class SequenceStatusService:
             checkpointed=checkpointed,
             cancelled=cancelled,
             remaining=remaining,
+            attempts=attempts,
         )
 
     def _completion_report_prefix(self, sequence_id: str) -> str | None:
@@ -282,6 +305,7 @@ class SequenceStatusService:
 
         if isinstance(state, BlockedSequenceState):
             run_state, _, _ = self.store.load_validated_snapshot(conn, state.current_run_id)
+            run_block_kind = getattr(run_state, "block_reason_kind", None)
             return SequenceStatusResult(
                 sequence_id=state.sequence_id,
                 name=definition.name,
@@ -305,6 +329,8 @@ class SequenceStatusService:
                 safe_next_action=blocked_sequence_safe_next_action(
                     state.sequence_id,
                     block_reason_kind=state.block_reason_kind,
+                    current_run_id=state.current_run_id,
+                    run_block_reason_kind=run_block_kind,
                 ),
             )
 
