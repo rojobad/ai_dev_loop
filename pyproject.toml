@@ -11,6 +11,7 @@ license = "MIT"
 requires-python = ">=3.11"
 authors = [{ name = "ai_dev_loop contributors" }]
 dependencies = [
+    "jsonschema>=4.0",
     "platformdirs>=4.0",
     "pydantic>=2.0",
     "pyyaml>=6.0",
@@ -20,7 +21,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "build>=1.0",
-    "jsonschema>=4.0",
     "mkdocs>=1.6,<2.0",
     "mkdocs-material>=9.0,<10.0",
     "mypy>=1.8",
