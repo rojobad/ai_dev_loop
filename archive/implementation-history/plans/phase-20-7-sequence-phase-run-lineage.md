@@ -7,9 +7,8 @@
   frozen sequence definition.
 - Distinguish the planned run, current run, accepted run, and superseded terminal
   runs for every materialized sequence phase.
-- Normalize the Phase 20.6 sequence-recovery resolution into the same typed
-  lineage used by later same-reviewer recovery, while preserving all Phase 20.6
-  behavior and authority.
+- Limit the new lineage to the accepted sequence implementation and the existing
+  same-reviewer recovery successor that Phase 20.8 will make sequence-aware.
 - Provide a backward-compatible, fully validated persistence foundation for the
   sequence-aware manual review retry implemented in Phase 20.8.
 
@@ -18,8 +17,9 @@
 - Do not make `scheduler review retry` sequence-aware in this phase.
 - Do not create a new run, reactivate a blocked sequence, advance an ordinal,
   create a checkpoint commit, or change automatic scheduler behavior.
-- Do not revise or weaken the Phase 20.6 fresh-review recovery workflow,
-  managed-worktree authority, automatic integration, or cleanup rules.
+- Do not restore, import, adapt, or reimplement the abandoned Phase 20.6
+  fresh-review recovery work. It is absent from the accepted baseline and is not
+  a prerequisite for this phase.
 - Do not add automatic retry, retry on every failure, replacement reviewers,
   model fallback, dynamic sequence extension, skipped/reordered phases, or
   parallel phases.
@@ -36,9 +36,13 @@
   recovery kind, materialization time, and safe terminal-resolution metadata.
 - Add explicit current-run and optional accepted-run projections with aggregate
   validators that prove they agree with the ordered attempt lineage.
-- Adapt Phase 20.6 sequence recovery-resolution persistence to project its source
-  and recovery runs into the new lineage without changing its commands or Git
-  behavior.
+- Add an atomic, idempotent, write-once terminal-resolution operation and invoke
+  it from the existing accepted, residual-risk, blocked, aborted, and finalization
+  transitions so real flows populate the authoritative lineage without changing
+  which transitions occur.
+- Reserve a closed same-reviewer retry attempt kind and the exact store APIs that
+  Phase 20.8 will use, without creating a successor or changing runtime behavior
+  in this phase.
 - Add a forward migration, store operations, model/JSON-schema parity, historical
   read compatibility, and focused tests.
 - Add internal APIs needed by Phase 20.8 to authenticate the current leaf and
@@ -69,21 +73,24 @@ Before editing, read:
   and deterministic reports.
 - Phase 20.1.1 plan/findings and the current reviewer-recovery lineage and
   successor lookup implementation.
-- The committed Phase 20.5 and Phase 20.6 implementations, plans, findings,
-  migrations, schemas, recovery aggregate, sequence recovery resolution, and
-  automatic integration behavior.
+- The committed Phase 20.5 implementation, plan, findings, schemas, and capacity
+  recovery behavior.
+- The archived Phase 20.6 plan and abandonment history only to confirm that no
+  Phase 20.6 runtime, migration, schema, command, or compatibility behavior may
+  be assumed or imported.
 - `src/ai_dev_loop/scheduler/domain/sequence.py`,
   `sequence_lifecycle_validation.py`, sequence reducers/contracts, run recovery
   context models, and public safe-action models.
 - `src/ai_dev_loop/scheduler/infrastructure/sqlite_store.py`, all scheduler
   migrations, protected artifact helpers, and versioned JSON schemas.
 - Sequence prepare/start/materializer/handoff/reconcile/report/status/abort and
-  Phase 20.6 recovery services.
+  existing same-reviewer retry/recovery services.
 - Existing Phase 20 unit/integration tests and
   `tests/unit/scheduler/test_schema_readonly_historical.py`.
 
 The clean execution baseline must contain the independently reviewed and
-committed Phase 20.6 implementation.
+committed Phase 20.5 implementation. Phase 20.6 is intentionally not
+implemented and must not be treated as a prerequisite.
 
 ## Cursor Rules And Skills
 
@@ -118,12 +125,17 @@ committed Phase 20.6 implementation.
   contiguous generations and must point to the immediately preceding source
   leaf; forks, cycles, duplicate run IDs, duplicate generations, and cross-
   ordinal/cross-sequence references fail validation.
-- Recovery kinds are a closed typed set. Include the Phase 20.6 fresh-review
-  recovery kind and reserve the same-reviewer retry kind needed by Phase 20.8;
-  do not persist arbitrary strings.
+- Attempt kinds are a closed typed set containing only the planned run and the
+  same-reviewer retry kind needed by Phase 20.8. Do not persist arbitrary strings
+  or reserve a Phase 20.6 fresh-review kind.
 - A materialized ordinal has exactly one current leaf. An accepted run, when
   present, must be that ordinal's authenticated leaf and have an advancing
   accepted outcome. Earlier terminal attempts remain immutable and visible.
+- Terminal resolution is written once from authenticated run/sequence transition
+  authority. Replays verify the exact existing value; a contradictory second
+  outcome fails closed. Accepted and residual-risk outcomes set the accepted
+  leaf, while blocked/aborted outcomes resolve the attempt without fabricating
+  acceptance.
 
 ### Compatibility and schema discipline
 
@@ -132,8 +144,8 @@ committed Phase 20.6 implementation.
   database read-only.
 - Historical one-run entries must deterministically project to generation 1
   without rewriting their frozen definition or inventing recovery facts.
-- Current Phase 20.6 recovery resolutions must project to exact source/recovery
-  generations from authenticated stored IDs and outcomes, never from summaries,
+- Existing accepted one-run sequence rows project only their authenticated
+  planned run and terminal outcome. Never infer extra generations from summaries,
   filenames, `last_error`, or mutable artifacts.
 - Validate complete aggregate invariants whenever persisted sequence state is
   read, not only before writes. Invalid persisted combinations fail closed with
@@ -143,6 +155,10 @@ committed Phase 20.6 implementation.
   representative complete payloads and invalid nullable/cross-field cases, not
   property-name proxies.
 - Authority queries must not use display pagination or a fixed first-page limit.
+- Load and validate the complete unpaginated lineage for a sequence. Extra,
+  future, orphaned, cross-ordinal, or cross-sequence rows are persisted
+  corruption and must never remain invisible merely because an ordinal is not in
+  `materialized_entries`.
 
 ### Persistence and privacy
 
@@ -164,33 +180,37 @@ committed Phase 20.6 implementation.
 - This phase may persist and read the richer model but must preserve existing
   runtime behavior exactly. No command may create a second attempt solely because
   the schema can represent one.
-- Phase 20.6 recovery writes may be adapted to the new model only to preserve
-  their already-approved behavior and idempotency.
-- If the committed Phase 20.6 representation cannot be migrated without changing
-  its safety semantics, stop and record the conflict in `OpenQuestions` before
-  implementing a substitute design.
+- The abandoned Phase 20.6 snapshots are not compatibility inputs. If any staged
+  or live code begins importing their tables, models, migrations, commands, or
+  Git authority, stop and remove that dependency rather than reconstructing it.
 
 ## Implementation Plan
 
-1. Characterize the committed Phase 20.6 sequence/recovery persistence and all
-   current Phase 20 sequence aggregate invariants with focused regression tests.
+1. Characterize the committed Phase 20.5 baseline, current single-run sequence
+   persistence, existing same-reviewer successor lineage, and all current Phase
+   20 sequence aggregate invariants with focused regression tests.
 2. Define the versioned run-attempt and per-ordinal execution models, including
-   closed recovery kinds, generation/source rules, current leaf, accepted leaf,
+   closed attempt kinds, generation/source rules, current leaf, accepted leaf,
    and residual-risk consistency.
 3. Update sequence state variants and centralized lifecycle validation so every
    persisted read validates complete definition/materialization/attempt
    consistency.
 4. Add the forward migration and store APIs for full, unpaginated lineage reads,
    idempotent insertion, exact existing-row verification, and versioned CAS.
-5. Add backward-compatible adapters for historical single-run Phase 20 rows and
-   for committed Phase 20.6 recovery-resolution rows.
-6. Update sequence prepare/start/materialization and Phase 20.6 persistence to
-   write the new generation-1/recovery projections without changing behavior.
-7. Update JSON schemas and schema/model parity tests using full valid and invalid
-   payloads, including historical read-only database fixtures.
-8. Add privacy-safe internal inspection fixtures and regression coverage proving
+5. Add backward-compatible adapters for historical single-run Phase 20 rows;
+   do not recognize or import abandoned Phase 20.6 WIP shapes.
+6. Update sequence prepare/start/materialization to write the new generation-1
+   projection, then wire atomic write-once terminal resolution into the existing
+   accepted, residual-risk, blocked, aborted, and finalization transitions without
+   changing their lifecycle behavior.
+7. Load and validate every stored lineage row for the sequence, rejecting extra,
+   future, orphaned, cross-ordinal, and cross-sequence rows.
+8. Update JSON schemas and schema/model parity tests using identical complete
+   valid and invalid payloads, including nullable/generation/source/recovery and
+   current/accepted-leaf constraints plus historical read-only database fixtures.
+9. Add privacy-safe internal inspection fixtures and regression coverage proving
    no Git/process/recovery command behavior changed.
-9. Write
+10. Write
    `archive/implementation-history/findings/phase-20-7-sequence-phase-run-lineage.md`
    with exact validation evidence and residual risks.
 
@@ -202,15 +222,24 @@ committed Phase 20.6 implementation.
   of future ordinals and cross-sequence/cross-ordinal lineage.
 - **Schema tests:** complete model-to-JSON-schema parity for every changed state;
   missing, null, duplicate, malformed, and contradictory fields fail identically.
-- **Migration tests:** fresh database, upgrade from the Phase 20.6 schema,
-  read-only opening of representative older databases, interrupted migration
+- **Migration tests:** fresh database, upgrade from the current accepted Phase
+  20.5 baseline, read-only opening of representative older databases, interrupted
+  migration
   rollback, and repeated initialization are deterministic.
 - **Store/CAS tests:** exact insert/replay, conflicting replay refusal, complete
   definition comparison, concurrent duplicate insertion, CAS loser behavior,
   and unbounded authoritative lookup beyond display-page sizes.
-- **Compatibility tests:** old one-run sequences behave unchanged; committed
-  Phase 20.6 standalone and sequence recovery projections preserve exact source,
-  replacement, accepted outcome, residual risk, and report inputs.
+- **Terminal-resolution tests:** accepted, residual-risk, blocked, aborted, and
+  final-phase transitions resolve generation 1 atomically and idempotently;
+  contradictory replay fails; accepted-run projection comes only from an
+  advancing stored outcome; historical checkpointed/finalized rows migrate
+  without inventing results.
+- **Persisted-corruption tests:** complete lineage reads reject extra, future,
+  orphaned, cross-ordinal, and cross-sequence rows even when they are not named by
+  `materialized_entries`.
+- **Compatibility tests:** old one-run sequences behave unchanged; existing
+  same-reviewer successor rows remain readable without being adopted by a
+  sequence in this phase; abandoned Phase 20.6 shapes are not introduced.
 - **Boundary tests:** public `review retry`, sequence reconcile/handoff/abort, and
   scheduler tick do not create or adopt a new attempt in this phase.
 - **Privacy tests:** validation failures, status, history, events, and logs do not
@@ -240,16 +269,16 @@ uv run mkdocs build --strict
 git diff --check
 ```
 
-If committed Phase 20.6 uses different focused filenames, run their actual
-equivalents and record the exact commands in the findings artifact.
+Use the actual committed Phase 20.5 focused filenames when they differ and
+record the exact commands in the findings artifact.
 
 ## Risks Or Recovery Notes
 
 - The primary risk is creating two sources of truth: the original materialized
   entry and a new attempt list. Use one authoritative representation plus strict
   derived projections, or validate duplicated fields on every read.
-- A migration that silently treats a Phase 20.6 recovery as an ordinary planned
-  run would erase audit lineage. Preserve exact typed source and recovery IDs.
+- A migration that invents a recovery generation from untrusted or abandoned
+  data would corrupt audit lineage. Preserve only exact accepted source rows.
 - Do not broaden a schema-only phase into recovery behavior merely to make tests
   convenient. Honest boundary errors are preferable until Phase 20.8.
 - If historical data is contradictory, preserve it for diagnosis and fail closed;

@@ -6,8 +6,8 @@
   or more phase ordinals contain multiple scheduler runs.
 - Make reconciliation, handoff, abort, status, history, and completion reporting
   consistently follow the authenticated current/accepted run lineage.
-- Prove interoperability between ordinary runs, Phase 20.8 same-reviewer retry
-  successors, and Phase 20.6 fresh-review recovery results.
+- Prove interoperability between ordinary planned runs and Phase 20.8
+  same-reviewer retry successors, including more than one successor generation.
 - Preserve advancement on both `completed` and
   `completed_with_residual_risk`, with residual risk visible through final
   reporting.
@@ -19,8 +19,7 @@
 - Do not add another recovery mechanism, automatic retries, arbitrary run
   replacement, reviewer/model fallback, dynamic sequence mutation, branching,
   parallelism, skipping, reordering, or conditional phases.
-- Do not broaden Git authority beyond Phase 20.3 ordinary non-final checkpoints
-  and Phase 20.6 explicitly started authenticated fresh recovery.
+- Do not broaden Git authority beyond Phase 20.3 ordinary non-final checkpoints.
 - Do not automatically commit an ordinary final phase, push, fetch, create/update
   a PR, merge, deploy, or mutate remotes.
 - Do not change review ceilings or classify new capacity/provider errors.
@@ -38,7 +37,7 @@
   aggregates, Git uncertainty holds, active processes, reservations, and the
   current leaf.
 - Produce deterministic reports/status/history that show safe phase-level attempt
-  counts, current/accepted run prefixes, recovery kinds, outcomes, residual risk,
+  counts, current/accepted run prefixes, attempt kinds, outcomes, residual risk,
   checkpoint commit prefixes, and remaining manual actions.
 - Add a comprehensive hermetic end-to-end matrix, deterministic concurrency/fault
   injection, schema/read compatibility, public CLI coverage, documentation, and
@@ -54,7 +53,7 @@
   credentials, account state, GitHub/PR APIs, remote Git actions, and deployment.
 - Real Cursor/Codex executions or real recovery against this source repository as
   part of automated implementation or tests.
-- Rewriting Phase 20.5–20.8 archived plans or findings.
+- Rewriting the Phase 20.5, Phase 20.7, or Phase 20.8 archived plans or findings.
 - Cleanup of unowned, dirty, ambiguous, or diagnostically useful worktrees/refs.
 
 ## Required Context
@@ -63,8 +62,8 @@ Before editing, read:
 
 - `AGENTS.md`, every `.cursor/rules/*.mdc`, and all current sequence/recovery
   documentation under `/docs`.
-- The committed Phase 20.5–20.8 implementations, plans, findings, migrations,
-  schemas, safe-action contracts, and focused test suites.
+- The committed Phase 20.5, Phase 20.7, and Phase 20.8 implementations, plans,
+  findings, migrations, schemas, safe-action contracts, and focused test suites.
 - Phase 20.1–20.4 plans/findings, including every reviewer correction involving
   artifact authentication, schema parity, concurrency, durable Git intent,
   reservation/abort fencing, reconciliation, and report publication.
@@ -73,8 +72,7 @@ Before editing, read:
   and real public-CLI coverage.
 - Sequence prepare/start/materialize/handoff/checkpoint/reconcile/abort/report/
   status services; lifecycle validation; scheduler tick/status/history; direct
-  run abort/retry; reservation/hold coordination; and Phase 20.6 recovery
-  integration/cleanup services.
+  run abort/retry; and reservation/hold coordination.
 - Git checkpoint intent/evidence/result models and adapter, protected artifacts,
   SQLite store/migrations, JSON schemas, and historical read fixtures.
 - All Phase 20 unit/integration tests and fake Cursor/Codex/disposable Git helpers.
@@ -106,9 +104,9 @@ committed Phase 20.8 implementation.
 ### One lifecycle authority
 
 - Centralized lifecycle validation is authoritative for every prepared, active,
-  blocked, recovery-pending, abort-pending, aborted, awaiting-finalization, and
-  Phase 20.6 recovery-integrated sequence state. Validate persisted reads and
-  every transition.
+  blocked, replacement-pending, abort-pending, aborted, and
+  awaiting-finalization sequence state. Validate persisted reads and every
+  transition.
 - The frozen definition answers what was approved. Per-ordinal lineage answers
   which runs attempted it. The accepted leaf plus authenticated checkpoint or
   recovery-integration evidence answers what actually advanced it. Do not infer
@@ -143,7 +141,7 @@ committed Phase 20.8 implementation.
 ### Abort, reservation, and cleanup
 
 - Abort persists intent first, prevents new launches/transitions, targets the
-  exact current leaf or Phase 20.6 recovery owner, and never rewrites/deletes
+  exact current leaf, and never rewrites/deletes
   repository content or reverts an applied commit.
 - Holds and reservations survive until process/ref/checkpoint/recovery uncertainty
   is reconciled. Never release a sequence reservation merely because one source
@@ -151,17 +149,16 @@ committed Phase 20.8 implementation.
 - Avoid nested writer transactions and recursive service calls while a SQLite
   writer lock is held. CAS losers reload committed state and derive the next safe
   action outside conflicting critical sections.
-- Cleanup remains exact-owned and last. Dirty, ambiguous, unregistered, mismatched,
-  or diagnostically needed Phase 20.6 worktrees/refs are retained. No force,
-  reset, clean, broad glob, or unresolved path deletion is allowed.
+- This phase adds no worktree/ref cleanup authority. No force, reset, clean,
+  broad glob, or unresolved path deletion is allowed.
 
 ### Reporting, privacy, and compatibility
 
 - Completion reports use committed validated ledger state and authenticated full
   hashes internally. Public output may shorten IDs/hashes only after validation.
-- Reports retain every attempt generation and identify the accepted run/recovery
-  kind for each phase, while distinguishing ordinary staged finalization from
-  Phase 20.6 recovery-integrated completion.
+- Reports retain every attempt generation and identify the accepted run/attempt
+  kind for each phase. Final completion always remains the ordinary staged
+  `awaiting_finalization` boundary.
 - Status/history/controller output is stable, read-only, and performs no Git,
   artifact reauthentication, model call, or state repair merely to render.
 - Do not expose prompts, patches, reviews, fix prompts, provider prose, raw JSONL,
@@ -182,22 +179,22 @@ committed Phase 20.8 implementation.
 - Sequence abort/aborted never advances. An abort that races a proven applied
   checkpoint/integration records the immutable applied fact before terminalizing
   remaining sequence work; it never rolls Git back.
-- An ordinary accepted final phase remains staged in `awaiting_finalization`.
-  A Phase 20.6 explicitly authorized recovered final phase retains its distinct
-  recovery-integrated terminal result.
+- An accepted final phase remains staged in `awaiting_finalization`, including
+  when its accepted leaf is a same-reviewer retry successor.
 
 ## Implementation Plan
 
 1. Build a lifecycle transition table for every sequence state, current-run state,
-   recovery kind, accepted outcome, pending intent, hold, and abort combination;
+   attempt kind, accepted outcome, pending intent, hold, and abort combination;
    encode it in centralized validators and table-driven tests.
 2. Refactor sequence reconciliation discovery to include terminal current leaves
    and all pending durable intents without repeatedly growing the ledger.
 3. Complete ordinary checkpoint/handoff/finalization against the accepted lineage
    leaf, preserving exact Phase 20.3 Git evidence and Phase 20.4 materialization/
    reservation guarantees.
-4. Complete interoperability projections for Phase 20.6 fresh recovery and Phase
-   20.8 same-reviewer successors without creating a second integration authority.
+4. Complete interoperability projections for ordinary planned runs and Phase
+   20.8 same-reviewer successor generations without creating a second lifecycle
+   authority.
 5. Unify sequence/direct-run/recovery abort coordination around durable intent,
    current ownership, process/ref holds, CAS replay, and exact terminal outcomes.
 6. Rebuild status, history, controller projections, and completion reports from
@@ -208,7 +205,7 @@ committed Phase 20.8 implementation.
    handoff/recovery/cleanup competitors.
 8. Add public CLI and full end-to-end suites covering two- and four-phase
    sequences, multiple recovered ordinals, repeated generations, residual risk,
-   finalization, Phase 20.6 recovery, restarts, conflicts, and privacy.
+   finalization, restarts, conflicts, and privacy.
 9. Update current CLI reference, workflow, troubleshooting, observability, and
    sequence documentation. State exact manual actions and that no remote action
    occurs.
@@ -222,9 +219,8 @@ committed Phase 20.8 implementation.
   tested; validators run on persisted reads; terminal transitions and accepted
   leaf consistency fail closed.
 - **End-to-end sequences:** no recovery; one same-reviewer recovery; two or more
-  generations in one ordinal; recoveries in multiple ordinals; Phase 20.6 fresh
-  recovery; mixed recovery kinds; completed and residual-risk outcomes; ordinary
-  final staged state; specialized recovery-integrated final state.
+  generations in one ordinal; recoveries in multiple ordinals; completed and
+  residual-risk outcomes; and final staged `awaiting_finalization` state.
 - **Checkpoint evidence:** actual staged tree, patch, review result, commit object,
   parent, message, identity, branch/ref/HEAD, successor, reservation, and sequence
   versions are independently authenticated; tampering each field blocks.
@@ -235,18 +231,18 @@ committed Phase 20.8 implementation.
   proven not-applied effects clear/reconcile correctly; proven applied effects
   finish ledger/report/abort work without a second operator command.
 - **Concurrency tests:** explicit barriers—not sleeps—prove the intended race
-  window for competing ticks, retries, aborts, handoffs, and Phase 20.6 recovery;
+  window for competing ticks, retries, aborts, and handoffs;
   complete rows/events/reservations are asserted.
 - **CLI tests:** exercise commands through `CliRunner`/public entrypoint, including
   JSON and human status/history/report output and actual safe-next-action replay.
   Do not count direct service tests as CLI coverage.
-- **Compatibility tests:** read-only historical schemas, migrated Phase 20.1–20.6
+- **Compatibility tests:** read-only historical schemas, migrated Phase 20.1–20.5
   data, old one-run reports, and current multi-run reports; no query relies on a
   first-500/display pagination limit.
 - **Privacy tests:** every error/status/history/report/event/log path excludes all
   protected contents and full sensitive identities.
-- **Regression tests:** Phase 20.5 capacity behavior, Phase 20.6 standalone and
-  sequence recovery, review-budget extension, ordinary standalone runs, timer
+- **Regression tests:** Phase 20.5 capacity behavior, existing standalone
+  same-reviewer recovery, review-budget extension, ordinary standalone runs, timer
   budgets, abort process control, package build, and documentation remain green.
 
 All automated tests are hermetic. No test may invoke real models, real account
@@ -274,10 +270,10 @@ uv run mkdocs build --strict
 git diff --check
 ```
 
-Use the actual committed Phase 20.5–20.8 focused filenames where they differ and
-record exact commands, counts, skips, failures, and environmental residual risks
-in the findings artifact. A conditionally missing fixture is a test failure, not
-a permitted silent skip.
+Use the actual committed Phase 20.5, Phase 20.7, and Phase 20.8 focused filenames
+where they differ and record exact commands, counts, skips, failures, and
+environmental residual risks in the findings artifact. A conditionally missing
+fixture is a test failure, not a permitted silent skip.
 
 ## Risks Or Recovery Notes
 
@@ -290,8 +286,8 @@ a permitted silent skip.
 - Comprehensive acceptance can become superficial if it asserts only final state.
   Tests must prove intermediate durable rows, ownership, holds, events, and exact
   side-effect counts at controlled boundaries.
-- Do not remove retained Phase 20.6 worktrees/refs merely to make cleanup tests
-  pass. Ambiguous or dirty owned resources remain a visible manual recovery case.
+- The abandoned Phase 20.6 snapshots are historical evidence only. Do not import
+  their worktree/ref cleanup or Git integration authority to satisfy this plan.
 
 ## OpenQuestions
 
