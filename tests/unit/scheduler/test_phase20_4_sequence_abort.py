@@ -217,7 +217,7 @@ def test_abort_refuses_awaiting_finalization(
                 ordinal=1,
                 run_id=start.run_id,
                 entry_hash=entry_hash,
-                materialized_at="2026-09-13T12:00:00.000000Z",
+                materialized_at=active.materialized_entries[0].materialized_at,
             ),
             MaterializedSequenceEntry(
                 ordinal=2,
@@ -227,6 +227,10 @@ def test_abort_refuses_awaiting_finalization(
             ),
         ),
     )
+    from ai_dev_loop.scheduler.application.sequence_lineage_ops import (
+        sync_authoritative_lineage_from_state,
+    )
+
     with store.begin_immediate() as conn:
         store.compare_and_swap_sequence_state(
             conn,
@@ -235,6 +239,7 @@ def test_abort_refuses_awaiting_finalization(
             new_state=finalized,
             now=FIXED_NOW,
         )
+        sync_authoritative_lineage_from_state(store, conn, finalized)
     service = SequenceAbortService(store, now_factory=lambda: FIXED_NOW)
     with pytest.raises(SchedulerEngineError, match="awaiting finalization"):
         service.abort_sequence(sequence_id)

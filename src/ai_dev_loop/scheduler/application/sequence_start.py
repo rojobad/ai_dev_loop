@@ -237,6 +237,19 @@ class SequenceStartService:
                             SchedulerEngineErrorKind.CONFLICT,
                             "sequence start lost a concurrent sequence update",
                         )
+                    from ai_dev_loop.scheduler.application.sequence_lineage_ops import (
+                        insert_planned_run_attempt,
+                    )
+
+                    insert_planned_run_attempt(
+                        self.store,
+                        conn,
+                        sequence_id=sequence_id,
+                        ordinal=1,
+                        run_id=run_id,
+                        planned_run_id=entry.planned_run_id,
+                        materialized_at=now_text,
+                    )
                     self._step("after_db_insert")
                     return self._result_from_active(
                         conn, active_state, idempotent_replay=False, changed=True
@@ -358,6 +371,19 @@ class SequenceStartService:
             if isinstance(reloaded, ActiveSequenceState):
                 return reloaded
             return None
+        from ai_dev_loop.scheduler.application.sequence_lineage_ops import (
+            insert_planned_run_attempt,
+        )
+
+        insert_planned_run_attempt(
+            self.store,
+            conn,
+            sequence_id=prepared_state.sequence_id,
+            ordinal=1,
+            run_id=run_id,
+            planned_run_id=entry.planned_run_id,
+            materialized_at=now_text,
+        )
         return active_state
 
     def _result_from_active(

@@ -214,6 +214,19 @@ class SequenceReconcileService:
             now=now,
         ):
             return TickRunReceipt(run_id=run_id, action="sequence_block_cas_lost")
+        from ai_dev_loop.scheduler.application.sequence_lineage_ops import (
+            resolve_sequence_run_terminal,
+        )
+
+        resolve_sequence_run_terminal(
+            self.store,
+            conn,
+            sequence_id=sequence_state.sequence_id,
+            ordinal=sequence_state.current_ordinal,
+            run_id=run_id,
+            terminal_outcome="blocked",
+            resolved_at=now,
+        )
         worktree_key = blocked.definition.repository.worktree_key
         if not self._sequence_reconciliation_hold_pending(conn, run_id):
             self._release_sequence_reservation_if_owned(
@@ -281,6 +294,19 @@ class SequenceReconcileService:
             now=now,
         ):
             return TickRunReceipt(run_id=run_id, action="sequence_abort_cas_lost")
+        from ai_dev_loop.scheduler.application.sequence_lineage_ops import (
+            resolve_sequence_run_terminal,
+        )
+
+        resolve_sequence_run_terminal(
+            self.store,
+            conn,
+            sequence_id=sequence_state.sequence_id,
+            ordinal=sequence_state.current_ordinal,
+            run_id=run_id,
+            terminal_outcome="aborted",
+            resolved_at=now,
+        )
         worktree_key = aborted.definition.repository.worktree_key
         self._release_sequence_reservation_if_owned(
             conn,

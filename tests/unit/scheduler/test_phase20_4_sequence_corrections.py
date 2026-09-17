@@ -448,6 +448,11 @@ def test_completion_report_publication_recovers_after_interrupted_write(
             new_state=awaiting,
             now=FIXED_NOW,
         )
+        from ai_dev_loop.scheduler.application.sequence_lineage_ops import (
+            sync_authoritative_lineage_from_state,
+        )
+
+        sync_authoritative_lineage_from_state(store, conn, awaiting)
     report = SequenceCompletionReport(
         sequence_id=sequence_id,
         sequence_name=active.definition.name,

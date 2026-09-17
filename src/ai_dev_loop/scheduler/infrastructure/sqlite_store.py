@@ -58,9 +58,10 @@ if TYPE_CHECKING:
         | AwaitingFinalizationSequenceState
     )
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 SEQUENCE_SCHEMA_VERSION = 5
 REVIEW_RETRY_SCHEMA_VERSION = 6
+SEQUENCE_RUN_LINEAGE_SCHEMA_VERSION = 9
 MIN_READONLY_SCHEMA_VERSION = 4
 MIGRATION_V1_NAME = "0001_initial"
 MIGRATION_V2_NAME = "0002_tick_control"
@@ -70,6 +71,7 @@ MIGRATION_V5_NAME = "0005_sequence_definitions"
 MIGRATION_V6_NAME = "0006_review_retry"
 MIGRATION_V7_NAME = "0007_checkpoint_holds"
 MIGRATION_V8_NAME = "0008_capacity_retry"
+MIGRATION_V9_NAME = "0009_sequence_run_lineage"
 REQUIRED_TABLES = frozenset(
     {
         "scheduler_schema_migrations",
@@ -89,9 +91,11 @@ REQUIRED_TABLES = frozenset(
         "scheduler_review_recovery_successors",
         "scheduler_checkpoint_holds",
         "scheduler_capacity_retry_generations",
+        "scheduler_sequence_run_attempts",
     }
 )
-REQUIRED_TABLES_V7 = REQUIRED_TABLES - {"scheduler_capacity_retry_generations"}
+REQUIRED_TABLES_V8 = REQUIRED_TABLES - {"scheduler_sequence_run_attempts"}
+REQUIRED_TABLES_V7 = REQUIRED_TABLES_V8 - {"scheduler_capacity_retry_generations"}
 REQUIRED_INDEXES = frozenset(
     {
         "idx_scheduler_runs_state_kind",
@@ -115,10 +119,12 @@ REQUIRED_INDEXES = frozenset(
         "idx_scheduler_sequence_entries_sequence",
         "idx_scheduler_review_recovery_source",
         "idx_scheduler_checkpoint_holds_intent",
+        "idx_scheduler_sequence_run_attempts_sequence",
     }
 )
 REQUIRED_TABLES_V6 = REQUIRED_TABLES_V7 - {"scheduler_checkpoint_holds"}
-REQUIRED_INDEXES_V6 = REQUIRED_INDEXES - {"idx_scheduler_checkpoint_holds_intent"}
+REQUIRED_INDEXES_V8 = REQUIRED_INDEXES - {"idx_scheduler_sequence_run_attempts_sequence"}
+REQUIRED_INDEXES_V6 = REQUIRED_INDEXES_V8 - {"idx_scheduler_checkpoint_holds_intent"}
 REQUIRED_TABLES_V5 = REQUIRED_TABLES_V6 - {
     "scheduler_review_retry_generations",
     "scheduler_review_recovery_successors",
@@ -225,6 +231,10 @@ def _migration_v8_sql() -> str:
     return _migration_sql("0008_capacity_retry.sql")
 
 
+def _migration_v9_sql() -> str:
+    return _migration_sql("0009_sequence_run_lineage.sql")
+
+
 def _split_sql_statements(sql: str) -> list[str]:
     statements: list[str] = []
     for chunk in sql.split(";"):
@@ -257,6 +267,8 @@ def migration_checksum(version: int) -> str:
         return hashlib.sha256(_migration_v7_sql().encode("utf-8")).hexdigest()
     if version == 8:
         return hashlib.sha256(_migration_v8_sql().encode("utf-8")).hexdigest()
+    if version == 9:
+        return hashlib.sha256(_migration_v9_sql().encode("utf-8")).hexdigest()
     raise ValueError(f"unsupported migration version {version}")
 
 
@@ -360,6 +372,7 @@ class SqliteSchedulerStore:
                 self._migrate_v5_to_v6(conn)
                 self._migrate_v6_to_v7(conn)
                 self._migrate_v7_to_v8(conn)
+                self._migrate_v8_to_v9(conn)
             elif version == 1:
                 self._verify_migration_checksum(conn, 1)
                 self._migrate_v1_to_v2(conn)
@@ -369,6 +382,7 @@ class SqliteSchedulerStore:
                 self._migrate_v5_to_v6(conn)
                 self._migrate_v6_to_v7(conn)
                 self._migrate_v7_to_v8(conn)
+                self._migrate_v8_to_v9(conn)
             elif version == 2:
                 self._verify_migration_checksum(conn, 1)
                 self._verify_migration_checksum(conn, 2)
@@ -378,6 +392,7 @@ class SqliteSchedulerStore:
                 self._migrate_v5_to_v6(conn)
                 self._migrate_v6_to_v7(conn)
                 self._migrate_v7_to_v8(conn)
+                self._migrate_v8_to_v9(conn)
             elif version == 3:
                 for migration_version in (1, 2, 3):
                     self._verify_migration_checksum(conn, migration_version)
@@ -386,6 +401,7 @@ class SqliteSchedulerStore:
                 self._migrate_v5_to_v6(conn)
                 self._migrate_v6_to_v7(conn)
                 self._migrate_v7_to_v8(conn)
+                self._migrate_v8_to_v9(conn)
             elif version == 4:
                 for migration_version in (1, 2, 3, 4):
                     self._verify_migration_checksum(conn, migration_version)
@@ -393,21 +409,29 @@ class SqliteSchedulerStore:
                 self._migrate_v5_to_v6(conn)
                 self._migrate_v6_to_v7(conn)
                 self._migrate_v7_to_v8(conn)
+                self._migrate_v8_to_v9(conn)
             elif version == 5:
                 for migration_version in (1, 2, 3, 4, 5):
                     self._verify_migration_checksum(conn, migration_version)
                 self._migrate_v5_to_v6(conn)
                 self._migrate_v6_to_v7(conn)
                 self._migrate_v7_to_v8(conn)
+                self._migrate_v8_to_v9(conn)
             elif version == 6:
                 for migration_version in (1, 2, 3, 4, 5, 6):
                     self._verify_migration_checksum(conn, migration_version)
                 self._migrate_v6_to_v7(conn)
                 self._migrate_v7_to_v8(conn)
+                self._migrate_v8_to_v9(conn)
             elif version == 7:
                 for migration_version in (1, 2, 3, 4, 5, 6, 7):
                     self._verify_migration_checksum(conn, migration_version)
                 self._migrate_v7_to_v8(conn)
+                self._migrate_v8_to_v9(conn)
+            elif version == 8:
+                for migration_version in (1, 2, 3, 4, 5, 6, 7, 8):
+                    self._verify_migration_checksum(conn, migration_version)
+                self._migrate_v8_to_v9(conn)
             else:
                 self._verify_current_schema(conn)
             self._apply_database_permissions(self.db_path)
@@ -639,6 +663,41 @@ class SqliteSchedulerStore:
             raise
         self._apply_database_permissions(self.db_path)
 
+    def _migrate_v8_to_v9(self, conn: sqlite3.Connection) -> None:
+        if self._user_version(conn) >= 9:
+            self._verify_current_schema(conn)
+            return
+        for migration_version in (1, 2, 3, 4, 5, 6, 7, 8):
+            self._verify_migration_checksum(conn, migration_version)
+        from ai_dev_loop.scheduler.infrastructure.sequence_run_lineage_store import (
+            backfill_historical_lineage_for_sequence,
+        )
+
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for statement in _split_sql_statements(_migration_v9_sql()):
+                self._fault_maybe_raise_migration(statement)
+                conn.execute(statement)
+            sequence_rows = conn.execute(
+                "SELECT sequence_id FROM scheduler_sequences ORDER BY prepared_at ASC, sequence_id ASC"
+            ).fetchall()
+            for row in sequence_rows:
+                backfill_historical_lineage_for_sequence(conn, self, str(row["sequence_id"]))
+            applied_at = encode_utc_instant(datetime.now(tz=UTC))
+            conn.execute(
+                """
+                INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (9, MIGRATION_V9_NAME, migration_checksum(9), applied_at),
+            )
+            conn.execute("PRAGMA user_version = 9")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        self._apply_database_permissions(self.db_path)
+
     def _fault_maybe_raise_migration(self, statement: str) -> None:
         hook = self._migration_fault_hook
         if hook is not None:
@@ -678,9 +737,12 @@ class SqliteSchedulerStore:
         if target >= SCHEMA_VERSION:
             tables = REQUIRED_TABLES
             indexes = REQUIRED_INDEXES
+        elif target >= 8:
+            tables = REQUIRED_TABLES_V8
+            indexes = REQUIRED_INDEXES_V8
         elif target >= 7:
             tables = REQUIRED_TABLES_V7
-            indexes = REQUIRED_INDEXES
+            indexes = REQUIRED_INDEXES_V8
         elif target >= 6:
             tables = REQUIRED_TABLES_V6
             indexes = REQUIRED_INDEXES_V6
@@ -1376,6 +1438,24 @@ class SqliteSchedulerStore:
                         SchedulerEngineErrorKind.CONFLICT,
                         "sequence CAS lost during idempotent handoff",
                     )
+                from ai_dev_loop.scheduler.application.sequence_lineage_ops import (
+                    resolve_accepted_phase_handoff,
+                )
+
+                successor_entry = updated_sequence.definition.entries[intent.successor_ordinal - 1]
+                resolve_accepted_phase_handoff(
+                    self,
+                    conn,
+                    sequence_id=intent.sequence_id,
+                    predecessor_ordinal=intent.predecessor_ordinal,
+                    predecessor_run_id=intent.predecessor_run_id,
+                    accepted_outcome=intent.accepted_outcome,
+                    successor_ordinal=intent.successor_ordinal,
+                    successor_run_id=intent.successor_run_id,
+                    successor_planned_run_id=successor_entry.planned_run_id,
+                    successor_materialized_at=encode_utc_instant(now),
+                    resolved_at=now,
+                )
                 self.release_checkpoint_reconciliation_hold(
                     conn,
                     run_id=intent.predecessor_run_id,
@@ -1460,6 +1540,24 @@ class SqliteSchedulerStore:
                 SchedulerEngineErrorKind.CONFLICT,
                 "sequence CAS lost during handoff",
             )
+        from ai_dev_loop.scheduler.application.sequence_lineage_ops import (
+            resolve_accepted_phase_handoff,
+        )
+
+        successor_entry = updated_sequence.definition.entries[intent.successor_ordinal - 1]
+        resolve_accepted_phase_handoff(
+            self,
+            conn,
+            sequence_id=intent.sequence_id,
+            predecessor_ordinal=intent.predecessor_ordinal,
+            predecessor_run_id=intent.predecessor_run_id,
+            accepted_outcome=intent.accepted_outcome,
+            successor_ordinal=intent.successor_ordinal,
+            successor_run_id=intent.successor_run_id,
+            successor_planned_run_id=successor_entry.planned_run_id,
+            successor_materialized_at=encode_utc_instant(now),
+            resolved_at=now,
+        )
         self.release_checkpoint_reconciliation_hold(
             conn,
             run_id=intent.predecessor_run_id,
@@ -1521,6 +1619,19 @@ class SqliteSchedulerStore:
                 SchedulerEngineErrorKind.CONFLICT,
                 "sequence finalize CAS lost",
             )
+        from ai_dev_loop.scheduler.application.sequence_lineage_ops import (
+            resolve_sequence_run_terminal,
+        )
+
+        resolve_sequence_run_terminal(
+            self,
+            conn,
+            sequence_id=finalized_state.sequence_id,
+            ordinal=len(finalized_state.definition.entries),
+            run_id=finalized_state.final_run_id,
+            terminal_outcome=finalized_state.final_outcome,
+            resolved_at=now,
+        )
 
     def get_run_row(self, conn: sqlite3.Connection, run_id: str) -> sqlite3.Row:
         row = conn.execute(
@@ -3715,10 +3826,26 @@ class SqliteSchedulerStore:
             )
         return cast(sqlite3.Row, row)
 
+    def load_sequence_state_only(
+        self,
+        conn: sqlite3.Connection,
+        sequence_id: str,
+    ) -> SequencePersistedState:
+        row = self.get_sequence_row(conn, sequence_id)
+        state = self.load_sequence_state(row["payload"])
+        if state.sequence_id != sequence_id:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "sequence_id disagrees with primary key",
+            )
+        return state
+
     def load_validated_sequence_state(
         self,
         conn: sqlite3.Connection,
         sequence_id: str,
+        *,
+        validate_lineage: bool = True,
     ) -> SequencePersistedState:
         from ai_dev_loop.scheduler.domain.common import worktree_key
         from ai_dev_loop.scheduler.domain.sequence import (
@@ -3873,7 +4000,10 @@ class SqliteSchedulerStore:
                         SchedulerEngineErrorKind.CORRUPTION,
                         "materialized entry_hash disagrees with frozen entry payload",
                     )
-                if materialized.run_id != entry.planned_run_id:
+                if (
+                    not self.schema_supports_sequence_run_lineage(conn)
+                    and materialized.run_id != entry.planned_run_id
+                ):
                     raise SchedulerEngineError(
                         SchedulerEngineErrorKind.CORRUPTION,
                         "materialized run_id disagrees with planned run binding",
@@ -3889,7 +4019,16 @@ class SqliteSchedulerStore:
                     SchedulerEngineErrorKind.CORRUPTION,
                     str(exc),
                 ) from exc
+        if validate_lineage and self.schema_supports_sequence_run_lineage(conn):
+            from ai_dev_loop.scheduler.infrastructure.sequence_run_lineage_store import (
+                load_and_validate_sequence_lineage,
+            )
+
+            load_and_validate_sequence_lineage(conn, state)
         return state
+
+    def schema_supports_sequence_run_lineage(self, conn: sqlite3.Connection) -> bool:
+        return self._user_version(conn) >= SEQUENCE_RUN_LINEAGE_SCHEMA_VERSION
 
     def insert_prepared_sequence(
         self,
@@ -3965,6 +4104,7 @@ class SqliteSchedulerStore:
         expected_version: int,
         new_state: SequencePersistedState,
         now: datetime,
+        validate_lineage: bool = True,
     ) -> bool:
         from ai_dev_loop.scheduler.domain.sequence import (
             AbortedSequenceState,
@@ -4004,7 +4144,11 @@ class SqliteSchedulerStore:
                 SchedulerEngineErrorKind.VALIDATION,
                 "replacement version must equal expected_version + 1",
             )
-        current_state = self.load_validated_sequence_state(conn, sequence_id)
+        current_state = self.load_validated_sequence_state(
+            conn,
+            sequence_id,
+            validate_lineage=validate_lineage,
+        )
         if new_state.prepared_at != current_state.prepared_at:
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.VALIDATION,
@@ -4294,3 +4438,108 @@ class SqliteSchedulerStore:
                 SchedulerEngineErrorKind.CONFLICT,
                 "repository worktree reservation could not be claimed for recovery successor",
             )
+
+    def load_sequence_run_lineage(self, conn: sqlite3.Connection, sequence_id: str) -> object:
+        from ai_dev_loop.scheduler.infrastructure.sequence_run_lineage_store import (
+            load_sequence_run_lineage,
+        )
+
+        return load_sequence_run_lineage(conn, sequence_id)
+
+    def insert_sequence_run_attempt(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        sequence_id: str,
+        ordinal: int,
+        attempt: object,
+        planned_run_id: str,
+    ) -> None:
+        from ai_dev_loop.scheduler.domain.sequence_run_lineage import SequenceRunAttempt
+        from ai_dev_loop.scheduler.infrastructure.sequence_run_lineage_store import (
+            insert_sequence_run_attempt,
+        )
+
+        if not isinstance(attempt, SequenceRunAttempt):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "insert_sequence_run_attempt requires SequenceRunAttempt",
+            )
+        insert_sequence_run_attempt(
+            conn,
+            sequence_id=sequence_id,
+            ordinal=ordinal,
+            attempt=attempt,
+            planned_run_id=planned_run_id,
+        )
+
+    def resolve_sequence_attempt_terminal(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        sequence_id: str,
+        ordinal: int,
+        run_id: str,
+        terminal_outcome: str,
+        resolved_at: datetime,
+    ) -> None:
+        from ai_dev_loop.scheduler.infrastructure.sequence_run_lineage_store import (
+            resolve_sequence_attempt_terminal,
+        )
+
+        resolve_sequence_attempt_terminal(
+            conn,
+            sequence_id=sequence_id,
+            ordinal=ordinal,
+            run_id=run_id,
+            terminal_outcome=terminal_outcome,  # type: ignore[arg-type]
+            resolved_at=resolved_at,
+        )
+
+    def compare_and_swap_sequence_execution_leaf(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        sequence_id: str,
+        ordinal: int,
+        expectation: object,
+        expected_current_run_id: str,
+        replacement_attempt: object,
+        updated_sequence_state: object,
+        now: datetime,
+    ) -> bool:
+        from ai_dev_loop.scheduler.domain.sequence import ActiveSequenceState
+        from ai_dev_loop.scheduler.domain.sequence_run_lineage import (
+            SequenceRunAttempt,
+        )
+        from ai_dev_loop.scheduler.infrastructure.sequence_run_lineage_store import (
+            SequenceExecutionCASExpectation,
+            compare_and_swap_sequence_execution_leaf,
+        )
+
+        if not isinstance(expectation, SequenceExecutionCASExpectation):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "compare_and_swap_sequence_execution_leaf requires expectation",
+            )
+        if not isinstance(replacement_attempt, SequenceRunAttempt):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "compare_and_swap_sequence_execution_leaf requires SequenceRunAttempt",
+            )
+        if not isinstance(updated_sequence_state, ActiveSequenceState):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "compare_and_swap_sequence_execution_leaf requires active sequence state",
+            )
+        return compare_and_swap_sequence_execution_leaf(
+            conn,
+            self,
+            sequence_id=sequence_id,
+            ordinal=ordinal,
+            expectation=expectation,
+            expected_current_run_id=expected_current_run_id,
+            replacement_attempt=replacement_attempt,
+            updated_sequence_state=updated_sequence_state,
+            now=now,
+        )
