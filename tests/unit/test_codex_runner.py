@@ -201,6 +201,9 @@ def test_review_wrapper_prompt_includes_skill_and_cursor_content(tmp_path: Path)
     assert "Implement the sample plan exactly as written." in prompt
     assert "done: Implement the sample plan" in prompt
     assert "docs/plans/sample-plan.md" in prompt
+    assert "Treat the repository as read-only" in prompt
+    assert "run any automated tests needed for this review" in prompt
+    assert "including the complete test suite" in prompt
 
 
 def test_review_wrapper_prompt_states_missing_final_response(tmp_path: Path) -> None:

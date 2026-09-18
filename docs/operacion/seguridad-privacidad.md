@@ -133,7 +133,7 @@ solo revalida los inputs congelados y los checkpoints durablemente registrados.
 - En runs controller A frescos, A elige `--codex-review-model` y
   `--codex-review-reasoning-effort` en `scheduler submit`; no hay fallback desde
   YAML, sesion preexistente ni default de CLI en review time.
-  El scheduler crea exactamente un B con `codex exec` en `--sandbox read-only` en
+  El scheduler crea exactamente un B con `codex exec` en `--sandbox workspace-write` en
   el primer review, captura su session ID y los reviews posteriores usan
   `codex exec resume <exact-id>` con el mismo modelo y reasoning congelados.
 - En runs controller A, el controller session ID (A) se persiste solo para

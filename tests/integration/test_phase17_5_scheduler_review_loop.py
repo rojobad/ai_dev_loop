@@ -130,7 +130,7 @@ def test_no_findings_completes_with_fresh_bootstrap_and_resume_argv(
     )
     _run_until(tick, run_id, target_kind="completed")
     codex_log = Path(fake_clis["codex_log"]).read_text(encoding="utf-8")
-    assert "read-only" in codex_log
+    assert "workspace-write" in codex_log
     assert "'resume'" not in codex_log
     assert "--last" not in codex_log
     with tick.store.begin_read() as conn:

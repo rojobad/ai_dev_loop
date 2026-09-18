@@ -95,7 +95,7 @@ En el flujo scheduler actual:
 - `--codex-review-model` y `--codex-review-reasoning-effort` se pasan en
   `scheduler submit` y quedan congelados en `codex/fresh-reviewer-input.json`.
 - El reviewer B se crea una sola vez en el primer review con `codex exec` en
-  `--sandbox read-only`; los reviews posteriores reanudan esa misma sesion con
+  `--sandbox workspace-write`; los reviews posteriores reanudan esa misma sesion con
   `codex exec resume` (nunca `--last` ni un segundo B).
 - Los campos YAML `review_model` y `review_reasoning_effort` no sustituyen los
   flags de submit en runs nuevos del scheduler.

@@ -1,14 +1,15 @@
 ---
 name: ai-dev-loop-handoff
-description: Submit an approved local Codex implementation plan to the central ai_dev_loop scheduler. Use after a plan and its Cursor prompt are finalized, when the user wants automated Cursor implementation with a fresh read-only Codex reviewer created at the first review boundary.
+description: Submit an approved local Codex implementation plan to the central ai_dev_loop scheduler. Use after a plan and its Cursor prompt are finalized, when the user wants automated Cursor implementation with a fresh workspace-write Codex reviewer created at the first review boundary.
 ---
 
 # ai_dev_loop Handoff
 
 Use this skill after plan and Cursor prompt approval. Submit the durable
 scheduler run with frozen review model and reasoning effort. Reviewer B does
-**not** exist at submit time; the scheduler creates one fresh, read-only Codex CLI
-reviewer at the first review and resumes only that identity afterward.
+**not** exist at submit time; the scheduler creates one fresh Codex CLI reviewer
+with `workspace-write` access at the first review and resumes only that identity
+afterward.
 
 ## Identity Boundary
 
