@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-info-data-v1.json",
+  "title": "ai_dev_loop Integration API info data v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["aiDevLoopVersion", "capabilities"],
+  "properties": {
+    "aiDevLoopVersion": { "type": "string", "minLength": 1 },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "runs",
+        "sequences",
+        "reviewInspection",
+        "processOutput",
+        "codexCapacity"
+      ],
+      "properties": {
+        "runs": { "type": "boolean" },
+        "sequences": { "type": "boolean" },
+        "reviewInspection": { "type": "boolean" },
+        "processOutput": { "type": "boolean" },
+        "codexCapacity": { "type": "boolean" }
+      }
+    }
+  }
+}

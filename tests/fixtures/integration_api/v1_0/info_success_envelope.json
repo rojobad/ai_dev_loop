@@ -1,0 +1,16 @@
+{
+  "apiVersion": { "major": 1, "minor": 0 },
+  "ok": true,
+  "observedAt": "2026-09-18T12:00:00Z",
+  "data": {
+    "aiDevLoopVersion": "0.1.0",
+    "capabilities": {
+      "runs": false,
+      "sequences": false,
+      "reviewInspection": false,
+      "processOutput": false,
+      "codexCapacity": false
+    }
+  },
+  "error": null
+}

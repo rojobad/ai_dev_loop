@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-response-envelope-v1.json",
+  "title": "ai_dev_loop Integration API response envelope v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["apiVersion", "ok", "observedAt", "data", "error"],
+  "properties": {
+    "apiVersion": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["major", "minor"],
+      "properties": {
+        "major": { "type": "integer", "minimum": 0 },
+        "minor": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "ok": { "type": "boolean" },
+    "observedAt": {
+      "type": "string",
+      "format": "integration-rfc3339-utc"
+    },
+    "data": {},
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "https://ai-dev-loop.local/schemas/integration-api-error-body-v1.json" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "ok": { "const": true } }, "required": ["ok"] },
+      "then": {
+        "properties": {
+          "error": { "type": "null" },
+          "data": { "not": { "type": "null" } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "ok": { "const": false } }, "required": ["ok"] },
+      "then": {
+        "properties": {
+          "data": { "type": "null" },
+          "error": {
+            "$ref": "https://ai-dev-loop.local/schemas/integration-api-error-body-v1.json"
+          }
+        }
+      }
+    }
+  ]
+}

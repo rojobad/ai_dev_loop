@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-artifact-chunk-v1.json",
+  "title": "ai_dev_loop Integration API artifact chunk v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "available",
+    "reason",
+    "encoding",
+    "mediaType",
+    "byteOffset",
+    "returnedBytes",
+    "nextOffset",
+    "availableBytes",
+    "hasMore",
+    "contentBase64",
+    "sha256"
+  ],
+  "properties": {
+    "available": { "type": "boolean" },
+    "reason": { "type": ["string", "null"] },
+    "encoding": { "type": "string", "const": "base64" },
+    "mediaType": { "type": ["string", "null"] },
+    "byteOffset": { "type": "integer", "minimum": 0 },
+    "returnedBytes": { "type": "integer", "minimum": 0 },
+    "nextOffset": { "type": ["integer", "null"], "minimum": 0 },
+    "availableBytes": { "type": ["integer", "null"], "minimum": 0 },
+    "hasMore": { "type": "boolean" },
+    "contentBase64": { "type": "string" },
+    "sha256": { "type": ["string", "null"] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "available": { "const": true } }, "required": ["available"] },
+      "then": {
+        "properties": {
+          "reason": { "type": "null" },
+          "encoding": { "const": "base64" },
+          "availableBytes": { "type": "integer", "minimum": 0 },
+          "returnedBytes": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "available": { "const": false } }, "required": ["available"] },
+      "then": {
+        "properties": {
+          "reason": { "type": "string", "minLength": 1 },
+          "returnedBytes": { "const": 0 },
+          "contentBase64": { "const": "" },
+          "nextOffset": { "type": "null" },
+          "hasMore": { "const": false },
+          "availableBytes": { "type": "null" },
+          "sha256": { "type": "null" }
+        }
+      }
+    }
+  ]
+}

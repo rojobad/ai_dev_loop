@@ -289,6 +289,24 @@ Opciones:
 --wsl-hook-script-path PATH
 ```
 
+## `integration` (API local JSON)
+
+```bash
+ai_dev_loop integration info [--output json]
+```
+
+Namespace singular para el contrato JSON que consumirá el Bridge futuro. Todas
+las órdenes de este namespace emiten un único documento JSON en stdout; `--help`
+sigue siendo ayuda normal de Typer. El namespace plural `integrations` (instalación
+Codex global) no cambia.
+
+Phase 21.1 implementa solo `integration info`: versión del paquete, versión del
+contrato (`apiVersion` 1.0) y capacidades honestas (todavía todas `false`). La
+opción `--output json` pertenece al subcomando `info` (valor por defecto). No
+accede al ledger del scheduler ni crea estado XDG.
+
+Detalle del sobre, códigos de error y convenciones: [API de integración local](integration-api.md).
+
 ## `integrations sessions`
 
 ```bash
