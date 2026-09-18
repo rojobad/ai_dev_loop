@@ -146,7 +146,7 @@ def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
 
 
-def test_scheduler_codex_argv_enforces_read_only_for_writable_config(tmp_path: Path) -> None:
+def test_scheduler_codex_argv_enforces_workspace_write_for_readonly_config(tmp_path: Path) -> None:
     schema = tmp_path / "schema.json"
     schema.write_text("{}", encoding="utf-8")
     result = tmp_path / "result.json"
@@ -157,7 +157,7 @@ def test_scheduler_codex_argv_enforces_read_only_for_writable_config(tmp_path: P
         kwargs = {
             "command": "codex",
             "repo_root": str(tmp_path),
-            "sandbox": "workspace-write",
+            "sandbox": "read-only",
             "review_model": "gpt-5.6-sol",
             "review_reasoning_effort": "high",
             "schema_file": schema,
@@ -167,7 +167,7 @@ def test_scheduler_codex_argv_enforces_read_only_for_writable_config(tmp_path: P
             kwargs["session_id"] = BOOTSTRAP_ID
         args = builder(**kwargs)
         assert args[args.index("--sandbox") + 1] == SCHEDULER_CODEX_REVIEW_SANDBOX
-    assert scheduler_codex_review_sandbox("workspace-write") == SCHEDULER_CODEX_REVIEW_SANDBOX
+    assert scheduler_codex_review_sandbox("read-only") == SCHEDULER_CODEX_REVIEW_SANDBOX
 
 
 def test_codex_pre_execution_guard_authenticates_frozen_plan_and_prompt(tmp_path: Path) -> None:
@@ -189,18 +189,23 @@ def test_codex_pre_execution_guard_authenticates_frozen_plan_and_prompt(tmp_path
         "prompt_sha256": sha256_bytes(prompt_path.read_bytes()),
     }
     verify_pre_execution_codex_guards(tmp_path, evidence, run_id="run-test")
+    verify_pre_execution_codex_guards(
+        tmp_path,
+        {**evidence, "codex_sandbox": "read-only"},
+        run_id="run-test",
+    )
     prompt_path.write_text("tampered prompt\n", encoding="utf-8")
     with pytest.raises((CodexEvidenceError, CursorEvidenceError), match="hash does not match"):
         verify_pre_execution_codex_guards(tmp_path, evidence, run_id="run-test")
 
 
-def test_codex_pre_execution_guard_rejects_non_readonly_sandbox(tmp_path: Path) -> None:
+def test_codex_pre_execution_guard_rejects_non_workspace_write_sandbox(tmp_path: Path) -> None:
     evidence = {
         "run_id": "run-test",
         "effect_kind": BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND,
-        "codex_sandbox": "workspace-write",
+        "codex_sandbox": "danger-full-access",
     }
-    with pytest.raises(CodexEvidenceError, match="read-only sandbox"):
+    with pytest.raises(CodexEvidenceError, match="workspace-write sandbox"):
         verify_pre_execution_codex_guards(tmp_path, evidence, run_id="run-test")
 
 

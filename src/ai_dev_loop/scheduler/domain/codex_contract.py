@@ -20,8 +20,11 @@ CODEX_ATTEMPT_EFFECT_KINDS = frozenset(
 SCHEDULER_CODEX_BINDING_ARTIFACT = "codex/fresh-reviewer-binding.json"
 SCHEDULER_CODEX_UNCERTAINTY_ARTIFACT = "codex/fresh-reviewer-bootstrap-uncertainty.json"
 
-# Scheduler Codex reviews always run read-only regardless of legacy YAML sandbox values.
-SCHEDULER_CODEX_REVIEW_SANDBOX = "read-only"
+# Scheduler Codex reviews always receive workspace write access regardless of
+# legacy YAML sandbox values. This lets reviewer B make requested corrections
+# inside the target repository while the scheduler keeps the Git decision gates.
+SCHEDULER_CODEX_REVIEW_SANDBOX = "workspace-write"
+LEGACY_SCHEDULER_CODEX_REVIEW_SANDBOX = "read-only"
 
 MAX_CODEX_EVENTS_ARTIFACT_BYTES = 8 * 1024 * 1024
 MAX_CODEX_CAPTURE_STDOUT_BYTES = MAX_CODEX_EVENTS_ARTIFACT_BYTES

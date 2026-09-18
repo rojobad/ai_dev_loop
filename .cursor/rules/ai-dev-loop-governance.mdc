@@ -29,6 +29,29 @@ If archived files conflict with current code, tests, schemas, CLI help, or `/doc
 - Update docs and CLI text to describe the implemented slice accurately.
 - Leave `OpenQuestions` unresolved rather than making architecture, safety, external integration, security, privacy, or public-behavior assumptions.
 
+## Implementation Evidence And Correction Handoff
+
+- Before dependent work, check the active plan's explicit prerequisites against
+  the accepted implementation. An archived plan or abandoned WIP does not prove
+  that its capability exists. Report missing prerequisites and the decision
+  needed; stop dependent work rather than inventing a replacement.
+- Track the plan's contract IDs, when supplied, to real production entry points,
+  implementation, and acceptance tests. Complete mandatory work before claiming
+  the phase is implemented; do not relabel missing wiring or required tests as
+  residual risk. Clearly identify any incomplete delivery.
+- During corrections, preserve finding IDs and report each as fixed, disputed
+  with evidence, or blocked. Explain why an earlier fix was incomplete and
+  address the invariant across the supported paths affected by the change.
+- Test the actual behavior promised: independent assertions, real production
+  wiring, and explicit synchronization for races. Do not supply the missing
+  production guard in the test or accept an unsuccessful outcome as proof of
+  success. For critical regressions, explain how the test detects the defect.
+- Report exact validation commands/results and unexecuted checks. A focused
+  rerun after a fix is not evidence that the full suite was rerun successfully.
+- A contract blocker in the response is information for the reviewer/operator,
+  not a scheduler pause or new authorization. Do not change runtime schemas,
+  control live runs, or broaden Git authority to implement this reporting.
+
 ## Non-Negotiable Guardrails
 
 - Do not stage, commit, push, tag, reset, clean, stash, or otherwise rewrite Git state.

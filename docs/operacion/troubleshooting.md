@@ -250,7 +250,7 @@ Sintoma: el worker ya creo B en el primer review, pero otra sesion Codex recibe 
 
 Accion: deja intacta la identidad B capturada por el worker. Todo review reanuda solo esa session ID. Si otra sesion participo en el review, el contexto puede contaminarse; aborta si hace falta, inspecciona artefactos y prepara un run nuevo si el contrato ya no es confiable.
 
-En runs controller A frescos, B no existe en `prepare`: el worker lo crea una sola vez en el primer review con `codex exec` read-only. No pases `--codex-session-id` en `prepare` ni `scheduler submit`.
+En runs controller A frescos, B no existe en `prepare`: el worker lo crea una sola vez en el primer review con `codex exec --sandbox workspace-write`. No pases `--codex-session-id` en `prepare` ni `scheduler submit`.
 
 ## Bootstrap de reviewer ambiguo o bloqueado
 
@@ -275,7 +275,7 @@ para trabajo nuevo, `scheduler submit` fresco.
 ## Reviewer B duplicado o sesion incorrecta
 
 Los runs controller A frescos no admiten `--codex-session-id` en submit. El scheduler
-crea exactamente un B en el primer review con `codex exec` read-only y reanuda
+crea exactamente un B en el primer review con `codex exec --sandbox workspace-write` y reanuda
 solo esa sesion despues. No uses `--last` ni un segundo B.
 
 ## WSL distro ambiguo

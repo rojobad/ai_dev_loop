@@ -27,7 +27,7 @@ def build_scheduler_codex_bootstrap_args(
 ) -> list[str]:
     sandbox = scheduler_codex_review_sandbox(sandbox)
     if sandbox != SCHEDULER_CODEX_REVIEW_SANDBOX:
-        raise ValidationError("scheduler Codex bootstrap requires read-only sandbox")
+        raise ValidationError("scheduler Codex bootstrap requires workspace-write sandbox")
     return [
         command,
         "exec",
@@ -63,7 +63,7 @@ def build_scheduler_codex_resume_args(
         raise ValidationError("scheduler Codex resume requires bound reviewer session id")
     sandbox = scheduler_codex_review_sandbox(sandbox)
     if sandbox != SCHEDULER_CODEX_REVIEW_SANDBOX:
-        raise ValidationError("scheduler Codex resume requires read-only sandbox")
+        raise ValidationError("scheduler Codex resume requires workspace-write sandbox")
     return [
         command,
         "exec",

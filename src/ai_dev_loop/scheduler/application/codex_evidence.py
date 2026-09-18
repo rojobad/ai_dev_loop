@@ -23,6 +23,7 @@ from ai_dev_loop.scheduler.application.cursor_evidence import (
 from ai_dev_loop.scheduler.domain.codex_contract import (
     BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND,
     CODEX_ATTEMPT_EFFECT_KINDS,
+    LEGACY_SCHEDULER_CODEX_REVIEW_SANDBOX,
     MAX_CODEX_EVENTS_ARTIFACT_BYTES,
     MAX_CODEX_REVIEW_RESULT_BYTES,
     RESUME_CODEX_REVIEW_EFFECT_KIND,
@@ -148,8 +149,13 @@ def verify_pre_execution_codex_guards(
     if str(evidence.get("run_id", "")) != run_id:
         raise CodexEvidenceError("codex invocation evidence run_id mismatch")
     sandbox = str(evidence.get("codex_sandbox", "")).strip()
-    if sandbox != SCHEDULER_CODEX_REVIEW_SANDBOX:
-        raise CodexEvidenceError("scheduler codex review requires read-only sandbox")
+    # Keep immutable dispatch evidence from pre-write-access runs valid. The argv
+    # builder upgrades their next invocation to the current workspace-write mode.
+    if sandbox not in {
+        SCHEDULER_CODEX_REVIEW_SANDBOX,
+        LEGACY_SCHEDULER_CODEX_REVIEW_SANDBOX,
+    }:
+        raise CodexEvidenceError("scheduler codex review requires workspace-write sandbox")
     _verify_frozen_plan_prompt_artifacts(run_root, evidence)
     if effect_kind := str(evidence.get("effect_kind", "")):
         if effect_kind == RESUME_CODEX_REVIEW_EFFECT_KIND:

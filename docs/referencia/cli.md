@@ -50,7 +50,7 @@ el run existente y reporta su `state_kind` real (por ejemplo `aborted` sin accio
 de `start`). Tras un run terminal, usa `--resubmission-id` con un UUID elegido
 por el operador para crear un run `queued` distinto; reutiliza el mismo UUID
 solo para replay idempotente de ese envio. El primer review del scheduler crea exactamente un
-reviewer B con `codex exec` en `--sandbox read-only`; los reviews posteriores reanudan
+reviewer B con `codex exec` en `--sandbox workspace-write`; los reviews posteriores reanudan
 esa misma sesion con `codex exec resume` (nunca `--last` ni un segundo B).
 
 Ejemplo:

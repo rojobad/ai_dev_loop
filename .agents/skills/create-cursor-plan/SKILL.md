@@ -10,9 +10,10 @@ description: Create an execution plan and concise handoff prompt for Cursor. Use
 1. Read the user's request and inspect the repository enough to understand existing planning conventions.
 2. Read any referenced plan, findings, architecture notes, rules, skills, tickets, or docs before writing the handoff.
 3. Identify relevant Cursor rules and skills already present in the repo, such as `.cursor/rules/*`, `.cursor/rules/*.mdc`, `.cursor/skills/*`, `AGENTS.md`, or project-specific agent docs.
-4. Create or update the plan artifact in the repo's existing plan location. If no convention exists, use `plans/` unless the user specified another path.
-5. Create or update a separate concise prompt artifact when the user asks for a prompt or when the plan is meant to be handed to Cursor.
-6. Do not execute the plan unless the user explicitly asks.
+4. Verify the proposed prerequisites against the accepted implementation. An archived plan or abandoned WIP is not evidence that a dependency exists. Record missing prerequisites or contract conflicts in `OpenQuestions` before writing dependent steps as executable.
+5. Create or update the plan artifact in the repo's existing plan location. If no convention exists, use `plans/` unless the user specified another path.
+6. Create or update a separate concise prompt artifact when the user asks for a prompt or when the plan is meant to be handed to Cursor.
+7. Do not execute the plan unless the user explicitly asks.
 
 ## Required Plan Sections
 
@@ -32,6 +33,35 @@ Every Cursor execution plan must include these sections, using clearer project-s
 - OpenQuestions
 
 Use `OpenQuestions` exactly as the section name. If there are no unresolved questions, write `None.`.
+
+## Verifiable Contracts
+
+Use the existing sections rather than adding parallel checklists. Scale the
+detail to the behavior changed by the plan:
+
+- In `Required Context`, name prerequisite capabilities and the code, tests, or
+  accepted artifacts that establish them. Have Cursor recheck explicit
+  prerequisites before dependent work, not continuously during implementation.
+- Give mandatory behavioral contracts stable IDs such as `C-01`. Under
+  `Implementation Plan` and `Testing Criteria`, connect each ID to its observable
+  outcome, real production entry point/callers, acceptance scenario, and test.
+  A compact table is sufficient; do not assign IDs to every mechanical edit.
+- For changed persistence or external-effect boundaries, specify the relevant
+  transition: precondition, durable authority, permitted effect, postcondition,
+  and next action after interruption, replay, or abort. Include both retention
+  of ownership during uncertainty and eventual completion when resolved.
+- For changed protocols or schemas, define the supported input forms, canonical
+  persisted representation, historical fixtures, and domain invariants. Decide
+  absent/null and coercion behavior explicitly where relevant; avoid promising
+  undefined universal parity between different validation systems.
+- In `Validation`, require contract coverage and exact commands/results,
+  distinguishing executed, failed, and unexecuted checks. Mandatory unfinished
+  behavior or coverage is incomplete scope, not merely residual risk.
+
+Keep these contracts within `AGENTS.md`: no continuous baseline gates or
+exhaustive rare Git cases unless explicitly required by the approved scope or
+necessary for the supported workflow. For a large phase, prefer separately
+reviewable units with complete observable flows and explicit dependencies.
 
 ## OpenQuestions Rule
 
@@ -99,6 +129,13 @@ When automated tests are required, the plan must specify:
 
 When automated tests are not appropriate, the plan must say why and provide manual validation steps. Do not leave test creation implicit.
 
+Acceptance tests must exercise the production path they claim to cover and use
+independent expected outcomes. For a critical regression, specify how the test
+would detect the original defect; do not make the test supply the missing lock,
+validation, or transition itself. Require deterministic synchronization for
+promised race coverage and genuine historical fixtures for compatibility work.
+Do not substitute test counts or table self-consistency for behavioral evidence.
+
 ## Prompt Shape
 
 The Cursor prompt must be much shorter than the plan. It should:
@@ -110,6 +147,8 @@ The Cursor prompt must be much shorter than the plan. It should:
 - tell Cursor to follow the testing criteria and add/update automated tests when the plan requires them
 - name the highest-risk boundaries in one short paragraph
 - include validation command expectations only when they are essential
+- require a completion report mapping contract IDs to implementation and test
+  evidence, with explicit blockers and unfinished mandatory items
 
 Do not duplicate the plan in the prompt.
 
@@ -119,6 +158,8 @@ Preferred prompt template:
 Please implement the plan in <plan-path>. Follow the Cursor rules and skills listed in the plan, keep the architecture guardrails intact, follow the testing criteria, add/update automated tests where required, avoid assumptions, and stop to resolve any OpenQuestions before making dependent changes.
 
 Pay special attention to <2-5 highest-risk guardrails or boundaries>.
+
+Verify the plan's prerequisites before dependent work. If one is absent or conflicts with the approved contract, report the evidence and the decision needed; do not invent a substitute. Complete the mandatory contracts and report their IDs, production paths, tests, and exact validation results. Clearly identify unfinished work and checks you could not execute.
 ```
 
 Add project-specific command instructions only when important, for example:

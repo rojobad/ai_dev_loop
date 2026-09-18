@@ -83,6 +83,14 @@ model_reasoning_effort="<effective-effort>"
 - It must require a complete English `cursor_fix_prompt` when actionable findings exist.
 - It must require `cursor_fix_prompt: null` when there are no actionable findings.
 - The wrapper must not summarize, rewrite, or reinterpret findings itself.
+- Project-specific contract coverage and correction guidance belong in the
+  target project's planning/review skills and generated prompts. Do not copy
+  those policies into the generic wrapper without an explicit runtime plan.
+- Finding IDs, closure tracking, and contract blockers may be described inside
+  the existing review Markdown and fix prompt. They are not new JSON fields or
+  scheduler decisions; do not infer a pause, acceptance, or authorization from
+  prose. An executable blocker outcome requires a separately approved versioned
+  contract and workflow change.
 
 ## Structured Result Contract
 
