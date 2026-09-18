@@ -61,6 +61,43 @@ Ignore style-only concerns unless they conceal a correctness or maintenance
 risk. Do not report speculative findings; put uncertainty and unavailable
 validation under residual risk.
 
+## Contract Coverage And Correction Closure
+
+- On the first review, cover all mandatory contracts, their production wiring,
+  and acceptance evidence; report all confirmed actionable findings together.
+  Use plan contract IDs when available, otherwise cite the relevant requirement.
+  Do not reject an older approved plan merely because it lacks IDs or a table.
+- Keep acceptance tied to the approved scope and `AGENTS.md`. Optional hardening
+  and rare unsupported Git cases must not become new blocking requirements.
+  Mandatory unfinished behavior or tests remain findings even if the executor
+  calls them residual risk.
+- Assign stable finding IDs such as `F-01` within the run. Reuse an ID for a
+  persisting defect, never recycle a closed ID for an unrelated issue. On later
+  reviews, reconcile available prior findings as closed, still open, or reopened
+  with evidence; identify new findings separately. If prior evidence is absent,
+  say so rather than inventing a history.
+- Explain why a prior correction failed and identify the affected supported
+  callers/transitions. Verify the complete fix and inspect the rest of the
+  staged diff for regressions. Distinguish pre-existing defects from regressions
+  introduced by corrections when evidence permits; otherwise state uncertainty.
+- Evaluate tests by the behavior they prove. Check production entry points,
+  independent assertions, real race synchronization, and historical fixtures.
+  A passing mock or a helper called only by tests does not prove runtime wiring.
+- Separate executor-reported validation from checks independently executed in
+  this review. Record environment restrictions without claiming success or
+  requesting unrelated implementation changes to bypass them.
+
+When an absent prerequisite or contract conflict requires an external decision,
+identify it explicitly and stop requesting the same impossible code change.
+Describe the evidence and decision needed; do not authorize restoring abandoned
+work, changing the plan, or weakening its guarantees. If the approved contract
+remains unsatisfied, retain the blocking finding and the existing actionable
+JSON fields; do not return no-findings merely to stop the loop. Its fix prompt
+must explain the blocker and instruct Cursor to stop dependent work and report
+the needed decision, while listing any independently actionable corrections.
+Human text does not pause the current scheduler. Keep this limitation explicit
+when reporting such a blocker; do not invoke scheduler controls from review.
+
 ## Control-Plane Changes
 
 Treat changes to any of the following as control-plane changes:
@@ -95,11 +132,19 @@ For each actionable finding, use:
 
 ```markdown
 - [P1] Short title
+  - ID: F-01 (new, still open, or reopened).
+  - Contract: Plan contract ID/requirement or supported workflow.
   - File: `path:line`
+  - Scenario: Concrete trigger and affected production path.
   - Issue: What is wrong and why it matters.
   - Evidence: Concrete staged diff, code, test, or plan evidence.
   - Recommendation: Specific corrective action.
+  - Closure: Observable condition and validation that resolve the finding.
 ```
+
+Keep ID tracking and closed-finding summaries inside `review_markdown` (for
+example under `Summary`); closed findings do not count as actionable findings.
+Do not add JSON keys, decision values, or test statuses to the current schema.
 
 Use `has_actionable_findings`, `findings_count`, and `highest_severity` to
 reflect only those findings. Set `tests_status` to exactly one of `passed`,
@@ -111,3 +156,9 @@ instruction to verify each issue, fix only confirmed issues, preserve the
 approved plan and existing staged work, avoid unrelated changes, and report
 what changed. Include only actionable corrective work. Otherwise set
 `cursor_fix_prompt` to `null`.
+
+Reference finding IDs in the correction prompt. Ask Cursor to report each as
+fixed, disputed with evidence, or blocked, with its production path and exact
+validation evidence. For a repeated finding, request an explanation of what
+the previous correction missed and a fix across the affected supported paths.
+These are human reporting conventions, not new scheduler states.

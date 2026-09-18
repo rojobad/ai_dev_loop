@@ -26,6 +26,10 @@ These contracts protect the local audit trail and recovery model. They apply in 
 - Versioned schemas live under `src/ai_dev_loop/schemas/` and must describe the persisted contract accepted by the application.
 - Any non-trivial change to `RunState`, project config, or Codex review result shape must update the relevant schema in the same change.
 - Schema changes require tests that would fail if the model and schema drift apart.
+- For changed fields, distinguish accepted transport inputs, canonical persisted
+  output, and domain invariants. Follow the approved absent/null and coercion
+  contract; validate representative complete payloads rather than property-name
+  proxies. Do not broaden compatibility or parity promises during correction.
 - Prefer explicit typed models or dataclasses over unstructured dictionaries for new persisted structures.
 - If compatibility or migration is needed, add an explicit migration/read strategy. Do not silently reinterpret old state.
 
@@ -60,6 +64,10 @@ These contracts protect the local audit trail and recovery model. They apply in 
 ## Recovery Compatibility
 
 - Design each checkpoint so `resume` can later answer one question: what is the next safe action that does not change agent identity or repeat completed work?
+- For boundaries changed by the active plan, connect durable intent, authorized
+  effect, and postcondition to the real restart/abort caller. Prove both safety
+  during uncertainty and convergence after the outcome is known; a helper that
+  is never called by production does not complete recovery.
 - Persist Cursor chat IDs immediately after creation and reuse them after recoverable failures.
 - Persist staged diff artifacts before any Codex review consumes them.
 - Persist Codex review results and correction prompts exactly as returned once review is implemented.
