@@ -11,7 +11,7 @@ def build_integration_info_data() -> IntegrationInfoData:
         {
             "aiDevLoopVersion": __version__,
             "capabilities": {
-                "runs": False,
+                "runs": True,
                 "sequences": False,
                 "reviewInspection": False,
                 "processOutput": False,

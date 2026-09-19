@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-frozen-artifact-chunk-v1.json",
+  "title": "ai_dev_loop Integration API frozen run artifact chunk v1",
+  "allOf": [
+    {
+      "$ref": "https://ai-dev-loop.local/schemas/integration-api-artifact-chunk-v1.json"
+    },
+    {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["runId", "artifactKind", "sourceRepositoryPath"],
+      "properties": {
+        "runId": { "type": "string", "minLength": 1 },
+        "artifactKind": { "type": "string", "enum": ["plan", "initial_prompt"] },
+        "sourceRepositoryPath": { "type": "string", "minLength": 1 }
+      }
+    }
+  ]
+}

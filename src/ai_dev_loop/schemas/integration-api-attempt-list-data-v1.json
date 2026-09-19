@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-attempt-list-data-v1.json",
+  "title": "ai_dev_loop Integration API attempt list data v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["runId", "items", "page"],
+  "properties": {
+    "runId": { "type": "string", "minLength": 1 },
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "https://ai-dev-loop.local/schemas/integration-api-attempt-item-v1.json"
+      }
+    },
+    "page": {
+      "$ref": "https://ai-dev-loop.local/schemas/integration-api-collection-page-v1.json"
+    }
+  }
+}

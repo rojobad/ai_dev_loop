@@ -21,7 +21,13 @@ from ai_dev_loop.integration_api.version import API_MAJOR, API_MINOR
 class PublicWireModel(BaseModel):
     """Public JSON DTO; unknown additive fields are tolerated on ingest."""
 
-    model_config = ConfigDict(extra="allow", frozen=True, populate_by_name=True, strict=True)
+    model_config = ConfigDict(
+        extra="allow",
+        frozen=True,
+        populate_by_name=True,
+        validate_by_name=True,
+        strict=True,
+    )
 
 
 class ApiVersion(PublicWireModel):
@@ -149,3 +155,113 @@ class CollectionPageMeta(PublicWireModel):
 
 def current_api_version() -> ApiVersion:
     return ApiVersion(major=API_MAJOR, minor=API_MINOR)
+
+
+class IntegrationReviewBudget(PublicWireModel):
+    completed: StrictInt = Field(ge=0)
+    max_reviews: StrictInt = Field(alias="max", ge=0)
+    submitted_max: StrictInt | None = Field(None, alias="submittedMax", ge=0)
+
+
+class IntegrationSequenceBinding(PublicWireModel):
+    sequence_id: str = Field(alias="sequenceId")
+    ordinal: StrictInt = Field(ge=1)
+    phase_count: StrictInt = Field(alias="phaseCount", ge=1)
+
+
+class IntegrationSafeNextAction(PublicWireModel):
+    kind: str
+    run_id: str = Field(alias="runId")
+    sequence_id: str | None = Field(None, alias="sequenceId")
+    wait_until: str | None = Field(None, alias="waitUntil")
+
+
+class IntegrationRunListItem(PublicWireModel):
+    run_id: str = Field(alias="runId")
+    project_name: str = Field(alias="projectName")
+    repository_root: str = Field(alias="repositoryRoot")
+    state: str
+    submitted_at: str = Field(alias="submittedAt")
+    updated_at: str = Field(alias="updatedAt")
+    review_budget: IntegrationReviewBudget = Field(alias="reviewBudget")
+    sequence_binding: IntegrationSequenceBinding | None = Field(
+        None,
+        alias="sequenceBinding",
+    )
+
+
+class IntegrationRunInspectData(PublicWireModel):
+    run_id: str = Field(alias="runId")
+    project_name: str = Field(alias="projectName")
+    repository_root: str = Field(alias="repositoryRoot")
+    state: str
+    submitted_at: str = Field(alias="submittedAt")
+    updated_at: str = Field(alias="updatedAt")
+    review_budget: IntegrationReviewBudget = Field(alias="reviewBudget")
+    sequence_binding: IntegrationSequenceBinding | None = Field(
+        None,
+        alias="sequenceBinding",
+    )
+    residual_risk: bool | None = Field(None, alias="residualRisk")
+    block_reason: str | None = Field(None, alias="blockReason")
+    cursor_wait_until: str | None = Field(None, alias="cursorWaitUntil")
+    safe_next_action: IntegrationSafeNextAction = Field(alias="safeNextAction")
+    attempt_count: StrictInt = Field(alias="attemptCount", ge=0)
+
+
+class IntegrationAttemptItem(PublicWireModel):
+    attempt_id: str = Field(alias="attemptId")
+    component: str
+    effect_kind: str | None = Field(None, alias="effectKind")
+    iteration: StrictInt = Field(ge=1)
+    phase_attempt: StrictInt = Field(alias="phaseAttempt", ge=1)
+    status: str
+    created_at: str = Field(alias="createdAt")
+    launch_requested_at: str | None = Field(None, alias="launchRequestedAt")
+    completed_at: str | None = Field(None, alias="completedAt")
+    observed_duration_seconds: float | None = Field(None, alias="observedDurationSeconds")
+
+
+class IntegrationHistoryItem(PublicWireModel):
+    sequence: StrictInt = Field(ge=1)
+    kind: str
+    timestamp: str
+    safe_detail: str = Field(alias="safeDetail")
+
+
+class IntegrationCollectionPage(PublicWireModel):
+    offset: StrictInt = Field(ge=0)
+    limit: StrictInt = Field(ge=1, le=500)
+    next_offset: StrictInt | None = Field(None, alias="nextOffset", ge=0)
+    has_more: StrictBool = Field(alias="hasMore")
+
+    @model_validator(mode="after")
+    def _check_pagination_offsets(self) -> IntegrationCollectionPage:
+        if not self.has_more and self.next_offset is not None:
+            raise ValueError("nextOffset must be null when hasMore is false")
+        if self.has_more and self.next_offset is None:
+            raise ValueError("nextOffset is required when hasMore is true")
+        return self
+
+
+class IntegrationRunListData(PublicWireModel):
+    items: tuple[IntegrationRunListItem, ...]
+    page: IntegrationCollectionPage
+
+
+class IntegrationAttemptListData(PublicWireModel):
+    run_id: str = Field(alias="runId")
+    items: tuple[IntegrationAttemptItem, ...]
+    page: IntegrationCollectionPage
+
+
+class IntegrationHistoryListData(PublicWireModel):
+    run_id: str = Field(alias="runId")
+    items: tuple[IntegrationHistoryItem, ...]
+    page: IntegrationCollectionPage
+
+
+class IntegrationFrozenArtifactChunk(ArtifactChunk):
+    run_id: str = Field(alias="runId")
+    artifact_kind: str = Field(alias="artifactKind")
+    source_repository_path: str = Field(alias="sourceRepositoryPath")

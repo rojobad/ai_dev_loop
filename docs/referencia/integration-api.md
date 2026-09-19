@@ -5,7 +5,7 @@ futuro supervise el scheduler local sin acceder a SQLite ni rutas privadas.
 
 ## Versión del contrato
 
-- Versión actual de la API: **1.0** (`apiVersion.major` / `apiVersion.minor`).
+- Versión actual de la API: **1.1** (`apiVersion.major` / `apiVersion.minor`).
 - Misma major: compatible; campos desconocidos se ignoran en consumidores.
 - Major distinta: el consumidor debe detenerse con `UPDATE_REQUIRED` y no emitir
   más peticiones de recursos.
@@ -18,7 +18,7 @@ Todas las órdenes bajo `integration` escriben **un único documento JSON** en s
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 0 },
+  "apiVersion": { "major": 1, "minor": 1 },
   "ok": true,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": {},
@@ -30,7 +30,7 @@ Error:
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 0 },
+  "apiVersion": { "major": 1, "minor": 1 },
   "ok": false,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": null,
@@ -63,9 +63,32 @@ ai_dev_loop integration info [--output json]
 - No requiere ledger del scheduler, no crea directorios XDG y no sondea Codex.
 - `data.aiDevLoopVersion` es la versión del paquete instalado.
 - `data.capabilities` declara de forma honesta qué lecturas existen en esta
-  versión (Phase 21.1: todas `false`).
+  versión. En **1.1**, `runs` es `true`; el resto permanece `false` hasta fases
+  posteriores.
 
-## Convenciones compartidas (fases posteriores)
+## Lectura de runs (API 1.1)
+
+Todas las órdenes aceptan `--output json` (único formato soportado).
+
+```bash
+ai_dev_loop integration runs list [--kind all|standalone|sequence] [--offset N --limit N]
+ai_dev_loop integration run inspect RUN_ID
+ai_dev_loop integration run attempts RUN_ID [--offset N --limit N]
+ai_dev_loop integration run timeline RUN_ID [--offset N --limit N]
+ai_dev_loop integration run history RUN_ID [--offset N --limit N]
+ai_dev_loop integration run plan RUN_ID [--offset BYTE_OFFSET --limit BYTE_LIMIT]
+ai_dev_loop integration run initial-prompt RUN_ID [--offset BYTE_OFFSET --limit BYTE_LIMIT]
+```
+
+- Las lecturas usan el ledger y artefactos del scheduler en modo **solo lectura**;
+  no migran la base de datos, no adquieren reservas de escritura y no ejecutan Git.
+- Los resúmenes (`list`, `inspect`, `history`) no incluyen cuerpos de prompts,
+  revisiones ni salida de procesos. Los comandos `plan` e `initial-prompt` devuelven
+  el artefacto congelado capturado en el submit (sensible; solo bajo demanda).
+- `plan` / `initial-prompt` verifican el hash registrado antes de devolver cada trozo;
+  no leen el worktree actual del repositorio.
+
+## Convenciones compartidas
 
 - Identificadores opacos en camelCase; marcas de tiempo UTC RFC3339.
 - Paginación: `--offset` / `--limit` con metadatos `items`, `offset`, `limit`,

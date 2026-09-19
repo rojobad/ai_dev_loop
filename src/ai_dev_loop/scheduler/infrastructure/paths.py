@@ -139,6 +139,34 @@ def run_artifact_root(artifact_root: Path, run_id: str) -> Path:
     return artifact_root / RUNS_DIRNAME / safe_run_directory_key(run_id)
 
 
+def readonly_confined_run_artifact_root(artifact_root: Path, run_id: str) -> Path:
+    """Resolve an existing run artifact root for read-only access without mutation.
+
+    Validates the artifact root, runs container, and registered run directory exist as
+    real directories and rejects symlink components on the path to the run root.
+    """
+    if not artifact_root.exists():
+        raise ValueError("artifact root missing")
+    _reject_symlink_component(artifact_root, label="artifact root")
+    if not artifact_root.is_dir():
+        raise ValueError("artifact root must be a directory")
+    artifact_resolved = artifact_root.resolve(strict=False)
+    _reject_symlink_component(artifact_resolved, label="artifact root")
+    runs_root = artifact_resolved / RUNS_DIRNAME
+    if not runs_root.is_dir():
+        raise ValueError("runs artifact root missing")
+    _reject_symlink_component(runs_root, label="runs artifact root")
+    run_root = runs_root / safe_run_directory_key(run_id)
+    if not run_root.is_dir():
+        raise ValueError("run artifact root missing")
+    _reject_symlink_component(run_root, label="run artifact root")
+    try:
+        run_root.resolve(strict=False).relative_to(runs_root.resolve(strict=False))
+    except ValueError as exc:
+        raise ValueError("run artifact root escapes the runs container") from exc
+    return run_root
+
+
 def ensure_run_artifact_root(artifact_root: Path, run_id: str) -> Path:
     artifact_resolved = ensure_artifact_root(artifact_root)
     _ensure_private_directory(

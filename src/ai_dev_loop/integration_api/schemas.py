@@ -15,6 +15,14 @@ INFO_DATA_SCHEMA = "integration-api-info-data-v1.json"
 ERROR_BODY_SCHEMA = "integration-api-error-body-v1.json"
 ARTIFACT_CHUNK_SCHEMA = "integration-api-artifact-chunk-v1.json"
 COLLECTION_PAGE_SCHEMA = "integration-api-collection-page-v1.json"
+RUN_SHARED_SCHEMA = "integration-api-run-shared-v1.json"
+RUN_LIST_DATA_SCHEMA = "integration-api-run-list-data-v1.json"
+RUN_INSPECT_DATA_SCHEMA = "integration-api-run-inspect-data-v1.json"
+ATTEMPT_ITEM_SCHEMA = "integration-api-attempt-item-v1.json"
+ATTEMPT_LIST_DATA_SCHEMA = "integration-api-attempt-list-data-v1.json"
+HISTORY_ITEM_SCHEMA = "integration-api-history-item-v1.json"
+HISTORY_LIST_DATA_SCHEMA = "integration-api-history-list-data-v1.json"
+FROZEN_ARTIFACT_CHUNK_SCHEMA = "integration-api-frozen-artifact-chunk-v1.json"
 
 
 def load_integration_schema(name: str) -> dict[str, object]:
@@ -28,6 +36,14 @@ def integration_schema_names() -> tuple[str, ...]:
         ERROR_BODY_SCHEMA,
         ARTIFACT_CHUNK_SCHEMA,
         COLLECTION_PAGE_SCHEMA,
+        RUN_SHARED_SCHEMA,
+        RUN_LIST_DATA_SCHEMA,
+        RUN_INSPECT_DATA_SCHEMA,
+        ATTEMPT_ITEM_SCHEMA,
+        ATTEMPT_LIST_DATA_SCHEMA,
+        HISTORY_ITEM_SCHEMA,
+        HISTORY_LIST_DATA_SCHEMA,
+        FROZEN_ARTIFACT_CHUNK_SCHEMA,
     )
 
 

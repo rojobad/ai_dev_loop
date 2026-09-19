@@ -127,7 +127,7 @@ def test_f02_clirunner_root_and_namespace_help() -> None:
     info = runner.invoke(app, ["integration", "info"])
     assert info.exit_code == 0
     payload = json.loads(info.stdout)
-    assert payload["apiVersion"] == {"major": 1, "minor": 0}
+    assert payload["apiVersion"] == {"major": 1, "minor": 1}
 
 
 def test_c01_entry_point_subprocess_smoke(
@@ -160,9 +160,9 @@ def test_c01_info_cli_envelope_and_capabilities() -> None:
     code, stdout, _stderr = _invoke_integration(["info"])
     assert code == 0
     payload = json.loads(stdout)
-    assert payload["apiVersion"] == {"major": 1, "minor": 0}
+    assert payload["apiVersion"] == {"major": 1, "minor": 1}
     assert payload["observedAt"] == "2026-09-18T12:00:00Z"
-    assert payload["data"]["capabilities"]["runs"] is False
+    assert payload["data"]["capabilities"]["runs"] is True
 
 
 def test_f03_strict_integer_and_boolean_fields() -> None:

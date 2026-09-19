@@ -69,7 +69,12 @@ autenticada; el push Git usa SSH + `ssh-agent`.
 El scheduler central separa congelado (`scheduler submit`) de ejecucion (`scheduler start`
 + `scheduler tick`). `scheduler abort` persiste primero y solo senala procesos locales
 con ownership OS exacta. Status/history del scheduler no exponen prompts, patches,
-tokens, session IDs completos, argv, PID/PGID ni environments. **Gate A** valida con
+tokens, session IDs completos, argv, PID/PGID ni environments. El namespace
+`integration` (API local JSON) mantiene esa privacidad en resúmenes (`runs list`,
+`run inspect`, `run history`, `attempts`, `timeline`). Los comandos explícitos
+`integration run plan` e `integration run initial-prompt` devuelven el artefacto
+congelado capturado en el submit (contenido sensible); no leen el worktree actual
+ni reconstruyen historial ausente. **Gate A** valida con
 fakes/process boundaries; **Gate B** es
 aceptacion live pendiente hasta completar el ciclo controlado en parish360-poc.
 

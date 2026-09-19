@@ -1838,6 +1838,166 @@ class SqliteSchedulerStore:
         ).fetchall()
         return list(rows)
 
+    @staticmethod
+    def schema_has_table(conn: sqlite3.Connection, table_name: str) -> bool:
+        row = conn.execute(
+            """
+            SELECT 1 FROM sqlite_master
+            WHERE type = 'table' AND name = ?
+            LIMIT 1
+            """,
+            (table_name,),
+        ).fetchone()
+        return row is not None
+
+    def schema_supports_integration_attempt_queries(self, conn: sqlite3.Connection) -> bool:
+        return self.schema_has_table(conn, "scheduler_attempts")
+
+    def schema_supports_integration_history_queries(self, conn: sqlite3.Connection) -> bool:
+        return self.schema_has_table(conn, "scheduler_events")
+
+    def list_run_ids_for_integration(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        kind: str,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[str], bool]:
+        if limit < 1:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "limit must be positive",
+            )
+        if offset < 0:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "offset must be nonnegative",
+            )
+        sequence_filter = ""
+        if kind == "standalone":
+            sequence_filter = (
+                " AND COALESCE(json_extract(state_payload, '$.context.schema_version'), 0) != 4"
+            )
+        elif kind == "sequence":
+            sequence_filter = " AND json_extract(state_payload, '$.context.schema_version') = 4"
+        elif kind != "all":
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "kind must be all, standalone, or sequence",
+            )
+        rows = conn.execute(
+            f"""
+            SELECT run_id FROM scheduler_runs
+            WHERE 1 = 1{sequence_filter}
+            ORDER BY created_at DESC, run_id ASC
+            LIMIT ? OFFSET ?
+            """,
+            (limit + 1, offset),
+        ).fetchall()
+        has_more = len(rows) > limit
+        selected = rows[:limit]
+        return [str(row["run_id"]) for row in selected], has_more
+
+    def count_attempts_for_run(self, conn: sqlite3.Connection, run_id: str) -> int:
+        if not self.schema_supports_integration_attempt_queries(conn):
+            return 0
+        row = conn.execute(
+            "SELECT COUNT(*) FROM scheduler_attempts WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def list_integration_attempt_rows(
+        self,
+        conn: sqlite3.Connection,
+        run_id: str,
+        *,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[sqlite3.Row], bool]:
+        if limit < 1:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "limit must be positive",
+            )
+        if offset < 0:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "offset must be nonnegative",
+            )
+        rows = conn.execute(
+            """
+            SELECT attempt_id, iteration, component, status, effect_kind,
+                   launch_requested_at, completed_at, created_at, phase_attempt
+            FROM (
+                SELECT scheduler_attempts.attempt_id,
+                       scheduler_attempts.iteration,
+                       scheduler_attempts.component,
+                       scheduler_attempts.status,
+                       scheduler_attempts.launch_requested_at,
+                       scheduler_attempts.completed_at,
+                       scheduler_attempts.created_at,
+                       scheduler_effects.effect_kind,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY scheduler_attempts.iteration,
+                                        scheduler_attempts.component
+                           ORDER BY
+                               COALESCE(
+                                   scheduler_attempts.launch_requested_at,
+                                   scheduler_attempts.created_at
+                               ) ASC,
+                               scheduler_attempts.created_at ASC,
+                               scheduler_attempts.attempt_id ASC
+                       ) AS phase_attempt
+                FROM scheduler_attempts
+                LEFT JOIN scheduler_effects
+                  ON scheduler_effects.dispatch_id = scheduler_attempts.dispatch_id
+                WHERE scheduler_attempts.run_id = ?
+            )
+            ORDER BY
+                COALESCE(launch_requested_at, created_at) ASC,
+                created_at ASC,
+                attempt_id ASC
+            LIMIT ? OFFSET ?
+            """,
+            (run_id, limit + 1, offset),
+        ).fetchall()
+        has_more = len(rows) > limit
+        return [cast(sqlite3.Row, row) for row in rows[:limit]], has_more
+
+    def list_events_for_run_offset(
+        self,
+        conn: sqlite3.Connection,
+        run_id: str,
+        *,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[sqlite3.Row], bool]:
+        if limit < 1:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "limit must be positive",
+            )
+        if offset < 0:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "offset must be nonnegative",
+            )
+        rows = conn.execute(
+            """
+            SELECT event_id, run_id, sequence, event_kind,
+                   event_payload, event_payload_sha256, created_at
+            FROM scheduler_events
+            WHERE run_id = ?
+            ORDER BY sequence ASC
+            LIMIT ? OFFSET ?
+            """,
+            (run_id, limit + 1, offset),
+        ).fetchall()
+        has_more = len(rows) > limit
+        return [cast(sqlite3.Row, row) for row in rows[:limit]], has_more
+
     def next_event_sequence(self, conn: sqlite3.Connection, run_id: str) -> int:
         row = conn.execute(
             "SELECT MAX(sequence) FROM scheduler_events WHERE run_id = ?",

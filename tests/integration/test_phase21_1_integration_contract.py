@@ -98,7 +98,9 @@ def test_f07_offline_wheel_install_and_info(
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
         for schema_name in integration_schema_names():
-            assert any(name.endswith(f"schemas/{schema_name}") for name in names)
+            assert any(name.endswith(f"schemas/{schema_name}") for name in names), (
+                f"missing schema {schema_name} in wheel"
+            )
 
     subprocess.run(
         [
@@ -125,7 +127,7 @@ def test_f07_offline_wheel_install_and_info(
     )
     assert proc.returncode == 0
     payload = json.loads(proc.stdout)
-    assert payload["apiVersion"] == {"major": 1, "minor": 0}
+    assert payload["apiVersion"] == {"major": 1, "minor": 1}
 
     schema_probe = subprocess.run(
         [

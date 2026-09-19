@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-run-shared-v1.json",
+  "title": "ai_dev_loop Integration API shared run projection shapes v1",
+  "$defs": {
+    "reviewBudget": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["completed", "max"],
+      "properties": {
+        "completed": { "type": "integer", "minimum": 0 },
+        "max": { "type": "integer", "minimum": 0 },
+        "submittedMax": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "sequenceBinding": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["sequenceId", "ordinal", "phaseCount"],
+      "properties": {
+        "sequenceId": { "type": "string", "minLength": 1 },
+        "ordinal": { "type": "integer", "minimum": 1 },
+        "phaseCount": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "safeNextAction": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["kind", "runId"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "runId": { "type": "string", "minLength": 1 },
+        "sequenceId": { "type": ["string", "null"] },
+        "waitUntil": { "type": ["string", "null"] }
+      }
+    },
+    "runListItem": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "runId",
+        "projectName",
+        "repositoryRoot",
+        "state",
+        "submittedAt",
+        "updatedAt",
+        "reviewBudget"
+      ],
+      "properties": {
+        "runId": { "type": "string", "minLength": 1 },
+        "projectName": { "type": "string", "minLength": 1 },
+        "repositoryRoot": { "type": "string", "minLength": 1 },
+        "state": { "type": "string", "minLength": 1 },
+        "submittedAt": { "type": "string", "minLength": 1 },
+        "updatedAt": { "type": "string", "minLength": 1 },
+        "reviewBudget": { "$ref": "#/$defs/reviewBudget" },
+        "sequenceBinding": {
+          "oneOf": [
+            { "$ref": "#/$defs/sequenceBinding" },
+            { "type": "null" }
+          ]
+        }
+      }
+    }
+  }
+}

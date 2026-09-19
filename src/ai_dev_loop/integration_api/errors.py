@@ -49,3 +49,19 @@ class IntegrationApiError(Exception):
     @classmethod
     def invalid_argument(cls, message: str) -> IntegrationApiError:
         return cls(IntegrationErrorCode.INVALID_ARGUMENT, message)
+
+    @classmethod
+    def not_found(cls, message: str) -> IntegrationApiError:
+        return cls(IntegrationErrorCode.NOT_FOUND, message)
+
+    @classmethod
+    def unsupported(cls, message: str) -> IntegrationApiError:
+        return cls(IntegrationErrorCode.UNSUPPORTED, message)
+
+    @classmethod
+    def data_integrity(cls, message: str) -> IntegrationApiError:
+        return cls(IntegrationErrorCode.DATA_INTEGRITY, message)
+
+    @classmethod
+    def io_error(cls, message: str) -> IntegrationApiError:
+        return cls(IntegrationErrorCode.IO_ERROR, message)

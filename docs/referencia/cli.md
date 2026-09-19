@@ -293,6 +293,13 @@ Opciones:
 
 ```bash
 ai_dev_loop integration info [--output json]
+ai_dev_loop integration runs list [--kind all|standalone|sequence] [--offset N --limit N]
+ai_dev_loop integration run inspect RUN_ID
+ai_dev_loop integration run attempts RUN_ID [--offset N --limit N]
+ai_dev_loop integration run timeline RUN_ID [--offset N --limit N]
+ai_dev_loop integration run history RUN_ID [--offset N --limit N]
+ai_dev_loop integration run plan RUN_ID [--offset BYTE_OFFSET --limit BYTE_LIMIT]
+ai_dev_loop integration run initial-prompt RUN_ID [--offset BYTE_OFFSET --limit BYTE_LIMIT]
 ```
 
 Namespace singular para el contrato JSON que consumirá el Bridge futuro. Todas
@@ -300,12 +307,13 @@ las órdenes de este namespace emiten un único documento JSON en stdout; `--hel
 sigue siendo ayuda normal de Typer. El namespace plural `integrations` (instalación
 Codex global) no cambia.
 
-Phase 21.1 implementa solo `integration info`: versión del paquete, versión del
-contrato (`apiVersion` 1.0) y capacidades honestas (todavía todas `false`). La
-opción `--output json` pertenece al subcomando `info` (valor por defecto). No
-accede al ledger del scheduler ni crea estado XDG.
+`integration info` no requiere ledger del scheduler. Las lecturas de runs (API
+**1.1**, capacidad `runs: true`) abren el ledger en solo lectura y no migran la
+base de datos. La opción `--output json` es obligatoria en cada subcomando
+(valor por defecto donde aplica).
 
-Detalle del sobre, códigos de error y convenciones: [API de integración local](integration-api.md).
+Detalle del sobre, códigos de error, paginación y lecturas sensibles:
+[API de integración local](integration-api.md).
 
 ## `integrations sessions`
 

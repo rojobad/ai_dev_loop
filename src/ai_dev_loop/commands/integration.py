@@ -13,6 +13,13 @@ from typer.core import TyperCommand, TyperGroup
 from ai_dev_loop.integration_api.envelope import emit_failure, emit_success
 from ai_dev_loop.integration_api.errors import IntegrationApiError, IntegrationErrorCode
 from ai_dev_loop.integration_api.info import build_integration_info_data
+from ai_dev_loop.integration_api.run_projection import RunKindFilter
+from ai_dev_loop.integration_api.run_service import default_run_read_service
+from ai_dev_loop.integration_api.validation import (
+    COLLECTION_DEFAULT_LIMIT,
+    validate_artifact_read_bounds,
+    validate_collection_bounds,
+)
 
 IntegrationOutputOption = Annotated[
     str,
@@ -130,6 +137,52 @@ integration_app = typer.Typer(
     cls=IntegrationTyperGroup,
 )
 
+runs_app = typer.Typer(
+    help="Run collection queries.",
+    no_args_is_help=False,
+    add_completion=False,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+    cls=IntegrationTyperGroup,
+)
+
+run_app = typer.Typer(
+    help="Single-run inspection.",
+    no_args_is_help=False,
+    add_completion=False,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+    cls=IntegrationTyperGroup,
+)
+
+integration_app.add_typer(runs_app, name="runs")
+integration_app.add_typer(run_app, name="run")
+
+KindOption = Annotated[
+    RunKindFilter,
+    typer.Option("--kind", help="Filter runs: all, standalone, or sequence."),
+]
+
+OffsetOption = Annotated[
+    int,
+    typer.Option("--offset", help="Collection offset (default 0)."),
+]
+
+LimitOption = Annotated[
+    int,
+    typer.Option("--limit", help="Collection page size (default 100, max 500)."),
+]
+
+ByteOffsetOption = Annotated[
+    int,
+    typer.Option("--offset", help="Artifact byte offset (default 0)."),
+]
+
+ByteLimitOption = Annotated[
+    int,
+    typer.Option("--limit", help="Artifact byte limit (default 65536, max 262144)."),
+]
+
 
 @integration_app.callback(invoke_without_command=True)
 def integration_root(ctx: typer.Context) -> None:
@@ -145,6 +198,108 @@ def integration_info_command(
     """Return API contract version, package version, and honest capabilities."""
     _require_json_output(output)
     data = build_integration_info_data()
+    emit_success(data.model_dump(by_alias=True))
+
+
+@runs_app.command("list")
+def integration_runs_list_command(
+    output: IntegrationOutputOption = "json",
+    kind: KindOption = "all",
+    offset: OffsetOption = 0,
+    limit: LimitOption = COLLECTION_DEFAULT_LIMIT,
+) -> None:
+    """List scheduler runs with optional kind filter and pagination."""
+    _require_json_output(output)
+    validate_collection_bounds(offset, limit)
+    service = default_run_read_service()
+    data = service.list_runs(kind=kind, offset=offset, limit=limit)
+    emit_success(data.model_dump(by_alias=True))
+
+
+@run_app.command("inspect")
+def integration_run_inspect_command(
+    run_id: str,
+    output: IntegrationOutputOption = "json",
+) -> None:
+    """Inspect one run summary without loading artifact bodies."""
+    _require_json_output(output)
+    service = default_run_read_service()
+    data = service.inspect_run(run_id)
+    emit_success(data.model_dump(by_alias=True))
+
+
+@run_app.command("attempts")
+def integration_run_attempts_command(
+    run_id: str,
+    output: IntegrationOutputOption = "json",
+    offset: OffsetOption = 0,
+    limit: LimitOption = COLLECTION_DEFAULT_LIMIT,
+) -> None:
+    """List bounded attempt records for one run."""
+    _require_json_output(output)
+    validate_collection_bounds(offset, limit)
+    service = default_run_read_service()
+    data = service.list_attempts(run_id, offset=offset, limit=limit)
+    emit_success(data.model_dump(by_alias=True))
+
+
+@run_app.command("timeline")
+def integration_run_timeline_command(
+    run_id: str,
+    output: IntegrationOutputOption = "json",
+    offset: OffsetOption = 0,
+    limit: LimitOption = COLLECTION_DEFAULT_LIMIT,
+) -> None:
+    """List bounded attempt timeline rows for one run."""
+    _require_json_output(output)
+    validate_collection_bounds(offset, limit)
+    service = default_run_read_service()
+    data = service.list_timeline(run_id, offset=offset, limit=limit)
+    emit_success(data.model_dump(by_alias=True))
+
+
+@run_app.command("history")
+def integration_run_history_command(
+    run_id: str,
+    output: IntegrationOutputOption = "json",
+    offset: OffsetOption = 0,
+    limit: LimitOption = COLLECTION_DEFAULT_LIMIT,
+) -> None:
+    """List bounded redacted scheduler event history for one run."""
+    _require_json_output(output)
+    validate_collection_bounds(offset, limit)
+    service = default_run_read_service()
+    data = service.list_history(run_id, offset=offset, limit=limit)
+    emit_success(data.model_dump(by_alias=True))
+
+
+@run_app.command("plan")
+def integration_run_plan_command(
+    run_id: str,
+    output: IntegrationOutputOption = "json",
+    byte_offset: ByteOffsetOption = 0,
+    byte_limit: ByteLimitOption = 65536,
+) -> None:
+    """Read a verified chunk of the frozen plan artifact."""
+    _require_json_output(output)
+    validate_artifact_read_bounds(byte_offset, byte_limit)
+    service = default_run_read_service()
+    data = service.read_plan_chunk(run_id, byte_offset=byte_offset, limit=byte_limit)
+    emit_success(data.model_dump(by_alias=True))
+
+
+@run_app.command("initial-prompt")
+def integration_run_initial_prompt_command(
+    run_id: str,
+    output: IntegrationOutputOption = "json",
+    byte_offset: ByteOffsetOption = 0,
+    byte_limit: ByteLimitOption = 65536,
+) -> None:
+    """Read a verified chunk of the frozen initial Cursor prompt artifact."""
+    _require_json_output(output)
+    validate_artifact_read_bounds(byte_offset, byte_limit)
+    service = default_run_read_service()
+    data = service.read_initial_prompt_chunk(run_id, byte_offset=byte_offset, limit=byte_limit)
     emit_success(data.model_dump(by_alias=True))
 
 
