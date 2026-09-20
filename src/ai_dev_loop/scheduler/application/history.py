@@ -92,6 +92,12 @@ def _safe_detail_for_event(event_kind: str, payload_text: str) -> str:
     }:
         kind = payload.get("block_reason_kind")
         return f"{event_kind}: block_reason_kind={kind}"
+    if event_kind == "cursor_timeout_retry":
+        return (
+            f"{event_kind}: action={payload.get('action')} "
+            f"automatic_retries={payload.get('automatic_retries')} "
+            f"available_at={payload.get('available_at')}"
+        )
     if event_kind == "cursor_usage_limit_detected":
         wait_until = payload.get("wait_until")
         return f"{event_kind}: wait_until={wait_until}"

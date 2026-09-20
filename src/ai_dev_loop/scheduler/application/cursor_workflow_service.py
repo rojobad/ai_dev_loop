@@ -12,7 +12,7 @@ from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.iterations import build_usage_limit_continuation_envelope
 from ai_dev_loop.runners.git import validate_staged_patch_matches_artifact
 from ai_dev_loop.runners.staging import run_git_staging
-from ai_dev_loop.scheduler.application.contracts import TickRunReceipt
+from ai_dev_loop.scheduler.application.contracts import SchedulerEngineError, TickRunReceipt
 from ai_dev_loop.scheduler.application.cursor_evidence import (
     CursorEvidenceError,
     frozen_repository_identity,
@@ -846,15 +846,23 @@ class CursorWorkflowService:
             checkpoint = checkpoint_from_state(state)
 
         if timed_out:
-            return self._block_from_ingest(
-                run_id,
-                dispatch_id=dispatch_id,
-                attempt_id=attempt_id,
-                kind="cursor_turn_blocked",
-                reason_kind="cursor_timeout",
-                summary="Cursor execution timed out",
-                state_kind=type(state).__name__,
+            from ai_dev_loop.scheduler.application.cursor_timeout_retry import (
+                CursorTimeoutRetryService,
             )
+
+            try:
+                return CursorTimeoutRetryService(
+                    self.store, self.artifacts, now_factory=self._now_factory
+                ).record_timeout(run_id, attempt_id)
+            except SchedulerEngineError:
+                return self._block_from_ingest(
+                    run_id,
+                    dispatch_id=dispatch_id,
+                    attempt_id=attempt_id,
+                    kind="cursor_turn_blocked",
+                    reason_kind="timeout_retry_evidence_invalid",
+                    summary="Cursor timeout cannot be retried safely; inspect attempt evidence",
+                )
 
         if returncode != 0:
             if failure_code == "cursor_usage_limit":

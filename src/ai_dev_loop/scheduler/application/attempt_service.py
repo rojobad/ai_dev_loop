@@ -383,7 +383,20 @@ class AttemptService:
         stdout_rel = attempt_stdout_rel(attempt_id)
         stderr_rel = attempt_stderr_rel(attempt_id)
         result_rel = attempt_result_rel(attempt_id)
-        evidence = self._cursor_binding(cursor_state, effect_kind=effect_kind, run_id=run_id)
+        if cursor_state.cursor.timeout_attempt_id and effect_kind == RUN_CURSOR_TURN_EFFECT_KIND:
+            from ai_dev_loop.scheduler.application.cursor_timeout_retry import timeout_binding
+
+            with self.store.begin_read() as conn:
+                evidence = timeout_binding(
+                    self.store,
+                    self.artifacts,
+                    conn,
+                    run_id,
+                    cursor_state.cursor.timeout_attempt_id,
+                )
+            evidence["timeout_retry_of"] = cursor_state.cursor.timeout_attempt_id
+        else:
+            evidence = self._cursor_binding(cursor_state, effect_kind=effect_kind, run_id=run_id)
         evidence.update(
             {
                 "attempt_id": attempt_id,

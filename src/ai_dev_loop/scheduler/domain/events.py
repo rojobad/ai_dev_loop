@@ -58,6 +58,16 @@ RUN_ABORTED_EVENT_KIND = "run_aborted"
 ATTEMPT_RESULT_STALE_EVENT_KIND = "attempt_result_stale"
 
 
+class CursorTimeoutRetryEvent(DomainModel):
+    kind: Literal["cursor_timeout_retry"] = "cursor_timeout_retry"
+    run_id: NonEmptyStr
+    attempt_id: NonEmptyStr
+    iteration: int = Field(ge=1)
+    automatic_retries: int = Field(ge=0, le=3)
+    action: Literal["automatic", "manual", "exhausted"]
+    available_at: NonEmptyStr | None = None
+
+
 class RunSubmittedEvent(DomainModel):
     kind: str = Field(default=SUBMITTED_EVENT_KIND)
     run_id: str
@@ -770,7 +780,8 @@ def _scheduler_event_discriminator(value: object) -> str:
 
 
 SchedulerEvent = Annotated[
-    Annotated[RunSubmittedEvent, Tag(SUBMITTED_EVENT_KIND)]
+    Annotated[CursorTimeoutRetryEvent, Tag("cursor_timeout_retry")]
+    | Annotated[RunSubmittedEvent, Tag(SUBMITTED_EVENT_KIND)]
     | Annotated[RunAuthorizedEvent, Tag(AUTHORIZED_EVENT_KIND)]
     | Annotated[WorktreeAdmittedEvent, Tag(ADMISSION_EVENT_KIND)]
     | Annotated[WorktreeAdmissionBlockedEvent, Tag(ADMISSION_BLOCKED_EVENT_KIND)]

@@ -153,6 +153,32 @@ pendientes y no borra artefactos ni cambios staged del repositorio objetivo.
 fue extendido explicitamente, el techo efectivo puede superar el limite congelado en
 el contexto enviado; la salida indica el limite enviado solo cuando difiere.
 
+## `scheduler cursor-retry`
+
+```bash
+ai_dev_loop scheduler cursor-retry <run-id> [--output text|json]
+```
+
+Tras un timeout confirmado de un turno Cursor, el scheduler conserva el mismo run,
+chat, reviewer, prompt e iteracion, incluidos los cambios staged y unstaged. Programa
+un nuevo intento a los 30 minutos, con un maximo de tres reintentos automaticos por
+turno. Cada intento conserva sus propios artefactos; no consume una review adicional.
+
+El comando manual esta disponible desde el primer timeout: adelanta cualquier espera
+pendiente y tambien permite continuar tras agotar los tres automaticos. Adelantar una
+espera no consume un reintento automatico. El comando encola el intento para el siguiente
+tick; repetirlo antes del lanzamiento no crea otro intento. Requiere que el proceso
+anterior haya terminado, que el run conserve su reserva y que no haya un abort pendiente.
+No repite la admision ni exige limpiar el worktree. Al terminar Cursor, siguen el staging
+y la revision normales, incluida la continuacion de la misma secuencia.
+
+`status` expone `cursor_wait_until` y el comando manual; `history` muestra
+`cursor_timeout_retry` con la accion, el contador y la fecha. Tras agotar los automaticos,
+el run conserva su reserva y espera el comando manual o `scheduler abort`.
+Los bloqueos `cursor_timeout` de versiones anteriores no se migran. El timeout de
+`create-chat`, los fallos de integridad y las terminaciones inciertas no son reintentables
+por este comando.
+
 ## `scheduler extend`
 
 ```bash

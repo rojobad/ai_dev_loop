@@ -392,6 +392,25 @@ def scheduler_review_retry_command(
     _handle(run)
 
 
+@scheduler_app.command("cursor-retry")
+def scheduler_cursor_retry_command(
+    run_id: Annotated[str, typer.Argument(help="Run waiting after a Cursor timeout.")],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Retry a terminated Cursor turn now, keeping its chat, prompt and partial changes."""
+
+    def run() -> None:
+        from ai_dev_loop.scheduler.application.cursor_timeout_retry import scheduler_cursor_retry
+
+        result = scheduler_cursor_retry(run_id)
+        if output.value == "json":
+            typer.echo(result.model_dump_json(indent=2))
+        else:
+            typer.echo(f"Cursor retry: {result.run_id}; ready at {result.available_at}")
+
+    _handle(run)
+
+
 @scheduler_app.command("abort")
 def scheduler_abort_command(
     run_id: Annotated[str, typer.Argument(help="Scheduler run ID.")],

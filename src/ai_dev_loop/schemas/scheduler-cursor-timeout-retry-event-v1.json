@@ -1,0 +1,64 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "const": "cursor_timeout_retry",
+      "default": "cursor_timeout_retry",
+      "title": "Kind",
+      "type": "string"
+    },
+    "run_id": {
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "attempt_id": {
+      "minLength": 1,
+      "title": "Attempt Id",
+      "type": "string"
+    },
+    "iteration": {
+      "minimum": 1,
+      "title": "Iteration",
+      "type": "integer"
+    },
+    "automatic_retries": {
+      "maximum": 3,
+      "minimum": 0,
+      "title": "Automatic Retries",
+      "type": "integer"
+    },
+    "action": {
+      "enum": [
+        "automatic",
+        "manual",
+        "exhausted"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "available_at": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Available At"
+    }
+  },
+  "required": [
+    "run_id",
+    "attempt_id",
+    "iteration",
+    "automatic_retries",
+    "action"
+  ],
+  "title": "CursorTimeoutRetryEvent",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}
