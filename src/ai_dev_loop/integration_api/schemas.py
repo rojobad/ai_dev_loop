@@ -23,6 +23,12 @@ ATTEMPT_LIST_DATA_SCHEMA = "integration-api-attempt-list-data-v1.json"
 HISTORY_ITEM_SCHEMA = "integration-api-history-item-v1.json"
 HISTORY_LIST_DATA_SCHEMA = "integration-api-history-list-data-v1.json"
 FROZEN_ARTIFACT_CHUNK_SCHEMA = "integration-api-frozen-artifact-chunk-v1.json"
+SEQUENCE_SHARED_SCHEMA = "integration-api-sequence-shared-v1.json"
+SEQUENCE_LIST_DATA_SCHEMA = "integration-api-sequence-list-data-v1.json"
+SEQUENCE_INSPECT_DATA_SCHEMA = "integration-api-sequence-inspect-data-v1.json"
+SEQUENCE_PHASE_RUN_LIST_DATA_SCHEMA = "integration-api-sequence-phase-run-list-data-v1.json"
+FROZEN_SEQUENCE_ARTIFACT_CHUNK_SCHEMA = "integration-api-frozen-sequence-artifact-chunk-v1.json"
+SEQUENCE_REPORT_CHUNK_SCHEMA = "integration-api-sequence-report-chunk-v1.json"
 
 
 def load_integration_schema(name: str) -> dict[str, object]:
@@ -44,6 +50,12 @@ def integration_schema_names() -> tuple[str, ...]:
         HISTORY_ITEM_SCHEMA,
         HISTORY_LIST_DATA_SCHEMA,
         FROZEN_ARTIFACT_CHUNK_SCHEMA,
+        SEQUENCE_SHARED_SCHEMA,
+        SEQUENCE_LIST_DATA_SCHEMA,
+        SEQUENCE_INSPECT_DATA_SCHEMA,
+        SEQUENCE_PHASE_RUN_LIST_DATA_SCHEMA,
+        FROZEN_SEQUENCE_ARTIFACT_CHUNK_SCHEMA,
+        SEQUENCE_REPORT_CHUNK_SCHEMA,
     )
 
 

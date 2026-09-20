@@ -187,6 +187,30 @@ def sequence_artifact_root(artifact_root: Path, sequence_id: str) -> Path:
     return artifact_root / SEQUENCES_DIRNAME / safe_sequence_directory_key(sequence_id)
 
 
+def readonly_confined_sequence_artifact_root(artifact_root: Path, sequence_id: str) -> Path:
+    """Resolve an existing sequence artifact root for read-only access without mutation."""
+    if not artifact_root.exists():
+        raise ValueError("artifact root missing")
+    _reject_symlink_component(artifact_root, label="artifact root")
+    if not artifact_root.is_dir():
+        raise ValueError("artifact root must be a directory")
+    artifact_resolved = artifact_root.resolve(strict=False)
+    _reject_symlink_component(artifact_resolved, label="artifact root")
+    sequences_root = artifact_resolved / SEQUENCES_DIRNAME
+    if not sequences_root.is_dir():
+        raise ValueError("sequences artifact root missing")
+    _reject_symlink_component(sequences_root, label="sequences artifact root")
+    sequence_root = sequences_root / safe_sequence_directory_key(sequence_id)
+    if not sequence_root.is_dir():
+        raise ValueError("sequence artifact root missing")
+    _reject_symlink_component(sequence_root, label="sequence artifact root")
+    try:
+        sequence_root.resolve(strict=False).relative_to(sequences_root.resolve(strict=False))
+    except ValueError as exc:
+        raise ValueError("sequence artifact root escapes the sequences container") from exc
+    return sequence_root
+
+
 def ensure_sequence_artifact_root(artifact_root: Path, sequence_id: str) -> Path:
     artifact_resolved = ensure_artifact_root(artifact_root)
     _ensure_private_directory(

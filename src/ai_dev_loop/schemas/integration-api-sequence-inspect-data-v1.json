@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-sequence-inspect-data-v1.json",
+  "title": "ai_dev_loop Integration API sequence inspect data v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "sequenceId",
+    "name",
+    "projectName",
+    "repositoryRoot",
+    "state",
+    "preparedAt",
+    "updatedAt",
+    "aggregateCounts",
+    "residualRisk",
+    "residualRiskOrdinals",
+    "blockReason",
+    "safeNextAction",
+    "report",
+    "phases"
+  ],
+  "properties": {
+    "sequenceId": { "type": "string", "minLength": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "projectName": { "type": "string", "minLength": 1 },
+    "repositoryRoot": { "type": "string", "minLength": 1 },
+    "state": { "type": "string", "minLength": 1 },
+    "preparedAt": { "type": "string", "minLength": 1 },
+    "startedAt": { "type": ["string", "null"] },
+    "updatedAt": { "type": "string", "minLength": 1 },
+    "finalizedAt": { "type": ["string", "null"] },
+    "currentPhaseOrdinal": { "type": ["integer", "null"], "minimum": 1 },
+    "currentRunId": { "type": ["string", "null"] },
+    "currentRunState": { "type": ["string", "null"] },
+    "aggregateCounts": {
+      "$ref": "https://ai-dev-loop.local/schemas/integration-api-sequence-shared-v1.json#/$defs/aggregateCounts"
+    },
+    "residualRisk": { "type": ["boolean", "null"] },
+    "residualRiskOrdinals": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 1 }
+    },
+    "blockReason": { "type": ["string", "null"] },
+    "safeNextAction": {
+      "$ref": "https://ai-dev-loop.local/schemas/integration-api-run-shared-v1.json#/$defs/safeNextAction"
+    },
+    "report": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["available"],
+      "properties": {
+        "available": { "type": "boolean" },
+        "reason": { "type": ["string", "null"] },
+        "sha256Prefix": { "type": ["string", "null"] }
+      }
+    },
+    "phases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "ordinal",
+          "name",
+          "initialPlannedRunId",
+          "materialized",
+          "cancelled",
+          "residualRisk",
+          "checkpoint",
+          "frozenInputs",
+          "runs",
+          "runsHasMore",
+          "runCount"
+        ],
+        "properties": {
+          "ordinal": { "type": "integer", "minimum": 1 },
+          "name": { "type": "string", "minLength": 1 },
+          "initialPlannedRunId": { "type": "string", "minLength": 1 },
+          "materialized": { "type": "boolean" },
+          "currentRunId": { "type": ["string", "null"] },
+          "acceptedRunId": { "type": ["string", "null"] },
+          "cancelled": { "type": "boolean" },
+          "acceptedOutcome": { "type": ["string", "null"] },
+          "residualRisk": { "type": "boolean" },
+          "checkpoint": {
+            "type": "object",
+            "required": ["available"],
+            "properties": {
+              "available": { "type": "boolean" },
+              "commitSha256Prefix": { "type": ["string", "null"] }
+            }
+          },
+          "frozenInputs": {
+            "type": "object",
+            "required": ["planAvailable", "promptAvailable"],
+            "properties": {
+              "planAvailable": { "type": "boolean" },
+              "promptAvailable": { "type": "boolean" }
+            }
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "https://ai-dev-loop.local/schemas/integration-api-sequence-shared-v1.json#/$defs/phaseRunItem"
+            }
+          },
+          "runsHasMore": { "type": "boolean" },
+          "runsNextOffset": { "type": ["integer", "null"], "minimum": 0 },
+          "runCount": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  }
+}

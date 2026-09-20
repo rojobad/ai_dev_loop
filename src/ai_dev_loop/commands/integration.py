@@ -15,6 +15,7 @@ from ai_dev_loop.integration_api.errors import IntegrationApiError, IntegrationE
 from ai_dev_loop.integration_api.info import build_integration_info_data
 from ai_dev_loop.integration_api.run_projection import RunKindFilter
 from ai_dev_loop.integration_api.run_service import default_run_read_service
+from ai_dev_loop.integration_api.sequence_service import default_sequence_read_service
 from ai_dev_loop.integration_api.validation import (
     COLLECTION_DEFAULT_LIMIT,
     validate_artifact_read_bounds,
@@ -155,8 +156,33 @@ run_app = typer.Typer(
     cls=IntegrationTyperGroup,
 )
 
+sequences_app = typer.Typer(
+    help="Sequence collection queries.",
+    no_args_is_help=False,
+    add_completion=False,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+    cls=IntegrationTyperGroup,
+)
+
+sequence_app = typer.Typer(
+    help="Single-sequence inspection.",
+    no_args_is_help=False,
+    add_completion=False,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+    cls=IntegrationTyperGroup,
+)
+
 integration_app.add_typer(runs_app, name="runs")
 integration_app.add_typer(run_app, name="run")
+integration_app.add_typer(sequences_app, name="sequences")
+integration_app.add_typer(sequence_app, name="sequence")
+
+OrdinalOption = Annotated[
+    int,
+    typer.Option("--ordinal", help="Sequence phase ordinal (1-based)."),
+]
 
 KindOption = Annotated[
     RunKindFilter,
@@ -285,6 +311,109 @@ def integration_run_plan_command(
     validate_artifact_read_bounds(byte_offset, byte_limit)
     service = default_run_read_service()
     data = service.read_plan_chunk(run_id, byte_offset=byte_offset, limit=byte_limit)
+    emit_success(data.model_dump(by_alias=True))
+
+
+@sequences_app.command("list")
+def integration_sequences_list_command(
+    output: IntegrationOutputOption = "json",
+    offset: OffsetOption = 0,
+    limit: LimitOption = COLLECTION_DEFAULT_LIMIT,
+) -> None:
+    """List prepared and materialized sequences."""
+    _require_json_output(output)
+    validate_collection_bounds(offset, limit)
+    service = default_sequence_read_service()
+    data = service.list_sequences(offset=offset, limit=limit)
+    emit_success(data.model_dump(by_alias=True))
+
+
+@sequence_app.command("inspect")
+def integration_sequence_inspect_command(
+    sequence_id: str,
+    output: IntegrationOutputOption = "json",
+) -> None:
+    """Inspect one sequence summary including phase lineage overview."""
+    _require_json_output(output)
+    service = default_sequence_read_service()
+    data = service.inspect_sequence(sequence_id)
+    emit_success(data.model_dump(by_alias=True))
+
+
+@sequence_app.command("phase-runs")
+def integration_sequence_phase_runs_command(
+    sequence_id: str,
+    ordinal: OrdinalOption,
+    output: IntegrationOutputOption = "json",
+    offset: OffsetOption = 0,
+    limit: LimitOption = COLLECTION_DEFAULT_LIMIT,
+) -> None:
+    """List bounded run-attempt history for one sequence phase."""
+    _require_json_output(output)
+    validate_collection_bounds(offset, limit)
+    service = default_sequence_read_service()
+    data = service.list_phase_runs(sequence_id, ordinal=ordinal, offset=offset, limit=limit)
+    emit_success(data.model_dump(by_alias=True))
+
+
+@sequence_app.command("phase-plan")
+def integration_sequence_phase_plan_command(
+    sequence_id: str,
+    ordinal: OrdinalOption,
+    output: IntegrationOutputOption = "json",
+    byte_offset: ByteOffsetOption = 0,
+    byte_limit: ByteLimitOption = 65536,
+) -> None:
+    """Read a verified chunk of the frozen phase plan from the sequence definition."""
+    _require_json_output(output)
+    validate_artifact_read_bounds(byte_offset, byte_limit)
+    service = default_sequence_read_service()
+    data = service.read_phase_plan_chunk(
+        sequence_id,
+        ordinal=ordinal,
+        byte_offset=byte_offset,
+        limit=byte_limit,
+    )
+    emit_success(data.model_dump(by_alias=True))
+
+
+@sequence_app.command("phase-prompt")
+def integration_sequence_phase_prompt_command(
+    sequence_id: str,
+    ordinal: OrdinalOption,
+    output: IntegrationOutputOption = "json",
+    byte_offset: ByteOffsetOption = 0,
+    byte_limit: ByteLimitOption = 65536,
+) -> None:
+    """Read a verified chunk of the frozen phase prompt from the sequence definition."""
+    _require_json_output(output)
+    validate_artifact_read_bounds(byte_offset, byte_limit)
+    service = default_sequence_read_service()
+    data = service.read_phase_prompt_chunk(
+        sequence_id,
+        ordinal=ordinal,
+        byte_offset=byte_offset,
+        limit=byte_limit,
+    )
+    emit_success(data.model_dump(by_alias=True))
+
+
+@sequence_app.command("report")
+def integration_sequence_report_command(
+    sequence_id: str,
+    output: IntegrationOutputOption = "json",
+    byte_offset: ByteOffsetOption = 0,
+    byte_limit: ByteLimitOption = 65536,
+) -> None:
+    """Read the published sequence completion report when available."""
+    _require_json_output(output)
+    validate_artifact_read_bounds(byte_offset, byte_limit)
+    service = default_sequence_read_service()
+    data = service.read_report_chunk(
+        sequence_id,
+        byte_offset=byte_offset,
+        limit=byte_limit,
+    )
     emit_success(data.model_dump(by_alias=True))
 
 

@@ -12,12 +12,6 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from ai_dev_loop.integration_api.validation import (
-    ARTIFACT_HARD_MAX_LIMIT,
-    COLLECTION_HARD_MAX_LIMIT,
-)
-from ai_dev_loop.scheduler.domain.common import payload_sha256
-
 import pytest
 from tests.conftest import FIXTURE_REPO
 from tests.unit.scheduler.helpers import (
@@ -38,7 +32,12 @@ from ai_dev_loop.integration_api.schemas import (
     RUN_LIST_DATA_SCHEMA,
     validate_integration_instance,
 )
+from ai_dev_loop.integration_api.validation import (
+    ARTIFACT_HARD_MAX_LIMIT,
+    COLLECTION_HARD_MAX_LIMIT,
+)
 from ai_dev_loop.scheduler.application.submission import SubmitOptions, submit_run
+from ai_dev_loop.scheduler.domain.common import payload_sha256
 from ai_dev_loop.scheduler.domain.events import RunSubmittedEvent
 from ai_dev_loop.scheduler.domain.state import (
     SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
@@ -861,7 +860,7 @@ def test_c03_multichunk_unicode_prompt_eof_and_integrity_errors(
     rel_prompt = Path("docs/plans/unicode-prompt.txt")
     prompt_path = git_repo / rel_prompt
     prompt_path.parent.mkdir(parents=True, exist_ok=True)
-    prompt_bytes = "0123456789 café".encode("utf-8")
+    prompt_bytes = "0123456789 café".encode()
     accent_index = prompt_bytes.index(b"\xc3")
     assert prompt_bytes[accent_index : accent_index + 2] == b"\xc3\xa9"
     prompt_path.write_bytes(prompt_bytes)

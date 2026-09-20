@@ -127,7 +127,7 @@ def test_f07_offline_wheel_install_and_info(
     )
     assert proc.returncode == 0
     payload = json.loads(proc.stdout)
-    assert payload["apiVersion"] == {"major": 1, "minor": 1}
+    assert payload["apiVersion"] == {"major": 1, "minor": 2}
 
     schema_probe = subprocess.run(
         [

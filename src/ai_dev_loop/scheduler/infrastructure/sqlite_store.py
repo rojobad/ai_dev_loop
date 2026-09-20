@@ -1856,6 +1856,42 @@ class SqliteSchedulerStore:
     def schema_supports_integration_history_queries(self, conn: sqlite3.Connection) -> bool:
         return self.schema_has_table(conn, "scheduler_events")
 
+    def schema_supports_integration_sequence_queries(self, conn: sqlite3.Connection) -> bool:
+        version = self._user_version(conn)
+        return version >= SEQUENCE_SCHEMA_VERSION and self.schema_has_table(
+            conn,
+            "scheduler_sequences",
+        )
+
+    def list_sequence_ids_for_integration(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[str], bool]:
+        if limit < 1:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "limit must be positive",
+            )
+        if offset < 0:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "offset must be nonnegative",
+            )
+        rows = conn.execute(
+            """
+            SELECT sequence_id FROM scheduler_sequences
+            ORDER BY prepared_at DESC, sequence_id ASC
+            LIMIT ? OFFSET ?
+            """,
+            (limit + 1, offset),
+        ).fetchall()
+        has_more = len(rows) > limit
+        selected = rows[:limit]
+        return [str(row["sequence_id"]) for row in selected], has_more
+
     def list_run_ids_for_integration(
         self,
         conn: sqlite3.Connection,

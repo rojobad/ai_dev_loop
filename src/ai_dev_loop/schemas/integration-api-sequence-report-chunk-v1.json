@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-sequence-report-chunk-v1.json",
+  "title": "ai_dev_loop Integration API sequence report chunk v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "available",
+    "encoding",
+    "byteOffset",
+    "returnedBytes",
+    "hasMore",
+    "contentBase64",
+    "sequenceId"
+  ],
+  "properties": {
+    "available": { "type": "boolean" },
+    "reason": { "type": ["string", "null"] },
+    "encoding": { "type": "string", "const": "base64" },
+    "mediaType": { "type": ["string", "null"] },
+    "byteOffset": { "type": "integer", "minimum": 0 },
+    "returnedBytes": { "type": "integer", "minimum": 0 },
+    "nextOffset": { "type": ["integer", "null"], "minimum": 0 },
+    "availableBytes": { "type": ["integer", "null"], "minimum": 0 },
+    "hasMore": { "type": "boolean" },
+    "contentBase64": { "type": "string" },
+    "sha256": { "type": ["string", "null"] },
+    "sequenceId": { "type": "string", "minLength": 1 },
+    "integrity": { "type": ["string", "null"] }
+  }
+}

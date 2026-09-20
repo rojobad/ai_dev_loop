@@ -5,7 +5,7 @@ futuro supervise el scheduler local sin acceder a SQLite ni rutas privadas.
 
 ## Versión del contrato
 
-- Versión actual de la API: **1.1** (`apiVersion.major` / `apiVersion.minor`).
+- Versión actual de la API: **1.2** (`apiVersion.major` / `apiVersion.minor`).
 - Misma major: compatible; campos desconocidos se ignoran en consumidores.
 - Major distinta: el consumidor debe detenerse con `UPDATE_REQUIRED` y no emitir
   más peticiones de recursos.
@@ -18,7 +18,7 @@ Todas las órdenes bajo `integration` escriben **un único documento JSON** en s
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 1 },
+  "apiVersion": { "major": 1, "minor": 2 },
   "ok": true,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": {},
@@ -30,7 +30,7 @@ Error:
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 1 },
+  "apiVersion": { "major": 1, "minor": 2 },
   "ok": false,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": null,
@@ -63,10 +63,10 @@ ai_dev_loop integration info [--output json]
 - No requiere ledger del scheduler, no crea directorios XDG y no sondea Codex.
 - `data.aiDevLoopVersion` es la versión del paquete instalado.
 - `data.capabilities` declara de forma honesta qué lecturas existen en esta
-  versión. En **1.1**, `runs` es `true`; el resto permanece `false` hasta fases
-  posteriores.
+  versión. En **1.2**, `runs` y `sequences` son `true`; el resto permanece
+  `false` hasta fases posteriores.
 
-## Lectura de runs (API 1.1)
+## Lectura de runs (API 1.1+)
 
 Todas las órdenes aceptan `--output json` (único formato soportado).
 
@@ -87,6 +87,26 @@ ai_dev_loop integration run initial-prompt RUN_ID [--offset BYTE_OFFSET --limit 
   el artefacto congelado capturado en el submit (sensible; solo bajo demanda).
 - `plan` / `initial-prompt` verifican el hash registrado antes de devolver cada trozo;
   no leen el worktree actual del repositorio.
+
+## Lectura de secuencias (API 1.2)
+
+```bash
+ai_dev_loop integration sequences list [--offset N --limit N]
+ai_dev_loop integration sequence inspect SEQUENCE_ID
+ai_dev_loop integration sequence phase-runs SEQUENCE_ID --ordinal N [--offset N --limit N]
+ai_dev_loop integration sequence phase-plan SEQUENCE_ID --ordinal N [--offset BYTE_OFFSET --limit BYTE_LIMIT]
+ai_dev_loop integration sequence phase-prompt SEQUENCE_ID --ordinal N [--offset BYTE_OFFSET --limit BYTE_LIMIT]
+ai_dev_loop integration sequence report SEQUENCE_ID [--offset BYTE_OFFSET --limit BYTE_LIMIT]
+```
+
+- Las lecturas usan el ledger y artefactos de secuencia en modo **solo lectura**;
+  no migran la base de datos, no publican informes ni ejecutan Git.
+- `inspect` incluye fases, linaje materializado (hasta 100 intentos por fase en
+  línea) y disponibilidad del informe publicado.
+- `phase-plan` / `phase-prompt` leen la definición congelada de la secuencia, no
+  el binding de un run materializado.
+- `report` solo sirve `reports/completion-v1.json` ya publicado; ausencia explícita
+  con `not_yet_produced` o `publication_pending`.
 
 ## Convenciones compartidas
 

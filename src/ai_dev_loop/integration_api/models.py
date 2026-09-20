@@ -171,7 +171,7 @@ class IntegrationSequenceBinding(PublicWireModel):
 
 class IntegrationSafeNextAction(PublicWireModel):
     kind: str
-    run_id: str = Field(alias="runId")
+    run_id: str | None = Field(None, alias="runId")
     sequence_id: str | None = Field(None, alias="sequenceId")
     wait_until: str | None = Field(None, alias="waitUntil")
 
@@ -265,3 +265,119 @@ class IntegrationFrozenArtifactChunk(ArtifactChunk):
     run_id: str = Field(alias="runId")
     artifact_kind: str = Field(alias="artifactKind")
     source_repository_path: str = Field(alias="sourceRepositoryPath")
+
+
+class IntegrationSequenceAggregateCounts(PublicWireModel):
+    planned: StrictInt = Field(ge=0)
+    materialized: StrictInt = Field(ge=0)
+    accepted: StrictInt = Field(ge=0)
+    residual_risk: StrictInt = Field(alias="residualRisk", ge=0)
+    checkpointed: StrictInt = Field(ge=0)
+    cancelled: StrictInt = Field(ge=0)
+    remaining: StrictInt = Field(ge=0)
+    attempts: StrictInt = Field(ge=0)
+
+
+class IntegrationReportAvailability(PublicWireModel):
+    available: StrictBool
+    reason: str | None = None
+    sha256_prefix: str | None = Field(None, alias="sha256Prefix")
+
+
+class IntegrationPhaseCheckpointSummary(PublicWireModel):
+    available: StrictBool
+    commit_sha256_prefix: str | None = Field(None, alias="commitSha256Prefix")
+
+
+class IntegrationPhaseFrozenInputs(PublicWireModel):
+    plan_available: StrictBool = Field(alias="planAvailable")
+    prompt_available: StrictBool = Field(alias="promptAvailable")
+
+
+class IntegrationSequencePhaseRunItem(PublicWireModel):
+    run_id: str = Field(alias="runId")
+    generation: StrictInt = Field(ge=1)
+    source_run_id: str | None = Field(None, alias="sourceRunId")
+    attempt_kind: str = Field(alias="attemptKind")
+    materialized_at: str = Field(alias="materializedAt")
+    resolved_at: str | None = Field(None, alias="resolvedAt")
+    state: str
+    terminal_outcome: str | None = Field(None, alias="terminalOutcome")
+
+
+class IntegrationSequencePhaseSummary(PublicWireModel):
+    ordinal: StrictInt = Field(ge=1)
+    name: str
+    initial_planned_run_id: str = Field(alias="initialPlannedRunId")
+    materialized: StrictBool
+    current_run_id: str | None = Field(None, alias="currentRunId")
+    accepted_run_id: str | None = Field(None, alias="acceptedRunId")
+    cancelled: StrictBool
+    accepted_outcome: str | None = Field(None, alias="acceptedOutcome")
+    residual_risk: StrictBool = Field(alias="residualRisk")
+    checkpoint: IntegrationPhaseCheckpointSummary
+    frozen_inputs: IntegrationPhaseFrozenInputs = Field(alias="frozenInputs")
+    runs: tuple[IntegrationSequencePhaseRunItem, ...]
+    runs_has_more: StrictBool = Field(alias="runsHasMore")
+    runs_next_offset: StrictInt | None = Field(None, alias="runsNextOffset", ge=0)
+    run_count: StrictInt = Field(alias="runCount", ge=0)
+
+
+class IntegrationSequenceListItem(PublicWireModel):
+    sequence_id: str = Field(alias="sequenceId")
+    name: str
+    project_name: str = Field(alias="projectName")
+    repository_root: str = Field(alias="repositoryRoot")
+    state: str
+    prepared_at: str = Field(alias="preparedAt")
+    updated_at: str = Field(alias="updatedAt")
+
+
+class IntegrationSequenceListData(PublicWireModel):
+    items: tuple[IntegrationSequenceListItem, ...]
+    page: IntegrationCollectionPage
+
+
+class IntegrationSequenceInspectData(PublicWireModel):
+    sequence_id: str = Field(alias="sequenceId")
+    name: str
+    project_name: str = Field(alias="projectName")
+    repository_root: str = Field(alias="repositoryRoot")
+    state: str
+    prepared_at: str = Field(alias="preparedAt")
+    started_at: str | None = Field(None, alias="startedAt")
+    updated_at: str = Field(alias="updatedAt")
+    finalized_at: str | None = Field(None, alias="finalizedAt")
+    current_phase_ordinal: StrictInt | None = Field(None, alias="currentPhaseOrdinal", ge=1)
+    current_run_id: str | None = Field(None, alias="currentRunId")
+    current_run_state: str | None = Field(None, alias="currentRunState")
+    aggregate_counts: IntegrationSequenceAggregateCounts = Field(alias="aggregateCounts")
+    residual_risk: bool | None = Field(None, alias="residualRisk")
+    residual_risk_ordinals: tuple[StrictInt, ...] = Field(
+        default=(),
+        alias="residualRiskOrdinals",
+    )
+    block_reason: str | None = Field(None, alias="blockReason")
+    safe_next_action: IntegrationSafeNextAction = Field(alias="safeNextAction")
+    report: IntegrationReportAvailability
+    phases: tuple[IntegrationSequencePhaseSummary, ...]
+
+
+class IntegrationSequencePhaseRunListData(PublicWireModel):
+    sequence_id: str = Field(alias="sequenceId")
+    ordinal: StrictInt = Field(ge=1)
+    items: tuple[IntegrationSequencePhaseRunItem, ...]
+    page: IntegrationCollectionPage
+    run_count: StrictInt = Field(alias="runCount", ge=0)
+
+
+class IntegrationFrozenSequenceArtifactChunk(ArtifactChunk):
+    sequence_id: str = Field(alias="sequenceId")
+    ordinal: StrictInt = Field(ge=1)
+    artifact_kind: str = Field(alias="artifactKind")
+    source_repository_path: str = Field(alias="sourceRepositoryPath")
+
+
+class IntegrationSequenceReportChunk(ArtifactChunk):
+    sequence_id: str = Field(alias="sequenceId")
+    integrity: str | None = None
