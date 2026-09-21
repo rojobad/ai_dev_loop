@@ -7,12 +7,20 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from ai_dev_loop.integration_api.errors import IntegrationApiError
 from ai_dev_loop.integration_api.models import (
     IntegrationContentAvailability,
+    IntegrationProcessOutputAvailability,
     IntegrationReviewContentAvailability,
     IntegrationReviewDetailData,
     IntegrationReviewListItem,
     IntegrationReviewResponseBody,
+)
+from ai_dev_loop.integration_api.process_output_auth import ProcessOutputIntegrityError
+from ai_dev_loop.integration_api.process_output_resolution import (
+    authenticate_for_output,
+    resolve_process_stream,
+    stream_availability_reason,
 )
 from ai_dev_loop.integration_api.review_evidence_auth import (
     AuthenticatedReviewEvidence,
@@ -90,12 +98,94 @@ def _content_availability(
     )
 
 
+def _review_process_output(
+    run_root: Path,
+    *,
+    attempt_row: sqlite3.Row,
+    effect_kind: str,
+) -> IntegrationProcessOutputAvailability:
+    from ai_dev_loop.integration_api.models import IntegrationProcessStreamAvailability
+
+    try:
+        auth = authenticate_for_output(run_root, attempt_row, effect_kind)
+        stdout_resolved = resolve_process_stream(
+            run_root,
+            attempt_row=attempt_row,
+            effect_kind=effect_kind,
+            stream="stdout",
+            auth=auth,
+        )
+        stderr_resolved = resolve_process_stream(
+            run_root,
+            attempt_row=attempt_row,
+            effect_kind=effect_kind,
+            stream="stderr",
+            auth=auth,
+        )
+        stdout_reason = stderr_reason = None
+        try:
+            stdout_reason = stream_availability_reason(
+                run_root,
+                resolved=stdout_resolved,
+                auth=auth,
+                attempt_status=str(attempt_row["status"]),
+            )
+            stderr_reason = stream_availability_reason(
+                run_root,
+                resolved=stderr_resolved,
+                auth=auth,
+                attempt_status=str(attempt_row["status"]),
+            )
+        except ProcessOutputIntegrityError:
+            return IntegrationProcessOutputAvailability(
+                stdout=IntegrationProcessStreamAvailability(
+                    stream="stdout",
+                    available=False,
+                    reason="data_integrity",
+                ),
+                stderr=IntegrationProcessStreamAvailability(
+                    stream="stderr",
+                    available=False,
+                    reason="data_integrity",
+                ),
+            )
+        stdout_avail = (
+            IntegrationProcessStreamAvailability(stream="stdout", available=True, reason=None)
+            if stdout_reason is None
+            else IntegrationProcessStreamAvailability(
+                stream="stdout", available=False, reason=stdout_reason
+            )
+        )
+        stderr_avail = (
+            IntegrationProcessStreamAvailability(stream="stderr", available=True, reason=None)
+            if stderr_reason is None
+            else IntegrationProcessStreamAvailability(
+                stream="stderr", available=False, reason=stderr_reason
+            )
+        )
+        return IntegrationProcessOutputAvailability(stdout=stdout_avail, stderr=stderr_avail)
+    except IntegrationApiError:
+        return IntegrationProcessOutputAvailability(
+            stdout=IntegrationProcessStreamAvailability(
+                stream="stdout",
+                available=False,
+                reason="data_integrity",
+            ),
+            stderr=IntegrationProcessStreamAvailability(
+                stream="stderr",
+                available=False,
+                reason="data_integrity",
+            ),
+        )
+
+
 def build_review_list_item(
     *,
     run_id: str,
     attempt_row: sqlite3.Row,
     effect_kind: str,
     auth: AuthenticatedReviewEvidence,
+    run_root: Path | None = None,
 ) -> IntegrationReviewListItem:
     launch = (
         str(attempt_row["launch_requested_at"])
@@ -109,6 +199,27 @@ def build_review_list_item(
     review_model = str(invocation.get("review_model", ""))
     reasoning = str(invocation.get("review_reasoning_effort", ""))
     content = _content_availability(auth)
+    from ai_dev_loop.integration_api.models import IntegrationProcessStreamAvailability
+
+    if run_root is not None:
+        process_output = _review_process_output(
+            run_root,
+            attempt_row=attempt_row,
+            effect_kind=effect_kind,
+        )
+    else:
+        process_output = IntegrationProcessOutputAvailability(
+            stdout=IntegrationProcessStreamAvailability(
+                stream="stdout",
+                available=False,
+                reason="unavailable",
+            ),
+            stderr=IntegrationProcessStreamAvailability(
+                stream="stderr",
+                available=False,
+                reason="unavailable",
+            ),
+        )
     findings_count: int | None = None
     highest: str | None = None
     tests_status: str | None = None
@@ -132,6 +243,7 @@ def build_review_list_item(
         tests_status=tests_status,
         reviewer_session_ref=reviewer_ref_from_auth(auth),
         content=content,
+        process_output=process_output,
     )
 
 
@@ -141,6 +253,7 @@ def build_review_detail_data(
     attempt_row: sqlite3.Row,
     effect_kind: str,
     auth: AuthenticatedReviewEvidence,
+    run_root: Path | None = None,
 ) -> IntegrationReviewDetailData:
     launch = (
         str(attempt_row["launch_requested_at"])
@@ -154,6 +267,27 @@ def build_review_detail_data(
     review_model = str(invocation.get("review_model", ""))
     reasoning = str(invocation.get("review_reasoning_effort", ""))
     content = _content_availability(auth)
+    from ai_dev_loop.integration_api.models import IntegrationProcessStreamAvailability
+
+    if run_root is not None:
+        process_output = _review_process_output(
+            run_root,
+            attempt_row=attempt_row,
+            effect_kind=effect_kind,
+        )
+    else:
+        process_output = IntegrationProcessOutputAvailability(
+            stdout=IntegrationProcessStreamAvailability(
+                stream="stdout",
+                available=False,
+                reason="unavailable",
+            ),
+            stderr=IntegrationProcessStreamAvailability(
+                stream="stderr",
+                available=False,
+                reason="unavailable",
+            ),
+        )
     findings_count: int | None = None
     highest: str | None = None
     tests_status: str | None = None
@@ -190,6 +324,7 @@ def build_review_detail_data(
         result_state=auth.result_state,
         response=response_body,
         content=content,
+        process_output=process_output,
     )
 
 

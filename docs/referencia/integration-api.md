@@ -5,7 +5,7 @@ futuro supervise el scheduler local sin acceder a SQLite ni rutas privadas.
 
 ## Versión del contrato
 
-- Versión actual de la API: **1.3** (`apiVersion.major` / `apiVersion.minor`).
+- Versión actual de la API: **1.4** (`apiVersion.major` / `apiVersion.minor`).
 - Misma major: compatible; campos desconocidos se ignoran en consumidores.
 - Major distinta: el consumidor debe detenerse con `UPDATE_REQUIRED` y no emitir
   más peticiones de recursos.
@@ -18,7 +18,7 @@ Todas las órdenes bajo `integration` escriben **un único documento JSON** en s
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 3 },
+  "apiVersion": { "major": 1, "minor": 4 },
   "ok": true,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": {},
@@ -30,7 +30,7 @@ Error:
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 3 },
+  "apiVersion": { "major": 1, "minor": 4 },
   "ok": false,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": null,
@@ -63,8 +63,8 @@ ai_dev_loop integration info [--output json]
 - No requiere ledger del scheduler, no crea directorios XDG y no sondea Codex.
 - `data.aiDevLoopVersion` es la versión del paquete instalado.
 - `data.capabilities` declara de forma honesta qué lecturas existen en esta
-  versión. En **1.3**, `runs`, `sequences` y `reviewInspection` son `true`;
-  `processOutput` y `codexCapacity` permanecen `false` hasta fases posteriores.
+  versión. En **1.4**, `runs`, `sequences`, `reviewInspection` y `processOutput`
+  son `true`; `codexCapacity` permanece `false` hasta fases posteriores.
 
 ## Lectura de runs (API 1.1+)
 
@@ -128,6 +128,30 @@ ai_dev_loop integration run review-content RUN_ID --attempt ATTEMPT_ID --kind KI
   `codex/reviews/NN.<attempt_id>.prompt.txt` y
   `codex/reviews/NN.<attempt_id>.prompt-evidence.json` (esquema
   `scheduler-review-prompt-evidence-v1.json`).
+
+## Salida de procesos hijo (API 1.4)
+
+```bash
+ai_dev_loop integration run output RUN_ID --attempt ATTEMPT_ID --stream stdout|stderr [--offset BYTE_OFFSET --limit BYTE_LIMIT]
+```
+
+- Devuelve los bytes capturados del **proceso hijo** (eventos Cursor/Codex o stderr),
+  no el JSON de resultado del runner en `attempts/<id>/stdout.txt`.
+- `availableBytes` es el tamaño observado en disco **antes** de la lectura (snapshot);
+  las lecturas se limitan a ese snapshot y un shrink/reemplazo durante la lectura
+  devuelve `DATA_INTEGRITY`.
+- `complete` indica ejecución resuelta con escritor detenido (`completed`/`failed`,
+  o `cancelled` solo tras reconciliación de aborto con el intento marcado `ingested`
+  en el ledger del scheduler, sin exigir sobre de resultado autenticado).
+  Independientemente de si quedan trozos por leer. Con `complete=true` puede
+  haber `hasMore=true` en lecturas paginadas. Intentos `uncertain`, `launching`
+  o `active` permanecen `complete=false`; los `cancelled` pendientes de
+  reconciliación también. En EOF pollable con escritor activo, `hasMore=false` y
+  `nextOffset` apunta al final observado; con escritor detenido, `nextOffset=null`.
+- `truncatedAtSource` refleja el metadato final cuando existe; en intentos activos
+  o históricos sin sidecar puede ser `null`.
+- Los descriptors `processOutput` en `integration run review(s)` enlazan la misma
+  operación `output` por intento y stream.
 
 ## Convenciones compartidas
 

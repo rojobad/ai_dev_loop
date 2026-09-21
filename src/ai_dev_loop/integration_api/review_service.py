@@ -106,6 +106,7 @@ class IntegrationReviewReadService:
                     offset=offset,
                     limit=limit,
                 )
+                run_root = confined_run_root(self.artifact_root, run_id)
                 items = []
                 for row in rows:
                     effect_kind = str(row["effect_kind"] or "")
@@ -121,6 +122,7 @@ class IntegrationReviewReadService:
                             attempt_row=row,
                             effect_kind=effect_kind,
                             auth=auth,
+                            run_root=run_root,
                         )
                     )
         except SchedulerEngineError as exc:
@@ -144,11 +146,13 @@ class IntegrationReviewReadService:
                     ) from exc
         except SchedulerEngineError as exc:
             raise _map_engine_error(exc) from exc
+        run_root = confined_run_root(self.artifact_root, run_id)
         return build_review_detail_data(
             run_id=run_id,
             attempt_row=row,
             effect_kind=effect_kind,
             auth=auth,
+            run_root=run_root,
         )
 
     def read_review_content(

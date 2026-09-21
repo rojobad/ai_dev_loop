@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -86,6 +87,61 @@ def test_validate_cursor_turn_outcome_rejects_exit_zero_without_parse_ok() -> No
     }
     with pytest.raises(CursorEvidenceError, match="parseable"):
         validate_cursor_turn_outcome_semantics(outcome)
+
+
+def test_authenticated_outcome_allows_envelope_semantic_failure_with_zero_returncode(
+    tmp_path: Path,
+) -> None:
+    attempt_id = "att-parse-fail"
+    run_root = tmp_path
+    stdout_rel = attempt_stdout_rel(attempt_id)
+    stderr_rel = attempt_stderr_rel(attempt_id)
+    result_rel = attempt_result_rel(attempt_id)
+    stdout_path = run_root / stdout_rel
+    stderr_path = run_root / stderr_rel
+    result_path = run_root / result_rel
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    stderr_path.write_text("", encoding="utf-8")
+    stdout_path.write_text(
+        json.dumps(
+            {
+                "effect_kind": RUN_CURSOR_TURN_EFFECT_KIND,
+                "attempt_id": attempt_id,
+                "returncode": 0,
+                "timed_out": False,
+                "parse_ok": False,
+                "has_completion_signal": False,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    envelope = build_result_envelope(
+        attempt_id=attempt_id,
+        unit_identity=f"unit-{attempt_id}",
+        exit_code=1,
+        termination_class=TerminationClass.NONZERO_EXIT,
+        stdout_artifact_path=stdout_rel,
+        stdout_sha256=sha256_file(stdout_path),
+        stderr_artifact_path=stderr_rel,
+        stderr_sha256=sha256_file(stderr_path),
+    )
+    result_path.write_bytes(envelope)
+    digest = envelope_sha256(envelope)
+    outcome = load_authenticated_cursor_outcome(
+        run_root,
+        attempt_id=attempt_id,
+        unit_identity=f"unit-{attempt_id}",
+        result_rel=result_rel,
+        stdout_rel=stdout_rel,
+        stderr_rel=stderr_rel,
+        observed_exit_code=1,
+        expected_envelope_sha256=digest,
+        expected_effect_kind=RUN_CURSOR_TURN_EFFECT_KIND,
+    )
+    assert outcome["returncode"] == 0
+    assert outcome["parse_ok"] is False
 
 
 def test_validate_cursor_turn_outcome_accepts_verified_success() -> None:

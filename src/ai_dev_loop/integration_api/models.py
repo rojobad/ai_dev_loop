@@ -411,6 +411,7 @@ class IntegrationReviewListItem(PublicWireModel):
     tests_status: str | None = Field(None, alias="testsStatus")
     reviewer_session_ref: str | None = Field(None, alias="reviewerSessionRef")
     content: IntegrationReviewContentAvailability
+    process_output: IntegrationProcessOutputAvailability = Field(alias="processOutput")
 
 
 class IntegrationReviewListData(PublicWireModel):
@@ -448,9 +449,33 @@ class IntegrationReviewDetailData(PublicWireModel):
     result_state: str = Field(alias="resultState")
     response: IntegrationReviewResponseBody | None = None
     content: IntegrationReviewContentAvailability
+    process_output: IntegrationProcessOutputAvailability = Field(alias="processOutput")
 
 
 class IntegrationReviewContentChunk(ArtifactChunk):
     run_id: str = Field(alias="runId")
     attempt_id: str = Field(alias="attemptId")
     content_kind: str = Field(alias="contentKind")
+
+
+class IntegrationProcessStreamAvailability(PublicWireModel):
+    stream: str
+    available: StrictBool
+    reason: str | None = None
+
+
+class IntegrationProcessOutputAvailability(PublicWireModel):
+    stdout: IntegrationProcessStreamAvailability
+    stderr: IntegrationProcessStreamAvailability
+
+
+class IntegrationProcessOutputChunk(ArtifactChunk):
+    run_id: str = Field(alias="runId")
+    attempt_id: str = Field(alias="attemptId")
+    component: str
+    stream: str
+    stream_format: str = Field(alias="format")
+    process_state: str = Field(alias="processState")
+    complete: StrictBool
+    truncated_at_source: bool | None = Field(None, alias="truncatedAtSource")
+    stored_bytes: StrictInt | None = Field(None, alias="storedBytes", ge=0)

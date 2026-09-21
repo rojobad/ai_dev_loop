@@ -101,10 +101,13 @@ class _BoundedTextCapture:
         chunks: list[str],
         handle: IO[str] | None,
         limit: int | None,
+        *,
+        flush_after_emit: bool = False,
     ) -> None:
         self._chunks = chunks
         self._handle = handle
         self._limit = limit
+        self._flush_after_emit = flush_after_emit
         self._total = 0
         self._truncated = False
         self._decoder = codecs.getincrementaldecoder("utf-8")()
@@ -158,6 +161,8 @@ class _BoundedTextCapture:
         self._chunks.append(text)
         if self._handle is not None:
             self._handle.write(text)
+            if self._flush_after_emit:
+                self._handle.flush()
 
 
 def _read_nonblocking(fd: int) -> tuple[bytes, bool]:
@@ -198,6 +203,7 @@ def _capture_bounded_streams(
     stdout_handle: IO[str] | None,
     stderr_handle: IO[str] | None,
     drain_after_limit: bool = False,
+    flush_after_emit: bool = False,
 ) -> tuple[bool, bool, bool, bool]:
     """Multiplex stdin/stdout/stderr under one deadline with byte limits and EOF draining."""
 
@@ -223,8 +229,18 @@ def _capture_bounded_streams(
     stderr_eof = False
     timed_out = False
     limit_terminate = False
-    stdout_capture = _BoundedTextCapture(stdout_chunks, stdout_handle, max_stdout_bytes)
-    stderr_capture = _BoundedTextCapture(stderr_chunks, stderr_handle, max_stderr_bytes)
+    stdout_capture = _BoundedTextCapture(
+        stdout_chunks,
+        stdout_handle,
+        max_stdout_bytes,
+        flush_after_emit=flush_after_emit,
+    )
+    stderr_capture = _BoundedTextCapture(
+        stderr_chunks,
+        stderr_handle,
+        max_stderr_bytes,
+        flush_after_emit=flush_after_emit,
+    )
 
     def _close_stdin_input() -> None:
         nonlocal stdin_closed, stdin_fd
@@ -499,6 +515,7 @@ def run_process_streaming(
     max_stdout_bytes: int | None = None,
     max_stderr_bytes: int | None = None,
     drain_after_limit: bool = False,
+    incremental_file_capture: bool = False,
 ) -> StreamingProcessResult:
     """Run a subprocess in its own process group with optional artifact capture."""
     start = time.monotonic()
@@ -581,7 +598,10 @@ def run_process_streaming(
         assert proc.stdout is not None
         assert proc.stderr is not None
 
-        if max_stdout_bytes is not None or max_stderr_bytes is not None:
+        use_streaming_capture = (
+            max_stdout_bytes is not None or max_stderr_bytes is not None or incremental_file_capture
+        )
+        if use_streaming_capture:
             handles_already_written = stdout_handle is not None or stderr_handle is not None
             try:
                 (
@@ -600,6 +620,7 @@ def run_process_streaming(
                     stdout_handle=stdout_handle,
                     stderr_handle=stderr_handle,
                     drain_after_limit=drain_after_limit,
+                    flush_after_emit=incremental_file_capture,
                 )
             except Exception:
                 if proc.poll() is None:

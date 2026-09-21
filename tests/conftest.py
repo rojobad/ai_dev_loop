@@ -407,6 +407,39 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
             sys.exit(0)
         if "-p" in args:
             log("ARGS:" + repr(args))
+            child_sentinel = os.environ.get("FAKE_AGENT_CHILD_STDOUT_SENTINEL", "")
+            sentinel_sequence = os.environ.get("FAKE_AGENT_CHILD_STDOUT_SENTINELS", "").strip()
+            if sentinel_sequence:
+                counter_file = os.environ.get(
+                    "FAKE_AGENT_RUN_COUNTER",
+                    os.path.join(os.path.dirname(log_path), "agent_run_counter.txt"),
+                )
+                sentinel_index = 0
+                try:
+                    with open(counter_file, encoding="utf-8") as handle:
+                        sentinel_index = int(handle.read().strip() or "0")
+                except (OSError, ValueError):
+                    sentinel_index = 0
+                sentinel_parts = [
+                    item.strip() for item in sentinel_sequence.split(",") if item.strip()
+                ]
+                if sentinel_parts:
+                    child_sentinel = sentinel_parts[min(sentinel_index, len(sentinel_parts) - 1)]
+            if child_sentinel:
+                sys.stdout.write(child_sentinel)
+                sys.stdout.flush()
+            ready_signal = os.environ.get("FAKE_AGENT_CHILD_READY_FILE", "")
+            if ready_signal:
+                with open(ready_signal, "w", encoding="utf-8") as ready_handle:
+                    ready_handle.write("ready")
+            child_stderr = os.environ.get("FAKE_AGENT_CHILD_STDERR_SENTINEL", "")
+            if child_stderr:
+                sys.stderr.write(child_stderr)
+                sys.stderr.flush()
+            release = os.environ.get("FAKE_AGENT_CHILD_RELEASE_FILE", "")
+            if release and (child_sentinel or child_stderr):
+                while not os.path.exists(release):
+                    time.sleep(0.01)
             sequence = os.environ.get("FAKE_AGENT_RUN_SEQUENCE", "").strip()
             sequence_counter = None
             if sequence:
@@ -739,6 +772,16 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                     handle.write(str(counter + 1))
             else:
                 mode = os.environ.get("FAKE_CODEX_REVIEW_MODE", "no_findings")
+            child_sentinel = os.environ.get("FAKE_CODEX_CHILD_STDOUT_SENTINEL", "")
+            if child_sentinel:
+                print(child_sentinel, flush=True)
+            child_stderr = os.environ.get("FAKE_CODEX_CHILD_STDERR_SENTINEL", "")
+            if child_stderr:
+                print(child_stderr, file=sys.stderr, flush=True)
+            release = os.environ.get("FAKE_CODEX_CHILD_RELEASE_FILE", "")
+            if release and (child_sentinel or child_stderr):
+                while not os.path.exists(release):
+                    time.sleep(0.01)
             output_last_message = None
             if "--output-last-message" in args:
                 output_last_message = args[args.index("--output-last-message") + 1]

@@ -343,8 +343,8 @@ sigue siendo ayuda normal de Typer. El namespace plural `integrations` (instalac
 Codex global) no cambia.
 
 `integration info` no requiere ledger del scheduler. Las lecturas de runs y
-runs, secuencias y revisiones Codex (API **1.3**, capacidades `runs`, `sequences`
-y `reviewInspection`) abren el ledger en
+runs, secuencias, revisiones Codex y salida de procesos hijo (API **1.4**,
+capacidades `runs`, `sequences`, `reviewInspection` y `processOutput`) abren el ledger en
 solo lectura y no migran la base de datos. La opción `--output json` es
 obligatoria en cada subcomando (valor por defecto donde aplica).
 

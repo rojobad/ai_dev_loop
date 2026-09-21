@@ -52,6 +52,10 @@ def cursor_attempt_final_rel(iteration_number: int, attempt_id: str) -> str:
     return f"{cursor_attempt_iteration_dir(iteration_number, attempt_id)}/final.txt"
 
 
+def cursor_attempt_output_observation_rel(iteration_number: int, attempt_id: str) -> str:
+    return f"{cursor_attempt_iteration_dir(iteration_number, attempt_id)}/output-observation.json"
+
+
 def git_status_before_cursor_rel(iteration_number: int, attempt_id: str) -> str:
     return f"git/status/{iteration_label(iteration_number)}.{attempt_id}-before-cursor.txt"
 

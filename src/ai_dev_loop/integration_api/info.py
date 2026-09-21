@@ -14,7 +14,7 @@ def build_integration_info_data() -> IntegrationInfoData:
                 "runs": True,
                 "sequences": True,
                 "reviewInspection": True,
-                "processOutput": False,
+                "processOutput": True,
                 "codexCapacity": False,
             },
         }

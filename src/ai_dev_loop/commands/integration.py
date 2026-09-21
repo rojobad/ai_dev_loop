@@ -13,6 +13,7 @@ from typer.core import TyperCommand, TyperGroup
 from ai_dev_loop.integration_api.envelope import emit_failure, emit_success
 from ai_dev_loop.integration_api.errors import IntegrationApiError, IntegrationErrorCode
 from ai_dev_loop.integration_api.info import build_integration_info_data
+from ai_dev_loop.integration_api.process_output_service import default_process_output_read_service
 from ai_dev_loop.integration_api.review_reader import ReviewContentKind
 from ai_dev_loop.integration_api.review_service import default_review_read_service
 from ai_dev_loop.integration_api.run_projection import RunKindFilter
@@ -429,6 +430,11 @@ ReviewContentKindOption = Annotated[
     typer.Option("--kind", help="Review content kind."),
 ]
 
+ProcessStreamOption = Annotated[
+    str,
+    typer.Option("--stream", help="Child capture stream: stdout or stderr."),
+]
+
 
 @run_app.command("reviews")
 def integration_run_reviews_command(
@@ -455,6 +461,32 @@ def integration_run_review_command(
     _require_json_output(output)
     service = default_review_read_service()
     data = service.inspect_review(run_id, attempt_id=attempt_id)
+    emit_success(data.model_dump(by_alias=True))
+
+
+@run_app.command("output")
+def integration_run_output_command(
+    run_id: str,
+    attempt_id: AttemptIdOption,
+    stream: ProcessStreamOption,
+    output: IntegrationOutputOption = "json",
+    byte_offset: ByteOffsetOption = 0,
+    byte_limit: ByteLimitOption = 65536,
+) -> None:
+    """Read a bounded chunk of captured child stdout or stderr for one attempt."""
+    _require_json_output(output)
+    validate_artifact_read_bounds(byte_offset, byte_limit)
+    normalized = stream.strip().lower()
+    if normalized not in {"stdout", "stderr"}:
+        raise IntegrationApiError.invalid_argument("Unsupported --stream value.")
+    service = default_process_output_read_service()
+    data = service.read_process_output(
+        run_id,
+        attempt_id=attempt_id,
+        stream=normalized,  # type: ignore[arg-type]
+        byte_offset=byte_offset,
+        limit=byte_limit,
+    )
     emit_success(data.model_dump(by_alias=True))
 
 

@@ -367,6 +367,7 @@ def _run_codex_review(
         max_stdout_bytes=MAX_CODEX_CAPTURE_STDOUT_BYTES,
         max_stderr_bytes=MAX_CODEX_CAPTURE_STDERR_BYTES,
         drain_after_limit=True,
+        incremental_file_capture=True,
     )
 
     bootstrap_session_id: str | None = None

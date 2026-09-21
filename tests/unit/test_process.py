@@ -383,6 +383,79 @@ def test_bounded_streaming_retains_partial_chunk_at_exact_limit(tmp_path: Path) 
     assert result.stdout == "a" * 256
 
 
+def test_incremental_capture_flush_failure_after_write_reaps_child(tmp_path: Path) -> None:
+    partial_marker = "PARTIAL-INCREMENTAL-FLUSH-21-5"
+    ready_path = tmp_path / "child_ready"
+    pid_path = tmp_path / "child.pid"
+    stdout_path = tmp_path / "stdout_capture.txt"
+    script = tmp_path / "emit_partial.py"
+    script.write_text(
+        f"import os, sys, time\n"
+        f"open({str(pid_path)!r}, 'w').write(str(os.getpid()))\n"
+        f"open({str(ready_path)!r}, 'w').write('ready')\n"
+        f"sys.stdout.write({partial_marker!r})\n"
+        "sys.stdout.flush()\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    original_open_capture = process_module._open_capture_file
+
+    def open_capture_with_flush_fail(path: Path, *, sensitive: bool) -> object:
+        inner = original_open_capture(path, sensitive=sensitive)
+        if Path(path) != stdout_path:
+            return inner
+
+        class FlushFailAfterWrite:
+            def __init__(self, handle: object) -> None:
+                self._handle = handle
+                self._wrote_payload = False
+
+            def write(self, data: str) -> int:
+                if partial_marker in data:
+                    self._wrote_payload = True
+                return self._handle.write(data)  # type: ignore[union-attr]
+
+            def flush(self) -> None:
+                self._handle.flush()  # type: ignore[union-attr]
+                if self._wrote_payload and ready_path.is_file():
+                    raise OSError("flush failed")
+
+            def close(self) -> None:
+                self._handle.close()  # type: ignore[union-attr]
+
+            def __getattr__(self, name: str) -> object:
+                return getattr(self._handle, name)
+
+        return FlushFailAfterWrite(inner)
+
+    with (
+        patch.object(
+            process_module, "_open_capture_file", side_effect=open_capture_with_flush_fail
+        ),
+        pytest.raises(OSError, match="flush failed"),
+    ):
+        run_process_streaming(
+            [sys.executable, str(script)],
+            stdout_path=stdout_path,
+            timeout=5.0,
+            incremental_file_capture=True,
+        )
+
+    captured = stdout_path.read_text(encoding="utf-8")
+    assert partial_marker in captured
+    assert captured.count(partial_marker) == 1
+
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        if ready_path.is_file():
+            break
+        time.sleep(0.02)
+    assert ready_path.is_file()
+    child_pid = int(pid_path.read_text(encoding="utf-8"))
+    with pytest.raises(ProcessLookupError):
+        os.kill(child_pid, 0)
+
+
 def test_bounded_streaming_terminates_child_on_unexpected_capture_exception(
     tmp_path: Path,
 ) -> None:

@@ -97,6 +97,38 @@ def codex_runner_attempt_ids(backend: FakeAgentProcessBackend) -> list[str]:
     return ids
 
 
+def cursor_runner_attempt_ids(backend: FakeAgentProcessBackend) -> list[str]:
+    ids: list[str] = []
+    for call in backend.launch_calls:
+        if any("cursor_attempt_runner" in part for part in call.agent_argv):
+            ids.append(call.attempt_id)
+    return ids
+
+
+def cursor_turn_attempt_ids(
+    backend: FakeAgentProcessBackend,
+    *,
+    artifact_root: Path,
+    run_id: str,
+) -> list[str]:
+    from ai_dev_loop.scheduler.domain.cursor_contract import (
+        RUN_CURSOR_TURN_EFFECT_KIND,
+        invocation_evidence_rel,
+    )
+    from ai_dev_loop.scheduler.infrastructure.paths import run_artifact_root
+
+    run_root = run_artifact_root(artifact_root, run_id)
+    turn_ids: list[str] = []
+    for attempt_id in cursor_runner_attempt_ids(backend):
+        evidence_path = run_root / invocation_evidence_rel(attempt_id)
+        if not evidence_path.is_file():
+            continue
+        payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+        if str(payload.get("effect_kind", "")) == RUN_CURSOR_TURN_EFFECT_KIND:
+            turn_ids.append(attempt_id)
+    return turn_ids
+
+
 def expected_reviewer_session_ref(session_id: str) -> str:
     material = f"ai_dev_loop:reviewer-session:v1:{session_id.strip()}"
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
