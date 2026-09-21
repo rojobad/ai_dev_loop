@@ -1,0 +1,10 @@
+{
+  "provenance": {
+    "baseline_commit": "e4c6b08824b76d3ef7fdf38a6d30f6533b5aed02",
+    "writer": "codex_attempt_runner at baseline e4c6b088 had no publish_review_prompt_before_launch; fixture omits .prompt.txt and .prompt-evidence.json by construction."
+  },
+  "run_id": "fixture-project-20260921T013201Z-50f2bd",
+  "attempt_id": "att-00000000000000000000000000000009",
+  "review_iteration": 1,
+  "effect_kind": "codex.bootstrap_review"
+}

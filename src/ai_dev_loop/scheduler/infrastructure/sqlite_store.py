@@ -1944,6 +1944,136 @@ class SqliteSchedulerStore:
         ).fetchone()
         return int(row[0]) if row is not None else 0
 
+    def list_integration_codex_review_rows(
+        self,
+        conn: sqlite3.Connection,
+        run_id: str,
+        *,
+        offset: int,
+        limit: int,
+    ) -> tuple[list[sqlite3.Row], bool]:
+        from ai_dev_loop.scheduler.domain.codex_contract import CODEX_ATTEMPT_EFFECT_KINDS
+
+        if limit < 1:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "limit must be positive",
+            )
+        if offset < 0:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "offset must be nonnegative",
+            )
+        placeholders = ",".join("?" * len(CODEX_ATTEMPT_EFFECT_KINDS))
+        rows = conn.execute(
+            f"""
+            SELECT attempt_id, run_id, dispatch_id, iteration, component, status,
+                   unit_identity, launch_intent_sha256, launch_nonce,
+                   stdout_artifact_path, stderr_artifact_path, result_artifact_path,
+                   completion_envelope_sha256, effect_kind, launch_requested_at,
+                   completed_at, created_at, phase_attempt
+            FROM (
+                SELECT scheduler_attempts.attempt_id,
+                       scheduler_attempts.run_id,
+                       scheduler_attempts.dispatch_id,
+                       scheduler_attempts.iteration,
+                       scheduler_attempts.component,
+                       scheduler_attempts.status,
+                       scheduler_attempts.unit_identity,
+                       scheduler_attempts.launch_intent_sha256,
+                       scheduler_attempts.launch_nonce,
+                       scheduler_attempts.stdout_artifact_path,
+                       scheduler_attempts.stderr_artifact_path,
+                       scheduler_attempts.result_artifact_path,
+                       scheduler_attempts.completion_envelope_sha256,
+                       scheduler_attempts.launch_requested_at,
+                       scheduler_attempts.completed_at,
+                       scheduler_attempts.created_at,
+                       scheduler_effects.effect_kind,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY scheduler_attempts.iteration,
+                                        scheduler_attempts.component
+                           ORDER BY
+                               COALESCE(
+                                   scheduler_attempts.launch_requested_at,
+                                   scheduler_attempts.created_at
+                               ) ASC,
+                               scheduler_attempts.created_at ASC,
+                               scheduler_attempts.attempt_id ASC
+                       ) AS phase_attempt
+                FROM scheduler_attempts
+                JOIN scheduler_effects
+                  ON scheduler_effects.dispatch_id = scheduler_attempts.dispatch_id
+                WHERE scheduler_attempts.run_id = ?
+                  AND scheduler_attempts.component = 'codex'
+                  AND scheduler_effects.effect_kind IN ({placeholders})
+            )
+            ORDER BY iteration ASC, phase_attempt ASC, attempt_id ASC
+            LIMIT ? OFFSET ?
+            """,
+            (run_id, *CODEX_ATTEMPT_EFFECT_KINDS, limit + 1, offset),
+        ).fetchall()
+        has_more = len(rows) > limit
+        return [cast(sqlite3.Row, row) for row in rows[:limit]], has_more
+
+    def get_integration_codex_review_row(
+        self,
+        conn: sqlite3.Connection,
+        run_id: str,
+        attempt_id: str,
+    ) -> sqlite3.Row | None:
+        from ai_dev_loop.scheduler.domain.codex_contract import CODEX_ATTEMPT_EFFECT_KINDS
+
+        placeholders = ",".join("?" * len(CODEX_ATTEMPT_EFFECT_KINDS))
+        row = conn.execute(
+            f"""
+            SELECT attempt_id, run_id, dispatch_id, iteration, component, status,
+                   unit_identity, launch_intent_sha256, launch_nonce,
+                   stdout_artifact_path, stderr_artifact_path, result_artifact_path,
+                   completion_envelope_sha256, effect_kind, launch_requested_at,
+                   completed_at, created_at, phase_attempt
+            FROM (
+                SELECT scheduler_attempts.attempt_id,
+                       scheduler_attempts.run_id,
+                       scheduler_attempts.dispatch_id,
+                       scheduler_attempts.iteration,
+                       scheduler_attempts.component,
+                       scheduler_attempts.status,
+                       scheduler_attempts.unit_identity,
+                       scheduler_attempts.launch_intent_sha256,
+                       scheduler_attempts.launch_nonce,
+                       scheduler_attempts.stdout_artifact_path,
+                       scheduler_attempts.stderr_artifact_path,
+                       scheduler_attempts.result_artifact_path,
+                       scheduler_attempts.completion_envelope_sha256,
+                       scheduler_attempts.launch_requested_at,
+                       scheduler_attempts.completed_at,
+                       scheduler_attempts.created_at,
+                       scheduler_effects.effect_kind,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY scheduler_attempts.iteration,
+                                        scheduler_attempts.component
+                           ORDER BY
+                               COALESCE(
+                                   scheduler_attempts.launch_requested_at,
+                                   scheduler_attempts.created_at
+                               ) ASC,
+                               scheduler_attempts.created_at ASC,
+                               scheduler_attempts.attempt_id ASC
+                       ) AS phase_attempt
+                FROM scheduler_attempts
+                JOIN scheduler_effects
+                  ON scheduler_effects.dispatch_id = scheduler_attempts.dispatch_id
+                WHERE scheduler_attempts.run_id = ?
+                  AND scheduler_attempts.component = 'codex'
+                  AND scheduler_effects.effect_kind IN ({placeholders})
+            )
+            WHERE attempt_id = ?
+            """,
+            (run_id, *CODEX_ATTEMPT_EFFECT_KINDS, attempt_id),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
     def list_integration_attempt_rows(
         self,
         conn: sqlite3.Connection,

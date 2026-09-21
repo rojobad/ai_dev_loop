@@ -13,6 +13,8 @@ from typer.core import TyperCommand, TyperGroup
 from ai_dev_loop.integration_api.envelope import emit_failure, emit_success
 from ai_dev_loop.integration_api.errors import IntegrationApiError, IntegrationErrorCode
 from ai_dev_loop.integration_api.info import build_integration_info_data
+from ai_dev_loop.integration_api.review_reader import ReviewContentKind
+from ai_dev_loop.integration_api.review_service import default_review_read_service
 from ai_dev_loop.integration_api.run_projection import RunKindFilter
 from ai_dev_loop.integration_api.run_service import default_run_read_service
 from ai_dev_loop.integration_api.sequence_service import default_sequence_read_service
@@ -411,6 +413,68 @@ def integration_sequence_report_command(
     service = default_sequence_read_service()
     data = service.read_report_chunk(
         sequence_id,
+        byte_offset=byte_offset,
+        limit=byte_limit,
+    )
+    emit_success(data.model_dump(by_alias=True))
+
+
+AttemptIdOption = Annotated[
+    str,
+    typer.Option("--attempt", help="Codex review attempt ID."),
+]
+
+ReviewContentKindOption = Annotated[
+    ReviewContentKind,
+    typer.Option("--kind", help="Review content kind."),
+]
+
+
+@run_app.command("reviews")
+def integration_run_reviews_command(
+    run_id: str,
+    output: IntegrationOutputOption = "json",
+    offset: OffsetOption = 0,
+    limit: LimitOption = COLLECTION_DEFAULT_LIMIT,
+) -> None:
+    """List Codex review attempts for one run."""
+    _require_json_output(output)
+    validate_collection_bounds(offset, limit)
+    service = default_review_read_service()
+    data = service.list_reviews(run_id, offset=offset, limit=limit)
+    emit_success(data.model_dump(by_alias=True))
+
+
+@run_app.command("review")
+def integration_run_review_command(
+    run_id: str,
+    attempt_id: AttemptIdOption,
+    output: IntegrationOutputOption = "json",
+) -> None:
+    """Inspect one Codex review attempt metadata and validated response."""
+    _require_json_output(output)
+    service = default_review_read_service()
+    data = service.inspect_review(run_id, attempt_id=attempt_id)
+    emit_success(data.model_dump(by_alias=True))
+
+
+@run_app.command("review-content")
+def integration_run_review_content_command(
+    run_id: str,
+    attempt_id: AttemptIdOption,
+    kind: ReviewContentKindOption,
+    output: IntegrationOutputOption = "json",
+    byte_offset: ByteOffsetOption = 0,
+    byte_limit: ByteLimitOption = 65536,
+) -> None:
+    """Read a chunk of per-attempt Codex review prompt or result content."""
+    _require_json_output(output)
+    validate_artifact_read_bounds(byte_offset, byte_limit)
+    service = default_review_read_service()
+    data = service.read_review_content(
+        run_id,
+        attempt_id=attempt_id,
+        content_kind=kind,
         byte_offset=byte_offset,
         limit=byte_limit,
     )

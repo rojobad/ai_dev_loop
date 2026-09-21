@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "kind": "post_normalization",
+  "iteration": 1,
+  "captured_at": "2026-09-21T01:32:03.982314+00:00",
+  "branch": "master",
+  "head": "03d81b45c618a571a2b0b09bd5ec301238c81aca",
+  "repository_root_matches_state": true,
+  "status_porcelain_sha256": "fd0a5f78a5697bd76c35cb79c10182a39ebf46708eb72e9a309ade78767f17e1",
+  "cached_diff_sha256": "36cfa8b6869057f08f33a78dfdd0b08f79c1419c71a621b3fbd5a05cce8cae85",
+  "worktree_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "untracked_files": [],
+  "aggregate_sha256": "058c460f6fefae0f007ecb5d6ed6180c8cd093035a279fa4b4bfc6fd58657b7c"
+}

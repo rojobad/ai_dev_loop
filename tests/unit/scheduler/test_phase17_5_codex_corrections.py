@@ -901,11 +901,13 @@ def test_run_codex_review_uses_frozen_timeout_from_invocation_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from ai_dev_loop.scheduler import codex_attempt_runner
+    from ai_dev_loop.scheduler.infrastructure.paths import run_artifact_root
 
     plan_rel = "plan/plan.md"
     prompt_rel = "prompts/cursor-initial.txt"
-    run_root = tmp_path / "run-artifacts"
-    run_root.mkdir()
+    artifact_root = tmp_path / "artifacts"
+    run_root = run_artifact_root(artifact_root, "run-timeout-test")
+    run_root.mkdir(parents=True)
     plan_path = run_root / plan_rel
     prompt_path = run_root / prompt_rel
     plan_path.parent.mkdir(parents=True, exist_ok=True)
@@ -952,7 +954,12 @@ def test_run_codex_review_uses_frozen_timeout_from_invocation_evidence(
         "prompt_sha256": sha256_bytes(prompt_path.read_bytes()),
         "max_review_iterations": 3,
     }
-    codex_attempt_runner._run_codex_review(evidence, run_root, "run-timeout-test")
+    codex_attempt_runner._run_codex_review(
+        evidence,
+        run_root,
+        "run-timeout-test",
+        artifact_root=artifact_root,
+    )
     assert captured["timeout"] == 90 * 60
 
 

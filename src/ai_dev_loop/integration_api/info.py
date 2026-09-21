@@ -13,7 +13,7 @@ def build_integration_info_data() -> IntegrationInfoData:
             "capabilities": {
                 "runs": True,
                 "sequences": True,
-                "reviewInspection": False,
+                "reviewInspection": True,
                 "processOutput": False,
                 "codexCapacity": False,
             },

@@ -67,6 +67,19 @@ def codex_review_report_rel(review_iteration: int, attempt_id: str | None = None
     return f"codex/reviews/{label}.md"
 
 
+def codex_review_prompt_rel(review_iteration: int, attempt_id: str) -> str:
+    label = iteration_label(review_iteration)
+    return f"codex/reviews/{label}.{attempt_id}.prompt.txt"
+
+
+def codex_review_prompt_evidence_rel(review_iteration: int, attempt_id: str) -> str:
+    label = iteration_label(review_iteration)
+    return f"codex/reviews/{label}.{attempt_id}.prompt-evidence.json"
+
+
+REVIEWER_SESSION_REF_PREFIX = "ai_dev_loop:reviewer-session:v1:"
+
+
 REVIEW_RETRY_OPERATIONAL_ENVELOPE = (
     "This is an automated scheduler retry of Codex review. "
     "The prior attempt did not yield a valid structured review result. "

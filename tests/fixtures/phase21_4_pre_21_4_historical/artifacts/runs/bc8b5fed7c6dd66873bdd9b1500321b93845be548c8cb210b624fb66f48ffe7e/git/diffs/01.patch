@@ -1,0 +1,10 @@
+diff --git a/ai_dev_loop.yaml b/ai_dev_loop.yaml
+index 473dc95..5bc14a3 100644
+--- a/ai_dev_loop.yaml
++++ b/ai_dev_loop.yaml
+@@ -26,3 +26,5 @@ workflow:
+ prompt:
+   directory: docs/plans
+   filename_template: prompt_{plan_stem}.txt
++
++# modified by fake agent

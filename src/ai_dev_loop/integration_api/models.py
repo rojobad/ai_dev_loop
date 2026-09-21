@@ -381,3 +381,76 @@ class IntegrationFrozenSequenceArtifactChunk(ArtifactChunk):
 class IntegrationSequenceReportChunk(ArtifactChunk):
     sequence_id: str = Field(alias="sequenceId")
     integrity: str | None = None
+
+
+class IntegrationContentAvailability(PublicWireModel):
+    available: StrictBool
+    reason: str | None = None
+
+
+class IntegrationReviewContentAvailability(PublicWireModel):
+    prompt: IntegrationContentAvailability
+    response: IntegrationContentAvailability
+    review_markdown: IntegrationContentAvailability = Field(alias="reviewMarkdown")
+    cursor_fix_prompt: IntegrationContentAvailability = Field(alias="cursorFixPrompt")
+
+
+class IntegrationReviewListItem(PublicWireModel):
+    attempt_id: str = Field(alias="attemptId")
+    iteration: StrictInt = Field(ge=1)
+    phase_attempt: StrictInt = Field(alias="phaseAttempt", ge=1)
+    status: str
+    review_mode: str = Field(alias="reviewMode")
+    review_model: str = Field(alias="reviewModel")
+    reasoning_effort: str = Field(alias="reasoningEffort")
+    created_at: str = Field(alias="createdAt")
+    launch_requested_at: str | None = Field(None, alias="launchRequestedAt")
+    completed_at: str | None = Field(None, alias="completedAt")
+    findings_count: StrictInt | None = Field(None, alias="findingsCount", ge=0)
+    highest_severity: str | None = Field(None, alias="highestSeverity")
+    tests_status: str | None = Field(None, alias="testsStatus")
+    reviewer_session_ref: str | None = Field(None, alias="reviewerSessionRef")
+    content: IntegrationReviewContentAvailability
+
+
+class IntegrationReviewListData(PublicWireModel):
+    run_id: str = Field(alias="runId")
+    items: tuple[IntegrationReviewListItem, ...]
+    page: IntegrationCollectionPage
+
+
+class IntegrationReviewResponseBody(PublicWireModel):
+    has_actionable_findings: StrictBool = Field(alias="hasActionableFindings")
+    findings_count: StrictInt = Field(alias="findingsCount", ge=0)
+    highest_severity: str | None = Field(None, alias="highestSeverity")
+    review_markdown: str = Field(alias="reviewMarkdown")
+    cursor_fix_prompt: str | None = Field(None, alias="cursorFixPrompt")
+    tests_status: str = Field(alias="testsStatus")
+    summary: str
+
+
+class IntegrationReviewDetailData(PublicWireModel):
+    run_id: str = Field(alias="runId")
+    attempt_id: str = Field(alias="attemptId")
+    iteration: StrictInt = Field(ge=1)
+    phase_attempt: StrictInt = Field(alias="phaseAttempt", ge=1)
+    status: str
+    review_mode: str = Field(alias="reviewMode")
+    review_model: str = Field(alias="reviewModel")
+    reasoning_effort: str = Field(alias="reasoningEffort")
+    created_at: str = Field(alias="createdAt")
+    launch_requested_at: str | None = Field(None, alias="launchRequestedAt")
+    completed_at: str | None = Field(None, alias="completedAt")
+    findings_count: StrictInt | None = Field(None, alias="findingsCount", ge=0)
+    highest_severity: str | None = Field(None, alias="highestSeverity")
+    tests_status: str | None = Field(None, alias="testsStatus")
+    reviewer_session_ref: str | None = Field(None, alias="reviewerSessionRef")
+    result_state: str = Field(alias="resultState")
+    response: IntegrationReviewResponseBody | None = None
+    content: IntegrationReviewContentAvailability
+
+
+class IntegrationReviewContentChunk(ArtifactChunk):
+    run_id: str = Field(alias="runId")
+    attempt_id: str = Field(alias="attemptId")
+    content_kind: str = Field(alias="contentKind")

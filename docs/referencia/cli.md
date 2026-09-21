@@ -326,6 +326,9 @@ ai_dev_loop integration run timeline RUN_ID [--offset N --limit N]
 ai_dev_loop integration run history RUN_ID [--offset N --limit N]
 ai_dev_loop integration run plan RUN_ID [--offset BYTE_OFFSET --limit BYTE_LIMIT]
 ai_dev_loop integration run initial-prompt RUN_ID [--offset BYTE_OFFSET --limit BYTE_LIMIT]
+ai_dev_loop integration run reviews RUN_ID [--offset N --limit N]
+ai_dev_loop integration run review RUN_ID --attempt ATTEMPT_ID
+ai_dev_loop integration run review-content RUN_ID --attempt ATTEMPT_ID --kind prompt|response|review-markdown|cursor-fix-prompt [--offset BYTE_OFFSET --limit BYTE_LIMIT]
 ai_dev_loop integration sequences list [--offset N --limit N]
 ai_dev_loop integration sequence inspect SEQUENCE_ID
 ai_dev_loop integration sequence phase-runs SEQUENCE_ID --ordinal N [--offset N --limit N]
@@ -340,7 +343,8 @@ sigue siendo ayuda normal de Typer. El namespace plural `integrations` (instalac
 Codex global) no cambia.
 
 `integration info` no requiere ledger del scheduler. Las lecturas de runs y
-secuencias (API **1.2**, capacidades `runs` y `sequences`) abren el ledger en
+runs, secuencias y revisiones Codex (API **1.3**, capacidades `runs`, `sequences`
+y `reviewInspection`) abren el ledger en
 solo lectura y no migran la base de datos. La opción `--output json` es
 obligatoria en cada subcomando (valor por defecto donde aplica).
 

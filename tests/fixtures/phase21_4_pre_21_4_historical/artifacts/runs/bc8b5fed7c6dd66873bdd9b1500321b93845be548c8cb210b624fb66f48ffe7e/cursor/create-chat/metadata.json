@@ -1,0 +1,9 @@
+{
+  "args": [
+    "/tmp/pytest-of-rojobad/pytest-992/test_generate_pre_21_4_histori0/bin/agent",
+    "create-chat"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 0.054123115027323365,
+  "timed_out": false
+}

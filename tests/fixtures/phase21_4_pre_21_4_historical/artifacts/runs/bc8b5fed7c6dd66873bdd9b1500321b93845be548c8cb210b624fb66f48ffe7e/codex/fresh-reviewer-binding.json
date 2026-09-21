@@ -1,0 +1,7 @@
+{
+  "bootstrap_bound_at": "2026-09-20T12:00:00.000000Z",
+  "bootstrap_events_sha256": "923d3f9d929c85a87cddab12dc5117d71a0245a30c5b91c43564a8983c94fa69",
+  "bootstrap_session_id_prefix": "019def00",
+  "review_model": "gpt-5.6-sol",
+  "review_reasoning_effort": "high"
+}

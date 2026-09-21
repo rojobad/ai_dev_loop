@@ -5,7 +5,7 @@ futuro supervise el scheduler local sin acceder a SQLite ni rutas privadas.
 
 ## Versión del contrato
 
-- Versión actual de la API: **1.2** (`apiVersion.major` / `apiVersion.minor`).
+- Versión actual de la API: **1.3** (`apiVersion.major` / `apiVersion.minor`).
 - Misma major: compatible; campos desconocidos se ignoran en consumidores.
 - Major distinta: el consumidor debe detenerse con `UPDATE_REQUIRED` y no emitir
   más peticiones de recursos.
@@ -18,7 +18,7 @@ Todas las órdenes bajo `integration` escriben **un único documento JSON** en s
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 2 },
+  "apiVersion": { "major": 1, "minor": 3 },
   "ok": true,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": {},
@@ -30,7 +30,7 @@ Error:
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 2 },
+  "apiVersion": { "major": 1, "minor": 3 },
   "ok": false,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": null,
@@ -63,8 +63,8 @@ ai_dev_loop integration info [--output json]
 - No requiere ledger del scheduler, no crea directorios XDG y no sondea Codex.
 - `data.aiDevLoopVersion` es la versión del paquete instalado.
 - `data.capabilities` declara de forma honesta qué lecturas existen en esta
-  versión. En **1.2**, `runs` y `sequences` son `true`; el resto permanece
-  `false` hasta fases posteriores.
+  versión. En **1.3**, `runs`, `sequences` y `reviewInspection` son `true`;
+  `processOutput` y `codexCapacity` permanecen `false` hasta fases posteriores.
 
 ## Lectura de runs (API 1.1+)
 
@@ -107,6 +107,27 @@ ai_dev_loop integration sequence report SEQUENCE_ID [--offset BYTE_OFFSET --limi
   el binding de un run materializado.
 - `report` solo sirve `reports/completion-v1.json` ya publicado; ausencia explícita
   con `not_yet_produced` o `publication_pending`.
+
+## Inspección de revisiones Codex (API 1.3)
+
+```bash
+ai_dev_loop integration run reviews RUN_ID [--offset N --limit N]
+ai_dev_loop integration run review RUN_ID --attempt ATTEMPT_ID
+ai_dev_loop integration run review-content RUN_ID --attempt ATTEMPT_ID --kind KIND [--offset BYTE_OFFSET --limit BYTE_LIMIT]
+```
+
+- `KIND`: `prompt`, `response`, `review-markdown`, `cursor-fix-prompt`.
+- El índice lista todos los intentos Codex (reintentos incluidos) ordenados por
+  iteración, `phaseAttempt` e `attemptId`.
+- `review` expone metadatos y la respuesta estructurada validada cuando existe;
+  `resultState` distingue `valid`, `invalid`, `not_produced` y `pending`.
+- `review-content` devuelve bytes exactos por intento; los intentos anteriores a
+  21.4 pueden carecer de `prompt` (`not_recorded`). No se reconstruyen prompts
+  históricos.
+- El scheduler registra antes de cada lanzamiento Codex:
+  `codex/reviews/NN.<attempt_id>.prompt.txt` y
+  `codex/reviews/NN.<attempt_id>.prompt-evidence.json` (esquema
+  `scheduler-review-prompt-evidence-v1.json`).
 
 ## Convenciones compartidas
 

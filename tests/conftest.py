@@ -674,19 +674,65 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
 
         if len(args) >= 3 and args[0] == "exec" and args[1] == "--cd":
             log("ARGS:" + repr(args))
+            import hashlib
+
+            witness_root = os.environ.get("AI_DEV_LOOP_REVIEW_PROMPT_WITNESS_ROOT", "").strip()
+            prompt_rel = os.environ.get("AI_DEV_LOOP_REVIEW_PROMPT_REL", "").strip()
+            evidence_rel = os.environ.get("AI_DEV_LOOP_REVIEW_EVIDENCE_REL", "").strip()
+            if witness_root and prompt_rel and evidence_rel:
+                prompt_path = os.path.join(witness_root, prompt_rel)
+                evidence_path = os.path.join(witness_root, evidence_rel)
+                if not os.path.isfile(prompt_path) or not os.path.isfile(evidence_path):
+                    print("prompt witness missing on disk", file=sys.stderr)
+                    sys.exit(92)
             stdin_prompt = sys.stdin.read()
+            if witness_root and prompt_rel:
+                prompt_path = os.path.join(witness_root, prompt_rel)
+                on_disk = open(prompt_path, "rb").read()
+                if hashlib.sha256(on_disk).hexdigest() != hashlib.sha256(
+                    stdin_prompt.encode("utf-8")
+                ).hexdigest():
+                    print("prompt witness stdin mismatch", file=sys.stderr)
+                    sys.exit(93)
+                witness_out = os.environ.get("FAKE_CODEX_STDIN_SHA256_WITNESS", "").strip()
+                stdin_digest = hashlib.sha256(stdin_prompt.encode("utf-8")).hexdigest()
+                if witness_out:
+                    parent = os.path.dirname(witness_out)
+                    if parent:
+                        os.makedirs(parent, exist_ok=True)
+                    with open(witness_out, "w", encoding="utf-8") as handle:
+                        handle.write(stdin_digest)
+                witness_dir = os.environ.get("FAKE_CODEX_STDIN_SHA256_WITNESS_DIR", "").strip()
+                if witness_dir:
+                    os.makedirs(witness_dir, exist_ok=True)
+                    witness_index = len(
+                        [name for name in os.listdir(witness_dir) if name.endswith(".sha256")]
+                    )
+                    with open(
+                        os.path.join(witness_dir, f"witness-{{witness_index:04d}}.sha256"),
+                        "w",
+                        encoding="utf-8",
+                    ) as handle:
+                        handle.write(stdin_digest)
+                    with open(
+                        os.path.join(witness_dir, f"witness-{{witness_index:04d}}.resume"),
+                        "w",
+                        encoding="utf-8",
+                    ) as handle:
+                        handle.write("1" if "resume" in args else "0")
             log("STDIN:" + stdin_prompt)
+            counter_file = os.environ.get(
+                "FAKE_CODEX_REVIEW_COUNTER",
+                os.path.join(os.path.dirname(log_path), "codex_review_counter.txt"),
+            )
+            counter = 0
+            try:
+                with open(counter_file, encoding="utf-8") as handle:
+                    counter = int(handle.read().strip() or "0")
+            except (OSError, ValueError):
+                counter = 0
             sequence = os.environ.get("FAKE_CODEX_REVIEW_SEQUENCE", "").strip()
             if sequence:
-                counter_file = os.environ.get(
-                    "FAKE_CODEX_REVIEW_COUNTER",
-                    os.path.join(os.path.dirname(log_path), "codex_review_counter.txt"),
-                )
-                try:
-                    with open(counter_file, encoding="utf-8") as handle:
-                        counter = int(handle.read().strip() or "0")
-                except (OSError, ValueError):
-                    counter = 0
                 modes = [item.strip() for item in sequence.split(",") if item.strip()]
                 mode = modes[min(counter, len(modes) - 1)]
                 with open(counter_file, "w", encoding="utf-8") as handle:
@@ -844,12 +890,24 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                 print(json.dumps({{"type": "message", "content": "review complete"}}))
                 sys.exit(0)
             if mode == "findings":
+                review_pass = counter
+                fix_prompts = [
+                    "Fix issue ALPHA from first findings review.",
+                    "Fix issue BETA from second findings review.",
+                ]
+                markdown_titles = ["# Review ALPHA", "# Review BETA"]
+                pick = review_pass % len(fix_prompts)
+                large_pad = ""
+                if os.environ.get("FAKE_CODEX_LARGE_MARKDOWN") == "1":
+                    large_pad = "x" * int(
+                        os.environ.get("FAKE_CODEX_LARGE_MARKDOWN_BYTES", "120000")
+                    )
                 result = {{
                     "has_actionable_findings": True,
                     "findings_count": 1,
                     "highest_severity": "P1",
-                    "review_markdown": "# Review\\n\\nFound issue.",
-                    "cursor_fix_prompt": "Fix the sample issue in ai_dev_loop.yaml.",
+                    "review_markdown": markdown_titles[pick] + "\\n\\nFound issue." + large_pad,
+                    "cursor_fix_prompt": fix_prompts[pick],
                     "tests_status": "skipped_findings_present",
                     "summary": "One actionable finding.",
                 }}

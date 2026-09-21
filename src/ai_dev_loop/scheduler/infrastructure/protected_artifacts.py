@@ -16,6 +16,7 @@ from typing import IO
 import yaml
 
 from ai_dev_loop.paths import DIR_MODE, SENSITIVE_FILE_MODE, ensure_dir
+from ai_dev_loop.scheduler.application.artifact_digest import verify_file_digest
 from ai_dev_loop.scheduler.infrastructure.paths import (
     ensure_artifact_parent_directories,
     ensure_run_artifact_root,
@@ -106,6 +107,17 @@ class StoredArtifact:
     size_bytes: int
 
 
+def _assert_safe_artifact_file(path: Path) -> None:
+    if not path.is_file():
+        raise ProtectedArtifactError("artifact missing")
+    if path.is_symlink():
+        raise ProtectedArtifactError("artifact must not be a symlink")
+    if os.name != "nt":
+        mode = path.stat().st_mode & 0o777
+        if mode & 0o077:
+            raise ProtectedArtifactError("artifact has unsafe permissions")
+
+
 class ProtectedArtifactStore:
     """Write-once, hash-verified artifacts under the scheduler artifact root."""
 
@@ -146,9 +158,12 @@ class ProtectedArtifactStore:
             os.replace(temp_path, destination)
             if os.name != "nt":
                 os.chmod(destination, SENSITIVE_FILE_MODE)
-            verified = self.read_verified_bytes(run_id, relative_path, expected_sha256=digest)
-            if verified != content:
-                raise ProtectedArtifactError("post-write hash verification failed")
+            self._verify_stored_digest(
+                run_id,
+                relative_path,
+                expected_sha256=digest,
+                expected_size=len(content),
+            )
             return StoredArtifact(
                 relative_path=relative_path,
                 sha256=digest,
@@ -157,6 +172,32 @@ class ProtectedArtifactStore:
         finally:
             if temp_path.exists():
                 temp_path.unlink(missing_ok=True)
+
+    def _verify_stored_digest(
+        self,
+        run_id: str,
+        relative_path: str,
+        *,
+        expected_sha256: str,
+        expected_size: int,
+    ) -> StoredArtifact:
+        validate_sha256_hex(expected_sha256)
+        root = self.run_root(run_id)
+        path = resolve_run_relative_path(root, relative_path)
+        _assert_safe_artifact_file(path)
+        try:
+            size = verify_file_digest(
+                path,
+                expected_sha256=expected_sha256,
+                expected_size=expected_size,
+            )
+        except ValueError as exc:
+            raise ProtectedArtifactError("artifact hash or size mismatch") from exc
+        return StoredArtifact(
+            relative_path=relative_path,
+            sha256=expected_sha256,
+            size_bytes=size,
+        )
 
     def publish_or_verify_bytes(
         self,
@@ -174,17 +215,11 @@ class ProtectedArtifactStore:
         root = self.run_root(run_id)
         destination = resolve_run_relative_path(root, relative_path)
         if destination.exists():
-            verified = self.read_verified_bytes(
+            return self._verify_stored_digest(
                 run_id,
                 relative_path,
                 expected_sha256=digest,
-            )
-            if verified != content:
-                raise ProtectedArtifactError("artifact content mismatch on concurrent publish")
-            return StoredArtifact(
-                relative_path=relative_path,
-                sha256=digest,
-                size_bytes=len(content),
+                expected_size=len(content),
             )
         try:
             return self.write_bytes(
@@ -196,19 +231,11 @@ class ProtectedArtifactStore:
         except ProtectedArtifactError as exc:
             if "already exists" not in str(exc):
                 raise
-            verified = self.read_verified_bytes(
+            return self._verify_stored_digest(
                 run_id,
                 relative_path,
                 expected_sha256=digest,
-            )
-            if verified != content:
-                raise ProtectedArtifactError(
-                    "artifact content mismatch on concurrent publish"
-                ) from exc
-            return StoredArtifact(
-                relative_path=relative_path,
-                sha256=digest,
-                size_bytes=len(content),
+                expected_size=len(content),
             )
 
     def write_text(
@@ -232,16 +259,24 @@ class ProtectedArtifactStore:
         relative_path: str,
         *,
         expected_sha256: str,
+        expected_size: int | None = None,
     ) -> StoredArtifact:
-        verified = self.read_verified_bytes(
-            run_id,
-            relative_path,
-            expected_sha256=expected_sha256,
-        )
+        validate_sha256_hex(expected_sha256)
+        root = self.run_root(run_id)
+        path = resolve_run_relative_path(root, relative_path)
+        _assert_safe_artifact_file(path)
+        try:
+            size = verify_file_digest(
+                path,
+                expected_sha256=expected_sha256,
+                expected_size=expected_size,
+            )
+        except ValueError as exc:
+            raise ProtectedArtifactError("artifact hash or size mismatch") from exc
         return StoredArtifact(
             relative_path=relative_path,
             sha256=expected_sha256,
-            size_bytes=len(verified),
+            size_bytes=size,
         )
 
     def list_run_relative_files(self, run_id: str) -> frozenset[str]:
@@ -320,9 +355,12 @@ class ProtectedArtifactStore:
             os.replace(temp_path, destination)
             if os.name != "nt":
                 os.chmod(destination, SENSITIVE_FILE_MODE)
-            verified = self.read_verified_bytes(run_id, relative_path, expected_sha256=digest)
-            if verified != content:
-                raise ProtectedArtifactError("post-replace hash verification failed")
+            self._verify_stored_digest(
+                run_id,
+                relative_path,
+                expected_sha256=digest,
+                expected_size=len(content),
+            )
             return StoredArtifact(
                 relative_path=relative_path,
                 sha256=digest,
@@ -355,6 +393,7 @@ class ProtectedArtifactStore:
                 run_id,
                 relative_path,
                 expected_sha256=digest,
+                expected_size=len(content),
             )
         try:
             return self.write_bytes(run_id, relative_path, content, max_bytes=max_bytes)
@@ -364,6 +403,7 @@ class ProtectedArtifactStore:
                     run_id,
                     relative_path,
                     expected_sha256=digest,
+                    expected_size=len(content),
                 )
             raise exc
 
