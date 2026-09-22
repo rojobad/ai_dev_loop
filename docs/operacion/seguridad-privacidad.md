@@ -74,7 +74,9 @@ tokens, session IDs completos, argv, PID/PGID ni environments. El namespace
 `run inspect`, `run history`, `attempts`, `timeline`). Los comandos explícitos
 `integration run plan` e `integration run initial-prompt` devuelven el artefacto
 congelado capturado en el submit (contenido sensible); no leen el worktree actual
-ni reconstruyen historial ausente. **Gate A** valida con
+ni reconstruyen historial ausente. `integration codex-capacity` lanza una sonda
+Codex acotada bajo demanda (sin persistir telemetría ni cuota en el ledger); no
+sustituye la política de espera del scheduler. **Gate A** valida con
 fakes/process boundaries; **Gate B** es
 aceptacion live pendiente hasta completar el ciclo controlado en parish360-poc.
 

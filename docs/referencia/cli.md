@@ -335,6 +335,8 @@ ai_dev_loop integration sequence phase-runs SEQUENCE_ID --ordinal N [--offset N 
 ai_dev_loop integration sequence phase-plan SEQUENCE_ID --ordinal N [--offset BYTE_OFFSET --limit BYTE_LIMIT]
 ai_dev_loop integration sequence phase-prompt SEQUENCE_ID --ordinal N [--offset BYTE_OFFSET --limit BYTE_LIMIT]
 ai_dev_loop integration sequence report SEQUENCE_ID [--offset BYTE_OFFSET --limit BYTE_LIMIT]
+ai_dev_loop integration run output RUN_ID --attempt ATTEMPT_ID --stream stdout|stderr [--offset BYTE_OFFSET --limit BYTE_LIMIT]
+ai_dev_loop integration codex-capacity [--output json]
 ```
 
 Namespace singular para el contrato JSON que consumirá el Bridge futuro. Todas
@@ -343,8 +345,9 @@ sigue siendo ayuda normal de Typer. El namespace plural `integrations` (instalac
 Codex global) no cambia.
 
 `integration info` no requiere ledger del scheduler. Las lecturas de runs y
-runs, secuencias, revisiones Codex y salida de procesos hijo (API **1.4**,
-capacidades `runs`, `sequences`, `reviewInspection` y `processOutput`) abren el ledger en
+runs, secuencias, revisiones Codex, salida de procesos hijo y capacidad Codex
+(API **1.5**, capacidades `runs`, `sequences`, `reviewInspection`, `processOutput`
+y `codexCapacity`) abren el ledger en
 solo lectura y no migran la base de datos. La opción `--output json` es
 obligatoria en cada subcomando (valor por defecto donde aplica).
 

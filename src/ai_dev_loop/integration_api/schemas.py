@@ -30,6 +30,7 @@ SEQUENCE_PHASE_RUN_LIST_DATA_SCHEMA = "integration-api-sequence-phase-run-list-d
 FROZEN_SEQUENCE_ARTIFACT_CHUNK_SCHEMA = "integration-api-frozen-sequence-artifact-chunk-v1.json"
 SEQUENCE_REPORT_CHUNK_SCHEMA = "integration-api-sequence-report-chunk-v1.json"
 PROCESS_OUTPUT_CHUNK_SCHEMA = "integration-api-process-output-chunk-v1.json"
+CODEX_CAPACITY_DATA_SCHEMA = "integration-api-codex-capacity-data-v1.json"
 
 
 def load_integration_schema(name: str) -> dict[str, object]:
@@ -58,6 +59,7 @@ def integration_schema_names() -> tuple[str, ...]:
         FROZEN_SEQUENCE_ARTIFACT_CHUNK_SCHEMA,
         SEQUENCE_REPORT_CHUNK_SCHEMA,
         PROCESS_OUTPUT_CHUNK_SCHEMA,
+        CODEX_CAPACITY_DATA_SCHEMA,
     )
 
 

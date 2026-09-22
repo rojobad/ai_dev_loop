@@ -1,0 +1,14 @@
+{
+  "status": "available",
+  "reason": null,
+  "limits": [
+    {
+      "id": "default",
+      "window": "primary",
+      "usedPercent": 10,
+      "remainingPercent": 90,
+      "windowDurationMinutes": null,
+      "resetsAt": null
+    }
+  ]
+}

@@ -479,3 +479,18 @@ class IntegrationProcessOutputChunk(ArtifactChunk):
     complete: StrictBool
     truncated_at_source: bool | None = Field(None, alias="truncatedAtSource")
     stored_bytes: StrictInt | None = Field(None, alias="storedBytes", ge=0)
+
+
+class IntegrationCodexCapacityLimit(PublicWireModel):
+    id: str
+    window: str
+    used_percent: float = Field(alias="usedPercent", ge=0)
+    remaining_percent: float = Field(alias="remainingPercent", ge=0)
+    window_duration_minutes: StrictInt | None = Field(None, alias="windowDurationMinutes", gt=0)
+    resets_at: str | None = Field(None, alias="resetsAt")
+
+
+class IntegrationCodexCapacityData(PublicWireModel):
+    status: str
+    reason: str | None
+    limits: tuple[IntegrationCodexCapacityLimit, ...]

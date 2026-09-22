@@ -67,6 +67,18 @@ Los artefactos sensibles viven bajo `$XDG_STATE_HOME/ai_dev_loop/artifacts/` y e
 estado durable en `engine.sqlite3`. Los comandos de inspeccion del scheduler no imprimen
 prompts, patches ni session IDs completos por defecto.
 
+## API local `integration` (Bridge)
+
+```bash
+ai_dev_loop integration info --output json
+ai_dev_loop integration codex-capacity --output json
+```
+
+Emite un unico JSON por stdout. `info` no toca el ledger. `codex-capacity` observa
+cupos Codex locales sin escribir SQLite ni artefactos protegidos; `observedAt` marca
+el instante de la observacion, no la ultima espera del scheduler. Paginacion y
+lecturas sensibles por trozos: ver [API de integracion local](../referencia/integration-api.md).
+
 ## Runs legacy
 
 Los comandos `status`, `inspect` y `logs` de nivel superior para runs bajo `runs/`

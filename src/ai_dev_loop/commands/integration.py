@@ -10,6 +10,7 @@ import typer.main
 from typer import _click as click
 from typer.core import TyperCommand, TyperGroup
 
+from ai_dev_loop.integration_api.capacity_service import default_capacity_read_service
 from ai_dev_loop.integration_api.envelope import emit_failure, emit_success
 from ai_dev_loop.integration_api.errors import IntegrationApiError, IntegrationErrorCode
 from ai_dev_loop.integration_api.info import build_integration_info_data
@@ -227,6 +228,17 @@ def integration_info_command(
     """Return API contract version, package version, and honest capabilities."""
     _require_json_output(output)
     data = build_integration_info_data()
+    emit_success(data.model_dump(by_alias=True))
+
+
+@integration_app.command("codex-capacity")
+def integration_codex_capacity_command(
+    output: IntegrationOutputOption = "json",
+) -> None:
+    """Observe local Codex account capacity via one bounded app-server query."""
+    _require_json_output(output)
+    service = default_capacity_read_service()
+    data = service.observe()
     emit_success(data.model_dump(by_alias=True))
 
 

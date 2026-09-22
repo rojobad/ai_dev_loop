@@ -5,7 +5,7 @@ futuro supervise el scheduler local sin acceder a SQLite ni rutas privadas.
 
 ## Versión del contrato
 
-- Versión actual de la API: **1.4** (`apiVersion.major` / `apiVersion.minor`).
+- Versión actual de la API: **1.5** (`apiVersion.major` / `apiVersion.minor`).
 - Misma major: compatible; campos desconocidos se ignoran en consumidores.
 - Major distinta: el consumidor debe detenerse con `UPDATE_REQUIRED` y no emitir
   más peticiones de recursos.
@@ -18,7 +18,7 @@ Todas las órdenes bajo `integration` escriben **un único documento JSON** en s
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 4 },
+  "apiVersion": { "major": 1, "minor": 5 },
   "ok": true,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": {},
@@ -30,7 +30,7 @@ Error:
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 4 },
+  "apiVersion": { "major": 1, "minor": 5 },
   "ok": false,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": null,
@@ -63,8 +63,28 @@ ai_dev_loop integration info [--output json]
 - No requiere ledger del scheduler, no crea directorios XDG y no sondea Codex.
 - `data.aiDevLoopVersion` es la versión del paquete instalado.
 - `data.capabilities` declara de forma honesta qué lecturas existen en esta
-  versión. En **1.4**, `runs`, `sequences`, `reviewInspection` y `processOutput`
-  son `true`; `codexCapacity` permanece `false` hasta fases posteriores.
+  versión. En **1.5**, `runs`, `sequences`, `reviewInspection`, `processOutput`
+  y `codexCapacity` son `true`.
+
+## Capacidad Codex local (API 1.5)
+
+```bash
+ai_dev_loop integration codex-capacity [--output json]
+```
+
+- Observación **bajo demanda** del contexto Codex local: resuelve el ejecutable
+  `codex` en `PATH` del usuario del proceso (mismo requisito de despliegue que
+  el Bridge en una sola instalación WSL).
+- Reutiliza la sonda app-server acotada del scheduler (initialize → initialized →
+  `account/rateLimits/read`); **no** escribe en el ledger, **no** cachea historial
+  y **no** autoriza reanudar esperas del scheduler.
+- `data.status`: `available`, `exhausted` o `unavailable`. `data.reason` solo
+  cuando `unavailable` (motivos seguros; sin stderr ni payload de cuenta).
+- `data.limits` lista ventanas numéricas válidas (`id`, `window`, porcentajes,
+  duración/reinicio opcionales). Clasificación idéntica a la sonda del scheduler
+  en formas soportadas.
+- El hijo puede usar su configuración Codex local habitual; la API no promete
+  cuota compartida entre instalaciones/ejecutables distintos en la misma máquina.
 
 ## Lectura de runs (API 1.1+)
 

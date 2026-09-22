@@ -987,6 +987,11 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
             sys.exit(0)
 
         if len(args) >= 2 and args[0] == "app-server" and args[1] == "--stdio":
+            touch_path = os.environ.get("FAKE_CODEX_CAPACITY_PROBE_TOUCH_FILE", "").strip()
+            if touch_path:
+                with open(touch_path, "a", encoding="utf-8") as touch_handle:
+                    touch_handle.write("probe\\n")
+
             def _parse_probe_line(stripped: str) -> dict | None:
                 try:
                     payload = json.loads(stripped)
@@ -1114,6 +1119,19 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                         if init_id is None or limits_id is None:
                             print("missing probe request ids", file=sys.stderr)
                             sys.exit(2)
+                        eof_after_init = os.environ.get(
+                            "FAKE_CODEX_CAPACITY_EOF_AFTER_INIT", ""
+                        ).strip()
+                        if eof_after_init == "1":
+                            sys.exit(0)
+                        stall = os.environ.get("FAKE_CODEX_CAPACITY_STALL_SECONDS", "").strip()
+                        if stall:
+                            time.sleep(float(stall))
+                        oversized = os.environ.get("FAKE_CODEX_CAPACITY_OVERSIZED", "").strip()
+                        if oversized == "1":
+                            pad = "x" * (300 * 1024)
+                            print(json.dumps({{"id": limits_id, "result": {{"pad": pad}}}}), flush=True)
+                            sys.exit(0)
                         limits_payload = _build_limits_payload(limits_id)
                         if limits_payload is None:
                             sys.exit(0)
