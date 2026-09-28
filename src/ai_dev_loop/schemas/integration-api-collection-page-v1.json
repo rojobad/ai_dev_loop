@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-collection-page-v1.json",
+  "title": "ai_dev_loop Integration API collection page metadata v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["offset", "limit", "nextOffset", "hasMore"],
+  "properties": {
+    "offset": { "type": "integer", "minimum": 0 },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 500 },
+    "nextOffset": { "type": ["integer", "null"], "minimum": 0 },
+    "hasMore": { "type": "boolean" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "hasMore": { "const": false } }, "required": ["hasMore"] },
+      "then": { "properties": { "nextOffset": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "hasMore": { "const": true } }, "required": ["hasMore"] },
+      "then": {
+        "properties": { "nextOffset": { "type": "integer", "minimum": 0 } },
+        "required": ["nextOffset"]
+      }
+    }
+  ]
+}

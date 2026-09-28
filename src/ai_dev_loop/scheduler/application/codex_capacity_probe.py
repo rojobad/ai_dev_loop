@@ -12,6 +12,7 @@ import subprocess
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Protocol
 
@@ -56,9 +57,20 @@ class CodexCapacityReason(StrEnum):
 
 
 @dataclass(frozen=True)
+class CodexCapacityLimitDiagnostic:
+    limit_id: str
+    window: str
+    used_percent: float
+    remaining_percent: float
+    window_duration_minutes: int | None = None
+    resets_at_unix: int | None = None
+
+
+@dataclass(frozen=True)
 class CodexCapacityObservation:
     status: CodexCapacityStatus
     reason: CodexCapacityReason | None = None
+    limits: tuple[CodexCapacityLimitDiagnostic, ...] = ()
 
 
 class CodexCapacityProbePort(Protocol):
@@ -199,6 +211,83 @@ def _scan_limit_records(payload: dict[str, Any]) -> _LimitRecordScan | None:
             return None
         return _LimitRecordScan(records=[legacy], saw_invalid_entry=False)
     return None
+
+
+def _parse_window_duration_mins(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value > 0:
+        return value
+    return None
+
+
+def _parse_resets_at_unix(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if not isinstance(value, int) or value < 0:
+        return None
+    try:
+        datetime.fromtimestamp(value, tz=UTC)
+    except (OSError, OverflowError, ValueError):
+        return None
+    return value
+
+
+def _diagnostics_for_limit_record(
+    limit_id: str,
+    record: dict[str, Any],
+) -> list[CodexCapacityLimitDiagnostic]:
+    items: list[CodexCapacityLimitDiagnostic] = []
+    for window_name in ("primary", "secondary"):
+        if window_name not in record:
+            continue
+        window = record.get(window_name)
+        if window is None:
+            continue
+        if not isinstance(window, dict):
+            continue
+        used = _parse_used_percent(window.get("usedPercent"))
+        if used is None:
+            continue
+        remaining = max(0.0, 100.0 - used)
+        items.append(
+            CodexCapacityLimitDiagnostic(
+                limit_id=limit_id,
+                window=window_name,
+                used_percent=used,
+                remaining_percent=remaining,
+                window_duration_minutes=_parse_window_duration_mins(
+                    window.get("windowDurationMins")
+                ),
+                resets_at_unix=_parse_resets_at_unix(window.get("resetsAt")),
+            )
+        )
+    return items
+
+
+def extract_capacity_limit_diagnostics(
+    payload: dict[str, Any],
+) -> tuple[CodexCapacityLimitDiagnostic, ...]:
+    """Project allowlisted window diagnostics from a validated rate-limits result."""
+
+    scan = _scan_limit_records(payload)
+    if scan is None:
+        return ()
+    items: list[CodexCapacityLimitDiagnostic] = []
+    if "rateLimitsByLimitId" in payload:
+        by_limit_id = payload["rateLimitsByLimitId"]
+        if not isinstance(by_limit_id, dict):
+            return ()
+        for limit_id in sorted(by_limit_id, key=str):
+            record = by_limit_id[limit_id]
+            if not isinstance(record, dict):
+                continue
+            items.extend(_diagnostics_for_limit_record(str(limit_id), record))
+    else:
+        legacy = payload.get("rateLimits")
+        if isinstance(legacy, dict):
+            items.extend(_diagnostics_for_limit_record("default", legacy))
+    return tuple(items)
 
 
 def capacity_from_rate_limits_payload(payload: dict[str, Any]) -> CodexCapacityStatus | None:
@@ -862,7 +951,8 @@ class CodexAppServerCapacityProbe:
             reason = CodexCapacityReason.RESPONSE_RECEIVED
             if status == CodexCapacityStatus.EXHAUSTED:
                 reason = CodexCapacityReason.EXHAUSTED_WINDOW
-            return CodexCapacityObservation(status=status, reason=reason)
+            limits = extract_capacity_limit_diagnostics(limits_result)
+            return CodexCapacityObservation(status=status, reason=reason, limits=limits)
         except (RecursionError, ValueError, OverflowError):
             return CodexCapacityObservation(
                 status=CodexCapacityStatus.UNAVAILABLE,

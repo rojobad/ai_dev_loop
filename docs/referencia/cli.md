@@ -153,6 +153,32 @@ pendientes y no borra artefactos ni cambios staged del repositorio objetivo.
 fue extendido explicitamente, el techo efectivo puede superar el limite congelado en
 el contexto enviado; la salida indica el limite enviado solo cuando difiere.
 
+## `scheduler cursor-retry`
+
+```bash
+ai_dev_loop scheduler cursor-retry <run-id> [--output text|json]
+```
+
+Tras un timeout confirmado de un turno Cursor, el scheduler conserva el mismo run,
+chat, reviewer, prompt e iteracion, incluidos los cambios staged y unstaged. Programa
+un nuevo intento a los 30 minutos, con un maximo de tres reintentos automaticos por
+turno. Cada intento conserva sus propios artefactos; no consume una review adicional.
+
+El comando manual esta disponible desde el primer timeout: adelanta cualquier espera
+pendiente y tambien permite continuar tras agotar los tres automaticos. Adelantar una
+espera no consume un reintento automatico. El comando encola el intento para el siguiente
+tick; repetirlo antes del lanzamiento no crea otro intento. Requiere que el proceso
+anterior haya terminado, que el run conserve su reserva y que no haya un abort pendiente.
+No repite la admision ni exige limpiar el worktree. Al terminar Cursor, siguen el staging
+y la revision normales, incluida la continuacion de la misma secuencia.
+
+`status` expone `cursor_wait_until` y el comando manual; `history` muestra
+`cursor_timeout_retry` con la accion, el contador y la fecha. Tras agotar los automaticos,
+el run conserva su reserva y espera el comando manual o `scheduler abort`.
+Los bloqueos `cursor_timeout` de versiones anteriores no se migran. El timeout de
+`create-chat`, los fallos de integridad y las terminaciones inciertas no son reintentables
+por este comando.
+
 ## `scheduler extend`
 
 ```bash
@@ -288,6 +314,45 @@ Opciones:
 --wsl-hook-python TEXT
 --wsl-hook-script-path PATH
 ```
+
+## `integration` (API local JSON)
+
+```bash
+ai_dev_loop integration info [--output json]
+ai_dev_loop integration runs list [--kind all|standalone|sequence] [--offset N --limit N]
+ai_dev_loop integration run inspect RUN_ID
+ai_dev_loop integration run attempts RUN_ID [--offset N --limit N]
+ai_dev_loop integration run timeline RUN_ID [--offset N --limit N]
+ai_dev_loop integration run history RUN_ID [--offset N --limit N]
+ai_dev_loop integration run plan RUN_ID [--offset BYTE_OFFSET --limit BYTE_LIMIT]
+ai_dev_loop integration run initial-prompt RUN_ID [--offset BYTE_OFFSET --limit BYTE_LIMIT]
+ai_dev_loop integration run reviews RUN_ID [--offset N --limit N]
+ai_dev_loop integration run review RUN_ID --attempt ATTEMPT_ID
+ai_dev_loop integration run review-content RUN_ID --attempt ATTEMPT_ID --kind prompt|response|review-markdown|cursor-fix-prompt [--offset BYTE_OFFSET --limit BYTE_LIMIT]
+ai_dev_loop integration sequences list [--offset N --limit N]
+ai_dev_loop integration sequence inspect SEQUENCE_ID
+ai_dev_loop integration sequence phase-runs SEQUENCE_ID --ordinal N [--offset N --limit N]
+ai_dev_loop integration sequence phase-plan SEQUENCE_ID --ordinal N [--offset BYTE_OFFSET --limit BYTE_LIMIT]
+ai_dev_loop integration sequence phase-prompt SEQUENCE_ID --ordinal N [--offset BYTE_OFFSET --limit BYTE_LIMIT]
+ai_dev_loop integration sequence report SEQUENCE_ID [--offset BYTE_OFFSET --limit BYTE_LIMIT]
+ai_dev_loop integration run output RUN_ID --attempt ATTEMPT_ID --stream stdout|stderr [--offset BYTE_OFFSET --limit BYTE_LIMIT]
+ai_dev_loop integration codex-capacity [--output json]
+```
+
+Namespace singular para el contrato JSON que consumirá el Bridge futuro. Todas
+las órdenes de este namespace emiten un único documento JSON en stdout; `--help`
+sigue siendo ayuda normal de Typer. El namespace plural `integrations` (instalación
+Codex global) no cambia.
+
+`integration info` no requiere ledger del scheduler. Las lecturas de runs y
+runs, secuencias, revisiones Codex, salida de procesos hijo y capacidad Codex
+(API **1.5**, capacidades `runs`, `sequences`, `reviewInspection`, `processOutput`
+y `codexCapacity`) abren el ledger en
+solo lectura y no migran la base de datos. La opción `--output json` es
+obligatoria en cada subcomando (valor por defecto donde aplica).
+
+Detalle del sobre, códigos de error, paginación y lecturas sensibles:
+[API de integración local](integration-api.md).
 
 ## `integrations sessions`
 

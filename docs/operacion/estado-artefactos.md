@@ -84,3 +84,11 @@ $XDG_STATE_HOME/ai_dev_loop/codex-sessions/<session-id>.json
 ```
 
 No guarda transcript content.
+
+## Proyeccion `integration` (solo lectura)
+
+Los comandos `integration run …`, `integration sequences …` y lecturas de contenido
+leen `engine.sqlite3` y artefactos bajo `artifacts/` en transacciones de solo
+lectura; no migran esquema ni reservas de escritura. `integration codex-capacity`
+no persiste resultados de cuota: solo devuelve una proyeccion JSON efimera tras la
+sonda acotada al CLI Codex en `PATH`.

@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-sequence-shared-v1.json",
+  "title": "ai_dev_loop Integration API shared sequence projection shapes v1",
+  "$defs": {
+    "aggregateCounts": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "planned",
+        "materialized",
+        "accepted",
+        "residualRisk",
+        "checkpointed",
+        "cancelled",
+        "remaining",
+        "attempts"
+      ],
+      "properties": {
+        "planned": { "type": "integer", "minimum": 0 },
+        "materialized": { "type": "integer", "minimum": 0 },
+        "accepted": { "type": "integer", "minimum": 0 },
+        "residualRisk": { "type": "integer", "minimum": 0 },
+        "checkpointed": { "type": "integer", "minimum": 0 },
+        "cancelled": { "type": "integer", "minimum": 0 },
+        "remaining": { "type": "integer", "minimum": 0 },
+        "attempts": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "phaseRunItem": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "runId",
+        "generation",
+        "attemptKind",
+        "materializedAt",
+        "state"
+      ],
+      "properties": {
+        "runId": { "type": "string", "minLength": 1 },
+        "generation": { "type": "integer", "minimum": 1 },
+        "sourceRunId": { "type": ["string", "null"] },
+        "attemptKind": { "type": "string", "minLength": 1 },
+        "materializedAt": { "type": "string", "minLength": 1 },
+        "resolvedAt": { "type": ["string", "null"] },
+        "state": { "type": "string", "minLength": 1 },
+        "terminalOutcome": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

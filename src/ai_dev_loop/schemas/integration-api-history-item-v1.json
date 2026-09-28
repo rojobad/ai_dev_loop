@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-history-item-v1.json",
+  "title": "ai_dev_loop Integration API history item v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["sequence", "kind", "timestamp", "safeDetail"],
+  "properties": {
+    "sequence": { "type": "integer", "minimum": 1 },
+    "kind": { "type": "string", "minLength": 1 },
+    "timestamp": { "type": "string", "minLength": 1 },
+    "safeDetail": { "type": "string" }
+  }
+}

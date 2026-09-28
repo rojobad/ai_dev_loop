@@ -1,0 +1,28 @@
+{
+  "args": [
+    "/tmp/pytest-of-rojobad/pytest-992/test_generate_pre_21_4_histori0/bin/agent",
+    "-p",
+    "--force",
+    "--trust",
+    "--workspace",
+    "/tmp/pytest-of-rojobad/pytest-992/test_generate_pre_21_4_histori0/repo",
+    "--resume",
+    "019abc00-1111-2222-3333-444444444444",
+    "--model",
+    "composer-2.5-fast",
+    "--output-format",
+    "stream-json",
+    "--sandbox",
+    "disabled",
+    "<prompt-redacted>"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 0.05038669693749398,
+  "timed_out": false,
+  "parse_ok": true,
+  "has_completion_signal": true,
+  "errors": [],
+  "structured_errors": [],
+  "final_response_path": "cursor/iterations/01/att-00000000000000000000000000000005/final.txt",
+  "final_response_sha256": "a014e9b1173285f1e0083fc8fdb18af4371dfe987206807ddb06e0ebf6741b97"
+}

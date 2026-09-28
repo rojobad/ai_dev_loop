@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-run-list-data-v1.json",
+  "title": "ai_dev_loop Integration API run list data v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["items", "page"],
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "https://ai-dev-loop.local/schemas/integration-api-run-shared-v1.json#/$defs/runListItem"
+      }
+    },
+    "page": {
+      "$ref": "https://ai-dev-loop.local/schemas/integration-api-collection-page-v1.json"
+    }
+  }
+}

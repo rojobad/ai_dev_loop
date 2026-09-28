@@ -357,6 +357,11 @@ def safe_next_action_for_state_kind(
     cursor_wait_until: str | None = None,
     block_reason_kind: str | None = None,
 ) -> SafeNextAction:
+    if block_reason_kind == "cursor_timeout_retry":
+        return SafeNextAction(
+            kind=SafeNextActionKind.WAIT_UNTIL if cursor_wait_until else SafeNextActionKind.NONE,
+            command=f"ai_dev_loop scheduler cursor-retry {run_id}",
+        )
     if state_kind == "queued":
         return queued_safe_next_action(run_id)
     if state_kind == "authorized":
@@ -447,11 +452,22 @@ def reviewer_session_id_prefix_for_projection(
 
 
 def scheduler_status_projection_from_state(state: object) -> dict[str, str | None]:
-    from ai_dev_loop.scheduler.domain.state import BlockedState, WaitingUsageLimitState
+    from ai_dev_loop.scheduler.domain.state import (
+        BlockedState,
+        CursorReadyState,
+        WaitingForCursorFixState,
+        WaitingUsageLimitState,
+    )
 
     projection: dict[str, str | None] = {"cursor_wait_until": None, "block_reason_kind": None}
     if isinstance(state, WaitingUsageLimitState):
         projection["cursor_wait_until"] = state.cursor.wait_until
+    if (
+        isinstance(state, (CursorReadyState, WaitingForCursorFixState))
+        and state.cursor.timeout_attempt_id
+    ):
+        projection["cursor_wait_until"] = state.cursor.wait_until
+        projection["block_reason_kind"] = "cursor_timeout_retry"
     if isinstance(state, BlockedState):
         projection["block_reason_kind"] = state.block_reason_kind
     return projection

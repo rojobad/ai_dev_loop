@@ -13,6 +13,7 @@ from ai_dev_loop import __version__
 from ai_dev_loop.commands.config_cmd import run_validate_config
 from ai_dev_loop.commands.controller import controller_status, render_controller_status
 from ai_dev_loop.commands.doctor import render_doctor
+from ai_dev_loop.commands.integration import integration_app
 from ai_dev_loop.commands.integrations import (
     CodexIntegrationTarget,
     collect_bridge_status,
@@ -112,6 +113,7 @@ app.add_typer(config_app, name="config")
 app.add_typer(controller_app, name="controller")
 app.add_typer(scheduler_app, name="scheduler")
 app.add_typer(integrations_app, name="integrations")
+app.add_typer(integration_app, name="integration")
 
 
 class OutputFormat(StrEnum):
@@ -386,6 +388,25 @@ def scheduler_review_retry_command(
     def run() -> None:
         result = scheduler_review_retry(run_id)
         typer.echo(render_review_retry_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@scheduler_app.command("cursor-retry")
+def scheduler_cursor_retry_command(
+    run_id: Annotated[str, typer.Argument(help="Run waiting after a Cursor timeout.")],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Retry a terminated Cursor turn now, keeping its chat, prompt and partial changes."""
+
+    def run() -> None:
+        from ai_dev_loop.scheduler.application.cursor_timeout_retry import scheduler_cursor_retry
+
+        result = scheduler_cursor_retry(run_id)
+        if output.value == "json":
+            typer.echo(result.model_dump_json(indent=2))
+        else:
+            typer.echo(f"Cursor retry: {result.run_id}; ready at {result.available_at}")
 
     _handle(run)
 

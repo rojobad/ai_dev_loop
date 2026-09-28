@@ -1,0 +1,31 @@
+{
+  "args_redacted": [
+    "/tmp/pytest-of-rojobad/pytest-992/test_generate_pre_21_4_histori0/bin/codex",
+    "exec",
+    "--cd",
+    "/tmp/pytest-of-rojobad/pytest-992/test_generate_pre_21_4_histori0/repo",
+    "--sandbox",
+    "workspace-write",
+    "--model",
+    "gpt-5.6-sol",
+    "-c",
+    "model_reasoning_effort=\"high\"",
+    "--json",
+    "--output-schema",
+    "/home/rojobad/Projects/ai_dev_loop/src/ai_dev_loop/schemas/codex-review-result-v1.json",
+    "--output-last-message",
+    "/tmp/pytest-of-rojobad/pytest-992/test_generate_pre_21_4_histori0/xdg/state/ai_dev_loop/artifacts/runs/bc8b5fed7c6dd66873bdd9b1500321b93845be548c8cb210b624fb66f48ffe7e/codex/reviews/01.att-00000000000000000000000000000009.json",
+    "<stdin-prompt>"
+  ],
+  "review_mode": "bootstrap",
+  "exit_code": 0,
+  "timed_out": false,
+  "elapsed_seconds": 0.0660431309370324,
+  "stdout_truncated": false,
+  "stderr_truncated": false,
+  "stdout_captured_bytes": 130,
+  "stderr_captured_bytes": 0,
+  "bootstrap_session_id_prefix": "019def00",
+  "bootstrap_uncertainty_reason": null,
+  "review_error": null
+}

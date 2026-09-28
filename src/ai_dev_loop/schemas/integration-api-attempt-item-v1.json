@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-attempt-item-v1.json",
+  "title": "ai_dev_loop Integration API attempt item v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "attemptId",
+    "component",
+    "iteration",
+    "phaseAttempt",
+    "status",
+    "createdAt"
+  ],
+  "properties": {
+    "attemptId": { "type": "string", "minLength": 1 },
+    "component": { "type": "string", "minLength": 1 },
+    "effectKind": { "type": ["string", "null"] },
+    "iteration": { "type": "integer", "minimum": 1 },
+    "phaseAttempt": { "type": "integer", "minimum": 1 },
+    "status": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "string", "minLength": 1 },
+    "launchRequestedAt": { "type": ["string", "null"] },
+    "completedAt": { "type": ["string", "null"] },
+    "observedDurationSeconds": { "type": ["number", "null"] }
+  }
+}

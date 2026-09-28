@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-sequence-list-data-v1.json",
+  "title": "ai_dev_loop Integration API sequence list data v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["items", "page"],
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "sequenceId",
+          "name",
+          "projectName",
+          "repositoryRoot",
+          "state",
+          "preparedAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "sequenceId": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1 },
+          "projectName": { "type": "string", "minLength": 1 },
+          "repositoryRoot": { "type": "string", "minLength": 1 },
+          "state": { "type": "string", "minLength": 1 },
+          "preparedAt": { "type": "string", "minLength": 1 },
+          "updatedAt": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "page": {
+      "$ref": "https://ai-dev-loop.local/schemas/integration-api-collection-page-v1.json"
+    }
+  }
+}

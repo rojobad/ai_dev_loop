@@ -1,0 +1,13 @@
+{
+  "available": false,
+  "reason": "not_captured",
+  "encoding": "base64",
+  "mediaType": null,
+  "byteOffset": 0,
+  "returnedBytes": 1,
+  "nextOffset": null,
+  "availableBytes": null,
+  "hasMore": false,
+  "contentBase64": "",
+  "sha256": null
+}

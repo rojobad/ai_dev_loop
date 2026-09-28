@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-codex-capacity-data-v1.json",
+  "title": "ai_dev_loop Integration API Codex capacity data v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["status", "reason", "limits"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["available", "exhausted", "unavailable"]
+    },
+    "reason": {
+      "type": ["string", "null"]
+    },
+    "limits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "id",
+          "window",
+          "usedPercent",
+          "remainingPercent",
+          "windowDurationMinutes",
+          "resetsAt"
+        ],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "window": { "type": "string", "enum": ["primary", "secondary"] },
+          "usedPercent": { "type": "number", "minimum": 0 },
+          "remainingPercent": { "type": "number", "minimum": 0 },
+          "windowDurationMinutes": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
+          "resetsAt": {
+            "anyOf": [
+              { "type": "null" },
+              { "type": "string", "format": "integration-rfc3339-utc" }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

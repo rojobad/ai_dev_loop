@@ -404,6 +404,8 @@ class CursorWorkflowCheckpoint(DomainModel):
     staged_patch_path: NonEmptyStr | None = None
     staged_patch_sha256: Sha256Hex | None = None
     wait_until: NonEmptyStr | None = None
+    timeout_attempt_id: NonEmptyStr | None = None
+    timeout_automatic_retries: int = Field(default=0, ge=0, le=3)
 
     @field_validator("iteration")
     @classmethod

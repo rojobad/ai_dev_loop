@@ -42,6 +42,10 @@ from ai_dev_loop.scheduler.application.codex_argv import (
 from ai_dev_loop.scheduler.application.codex_evidence import (
     authenticate_pinned_codex_invocation_evidence,
 )
+from ai_dev_loop.scheduler.application.codex_review_prompt_evidence import (
+    CodexReviewPromptEvidenceError,
+    publish_review_prompt_before_launch,
+)
 from ai_dev_loop.scheduler.application.codex_subprocess_env import sanitize_codex_subprocess_env
 from ai_dev_loop.scheduler.domain.codex_contract import (
     BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND,
@@ -54,10 +58,13 @@ from ai_dev_loop.scheduler.domain.codex_contract import (
     codex_attempt_events_rel,
     codex_attempt_stderr_rel,
     codex_review_metadata_rel,
+    codex_review_prompt_evidence_rel,
+    codex_review_prompt_rel,
     codex_review_report_rel,
     codex_review_result_rel,
 )
 from ai_dev_loop.scheduler.infrastructure.paths import run_artifact_root
+from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
 from ai_dev_loop.state import (
     RUN_STATE_SCHEMA_VERSION_FRESH,
     CodexState,
@@ -258,7 +265,11 @@ def _finalize_success_artifacts(
 
 
 def _run_codex_review(
-    evidence: dict[str, object], run_root: Path, run_id: str
+    evidence: dict[str, object],
+    run_root: Path,
+    run_id: str,
+    *,
+    artifact_root: Path,
 ) -> dict[str, object]:
     effect_kind = str(evidence["effect_kind"])
     review_iteration = _binding_int(evidence, "review_iteration")
@@ -300,6 +311,18 @@ def _run_codex_review(
     if evidence.get("operational_review_retry"):
         prompt = REVIEW_RETRY_OPERATIONAL_ENVELOPE + prompt
 
+    artifacts = ProtectedArtifactStore(artifact_root)
+    try:
+        publish_review_prompt_before_launch(
+            artifacts,
+            run_id=run_id,
+            attempt_id=attempt_id,
+            review_iteration=review_iteration,
+            prompt=prompt,
+        )
+    except CodexReviewPromptEvidenceError as exc:
+        raise RuntimeError(str(exc)) from exc
+
     if effect_kind == BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND:
         args = build_scheduler_codex_bootstrap_args(
             command=str(evidence["codex_command"]),
@@ -326,6 +349,12 @@ def _run_codex_review(
         )
         review_mode = "resume"
 
+    prompt_rel = codex_review_prompt_rel(review_iteration, attempt_id)
+    evidence_rel = codex_review_prompt_evidence_rel(review_iteration, attempt_id)
+    codex_env = sanitize_codex_subprocess_env()
+    codex_env["AI_DEV_LOOP_REVIEW_PROMPT_WITNESS_ROOT"] = str(run_root)
+    codex_env["AI_DEV_LOOP_REVIEW_PROMPT_REL"] = prompt_rel
+    codex_env["AI_DEV_LOOP_REVIEW_EVIDENCE_REL"] = evidence_rel
     process = run_process_streaming(
         args,
         cwd=repository_root,
@@ -334,10 +363,11 @@ def _run_codex_review(
         stdout_path=events_path,
         stderr_path=stderr_path,
         sensitive=True,
-        env=sanitize_codex_subprocess_env(),
+        env=codex_env,
         max_stdout_bytes=MAX_CODEX_CAPTURE_STDOUT_BYTES,
         max_stderr_bytes=MAX_CODEX_CAPTURE_STDERR_BYTES,
         drain_after_limit=True,
+        incremental_file_capture=True,
     )
 
     bootstrap_session_id: str | None = None
@@ -486,7 +516,12 @@ def main(argv: list[str] | None = None) -> int:
             launch_intent_sha256=args.launch_intent_sha256,
             effect_kind=effect_kind,
         )
-        codex_outcome = _run_codex_review(evidence, run_root, args.run_id)
+        codex_outcome = _run_codex_review(
+            evidence,
+            run_root,
+            args.run_id,
+            artifact_root=Path(args.artifact_root),
+        )
         if codex_outcome.get("timed_out"):
             exit_code = 124
         else:

@@ -1,0 +1,1 @@
+{"attempt_id": "att-00000000000000000000000000000002", "chat_id": "019abc00-1111-2222-3333-444444444444", "create_chat_metadata_path": "cursor/create-chat/metadata.json", "dispatch_id": "fx-37e3ac514a9dbe16abc3693f4ede3a31", "effect_kind": "cursor.create_chat", "has_completion_signal": true, "run_id": "fixture-project-20260921T013201Z-50f2bd"}

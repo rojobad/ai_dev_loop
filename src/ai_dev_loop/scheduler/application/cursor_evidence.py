@@ -161,7 +161,14 @@ def verify_prompt_binding(
     prompt_path: str,
     prompt_sha256: str,
 ) -> None:
-    path = run_root / prompt_path
+    from ai_dev_loop.scheduler.infrastructure.paths import resolve_run_relative_path
+
+    try:
+        path = resolve_run_relative_path(run_root, prompt_path)
+    except ValueError:
+        raise CursorEvidenceError("prompt path is not safe to read") from None
+    if path.is_symlink():
+        raise CursorEvidenceError("prompt path is not safe to read")
     if not path.is_file():
         raise CursorEvidenceError("prompt artifact missing for invocation binding")
     digest = sha256_bytes(path.read_bytes())
@@ -205,7 +212,7 @@ def verify_pre_execution_cursor_guards(
     )
     fingerprint_path = evidence.get("usage_limit_fingerprint_path")
     fingerprint_sha = evidence.get("usage_limit_fingerprint_sha256")
-    if fingerprint_path and fingerprint_sha:
+    if fingerprint_path and fingerprint_sha and not evidence.get("timeout_retry_of"):
         iteration_raw = evidence["iteration"]
         if isinstance(iteration_raw, bool) or not isinstance(iteration_raw, (int, str)):
             raise CursorEvidenceError("invocation evidence iteration must be numeric")
@@ -301,7 +308,8 @@ def verify_pre_execution_cursor_guards(
             digest = sha256_bytes(patch_abs.read_bytes())
             if digest != str(staged_patch_sha):
                 raise CursorEvidenceError("staged patch artifact hash does not match binding")
-            validate_staged_patch_matches_artifact(repo_root, patch_abs)
+            if not evidence.get("timeout_retry_of"):
+                validate_staged_patch_matches_artifact(repo_root, patch_abs)
 
 
 def authenticate_pinned_invocation_evidence(
@@ -451,6 +459,8 @@ def load_authenticated_cursor_outcome(
         and effect_kind == RUN_CURSOR_TURN_EFFECT_KIND
         and not outcome.get("timed_out")
         and int(outcome.get("returncode", validated.exit_code)) == 0
+        and outcome.get("parse_ok") is True
+        and outcome.get("has_completion_signal") is True
     ):
         raise CursorEvidenceError("outcome disagrees with envelope termination")
     return outcome

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-sequence-phase-run-list-data-v1.json",
+  "title": "ai_dev_loop Integration API sequence phase run list data v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["sequenceId", "ordinal", "items", "page", "runCount"],
+  "properties": {
+    "sequenceId": { "type": "string", "minLength": 1 },
+    "ordinal": { "type": "integer", "minimum": 1 },
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "https://ai-dev-loop.local/schemas/integration-api-sequence-shared-v1.json#/$defs/phaseRunItem"
+      }
+    },
+    "page": {
+      "$ref": "https://ai-dev-loop.local/schemas/integration-api-collection-page-v1.json"
+    },
+    "runCount": { "type": "integer", "minimum": 0 }
+  }
+}

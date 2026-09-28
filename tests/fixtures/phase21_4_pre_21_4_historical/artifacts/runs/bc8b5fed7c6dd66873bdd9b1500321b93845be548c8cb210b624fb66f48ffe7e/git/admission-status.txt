@@ -1,0 +1,5 @@
+branch=master
+head=03d81b45c618a571a2b0b09bd5ec301238c81aca
+git_common_dir=/tmp/pytest-of-rojobad/pytest-992/test_generate_pre_21_4_histori0/repo/.git
+git_dir=/tmp/pytest-of-rojobad/pytest-992/test_generate_pre_21_4_histori0/repo/.git
+status_porcelain=

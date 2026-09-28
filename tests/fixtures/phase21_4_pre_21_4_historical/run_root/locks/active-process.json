@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "run_id": "fixture-project-20260921T013201Z-50f2bd",
+  "component": "cursor",
+  "iteration": 1,
+  "pid": 66318,
+  "pgid": 66318,
+  "parent_pid": 66288,
+  "started_at": "2026-09-21T01:32:03.355666+00:00",
+  "cwd": "/tmp/pytest-of-rojobad/pytest-992/test_generate_pre_21_4_histori0/repo",
+  "argv_redacted": [
+    "/tmp/pytest-of-rojobad/pytest-992/test_generate_pre_21_4_histori0/bin/agent",
+    "-p",
+    "--force",
+    "--trust",
+    "--workspace",
+    "/tmp/pytest-of-rojobad/pytest-992/test_generate_pre_21_4_histori0/repo",
+    "--resume",
+    "019abc00-1111-2222-3333-444444444444",
+    "--model",
+    "composer-2.5-fast",
+    "--output-format",
+    "stream-json",
+    "--sandbox",
+    "disabled",
+    "<prompt-redacted>"
+  ],
+  "process_start_time": "84767395",
+  "executable": "/home/rojobad/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/bin/python3.11",
+  "cleared_at": "2026-09-21T01:32:03.395353+00:00",
+  "cleared_reason": "completed"
+}

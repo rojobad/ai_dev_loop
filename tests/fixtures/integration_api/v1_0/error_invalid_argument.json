@@ -1,0 +1,10 @@
+{
+  "apiVersion": { "major": 1, "minor": 0 },
+  "ok": false,
+  "observedAt": "2026-09-18T12:00:00Z",
+  "data": null,
+  "error": {
+    "code": "INVALID_ARGUMENT",
+    "message": "Unknown integration command."
+  }
+}

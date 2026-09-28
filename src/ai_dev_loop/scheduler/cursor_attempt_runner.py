@@ -10,6 +10,8 @@ from pathlib import Path
 
 from ai_dev_loop.runners.cursor import (
     CREATE_CHAT_METADATA_REL,
+    CREATE_CHAT_STDERR_REL,
+    CREATE_CHAT_STDOUT_REL,
     create_chat,
     execute_prompt,
 )
@@ -29,6 +31,7 @@ from ai_dev_loop.scheduler.application.cursor_evidence import (
     authenticate_pinned_invocation_evidence,
     verify_pre_execution_cursor_guards,
 )
+from ai_dev_loop.scheduler.application.output_observation import write_cursor_output_observation
 from ai_dev_loop.scheduler.domain.cursor_contract import (
     CREATE_CHAT_EFFECT_KIND,
     RUN_CURSOR_TURN_EFFECT_KIND,
@@ -237,13 +240,22 @@ def _run_create_chat(evidence: dict[str, object], run_root: Path, run_id: str) -
         run_directory=run_root,
         run_id=run_id,
     )
-    return {
+    stdout_path = run_root / CREATE_CHAT_STDOUT_REL
+    stderr_path = run_root / CREATE_CHAT_STDERR_REL
+    outcome: dict[str, object] = {
         "effect_kind": CREATE_CHAT_EFFECT_KIND,
         "chat_id": chat_id,
         "create_chat_metadata_path": CREATE_CHAT_METADATA_REL,
+        "create_chat_stdout_artifact_path": CREATE_CHAT_STDOUT_REL,
+        "create_chat_stderr_artifact_path": CREATE_CHAT_STDERR_REL,
         "has_completion_signal": True,
         **_outcome_identity(evidence),
     }
+    if stdout_path.is_file() and not stdout_path.is_symlink():
+        outcome["create_chat_stdout_sha256"] = sha256_file(stdout_path)
+    if stderr_path.is_file() and not stderr_path.is_symlink():
+        outcome["create_chat_stderr_sha256"] = sha256_file(stderr_path)
+    return outcome
 
 
 def _run_cursor_turn(
@@ -316,6 +328,18 @@ def _run_cursor_turn(
         metadata_payload["final_response_path"] = final_rel
         metadata_payload["final_response_sha256"] = final_response_sha256
     atomic_write_json(run_root / metadata_rel, metadata_payload, sensitive=True)
+    stdout_stored = events_path.stat().st_size if events_path.is_file() else 0
+    stderr_stored = stderr_path.stat().st_size if stderr_path.is_file() else 0
+    write_cursor_output_observation(
+        run_root,
+        run_id=run_id,
+        attempt_id=attempt_id,
+        iteration=iteration_number,
+        stdout_stored_bytes=stdout_stored,
+        stderr_stored_bytes=stderr_stored,
+        stdout_truncated=execution.process.stdout_truncated,
+        stderr_truncated=execution.process.stderr_truncated,
+    )
 
     run_state = _run_state_from_binding(evidence)
     fingerprint_path = ""

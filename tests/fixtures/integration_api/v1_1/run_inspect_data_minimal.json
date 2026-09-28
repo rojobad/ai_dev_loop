@@ -1,0 +1,20 @@
+{
+  "runId": "fixture-project-20260904T120000Z-abc123",
+  "projectName": "fixture-project",
+  "repositoryRoot": "/tmp/repo",
+  "state": "queued",
+  "submittedAt": "2026-09-04T12:00:00.000000Z",
+  "updatedAt": "2026-09-04T12:00:00.000000Z",
+  "reviewBudget": { "completed": 0, "max": 3, "submittedMax": null },
+  "sequenceBinding": null,
+  "residualRisk": null,
+  "blockReason": null,
+  "cursorWaitUntil": null,
+  "safeNextAction": {
+    "kind": "scheduler_start",
+    "runId": "fixture-project-20260904T120000Z-abc123",
+    "sequenceId": null,
+    "waitUntil": null
+  },
+  "attemptCount": 0
+}

@@ -32,6 +32,7 @@ nav:
       - Desinstalación y limpieza: operacion/desinstalacion-limpieza.md
   - Referencia:
       - CLI: referencia/cli.md
+      - API de integración local: referencia/integration-api.md
       - Configuración: referencia/configuracion.md
       - Codex Desktop WSL Sessions: referencia/codex-desktop-wsl-sessions.md
       - Trazabilidad de fases: referencia/trazabilidad-fases.md

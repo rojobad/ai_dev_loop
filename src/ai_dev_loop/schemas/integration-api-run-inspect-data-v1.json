@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-run-inspect-data-v1.json",
+  "title": "ai_dev_loop Integration API run inspect data v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "runId",
+    "projectName",
+    "repositoryRoot",
+    "state",
+    "submittedAt",
+    "updatedAt",
+    "reviewBudget",
+    "residualRisk",
+    "blockReason",
+    "cursorWaitUntil",
+    "safeNextAction",
+    "attemptCount"
+  ],
+  "properties": {
+    "runId": { "type": "string", "minLength": 1 },
+    "projectName": { "type": "string", "minLength": 1 },
+    "repositoryRoot": { "type": "string", "minLength": 1 },
+    "state": { "type": "string", "minLength": 1 },
+    "submittedAt": { "type": "string", "minLength": 1 },
+    "updatedAt": { "type": "string", "minLength": 1 },
+    "reviewBudget": {
+      "$ref": "https://ai-dev-loop.local/schemas/integration-api-run-shared-v1.json#/$defs/reviewBudget"
+    },
+    "sequenceBinding": {
+      "oneOf": [
+        {
+          "$ref": "https://ai-dev-loop.local/schemas/integration-api-run-shared-v1.json#/$defs/sequenceBinding"
+        },
+        { "type": "null" }
+      ]
+    },
+    "residualRisk": { "type": ["boolean", "null"] },
+    "blockReason": { "type": ["string", "null"] },
+    "cursorWaitUntil": { "type": ["string", "null"] },
+    "safeNextAction": {
+      "$ref": "https://ai-dev-loop.local/schemas/integration-api-run-shared-v1.json#/$defs/safeNextAction"
+    },
+    "attemptCount": { "type": "integer", "minimum": 0 }
+  }
+}

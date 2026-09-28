@@ -242,6 +242,7 @@ def execute_prompt(
         stderr_path=stderr_path,
         sensitive=True,
         active_process=active_process,
+        incremental_file_capture=active_process is not None,
     )
     parse = parse_stream_json(process.stdout)
     failure = classify_cursor_failure_text(

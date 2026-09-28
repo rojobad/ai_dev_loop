@@ -279,6 +279,8 @@ def apply_cursor_turn_completed(
     cursor = state.cursor.model_copy(
         update={
             "iteration": event.iteration,
+            "timeout_attempt_id": None,
+            "timeout_automatic_retries": 0,
             "cursor_output_fingerprint_path": event.cursor_output_fingerprint_path,
             "cursor_output_fingerprint_sha256": event.cursor_output_fingerprint_sha256,
             "wait_until": None,
@@ -329,6 +331,7 @@ def apply_cursor_usage_limit_detected(
     if event.run_id != state.run_id:
         raise ValueError("event run_id disagrees with state")
     cursor_updates: dict[str, object] = {
+        "timeout_attempt_id": None,
         "iteration": event.iteration,
         "wait_until": event.wait_until,
         "usage_limit_fingerprint_path": event.usage_limit_fingerprint_path,

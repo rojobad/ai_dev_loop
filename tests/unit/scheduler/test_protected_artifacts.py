@@ -149,6 +149,35 @@ def test_secures_existing_sequence_root_permissions(tmp_path: Path) -> None:
     assert stat.S_IMODE(root.stat().st_mode) == DIR_MODE
 
 
+def test_f11_write_text_or_verify_conflicting_hash_raises_protected_artifact_error(
+    tmp_path: Path,
+) -> None:
+    store = ProtectedArtifactStore(tmp_path / "artifacts")
+    store.write_text_or_verify(
+        "run-1",
+        "plan/plan.md",
+        "original plan\n",
+        max_bytes=1024,
+    )
+    with pytest.raises(ProtectedArtifactError, match="hash|mismatch"):
+        store.write_text_or_verify(
+            "run-1",
+            "plan/plan.md",
+            "different plan\n",
+            max_bytes=1024,
+        )
+
+
+def test_f11_publish_or_verify_conflicting_size_raises_protected_artifact_error(
+    tmp_path: Path,
+) -> None:
+    store = ProtectedArtifactStore(tmp_path / "artifacts")
+    rel = "prompts/p.txt"
+    store.publish_or_verify_bytes("run-1", rel, b"short", max_bytes=1024)
+    with pytest.raises(ProtectedArtifactError, match="hash|mismatch"):
+        store.publish_or_verify_bytes("run-1", rel, b"longer-bytes", max_bytes=1024)
+
+
 def test_write_text_or_verify_accepts_concurrent_identical_publish(tmp_path: Path) -> None:
     import threading
 

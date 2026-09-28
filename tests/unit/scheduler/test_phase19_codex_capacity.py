@@ -139,7 +139,14 @@ def _run_until(
             state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
             if state.kind == target_kind:
                 return
-    raise AssertionError(f"run {run_id} did not reach {target_kind}")
+    with tick.store.begin_read() as conn:
+        state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
+        last_error = getattr(state, "last_error", None)
+        block_reason = getattr(state, "block_reason_kind", None)
+    raise AssertionError(
+        f"run {run_id} did not reach {target_kind}; final kind={state.kind!r} "
+        f"block_reason={block_reason!r} last_error={last_error!r}"
+    )
 
 
 class TestUsageLimitClassifier:
