@@ -149,8 +149,14 @@ otorgarse con `scheduler extend` mientras el run esta en `max_iterations_reached
 Los limites
 operativos documentados son:
 
-- `max_iterations_reached`: el run termina con cambios staged y el ultimo fix
-  prompt preservado; no hay comando publico para ampliar el presupuesto.
+- `max_iterations_reached`: el run conserva cambios staged y el último fix
+  prompt. `scheduler extend <run-id> --max-review-iterations <higher-total>`
+  autoriza explícitamente un techo mayor y encola la corrección pendiente.
+- `scheduler review retry`: autoriza reintentos elegibles del reviewer o crea
+  un sucesor same-reviewer de un origen bloqueado elegible; no cambia los
+  valores congelados de modelo y razonamiento.
+- `scheduler cursor-retry`: adelanta o autoriza otro intento de un turno Cursor
+  con timeout confirmado, conservando chat, modelo, prompt y trabajo parcial.
 - `scheduler abort`: cancelacion no destructiva; preserva artefactos y cambios staged.
 - Runs interrumpidos o bloqueados: inspecciona `scheduler status` y
   `scheduler history`; la accion segura depende del checkpoint durable en el ledger.

@@ -1,96 +1,78 @@
 ---
-description: "Abort contracts for ai_dev_loop process control, active child metadata, safe termination, and non-destructive cancellation. Apply whenever editing abort, process execution, workflow control, status/logs/inspect abort reporting, docs, or tests."
+description: "Scheduler abort, exact process ownership, and non-destructive cancellation contracts. Apply when editing abort, attempts, process control, sequence recovery, docs, or tests."
 globs:
 alwaysApply: true
 ---
 
 # ai_dev_loop Abort Contracts
 
-These contracts protect `ai_dev_loop abort <run-id>` and any code that observes abort requests while a run is active. They apply in addition to `ai-dev-loop-governance.mdc`, `ai-dev-loop-orchestrator-contracts.mdc`, `ai-dev-loop-state-and-schema-contracts.mdc`, `ai-dev-loop-codex-review-contracts.mdc`, and `ai-dev-loop-loop-and-resume-contracts.mdc`.
+Apply with `AGENTS.md` and the governance, orchestrator, state/schema, review,
+and loop rules. The supported commands are `scheduler abort <run-id>` and
+`scheduler sequence abort <sequence-id>`, not the retired top-level `abort`.
 
-## Source Of Truth
+## Durable Cancellation
 
-- `archive/implementation-history/master-plan.md` is the archived master architecture contract.
-- The active phase plan narrows implementation scope.
-- `abort` is a process-control and state-preservation command, not a cleanup or rollback command.
-- If process-control state is ambiguous, fail safely and preserve diagnostics.
+- Persist the abort request in the scheduler ledger before attempting external
+  process termination. Cancel/fence pending effects, timers, and claims through
+  the existing abort/reconciliation services.
+- Stop only the exact owned attempt unit through the configured process backend.
+  Never discover a target by fuzzy process names, guessed PIDs, or agent output.
+- Check durable cancellation before new agent work, staging, review, and sequence
+  handoff. A late result must not revive cancelled work or authorize a successor.
+- Do not claim full process cleanup or release the repository reservation while
+  an owned process or checkpoint outcome remains unresolved. Preserve holds and
+  report the safe next action for later reconciliation.
+- A signal or nonzero exit alone is not proof of user abort. External kills,
+  OOM, and terminal loss without durable cancellation follow classified failure
+  handling, not invented user intent.
+- Repeated abort of an aborted run reconciles outstanding cleanup idempotently;
+  other terminal outcomes follow the command's conflict policy. Review-budget
+  extension is a separate explicit command, not an abort transition.
 
-## Non-Destructive Abort
+## Repository And Artifact Preservation
 
-- Preserve repository contents exactly as they exist when abort is requested.
-- Preserve staged changes exactly as they exist when abort is requested.
-- Preserve run artifacts, logs, prompts, reviews, patches, and partial child output.
-- Do not commit, tag, push, reset, clean, stash, unstage, delete agent edits, or rewrite Git state.
-- Do not remove lock files owned by another active process.
-- Do not delete partial Cursor or Codex artifacts.
+- Abort does not roll back agent edits, restore an earlier index, delete partial
+  output, or reset the worktree. Preserve staged/unstaged changes and artifacts.
+  A live process can still write before it is stopped; do not promise an atomic
+  filesystem snapshot at the instant the user requests abort.
+- Do not commit, push, tag, reset, clean, stash, unstage, or rewrite Git history
+  as abort cleanup. Do not remove locks held by another live owner.
+- Preserve partial Cursor/Codex output, reviews, fix prompts, and attempt evidence.
 
-## Abort Request Contract
+## Sequence Coordination
 
-- Persist a durable abort request under the run directory before attempting process termination.
-- The abort request must include the run ID, request timestamp, requesting PID, and a stable reason such as `user_requested_abort`.
-- Write abort request metadata atomically and apply sensitive permissions where supported.
-- Check for an existing abort request before creating a Cursor chat or performing any other post-preflight side effect.
-- The active workflow must check for abort requests before starting each Cursor turn, staging pass, Codex review, or review-processing step.
-- The active workflow must check again after each workflow action.
-- Once an abort request is observed, do not start another Cursor turn, staging pass, Codex review, or correction turn.
+- Prepared-sequence abort cancels future work without materializing runs.
+  Active-sequence abort persists intent before delegating to the current run.
+- Cancel pending replacement/handoff work and prevent later phases from starting.
+  Do not release the shared reservation while the sequence or unresolved holds
+  still governs it.
+- An abort around an already-applied checkpoint ref CAS reconciles the observed
+  commit without rolling it back, making another Git mutation, or starting the
+  next phase. Uncertain CAS/process outcomes retain their reconciliation holds.
+- A terminal current run does not prevent sequence abort from completing through
+  the supported sequence service; do not retry an ineligible run abort blindly.
 
-## Active Process Metadata
+## Child Process Helpers And Legacy Metadata
 
-- Register active Cursor and Codex streaming subprocesses immediately after process start.
-- Active-process registration is all-or-nothing: if a child process has started and metadata registration fails, terminate and reap the entire child process group before returning an error.
-- Never allow a Cursor or Codex child process to continue running without active-process metadata when that metadata is required for abort control.
-- Metadata must include run ID, component, iteration, PID, PGID, parent PID, start timestamp, working directory, and redacted argv.
-- Redact prompts, fix prompts, raw patches, full review content, auth payloads, and secret-like values.
-- Do not store full process environments.
-- Clear or mark active metadata when the child completes, fails, times out, or is aborted.
-- Keep process metadata under XDG-managed run state outside target repositories.
+- When a process helper requires active metadata, registration is all-or-nothing:
+  after a child starts, registration failure must terminate and reap its group.
+- Validate exact run ownership and liveness before signaling any registered PID/
+  PGID. Never kill an unrelated process due to stale metadata. Use bounded graceful
+  termination followed by forced termination only for the same owned process.
+- Keep process metadata outside the repository, with redacted arguments and no
+  full environments. Preserve ambiguous evidence for diagnosis.
+- Legacy `abort-request.json` and active-process files are contracts for retained
+  helpers/fixtures. They do not replace scheduler ledger cancellation and exact
+  attempt-unit ownership. Do not restore top-level `abort` or per-run locks as
+  the scheduler control interface.
 
-## Process Signaling Safety
+## Privacy And Validation
 
-- Signal only process groups clearly tied to the selected run by active-process metadata.
-- Validate the metadata run ID before signaling.
-- Validate PID and PGID are positive integers.
-- Check process liveness before signaling.
-- Prefer conservative stale-metadata handling. If metadata may point at an unrelated process, do not signal it.
-- Do not mark a run `aborted` while stale-but-live active-process metadata may still represent a child mutating the repository.
-- Preserve stale or ambiguous active-process metadata for manual diagnostics unless process-group liveness was actually checked and the group is confirmed not live.
-- Send `SIGTERM` first, wait a bounded grace period, then send `SIGKILL` only if the same process group is still live.
-- Never execute text emitted by Cursor or Codex while handling abort.
-
-## Workflow Outcome
-
-- A child process killed because of a user abort must lead to run status `aborted`.
-- A child process exit from `SIGTERM` or `SIGKILL` is a user abort only when a durable abort request exists for the run.
-- External kills, OOMs, terminal closures, or manual signals without an abort request must follow normal failure/interruption handling with diagnostics.
-- Do not report a user-aborted child as a generic `failed` or `interrupted` outcome.
-- If no child is active and the run is non-terminal, `abort` may mark the run `aborted` after acquiring safe mutation locks.
-- If the workflow lock is held by an active run, `abort` may leave the abort request for the active workflow to observe at the next checkpoint.
-- Terminal states remain terminal:
-  - `completed`;
-  - `completed_with_residual_risk`;
-  - `max_iterations_reached`;
-  - `failed`;
-  - `aborted`.
-
-## Privacy And Output
-
-- Default CLI output must be concise and must not include full prompts, fix prompts, staged patches, review Markdown, raw JSONL, full session IDs, auth payloads, full environments, or secret-like values.
-- Human-readable errors should point to artifact paths or safe summaries instead of embedding raw child output.
-- Structured event details must be redacted.
-- Include enough status/log/inspect context for manual recovery without leaking sensitive content.
-
-## Tests
-
-- Use fake `agent` and fake `codex` executables in automated tests.
-- Do not invoke real model activity in tests.
-- Test aborting a running fake Cursor process.
-- Test aborting a running fake Codex process.
-- Test abort requests with no active child process.
-- Test terminal-state refusal or no-op behavior.
-- Test stale or mismatched active-process metadata does not kill unrelated processes.
-- Test stale-but-live metadata does not mark the run `aborted` and preserves diagnostics.
-- Test active-process registration failure after child start terminates and reaps the child process group.
-- Test external `SIGTERM` or `SIGKILL` without an abort request is not classified as user abort.
-- Test abort requested before Cursor chat creation does not create `cursor/chat.json`.
-- Test staged and unstaged repository contents are preserved.
-- Test status, logs, and inspect expose abort diagnostics without leaking sensitive content.
+- Default output contains safe summaries, shortened identities, and artifact
+  references, not raw prompts, patches, reviews, stdout/stderr, or secrets.
+- Test changed abort paths with fake backends/CLIs and temporary repositories:
+  durable request before stop, no new work after cancellation, exact ownership,
+  uncertain termination, repeated reconciliation, sequence/checkpoint races,
+  and preservation of edits/artifacts/reservations until cleanup is proven.
+- No real model activity, timer enablement, or workstation service changes belong
+  in automated tests.

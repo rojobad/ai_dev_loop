@@ -20,9 +20,11 @@ These contracts protect the user-level Codex integration layer for `ai_dev_loop`
 - Install only the package-owned skills at:
   - `$HOME/.agents/skills/ai-dev-loop-handoff/SKILL.md`
   - `$HOME/.agents/skills/ai-dev-loop-controller/SKILL.md`
+  - `$HOME/.agents/skills/ai-dev-loop-fallback-recovery/SKILL.md`
   for the selected target's Codex-visible home.
-- Those two skill directories are the only package-managed skills. Do not invent
-  additional skill install roots.
+- Use `OWNED_SKILLS` in `src/ai_dev_loop/integrations/codex/assets.py` as the
+  package-owned resource inventory, including fallback recovery's reference and
+  agent metadata files. Do not invent additional install roots.
 - For `wsl-cli`, the Codex-visible home is the WSL user home.
 - For `codex-desktop-wsl`, the Codex-visible home is the Windows user profile exposed to WSL (for example `/mnt/c/Users/<user>`), not the WSL home.
 - Do not install skills under `~/.codex/skills` or any invented/deprecated skill path.
@@ -64,29 +66,35 @@ These contracts protect the user-level Codex integration layer for `ai_dev_loop`
 - `integrations sessions remove` removes only the bridge symlink and refuses non-symlink paths.
 - `integrations uninstall` must not remove the session bridge by default.
 - `integrations sessions list` may read rollout filenames only; do not read rollout contents or SQLite state.
-- Phase 10 `prepare` may resolve an exact session UUID through the validated bridge and stream its rollout solely to extract allowlisted `session_meta`, `thread_settings_applied`, and `turn_context` runtime scalars, including supported `event_msg` wrappers.
+- Retained Phase 10 compatibility code may resolve an exact UUID through the
+  validated bridge solely to extract allowlisted runtime scalars. New scheduler
+  submissions do not read A's rollout or require the bridge to create reviewer B.
 - Session runtime extraction must not retain transcript content, arbitrary event payloads, or the absolute rollout path. Ambiguous UUID matches or untrusted roots must fail closed.
 
 ## Skill Contract
 
-- Package-owned skill frontmatter names must be exactly `ai-dev-loop-handoff` and
-  `ai-dev-loop-controller`.
-- The handoff skill orchestrates the A/B workflow: same-directory app fork after
-  explicit plan approval; B prepares with `--controller-session-id <A>` and its own
-  exact SessionStart ID as `--codex-session-id`; B returns the prepared run identity
-  to A through an authorized app message; B then remains inactive.
-- The controller skill is controller-A-only. It may call only `controller status`,
-  `launch`, `abort`, and existing read-only inspection commands. It must refuse when
-  A equals the run's reviewer B.
-- Both skills must tell Codex to use the exact session ID supplied by SessionStart
-  context and must never use `--last` or inferred IDs.
+- Package-owned skill names must match `OWNED_SKILLS`: `ai-dev-loop-handoff`,
+  `ai-dev-loop-controller`, and `ai-dev-loop-fallback-recovery`.
+- Handoff submits an approved plan and exact prompt with explicit review model
+  and reasoning. A is optional provenance; no app fork, cross-chat message, or
+  pre-existing B is required. Do not pass `--codex-session-id`.
+- The scheduler creates B once at the first review, then resumes its exact
+  identity. Controller actions must never send prompts to or resume B directly.
+- Controller commands are `controller status`, `scheduler start`,
+  `scheduler abort`, and read-only scheduler status/list/history/timeline.
+  Refuse controller actions from the run's bound reviewer identity. Known run ID
+  and repository suffice for lookup; missing optional A metadata does not block it.
+- If A provenance is supplied, use the exact known SessionStart ID. Never use
+  `--last`, infer IDs, or make session discovery a new-run prerequisite.
 - The handoff skill must tell Codex to read the target repository's `ai_dev_loop.yaml`.
-- The handoff skill must not tell Codex to run `ai_dev_loop start` or `launch` from
-  reviewer session B.
+- Do not restore retired top-level `start`/`launch` or session-bound preparation.
 - The skills must not hard-code project names, plan paths, prompt paths, model names,
   or review skill names.
-- If the Codex app fork or cross-thread message capability is unavailable, the skills
-  must stop safely and explain the missing capability.
+- Fallback recovery is a separately authorized agent workflow that reproduces a
+  stable staged implementation in an isolated worktree and submits a fresh
+  ordinary run. It is not `scheduler review retry`, does not preserve B, and is
+  not a new `scheduler recovery` command. Follow its explicit admission/scope
+  limits; do not trigger it automatically for every failed review.
 
 ## SessionStart Hook Contract
 
@@ -125,15 +133,16 @@ These contracts protect the user-level Codex integration layer for `ai_dev_loop`
 - Preserve unrelated hook registrations.
 - Validate and parse `hooks.json` before deleting installed files. If `hooks.json` is invalid, leave the skill file, hook script, and hook registration untouched and report the validation error.
 - Do all fallible validation work before destructive or irreversible file operations whenever mutating user-global files.
-- Delete only installed files, such as `SKILL.md` and the installed hook script. Remove an installed asset directory only when it is empty after deleting owned files.
+- Delete only package-owned resources from the current inventory and the owned
+  hook script. Remove installed directories only when empty afterward.
 - Preserve user-added files inside package-owned skill directories
-  (`ai-dev-loop-handoff` and `ai-dev-loop-controller`).
-- Delete only owned `SKILL.md` files on uninstall; remove a skill directory only when
-  empty afterward.
+  (`ai-dev-loop-handoff`, `ai-dev-loop-controller`, and
+  `ai-dev-loop-fallback-recovery`).
 - Preserve run history, prompts, reviews, staged patches, logs, XDG state, and XDG config by default.
 - Back up `hooks.json` before removing the `ai_dev_loop` hook registration.
 - If `hooks.json` is invalid, fail safely and do not rewrite it.
-- Do not implement destructive state cleanup unless an explicit later plan adds confirmation and tests.
+- Uninstall does not perform state cleanup. The existing explicit
+  `scheduler cutover cleanup` has a separate confirmation and ownership boundary.
 
 ## Status And Doctor
 

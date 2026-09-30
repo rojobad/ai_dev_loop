@@ -1,180 +1,135 @@
 ---
-description: "Loop and resume contracts for ai_dev_loop bounded review/fix iterations, correction staging, and idempotent recovery. Apply whenever editing start/resume, staging, Cursor/Codex runners, iteration state, logs, docs, or tests."
+description: "Scheduler review/fix loop, staging, bounded retries, sequence checkpoints, and recovery contracts. Apply when editing workflow, runners, recovery, artifacts, docs, or tests."
 globs:
 alwaysApply: true
 ---
 
-# ai_dev_loop Loop And Resume Contracts
+# ai_dev_loop Loop And Recovery Contracts
 
-These contracts protect the complete stage-review-fix loop and explicit resume behavior. They apply in addition to `ai-dev-loop-governance.mdc`, `ai-dev-loop-orchestrator-contracts.mdc`, `ai-dev-loop-state-and-schema-contracts.mdc`, and `ai-dev-loop-codex-review-contracts.mdc`.
+Apply with `AGENTS.md`, governance, orchestrator, state/schema, and review rules.
+The supported engine is the central scheduler. The filename is retained for
+existing references; it does not imply a public `resume` command.
 
-## Source Of Truth
+## Loop And Budget
 
-- `archive/implementation-history/master-plan.md` is the archived master architecture contract.
-- Archived phase plans under `archive/implementation-history/plans/` provide historical scope context.
-- The structured Codex JSON result is the source of truth for loop decisions.
-- The orchestrator may validate, persist, and forward prompts and decisions. It must not invent architecture, reinterpret findings, scrape Markdown, or replace Codex/Cursor reasoning.
+- `scheduler submit` freezes inputs; `scheduler start` authorizes execution;
+  bounded `scheduler tick` passes reconcile durable effects and attempt results.
+- `workflow.max_review_iterations` counts completed Codex reviews, including
+  the first review after the initial Cursor implementation. Operational retries
+  do not themselves consume another completed review.
+- Schema-validated Codex results drive acceptance and fixes. Never scrape
+  Markdown, invent findings, or infer approval from silence or failed output.
+- Persist the exact `cursor_fix_prompt` and deterministic execution envelope.
+  Embed the fix prompt byte-for-byte without rewriting, translating, reordering,
+  or adding findings. Forward it to the same Cursor chat.
+- Findings schedule a correction only when the effective review budget permits.
+  Exhaustion preserves the last fix prompt and staged changes in
+  `max_iterations_reached`, without an extra Cursor turn.
+- `scheduler extend <run-id> --max-review-iterations <higher-total>` explicitly
+  authorizes a higher absolute ceiling for that exhausted run. Persist the
+  extension separately from immutable submitted configuration, reacquire the
+  reservation, and schedule the exact pending correction. Preserve idempotence.
 
-## Bounded Loop Semantics
+## Agent Identity
 
-- `workflow.max_review_iterations` counts Codex review passes, including the first review after the initial Cursor implementation.
-- Iteration `01` is the initial Cursor implementation and review `01`.
-- Iterations `02+` are Cursor correction turns and their corresponding reviews.
-- If review `NN` has no actionable findings, stop with `completed` or `completed_with_residual_risk` according to the structured `tests_status`.
-- If review `NN` has actionable findings and `NN < max_review_iterations`, persist `waiting_for_cursor_fix`, then continue with Cursor correction iteration `NN+1`.
-- If review `NN` has actionable findings and `NN >=` the effective review ceiling, set `max_iterations_reached`, leave changes staged, persist the final review result and exact fix prompt artifacts, and do not invoke Cursor again.
-- `max_iterations_reached` remains terminal for automatic scheduler progress. Only the explicit `ai_dev_loop scheduler extend <run-id> --max-review-iterations <higher-total>` command may raise the effective ceiling for the same run and recover the exact final exhausted review's validated fix prompt into `waiting_for_cursor_fix` without creating a successor run or changing frozen submit context.
-- Any path that resumes from `waiting_for_cursor_fix` must re-check the review iteration limit before transitioning to a Cursor correction turn. Legacy or checkpointed waiting states at the limit must become `max_iterations_reached` without another Cursor invocation.
+- Persist the Cursor chat before its first turn; reuse it for fixes and eligible
+  continuation. Missing identity after recorded work is not permission to create
+  another chat.
+- Bootstrap Codex reviewer B once at the first review; subsequent reviews and
+  eligible retries resume the exact authenticated B. Controller A is optional
+  provenance, not reviewer identity. Never use `--last`.
+- Keep model/reasoning/executable configuration frozen. Current scheduler
+  recovery does not switch Cursor models or inherit reviewer settings from a
+  controller session.
 
-## Cursor Identity And Fix Prompts
+## Git And Review Boundaries
 
-- Create at most one Cursor chat per run.
-- Persist the chat ID immediately and reuse `state.cursor.chat_id` for every Cursor turn.
-- If any workflow progress exists, including iteration metadata, Cursor artifacts, or `cursor/chat.json`, a missing `state.cursor.chat_id` is a fatal checkpoint error. Do not create a replacement chat for a checkpointed run.
-- The initial Cursor prompt comes from `state.prompt.snapshot_path`.
-- Correction iteration `NN+1` must use the exact persisted `prompts/fixes/NN.txt` as the Codex-authored finding body. The orchestrator may wrap that exact body in a deterministic operational envelope for execution, and must embed the fix prompt byte-for-byte without summarizing, translating, reordering, or rewriting findings.
-- Persist the exact fix prompt and the execution envelope (or deterministic reconstruction metadata) as sensitive artifacts.
-- Missing or empty persisted Cursor prompts, including correction fix prompts, must mark the run `failed` with `last_error` and an event before returning an error.
-- `cursor_fix_prompt` must come from the resumed Codex review result. Do not synthesize, rewrite, summarize, translate, or improve it.
-- Pass Cursor prompts as single positional arguments without shell interpolation.
-- Treat Cursor output as untrusted data and never execute it.
+- Apply the configured safe-baseline policy at admission before agent execution.
+  Do not add continuous baseline gates over normal agent edits (`AGENTS.md`).
+- Keep repository reservation/identity and frozen plan/prompt integrity. Preserve
+  the existing reviewed-patch and attempt-evidence checks at their boundaries.
+- Cursor may update staging as required by authorized implementation/fixes.
+  It must not commit, amend, reset, switch branches, stash, clean, merge, rebase,
+  tag, push, or change repository identity under the ordinary execution envelope.
+- After a successful Cursor turn, `stage_mode: all` normalizes via `git add -A`
+  and records the complete staged snapshot before Codex review. Merely unstaging
+  a tracked non-ignored change does not exclude it from that snapshot.
+- Do not reject normal Cursor output solely because Cursor changed the index.
+  Preserve supported artifact/content checks without expanding them into
+  exhaustive Git-status emulation.
+- Expected partial work from a timed-out or usage-limited Cursor turn is
+  preserved for continuation; do not demand a new clean baseline or discard it.
+- Standalone runs and final sequence phases leave changes staged. Only an
+  explicitly started sequence authorizes the existing local unsigned/no-hook
+  checkpoint commit for an accepted non-final phase. Authenticate the reviewed
+  tree and durable intent; reconcile `write-tree` / `commit-tree` / `update-ref`
+  CAS outcomes before transferring reservation to the successor.
+- No acceptance or retry authorizes push, PR creation, merge, or destructive Git
+  repair. Preserve unresolved checkpoint/process holds during abort/recovery.
 
-## Codex Review Identity
+## Cursor Continuation
 
-- Every review must resume the exact original `state.codex.session_id`.
-- Never use `--last`, guessed sessions, plain new `codex exec` review sessions, or subagents as final reviewers.
-- Invoke the configured target-repository review skill exactly as `$<state.codex.review_skill>` in the review prompt.
-- The same resumed Codex session must author every `cursor_fix_prompt`.
-- Decide loop outcomes only from schema-validated Codex JSON, never from Markdown.
+- Classify usage limits from protected contemporaneous process evidence, never
+  fuzzy `last_error` text. Preserve partial output, prompt, identity, and content
+  evidence required by the existing continuation contract.
+- `waiting_usage_limit` continues the same run/chat/model after the bounded
+  structured retry-after, or the implemented five-hour fallback. The recovery
+  envelope embeds the exact previous prompt and preserves partial work.
+- Confirmed Cursor turn timeouts support three automatic retries per turn at
+  30-minute intervals. `scheduler cursor-retry` can advance the wait or continue
+  after automatic retries are exhausted, without creating a new chat or review.
+- A prior process must be confirmed terminated and the reservation retained.
+  Abort, uncertain termination, integrity failures, and create-chat timeouts
+  must not be bypassed through the timeout-retry command.
+- Preserve each attempt's artifacts separately. Do not overwrite prior output,
+  rerun admission, or confuse an attempt retry with a completed correction.
 
-## Iteration And Artifact Contract
+## Reviewer Retry And Recovery
 
-- Store iteration artifact paths relative to the run directory.
-- Do not overwrite completed earlier iteration metadata when writing later iterations.
-- Each iteration entry should use stable keys where available: `number`, `kind`, `started_at`, `completed_at`, `cursor`, `git`, `codex`, and `review`.
-- Use `kind: initial_implementation` for iteration `01`.
-- Use `kind: cursor_correction` for correction iterations.
-- Cursor artifacts live under `cursor/iterations/NN/`.
-- Git status and staged diff artifacts use `git/status/NN-*` and `git/diffs/NN.*`.
-- Post-Cursor content fingerprints use `git/cursor-output/NN.json` and are sensitive operational metadata (hashes and paths only; no file contents).
-- Codex review artifacts use `codex/events/NN.*` and `codex/reviews/NN.*`.
-- Fix prompts use `prompts/fixes/NN.txt`, where `NN` is the review that produced the prompt. Correction execution envelopes use `prompts/fixes/NN.execution-envelope.txt`.
-- Staged diff artifacts for each iteration represent the full current staged change set at that point.
+- `scheduler review retry <run-id>` is process-free authorization. It handles
+  eligible `waiting_codex_review_retry` and `waiting_codex_capacity` states, or
+  authenticated recovery of an eligible blocked review source. Tick launches
+  the actual review afterward.
+- Same-run retries preserve reviewer, model, reasoning, staged target, and review
+  iteration. Use the returned safe next action; not every failure is retryable.
+- Blocked-source recovery creates or reuses an authenticated same-reviewer
+  successor. Keep the source immutable, preserve required evidence and lineage,
+  and never repeat completed Cursor implementation merely to retry a review.
+- For sequences, atomically coordinate replacement intent, phase-run lineage,
+  reservation, abort state, and successor adoption. Do not revive stale leaves
+  or advance phases based on an unauthenticated successor.
+- Missing/uncertain bootstrap identity and invalid integrity evidence must not
+  be repaired by guessing a session or silently bootstrapping a replacement B.
+- A fresh `scheduler submit --resubmission-id <uuid>` is distinct from native
+  retry: it creates ordinary new work, with its own admission and fresh reviewer.
 
-## Git And Staging Safety
+## State, Artifacts, And Privacy
 
-- Before the first Cursor turn, the trusted prepare/start baseline must reject a
-  pre-existing staged index. That empty-index invariant is not re-checked after
-  Cursor completes.
-- Before every correction Cursor turn, the current staged index must still match the previous iteration's recorded staged patch exactly, with no tracked unstaged changes or untracked non-ignored files. This remains the trusted pre-Cursor checkpoint.
-- During Cursor execution, index mutation is permitted for both the initial
-  implementation turn and correction turns. Cursor may use `git add`, `git restore --staged`, and `git rm --cached`. Cursor must not commit, amend, reset, checkout/switch branches, stash, clean, merge, rebase, tag, push, or otherwise change Git history, HEAD, branch, remotes, or repository identity.
-- After Cursor completes successfully, validate that HEAD, branch, Git common directory, Git directory, and repository root remain exactly as prepared, then capture a post-Cursor content fingerprint before staging.
-- Immediately after a successful `git add -A` normalization, capture a post-normalization fingerprint before writing staged patch artifacts so recovery can verify either the pre-staging or post-normalization repository state.
-- Do not assume the post-Cursor index equals the pre-Cursor index. Post-Cursor staging for initial and correction iterations must not reject solely because Cursor changed or emptied the index.
-- For `stage_mode: all`, always execute `git add -A` after Cursor, even if Cursor already staged some or all changes. Merely unstaging a tracked non-ignored modification does not exclude it from the final snapshot.
-- After `git add -A`, require no tracked unstaged changes and no untracked non-ignored files. Ignored files may remain.
-- The cumulative staged patch after orchestrator normalization is the only patch Codex reviews and the only patch used for the next correction checkpoint.
-- Staged-patch equality checks before Codex review and before the next Cursor correction remain unconditional.
-- Continue protecting the repository plan hash and prompt source path.
-- Continue rejecting staged prompt-source paths.
-- Do not commit, tag, push, reset, clean, stash, unstage, or otherwise rewrite Git
-  state from the orchestrator outside configured staging normalization and the narrow
-  Phase 20.3 reviewed-tree sequence checkpoint for accepted non-final phases.
-- Fail safely on ambiguous repository state rather than guessing.
+- Use ledger checkpoints, fenced attempts, and protected artifacts as authority.
+  Keep paths relative to the artifact root and use the domain path builders;
+  attempt-specific evidence must not overwrite earlier attempts.
+- Preserve exact prompts, final responses, staged patches, validated review
+  results, and review-prompt evidence in sensitive artifacts outside the repo.
+- Default status/history/timeline and errors expose safe summaries, counters,
+  paths, and shortened identities, not raw prompts, patches, or process output.
+- Explicit integration content reads have separate authentication, pagination,
+  and privacy contracts; do not use them to broaden default output.
 
-## Resume Discipline
+## Historical Compatibility
 
-- `resume <run-id>` must acquire the same run and repository locks before mutation.
-- `resume` must preserve Cursor chat identity and Codex session identity.
-- `resume` must not rerun completed agent turns when durable artifacts prove they completed.
-- `resume` may continue only from clear checkpoints such as `prepared`, `waiting_for_cursor_fix`, completed staging waiting for review, completed review waiting for outcome processing, or explicit interrupted states with enough artifacts to determine the next safe action.
-- `interrupted` resume must derive the real checkpoint from durable artifacts, then restore to `running_cursor`, `staging`, or `reviewing` as appropriate. Do not blindly route `interrupted` through `validating`.
-- If retrying an interrupted Cursor or Codex turn, preserve existing partial artifacts before writing new attempt artifacts.
-- If the next safe action is ambiguous, fail with a diagnostic and do not mutate the repository.
-- Terminal source runs remain terminal and immutable. Ordinary `resume` still rejects `failed`, `aborted`, `completed`, `completed_with_residual_risk`, and `max_iterations_reached`.
-- Explicit `recover <failed-run-id>` may create a distinct successor run; it must never transition the source run out of `failed` or edit source artifacts.
+- Top-level `start`, `resume`, `recover`, and `extend` were retired at cutover.
+  Legacy `state.json`, `interrupted` successors, Phase 9/10 runtime inheritance,
+  model-switch recovery/adoption, and tool-update flags describe retained
+  compatibility code/fixtures only. They are not scheduler instructions.
+- Do not introduce `--adopt-current-cursor-output`, `--update-tools`,
+  `--skip-tool-update`, or `--allow-incompatible-tools` into scheduler examples.
+  Preserve compatibility only where the active change touches that code.
 
-## Failed-Run Recovery Discipline
+## Validation
 
-- Recoverability is checkpoint- and artifact-driven. Do not classify eligibility by parsing `last_error` strings.
-- Recover post-staging failures whose next proven action is Codex review or review-result processing; correction staging failures (`reason_code: correction_staging_failed`, iteration >= 2) where Cursor completed but staging did not; and initial staging failures (`reason_code: initial_staging_failed`, iteration 1) where Cursor completed but staging did not.
-- Reject recovery of incomplete Cursor turns.
-- Require exact preservation of `codex.session_id` and `cursor.chat_id`. Never use `--last`, a new Codex session, or a replacement Cursor chat.
-- Require repository root, Git common directory, Git directory, branch, and initial HEAD to match the source run.
-- For review/process-review checkpoints, require the current staged patch to match the recorded artifact byte-for-byte, and reject unstaged tracked changes or untracked files.
-- For staging checkpoints, require the current repository content to match the persisted post-Cursor fingerprint or the post-normalization fingerprint captured after a successful `git add -A`. Correction staging may also use explicit `--adopt-current-cursor-output` when a historical source lacks a fingerprint and the recorded after-cursor status still matches exactly. Initial staging recovery (`initial_staging_failed`) requires a valid fingerprint match, keeps `source_staged_patch_sha256` and `previous_staged_patch_sha256` null, and does not support adoption.
-- The target repository and index are read-only to `recover`. Do not commit, reset, clean, stash, unstage, or apply patches. Staging occurs only when the successor is explicitly resumed.
-- Phase 10 sources with non-null effective runtime and provenance preserve frozen values exactly; do not reread the session and alter them.
-- Eligible Phase 9 legacy sources may capture exact-session runtime during recovery, record `runtime_migration: phase9_session_capture`, and never use WSL `config.toml` defaults.
-- Create successors transactionally (temporary sibling directory plus atomic rename). A partial failure must leave no discoverable runnable successor.
-- Successor lineage lives only on the successor (`recovery` section). Do not mutate the source run to record child IDs.
-- Idempotent recovery reuses a matching non-terminal successor for the same source checkpoint. Correction staging keys on the previous staged-patch hash plus fingerprint; initial staging keys on the post-Cursor fingerprint with null staged-patch hashes. A failed successor must itself be selected for the next recovery; do not skip generations.
-- `recover --dry-run` is strictly read-only. `recover` never launches Cursor, Codex, or updaters; update flags belong to the returned `resume` command.
-- Successor `resume` must derive the review/process-review checkpoint from copied durable artifacts and must not rerun completed Cursor work.
-
-## Cursor Usage-Limit Recovery
-
-- Classify usage-limit failures only from contemporaneous Cursor process evidence (`failure_code == cursor_usage_limit` in protected metadata), never from fuzzy `last_error` parsing.
-- Require nonzero Cursor exit plus the specific `ActionRequiredError` usage-limit and model-switch markers. Unknown or partial matches remain ordinary failed Cursor executions.
-- Persist a binary-safe usage-limit fingerprint (`git/cursor-output/NN.usage-limit-failure.json`) covering cached, worktree, and untracked content before marking the source recoverable.
-- Recover into an immutable successor that preserves the exact `cursor.chat_id`, freezes the requested fallback model in `successor.cursor.model`, and never creates a new Cursor chat.
-- `--cursor-model` is required for the `cursor` checkpoint and invalid for staging/review checkpoints. Interactive `start`/`resume` may offer `auto` only on a TTY after the source failure is durable and unlocked; non-interactive callers require explicit recovery.
-- The continuation envelope embeds the exact previous orchestrator prompt (initial snapshot or exact Codex findings file) and instructs Cursor to inspect and preserve partial unstaged/untracked work.
-- Partial unstaged/untracked work is expected evidence for this checkpoint. Normal `git add -A` staging and Codex review resume only after the recovered Cursor turn succeeds.
-- Idempotent reuse keys on source run, incomplete iteration, failure fingerprint, source prompt hash, and requested fallback model. Do not create parallel active successors with different fallback models for the same checkpoint.
-
-## Legacy Cursor Usage-Limit Adoption
-
-- Normal Phase 13 recovery remains strict: it requires `failure_code == cursor_usage_limit` and a contemporaneous `git/cursor-output/NN.usage-limit-failure.json` fingerprint match. Reject redundant `--adopt-current-cursor-output` on those sources.
-- Historical adoption applies only when protected `cursor/iterations/NN/stderr.txt` classifies as usage-limit, `git/status/NN-after-cursor.txt` matches current porcelain exactly, and the user supplies both `--adopt-current-cursor-output` and `--cursor-model <model>`.
-- Never use `last_error` as adoption evidence. Matching status is a prerequisite to explicit user attestation, not proof of matching file contents before recovery time.
-- Write only safe adoption metadata in the successor (`git/cursor-output/NN.usage-limit-adopted.json`) with hashes and paths, never stderr/prompt/chat/billing contents.
-- Record `legacy_cursor_usage_limit_adopted: true` in recovery lineage; do not overload Phase 12 `legacy_cursor_output_adopted`.
-- `recover` stays read-only to the target repository and source run; only successor `resume` invokes Cursor and normal staging/Codex boundaries.
-
-## Tool Compatibility And Updates
-
-- `start` and `resume` accept `--update-tools`, `--skip-tool-update`, and `--allow-incompatible-tools`; update and skip are mutually exclusive.
-- Interactive TTY execution may ask separately for each incompatible tool and defaults to no. Non-TTY execution never prompts and fails on incompatibility unless update or incompatible-tool continuation was explicitly authorized.
-- Update only the configured WSL CLI executable with `[configured_command, "update"]`, `shell=False`; never derive update consent from repository YAML.
-- Re-probe versions and `agent models`/`codex debug models` after an update. Distinguish incompatible from unknown and say an update may add support, not that one is definitely available.
-- Check durable abort requests before any updater prompt or launch; abort wins.
-
-## Privacy And Output
-
-- Do not print full prompts, fix prompts, staged patches, review Markdown, raw JSONL, full session IDs, auth payloads, full environments, or secret-like values in default CLI output.
-- Human-readable errors should point to sensitive artifacts instead of embedding raw Cursor or Codex output.
-- Structured event details must be redacted.
-- Raw agent artifacts remain local under XDG state with sensitive permissions where supported.
-
-## Tests
-
-- Use fake `agent` and fake `codex` executables in automated tests.
-- Do not invoke real model activity in tests.
-- Test same Cursor chat ID across implementation and fixes.
-- Test same Codex session ID across all reviews.
-- Test max-iteration exhaustion without an extra Cursor turn.
-- Test resume from `waiting_for_cursor_fix`.
-- Test resume does not rerun completed turns.
-- Test checkpointed runs with workflow progress reject missing Cursor chat IDs instead of creating new chats.
-- Test missing and empty correction fix prompts persist `failed` state and `last_error`.
-- Test interrupted resume derives `running_cursor`, `staging`, or `reviewing` from artifacts.
-- Test review and review-processing resume reject staged index drift, unstaged tracked changes, and untracked files.
-- Test that a Cursor-created initial staged index is normalized with `git add -A` and reaches Codex review.
-- Test that a user-preexisting staged index is rejected at the pre-Cursor prepare/start boundary before any agent launch.
-- Test initial staging recovery (`initial_staging_failed`) creates an immutable successor and `resume` skips Cursor.
-- Test correction staging rejects drift in the previously recorded staged patch.
-- Test correction staging rejects an emptied index when a previous staged patch was recorded.
-- Test status, logs, and inspect output across multiple iterations without leaking sensitive content.
-- Test `recover` creates an immutable-source successor for eligible post-staging failures.
-- Test successor `resume` continues Codex review without rerunning completed Cursor work.
-- Test Phase 9 recovery runtime migration and Phase 10 frozen-runtime preservation.
-- Test dry-run recoverability analysis mutates neither source run nor repository.
-- Test idempotent successor reuse and failed-successor chain recovery.
-- Test recover rejects status, identity, staged-patch, worktree, and active-process blockers.
-- Test Cursor usage-limit classification requires ActionRequiredError plus usage-limit and model-switch markers.
-- Test usage-limit recovery preserves the exact Cursor chat ID, freezes the requested fallback model, embeds the exact source prompt in the continuation envelope, and resumes staging/Codex only after Cursor succeeds.
-- Test non-TTY start/resume never auto-selects a fallback model and prints the explicit `recover --cursor-model` command.
-- Test legacy cursor usage-limit adoption requires both explicit flags, protected stderr classification, status match, and writes only safe adoption artifacts in the successor.
-- Test normal Phase 13 usage-limit recovery rejects redundant adoption and remains strict without adoption.
+Use fake CLIs and temporary repositories. For changed boundaries, verify exact
+agent continuity, unchanged fix prompts, budget exhaustion/extension, staging
+before review, timeout/usage-limit continuation, classified reviewer failures,
+idempotent retry/recovery, sequence replacement/abort coordination, and private
+artifact handling. Exercise real production callers, including restart paths;
+a helper tested in isolation is not proof of durable continuation.

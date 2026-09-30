@@ -13,12 +13,31 @@ This repository builds `ai_dev_loop`, a deterministic local orchestrator for Cod
 Before making architecture, workflow, integration, or safety-sensitive changes, read the current product documentation and, when historical context is needed, the archived implementation history:
 
 - `docs/`
+- `AGENTS.md`
 - `archive/implementation-history/master-plan.md`
 - `archive/implementation-history/findings/`
 - `archive/implementation-history/plans/`
 - all applicable `.cursor/rules/*.mdc`
 
-If archived files conflict with current code, tests, schemas, CLI help, or `/docs`, treat the current implementation as authoritative and use the archive only to understand intent. If a conflict would change safety behavior, stop and report it before making dependent changes.
+Use current code, tests, schemas, and CLI help to verify behavior; keep `/docs`
+and these rules consistent with that evidence and `AGENTS.md`. Archived files
+explain historical intent, not current command availability. Correct obsolete
+documentation within the user's scope. Stop dependent implementation only when
+an unresolved decision would change safety behavior.
+
+## Supported Runtime
+
+- Use the central scheduler for new runs. Submit freezes inputs, start records
+  authorization, and bounded ticks reconcile work. Sequences freeze per-phase
+  inputs with `scheduler sequence prepare` before explicit sequence start.
+- Reviewer B is created once at the first review, then resumed by exact identity.
+  Controller A is optional provenance; no app fork or cross-chat message is
+  required. Review model and reasoning are explicit frozen inputs.
+- `engine.sqlite3` and protected `artifacts/` are authoritative. Legacy
+  `state.json` contracts apply only to retained compatibility code and fixtures.
+- Top-level `prepare`, `start`, `resume`, `recover`, `launch`, inspection commands,
+  `pr-review`, and `github doctor` are retired. Do not restore them or recommend
+  their flags for new scheduler work. Consult `docs/referencia/cli.md`.
 
 ## Scope Discipline
 
@@ -54,7 +73,10 @@ If archived files conflict with current code, tests, schemas, CLI help, or `/doc
 
 ## Non-Negotiable Guardrails
 
-- Do not stage, commit, push, tag, reset, clean, stash, or otherwise rewrite Git state.
+- Do not stage or commit without the durable authority described in `AGENTS.md`.
+  Runtime staging and accepted non-final sequence checkpoints have their own
+  implemented authorization boundaries. They do not authorize implementation
+  agents to make unrelated commits or external Git changes.
 - Do not remove unrelated user files or metadata artifacts.
 - Do not modify, replace, or depend on system Python. Use a standard Python 3.11+ package and document `uv` as the preferred local workflow.
 - Do not use cloud workers or remote implementation agents.
@@ -76,7 +98,8 @@ If archived files conflict with current code, tests, schemas, CLI help, or `/doc
 - Use typed models and versioned schemas for config, state, and review results.
 - Use atomic writes for state and manifest files.
 - Treat agent output as untrusted data.
-- Keep durable checkpoints rich enough for manual recovery and later idempotent `resume`.
+- Keep durable checkpoints sufficient for idempotent scheduler reconciliation
+  and the supported retry/recovery commands; do not invent a `scheduler resume`.
 - Keep target repositories unaware of XDG state/cache/config storage paths.
 
 ## Subprocess And Git Rules

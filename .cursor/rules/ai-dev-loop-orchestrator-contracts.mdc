@@ -13,7 +13,9 @@ These contracts preserve the product's safety model across implementation phases
 - `archive/implementation-history/master-plan.md` is the archived master architecture contract.
 - `archive/implementation-history/plans/` contains archived phase plans and prompts. These files are historical context, not active user-facing documentation.
 - `.cursor/rules/ai-dev-loop-state-and-schema-contracts.mdc` is the detailed contract for persisted state, schemas, manifests, checkpoints, and recovery compatibility.
-- `state.json`, `manifest.json`, snapshots, logs, and per-iteration artifacts are the durable local audit trail.
+- The central scheduler ledger (`engine.sqlite3`), protected snapshots, events,
+  attempts, and artifacts are the durable audit trail. `state.json` and
+  `manifest.json` describe the retired local engine, not scheduler authority.
 - The orchestrator transports exact prompts and validated decisions. It must not invent architecture, reinterpret findings, or replace Codex or Cursor reasoning.
 
 ## State And Persistence
@@ -25,38 +27,54 @@ These contracts preserve the product's safety model across implementation phases
 - Use user-only permissions where supported: directories `0700`; prompt/session/agent-output files `0600`.
 - Keep schemas versioned and typed models aligned with persisted JSON.
 - Any persisted shape change must update the typed model, JSON schema, artifact writer/reader, and tests in the same phase unless the active plan explicitly defers that persisted field.
-- Treat `iterations` as a recovery and audit contract. Do not add ad hoc keys, fake later-phase data, or unversioned nested structures without documenting and testing the shape.
+- Treat iteration counters, attempts, and checkpoints as recovery contracts.
+  Do not add ad hoc keys or unversioned structures without documenting and
+  testing the shape.
 - Do not mutate run status outside the explicit state machine.
 - Preserve enough artifacts to recover manually after crashes, timeouts, or interrupted writes.
 - Phase boundary state must distinguish completed checkpoints from future work. Do not set statuses, results, or iteration fields that imply an unimplemented later phase ran.
-- Explicit `recover` may create a new interrupted successor with optional `recovery` lineage. It must not rewrite a terminal source run or mutate the target repository Git state.
+- Eligible `scheduler review retry` recovery may create a successor with
+  authenticated lineage and the same reviewer; it leaves the blocked source
+  immutable. `scheduler extend` explicitly reopens an exhausted run with a
+  higher effective review ceiling while preserving submitted inputs.
 
 ## Git Contracts
 
-- `prepare` validates the baseline and never starts agents.
-- `start` and later active-loop commands must verify branch, HEAD, plan hash, prompt hash, and baseline worktree before mutation.
+- `scheduler submit` and `scheduler sequence prepare` freeze inputs without
+  invoking Git or agents. Start records authorization; admission occurs in
+  the first eligible tick, before agent work.
+- Apply baseline/clean-worktree policy at admission. Preserve repository
+  reservation, identity, frozen inputs, and authenticated reviewed artifacts
+  at their supported boundaries. Do not add continuous clean-baseline gates
+  over normal agent work; follow `AGENTS.md`.
 - With `stage_mode: all`, staging is allowed only in phases that explicitly implement staging and after safety checks pass.
-- Never commit, tag, push, reset, clean, stash, or unstage user work, except the
+- The orchestrator must not commit, tag, push, reset, clean, stash, or unstage
+  user work outside its configured staging normalization and the
   narrow Phase 20.3 sequence checkpoint: an explicitly started multi-phase sequence
   may create one local unsigned/no-hook checkpoint commit per accepted non-final
   phase after exact staged review validation.
 - Use direct Git argument arrays with explicit working directories.
-- Fail safely on ambiguous status, symlink escapes, unrelated dirty work, or baseline drift.
+- Reject invalid admission or artifact/identity evidence safely. Do not treat
+  expected implementation changes or preserved partial work as baseline drift.
 - Staged diff artifacts are part of the audit trail. Capture them durably before any review phase consumes them.
 
 ## Locking Contracts
 
-- Use one lock per run and one lock per repository worktree before mutating a run or target repository.
-- Store lock metadata with PID, run ID, repository path, and start timestamp.
+- Preserve scheduler tick leases, fenced attempts, transactional state updates,
+  repository reservations, and worktree locks before authorized mutations.
+- Use the owning subsystem's metadata and identity checks; legacy per-run
+  process/lock files do not replace the central ledger.
 - Keep lock files outside target repositories.
 - Do not remove a lock held by a live process.
-- `status` and `inspect` must remain read-only and usable while locks are held.
+- `scheduler status` and `integration run inspect` must remain read-only and
+  usable while execution owns the repository.
 
 ## Cursor Contracts
 
 - Cursor is the implementation agent only.
 - Create at most one Cursor chat per run.
-- Persist the chat ID immediately in `state.json` and `cursor/chat.json`.
+- Persist the chat binding durably in the scheduler checkpoint and protected
+  `cursor/chat.json` artifact before dispatching a turn.
 - Reuse the stored chat ID on later turns and after recoverable failures.
 - Pass Cursor prompts as exact positional arguments without shell interpolation.
 - Use `stream-json` for auditability when configured.
@@ -66,21 +84,29 @@ These contracts preserve the product's safety model across implementation phases
 
 ## Codex Contracts
 
-- Codex is the architect, context owner, prompt author, and reviewer.
-- Every review must resume the exact original Codex session ID.
-- Never use `codex exec` without `resume` for final review.
+- Codex is the final reviewer. The scheduler creates reviewer B once using
+  `codex exec` at the first review boundary and captures its exact identity.
+- Later reviews and eligible retries resume that bound B with `codex exec
+  resume`; no guessed identities, second bootstrap, or controller-session reuse.
 - Never use `--last`, guessed session IDs, or subagents as the final reviewer.
-- The resumed Codex session must author any `cursor_fix_prompt`; the orchestrator only validates and forwards it.
-- New Phase 10 runs must freeze the session-captured and effective review model/reasoning at `prepare`, with independent explicit/session provenance, and pass both effective values on every review resume.
-- Do not derive inherited review runtime from WSL `config.toml` or a Codex CLI default.
+- The bound Codex reviewer must author every `cursor_fix_prompt`, including
+  the bootstrap result; the orchestrator only validates and forwards it.
+- New submissions require explicit review model/reasoning CLI inputs; sequences
+  require both in every phase manifest entry. Pass the frozen values on bootstrap
+  and resume. YAML defaults, session capture, and CLI defaults do not substitute.
+- Enforced `workspace-write` sandbox capability does not override the review
+  wrapper's staged-only, no-intentional-edits discipline or configured skill.
 - Automated tests must use fake `codex` executables and must not invoke real Codex model activity.
 
 ## External Tool Compatibility
 
-- Before launching a model process, `start` and `resume` must classify required Cursor/Codex model support as compatible, incompatible, or unknown.
-- Only explicit CLI policy may authorize `[configured_command, "update"]`; target-repository YAML must never authorize updates.
-- Non-TTY execution must never prompt. After an approved update, re-probe versions and model catalogs before continuing.
-- Abort requests take precedence over updater prompts and updater launches. Updates affect WSL CLI binaries only, never Windows desktop applications.
+- Scheduler preflight probes the frozen executables and model support; unknown
+  or incompatible results block admission to agent execution with diagnostics.
+- Scheduler commands do not expose the retired `--update-tools`,
+  `--skip-tool-update`, or `--allow-incompatible-tools` flags. Do not add an
+  updater prompt or infer update consent from target-repository YAML.
+- Actual tool updates are separate operator work. Abort always takes precedence
+  over new side effects; do not update Windows desktop apps from WSL workers.
 
 ## Process Contracts
 

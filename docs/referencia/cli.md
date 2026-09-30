@@ -13,6 +13,31 @@ Opciones globales:
 --help
 ```
 
+## Contrato vigente
+
+El flujo de un run nuevo es `scheduler submit` -> `scheduler start` ->
+`scheduler tick`. Para varias fases, usa `scheduler sequence prepare` ->
+`scheduler sequence start` -> ticks. El ledger `engine.sqlite3` y los artefactos
+protegidos son la autoridad; los `state.json` del motor anterior son históricos.
+
+| Momento | Efecto |
+| --- | --- |
+| Submit / preparación de secuencia | Congela plan, prompt, configuración y modelos; no invoca agentes ni Git. |
+| Start | Registra autorización; la ejecución progresa mediante ticks. |
+| Admisión del primer tick elegible | Verifica identidad, entradas y baseline según la política congelada, antes del trabajo de agentes. |
+| Turno Cursor completado | Normaliza staging y conserva el snapshot que revisará Codex. |
+| Primera revisión | Crea reviewer B con `codex exec` y registra su identidad exacta. |
+| Revisiones y reintentos posteriores | Reanuda el B autenticado con `codex exec resume`. |
+
+Controller A es proveniencia opcional: no hace falta un fork, un mensaje a otra
+conversación ni una sesión desktop preexistente para enviar o controlar un run.
+Si se proporciona A, su ID debe ser exacto; no se usa como reviewer B. Nunca se
+selecciona una sesión mediante `--last`.
+
+La admisión no es una exigencia continua de worktree limpio durante el trabajo
+de los agentes. Permanecen las comprobaciones implementadas de identidad,
+reservas, entradas inmutables y artefactos revisados en sus respectivos límites.
+
 ## `scheduler submit`
 
 ```bash
@@ -37,6 +62,8 @@ Opciones principales:
 --codex-review-reasoning-effort TEXT (obligatorio)
 --cursor-command TEXT
 --cursor-model TEXT
+--cursor-output-format TEXT
+--codex-command TEXT
 --review-skill TEXT
 --max-review-iterations INTEGER
 --cursor-timeout-minutes INTEGER
@@ -53,6 +80,17 @@ solo para replay idempotente de ese envio. El primer review del scheduler crea e
 reviewer B con `codex exec` en `--sandbox workspace-write`; los reviews posteriores reanudan
 esa misma sesion con `codex exec resume` (nunca `--last` ni un segundo B).
 
+Modelo y razonamiento del reviewer deben ser explícitos en los flags de submit.
+Los campos YAML `codex.review_model` y `codex.review_reasoning_effort`, los datos
+de A y los defaults del CLI no sustituyen esos flags. Los valores quedan
+congelados para bootstrap, correcciones y reintentos. `--cursor-model` selecciona
+por separado el modelo del ejecutor; no cambia el proveedor ni el modelo de Codex.
+
+El scheduler impone `workspace-write` al proceso Codex. El wrapper y la skill de
+review siguen exigiendo revisar únicamente el staged y no editar, stagear ni
+eliminar intencionalmente archivos del repositorio. Se permite ejecutar pruebas;
+la capacidad de escritura no autoriza corregir código para que pasen.
+
 Ejemplo:
 
 ```bash
@@ -60,6 +98,7 @@ ai_dev_loop scheduler submit \
   --repo-path /path/al/repo \
   --plan-path docs/plans/mi-plan.md \
   --prompt-source-path docs/plans/prompt_mi-plan.txt \
+  --cursor-model "<cursor-model>" \
   --codex-review-model "<review-model>" \
   --codex-review-reasoning-effort high \
   --output json < docs/plans/prompt_mi-plan.txt
@@ -108,9 +147,11 @@ Phase 20.7 y 20.8 anaden lineage de intentos por fase y reintentos manuales
 proyeccion de status/report (`attempt_count`, `accepted_run_id_prefix`,
 `attempt_kind_labels`, conteo agregado `attempts`) y amplia la reconciliacion para
 secuencias con holds de checkpoint en el run actual. La autoridad sigue siendo el ledger
-validado mas la lineage autenticada; no hay commit/push/PR/merge automaticos.
+validado mas la lineage autenticada. Los únicos commits del flujo son los
+checkpoints locales de fases no finales autorizados al iniciar la secuencia;
+no hay commit final, push, PR ni merge automáticos.
 
-Tras `prepare`, la accion segura es `scheduler sequence start <sequence-id>`; tras un
+Tras `scheduler sequence prepare`, la accion segura es `scheduler sequence start <sequence-id>`; tras un
 start exitoso, `scheduler tick` y `scheduler sequence status <sequence-id>`.
 `scheduler sequence abort` persiste la intencion antes de delegar al run activo y
 cancela fases futuras sin crear filas `scheduler_runs` para ellas.
@@ -130,6 +171,10 @@ Opciones de repositorio, `--config-path`, `--controller-session-id`, `--resubmis
 y overrides globales siguen el contrato de `scheduler submit`. Cada fase del manifest
 debe declarar `codex.review_model` y `codex.review_reasoning_effort`; la fase final no
 puede incluir `commit_message`.
+Los dos valores de review provienen del manifest de cada fase, no de flags
+globales de review ni de una sesión previa. Cada run planificado crea su propio
+B al llegar a su primera revisión; un sucesor de recuperación same-reviewer
+conserva el B de su origen autenticado.
 
 ## `scheduler start` / `tick` / `status` / `list` / `abort` / `history` / `timeline`
 
@@ -144,7 +189,7 @@ ai_dev_loop scheduler timeline <run-id> [--limit N] [--order oldest|newest] [--o
 ```
 
 `scheduler abort` persiste primero la cancelacion durable, invalida effects/timers/claims
-pendientes y no borra artefactos ni cambios staged del repositorio objetivo.
+pendientes y no borra artefactos ni cambios staged o unstaged del repositorio objetivo.
 
 `scheduler history` devuelve eventos acotados y redactados.
 
@@ -190,7 +235,35 @@ Autoriza un techo absoluto mayor de reviews Codex para el mismo run cuando esta 
 reacquire la reserva del worktree, registra el evento `review_budget_extended`,
 transiciona a `waiting_for_cursor_fix` con el fix prompt exacto de la review
 agotada y encola un efecto de correccion Cursor. Repetir el mismo objetivo absoluto
-es idempotente. Un objetivo menor o igual al techo efectivo actual se rechaza.
+es idempotente. Fuera de ese replay, un objetivo menor o igual al techo efectivo
+actual se rechaza.
+
+## `scheduler review retry`
+
+```bash
+ai_dev_loop scheduler review retry <run-id> [--output text|json]
+```
+
+Autoriza una revisión de nuevo sin lanzar procesos; el siguiente tick ejecuta
+el intento. La acción depende del checkpoint durable:
+
+| Estado de origen | Comportamiento |
+| --- | --- |
+| `waiting_codex_review_retry` | Encola un reintento del mismo run, reviewer, modelo, razonamiento e iteración. |
+| `waiting_codex_capacity` | Permite autorizar explícitamente el reintento conservando el reviewer; no cambia de modelo ni garantiza cuota disponible. |
+| `blocked` elegible | Crea o reutiliza un sucesor con el mismo reviewer y evidencia autenticada; conserva inmutable el origen. |
+
+En una secuencia, la recuperación coordina el reemplazo con su lineage y reserva.
+No vuelve a ejecutar una implementación Cursor ya completada para reintentar la
+review. Un reintento operativo no consume por sí solo una revisión completada.
+La repetición de una autorización ya registrada no debe duplicar el intento.
+
+No todos los bloqueos admiten recuperación: una identidad B incierta o evidencia
+de integridad inválida no se resuelve creando otra sesión. Consulta `scheduler
+status` y su acción segura; conserva los artefactos de diagnóstico. Este comando
+no es el antiguo `recover` ni un envío fresco con `--resubmission-id`.
+
+## Detalle de `scheduler timeline`
 
 `scheduler timeline` devuelve una tabla acotada de intentos Cursor/Codex por
 iteracion: fase, ordinal de reintento, estado seguro, marcas de tiempo durables
@@ -344,12 +417,13 @@ las órdenes de este namespace emiten un único documento JSON en stdout; `--hel
 sigue siendo ayuda normal de Typer. El namespace plural `integrations` (instalación
 Codex global) no cambia.
 
-`integration info` no requiere ledger del scheduler. Las lecturas de runs y
-runs, secuencias, revisiones Codex, salida de procesos hijo y capacidad Codex
-(API **1.5**, capacidades `runs`, `sequences`, `reviewInspection`, `processOutput`
-y `codexCapacity`) abren el ledger en
-solo lectura y no migran la base de datos. La opción `--output json` es
-obligatoria en cada subcomando (valor por defecto donde aplica).
+La API **1.5** expone las capacidades `runs`, `sequences`, `reviewInspection`,
+`processOutput` y `codexCapacity`. Las lecturas de runs, secuencias, revisiones y
+salidas de procesos abren el ledger en solo lectura y no migran la base de datos.
+`integration info` no requiere ledger. `integration codex-capacity` ejecuta una
+sonda acotada de capacidad sin persistir cuotas en el ledger. El único formato
+admitido es JSON; la presencia obligatoria del flag `--output json` depende del
+subcomando, según su ayuda.
 
 Detalle del sobre, códigos de error, paginación y lecturas sensibles:
 [API de integración local](integration-api.md).

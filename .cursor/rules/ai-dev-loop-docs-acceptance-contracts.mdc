@@ -1,76 +1,70 @@
 ---
-description: "Cursor implementation contracts for ai_dev_loop final acceptance, MkDocs scaffold, real workstation validation, model smoke tests, and Phase 8/8.5 handoff. Apply whenever editing docs scaffold, acceptance tests, validation flows, package install checks, integration verification, findings files, or documentation-related project configuration."
+description: "Current documentation and acceptance contracts for ai_dev_loop. Apply when editing MkDocs pages, acceptance evidence, validation flows, integration docs, or documentation configuration."
 globs:
 alwaysApply: true
 ---
 
 # ai_dev_loop Docs And Acceptance Contracts
 
-These contracts are the Cursor-side governance for Phase 8 and later acceptance/documentation-adjacent implementation work. They apply in addition to all other `ai-dev-loop-*` rules.
+Apply with `AGENTS.md` and the other repository rules. Current code, schemas,
+CLI help, and tests establish implemented behavior; active user instructions
+and approved scope establish authority. Archives preserve historical evidence.
 
-## Source Of Truth
+## Current Documentation
 
-- `archive/implementation-history/master-plan.md` is the archived master architecture contract.
-- Archived phase plans under `archive/implementation-history/plans/` provide historical scope context.
-- Phase findings files are durable audit and handoff artifacts.
-- Cursor must implement only the active phase and preserve all architecture guardrails from the master plan and relevant findings.
+- MkDocs with Material is the official documentation surface. Keep generated
+  `site/` output untracked and verify changed documentation with a strict build.
+- Document the central scheduler and current CLI. Clearly label retired
+  top-level commands, legacy `state.json`, and session-bound review contracts
+  as historical; do not mix their flags or identities into new-run examples.
+- Describe optional controller A, one fresh reviewer B at the first review,
+  frozen explicit model/reasoning, exact-session retries, and current recovery.
+- Distinguish `workspace-write` process capability from the wrapper/skill's
+  staged-only review discipline and prohibition on intentional repository edits.
+- Describe runtime staging and explicitly authorized non-final sequence
+  checkpoint commits accurately; no final commit, push, PR, or merge is implied.
+- Treat preflight as admission and preserve the implemented evidence boundaries.
+  Do not invent continuous baseline policing or requirements for rare unsupported
+  Git cases when updating documentation.
+- Cross-check options and side effects against CLI help and implementation. Do
+  not advertise planned provider switching, Cursor master/executor configuration,
+  or other unimplemented interfaces as available.
+- Keep README changes factual and limited to the current task.
 
-## Phase 8 Implementation Boundary
+## Validation And Operator Work
 
-- Phase 8 owns final acceptance hardening, package validation, real workstation validation, model-backed smoke validation, and MkDocs scaffolding.
-- Phase 8 must not write the final documentation content.
-- Configure MkDocs with Material for MkDocs.
-- Keep `docs/index.md` intentionally minimal.
-- Move `scripts/codex-desktop-wsl-sessions.md` to `docs/reference/codex-desktop-wsl-sessions.md` as a placeholder for Codex-driven Phase 8.5 documentation.
-- Do not restore `scripts/share-codex-desktop-sessions.sh`.
-- Do not implement destructive state cleanup.
+- Automated tests use fake `agent`/`codex`, fake process backends, temporary homes,
+  XDG state, and repositories. Never invoke real models in automated tests.
+- Real model smoke tests and workstation changes require current explicit user
+  authorization; historical Phase 8 approval is not reusable consent.
+- Do not run real model-backed acceptance smoke tests against this source repo.
+- New scheduler runs do not require a pre-existing reviewer or desktop session.
+  If optional controller provenance is supplied, use its exact known ID. Never
+  guess an identity or use `--last`.
+- Follow `docs/operacion/timer-systemd-wsl.md` for explicitly authorized real WSL
+  timer/linger work. Do not enable or alter the timer as part of implementation.
+- Do not infer distro choice or hook trust from historical acceptance findings.
+  Use explicit configuration and report any trust action needed for changed hooks.
 
-## Cursor Validation Discipline
+## Integration, Privacy, And Cleanup
 
-- Automated tests must use fake `agent` and fake `codex` executables.
-- Real model calls are allowed only because the active Phase 8 plan and user explicitly approve them.
-- Do not run real model-backed smoke tests against the `ai_dev_loop` source repository.
-- If no exact desktop session ID is available for real model-backed smoke validation, stop. Do not guess, shorten, infer, search heuristically, or use `--last`.
-- If WSL distro detection is ambiguous during real desktop integration checks, use `Ubuntu-22.04`.
-- Treat Codex Desktop `/hooks` trust as user-confirmed before Phase 8, but report renewed trust may be required if installation changes the hook definition.
+- Do not share Windows and WSL `.codex` homes, set WSL `CODEX_HOME` to a Windows
+  path, or copy/open Codex SQLite databases across those environments.
+- Keep the desktop bridge limited to rollout files and never bypass hook trust.
+- Preserve run artifacts and repository work. A docs task does not authorize
+  staging, commits, integration installation, or destructive cleanup.
+- The existing `scheduler cutover cleanup --confirm delete-legacy-state` is an
+  explicit operator command, not an automatic migration or general cleanup tool.
+  Document its limits; do not execute it during docs validation.
+- Default summaries omit full prompts, fix prompts, staged patches, raw process
+  output, session IDs, credentials, environments, and transcript contents.
+- Report validation performed, unexecuted checks, and material limitations
+  accurately. Do not describe a docs build as a live scheduler/model test.
 
-## Documentation Scaffold Discipline
+## Historical Acceptance
 
-- MkDocs is the official documentation surface.
-- Use Material for MkDocs.
-- `site/` and other generated documentation build output must not be tracked.
-- Phase 8 may add placeholders and TODOs needed for Phase 8.5, but must not write complete final docs pages.
-- Do not document behavior that is not implemented and verified.
-- Any README edits should be minimal and factual.
-
-## Global Integration And Bridge Guardrails
-
-- Do not share the entire Windows `.codex` home with WSL.
-- Do not set WSL `CODEX_HOME` to `/mnt/c/.../.codex`.
-- Do not symlink, copy, migrate, open, or inspect Codex SQLite databases across Windows and WSL.
-- Keep the desktop bridge limited to rollout session files.
-- Do not bypass, mutate, or guess Codex hook trust state.
-- Do not use `--last`.
-
-## Non-Destructive Policy
-
-- Do not commit, push, tag, reset, clean, stash, unstage, or perform destructive cleanup.
-- Do not add destructive cleanup commands.
-- Preserve run artifacts, prompts, logs, staged patches, and findings for auditability.
-
-## Privacy And Output
-
-- Default CLI output and findings summaries must not include full prompts, fix prompts, staged patches, raw JSONL, auth payloads, full environments, transcript contents, or full session IDs.
-- Prefer artifact paths and safe summaries over raw sensitive content.
-
-## Findings Handoff
-
-Final acceptance created `archive/implementation-history/findings/phase-8-findings.md` with:
-
-- commands run;
-- validation results;
-- package install verification;
-- real workstation integration actions;
-- real model smoke outcome or exact stop reason;
-- residual risks;
-- Phase 8.5 documentation handoff.
+Phase 8 created scaffolding and Phase 8.5 authored the original documentation.
+Their placeholder-only limits, proposed file moves, and workstation approvals
+are historical, not current editing restrictions. Keep their archived findings
+unchanged as audit records; use a new scoped finding only when the active
+acceptance task requires one.

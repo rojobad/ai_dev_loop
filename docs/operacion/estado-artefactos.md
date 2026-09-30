@@ -59,9 +59,14 @@ manual hasta el cutover.
 No existe `recover` publico en el scheduler central. Ante fallos:
 
 - usa `scheduler status` y `scheduler history` para el checkpoint durable;
+- usa `scheduler review retry` para una revisión recuperable, `scheduler
+  cursor-retry` para un timeout Cursor elegible o `scheduler extend` para
+  autorizar más reviews tras agotar el presupuesto; consulta las condiciones en
+  la [referencia CLI](../referencia/cli.md);
 - `scheduler abort` cancela sin borrar artefactos ni cambios staged;
 - para trabajo nuevo tras un run terminal, `scheduler submit` con
-  `--resubmission-id <uuid>` e identidad controller y modelo de review explicitos;
+  `--resubmission-id <uuid>`, modelo y razonamiento de review explícitos
+  (controller A sigue siendo opcional);
   repetir submit sin esa opcion reutiliza el run terminal existente.
 
 Los contratos de recovery legacy (`recover`, sucesores `interrupted`, checkpoints

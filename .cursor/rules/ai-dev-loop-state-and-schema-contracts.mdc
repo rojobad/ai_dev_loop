@@ -1,88 +1,106 @@
 ---
-description: "State, schema, manifest, and checkpoint contracts for ai_dev_loop. Apply whenever editing persisted models, schemas, run artifacts, status transitions, recovery behavior, or tests that assert them."
+description: "Scheduler ledger, schema, protected-artifact, checkpoint, and historical compatibility contracts. Apply when editing persisted models, state transitions, recovery, docs, or tests."
 globs:
 alwaysApply: true
 ---
 
 # ai_dev_loop State And Schema Contracts
 
-These contracts protect the local audit trail and recovery model. They apply in addition to `ai-dev-loop-governance.mdc` and `ai-dev-loop-orchestrator-contracts.mdc`.
+Apply with `AGENTS.md`, governance, and orchestrator rules. Verify current
+contracts in `src/ai_dev_loop/scheduler/`, `src/ai_dev_loop/schemas/`, tests,
+and `docs/operacion/estado-artefactos.md`.
 
-## Persisted State Is A Public Contract
+## Persisted Authority
 
-- Treat `state.json`, `manifest.json`, `effective-config.yaml`, `source-config.yaml`, snapshots, logs, and per-iteration artifacts as durable product contracts, not incidental implementation details.
-- Keep Pydantic models, JSON schemas, artifact writers, artifact readers, tests, and documentation aligned whenever a persisted shape changes.
-- Do not add persisted fields just because they are convenient for the current function. Each persisted field must support auditability, recovery, compatibility, or clear user inspection.
-- Do not store absolute XDG run paths inside target repositories or target-repository files.
-- Do not store authentication tokens, API keys, full process environments, or copied Codex transcript contents.
-- Treat `result`, `last_error`, structured event details, command metadata, and other diagnostic fields as user-facing privacy surfaces unless they are documented sensitive artifacts.
-- Persist raw prompts, patches, agent stdout/stderr, review Markdown, and fix prompts only in dedicated sensitive artifacts, not in summary fields that status, logs, inspect, or CLI errors render by default.
-- Phase 10 `CodexState` records `session_model`, `session_reasoning_effort`, effective `review_model`, effective `review_reasoning_effort`, `review_model_source`, and `review_reasoning_source`. New-run provenance values are `session` or `explicit`; `legacy_inherit` is reserved for historical compatibility.
-- Newly prepared Phase 10 runs require effective review model/reasoning values and provenance. Historical Phase 9 states with null review values and no provenance, or the compatibility marker `legacy_inherit`, remain readable only through the documented legacy path; never reinterpret them as session-derived.
-- Optional `recovery` lineage on successor runs records `source_run_id`, `source_status`, `source_iteration`, `recovered_checkpoint` (`staging`, `reviewing`, `process_review`, or `cursor`), `source_staged_patch_sha256`, `created_at`, `runtime_migration`, and `reason_code`. Staging checkpoints also record `cursor_output_fingerprint_sha256` and optional `legacy_cursor_output_adopted`. Correction staging (`reason_code: correction_staging_failed`, iteration >= 2) requires equal `source_staged_patch_sha256` and `previous_staged_patch_sha256`. Initial staging (`reason_code: initial_staging_failed`, iteration 1) requires both staged-patch hashes to be null and does not support adoption. Cursor usage-limit checkpoints (`recovered_checkpoint: cursor`, `reason_code: cursor_usage_limit`) record `source_cursor_model`, `cursor_model_fallback`, `source_prompt_path`/`source_prompt_sha256`, `usage_limit_fingerprint_path`/`usage_limit_fingerprint_sha256`, optional `legacy_cursor_usage_limit_adopted`, and `continuation_envelope_path`/`continuation_envelope_sha256`, with `source_staged_patch_sha256` null. Legacy cursor adoption uses a successor `git/cursor-output/NN.usage-limit-adopted.json` artifact and must not be confused with Phase 12 `legacy_cursor_output_adopted` or Phase 13 failure-time fingerprints. Keep recovery optional so historical states remain readable. Do not copy raw `last_error`, stderr, prompts, patches, or full session IDs into lineage.
+- The scheduler uses `$XDG_STATE_HOME/ai_dev_loop/engine.sqlite3` and protected
+  `artifacts/runs/<sha256(run_id)>/` and `artifacts/sequences/` roots. The default
+  XDG state home is `~/.local/state`. Never store run state inside target repos.
+- Validated ledger snapshots/events, reservations, fenced effects/attempts, and
+  authenticated artifact bindings are authority. Do not use legacy `state.json`
+  or an agent's text report as a replacement.
+- Keep typed models, versioned JSON schemas, SQLite migrations, writers,
+  readers, projections, and tests aligned for each changed persisted contract.
+- Freeze plan/prompt/configuration and explicit review model/reasoning at submit
+  or sequence preparation. Controller A is optional provenance; no reviewer B
+  identity exists until its first-review bootstrap is authenticated.
+- Preserve frozen inputs during retries. Budget extension is a separate durable
+  authorization, not an edit to the submitted max-review-iterations field.
+- Add fields only for an explicit audit, recovery, compatibility, or inspection
+  requirement. Do not invent unversioned nested structures or future-phase data.
 
-## Schema Discipline
+## Schema And State Transitions
 
-- Versioned schemas live under `src/ai_dev_loop/schemas/` and must describe the persisted contract accepted by the application.
-- Any non-trivial change to `RunState`, project config, or Codex review result shape must update the relevant schema in the same change.
-- Schema changes require tests that would fail if the model and schema drift apart.
-- For changed fields, distinguish accepted transport inputs, canonical persisted
-  output, and domain invariants. Follow the approved absent/null and coercion
-  contract; validate representative complete payloads rather than property-name
-  proxies. Do not broaden compatibility or parity promises during correction.
-- Prefer explicit typed models or dataclasses over unstructured dictionaries for new persisted structures.
-- If compatibility or migration is needed, add an explicit migration/read strategy. Do not silently reinterpret old state.
+- Use scheduler domain models/reducers and transactional compare-and-swap state
+  updates with the appropriate lease/fence. Do not directly edit persisted JSON
+  to force a transition or mutate a run outside the state machine.
+- Schema/model changes require tests for accepted transport, canonical persisted
+  output, and domain invariants. Honor the approved absent/null and coercion
+  contract; do not broaden compatibility promises during correction.
+- Persist classified failures and diagnostic events consistently with the actual
+  checkpoint. Scheduler wait/blocked states are not the legacy engine's generic
+  `failed` status; do not impose `RunStatus`/`ALLOWED_STATUS_TRANSITIONS` on them.
+- Operational retries retain the review iteration. Completed-review counters
+  advance only for authenticated completed reviews, not attempted processes.
+- Preserve idempotent explicit transitions such as `scheduler extend` from
+  `max_iterations_reached`; a blanket ban on terminal-state transitions would
+  contradict that implemented authorization.
+- Blocked-source review recovery leaves the source immutable and records
+  authenticated successor lineage. Sequence recovery also reconciles phase-run
+  lineage and replacement intent before adoption or advancement.
 
-## State Machine Discipline
+## Artifacts And Privacy
 
-- Mutate `RunStatus` only through named transition helpers or equivalent centralized functions.
-- Update `ALLOWED_STATUS_TRANSITIONS` and tests whenever a phase introduces a real new transition.
-- Do not use terminal states to mean "temporarily paused".
-- Do not set a status that implies a later phase has run. For example, do not set `reviewing` before Codex review execution exists.
-- Keep `result`, `last_error`, and status-specific next actions consistent with the actual completed checkpoint.
-- Once a command has mutated status or entered a resumable checkpoint, validation and preflight failures must be persisted before returning: set `failed`, set `last_error`, save state, and append a diagnostic event/log entry.
-- Do not leave runs parked in transient statuses such as `validating`, `running_cursor`, `staging`, or `reviewing` after a handled local validation failure.
+- Publish protected artifacts through the existing store with verified bindings.
+  Preserve atomic file writes and transactional ledger updates; reconcile the
+  boundary between filesystem publication and database recording after crashes.
+- Keep artifact paths relative and contained within their owning run/sequence.
+  Use documented domain path builders and per-attempt names. Preserve earlier
+  attempts instead of overwriting their output during retry.
+- Keep plan/prompt snapshots, staged patches, process events/output, validated
+  review results, exact fix prompts, and review-prompt evidence available for
+  supported recovery and explicit inspection.
+- Do not store tokens, credentials, full process environments, or copied Codex
+  transcripts. Preserve user-only permissions where supported.
+- Summary fields, errors, events, CLI status/history/timeline, and integration
+  summary projections must not contain raw prompts, patches, stdout/stderr,
+  review content, or full session IDs. Reference protected artifacts instead.
+- Explicit paginated integration content reads are a separate interface. They
+  must authenticate artifact ownership/integrity and preserve their documented
+  redaction and availability semantics. Missing historical evidence is not
+  permission to reconstruct or fabricate a past prompt.
+- Read-only inspection must not migrate the scheduler database, advance state,
+  or release reservations.
 
-## Iteration Contract
+## Recovery Evidence
 
-- `iterations` is the durable bridge between Cursor turns, Git staging, Codex reviews, and future resume behavior.
-- Each iteration entry must use stable keys that match the master plan where possible: `number`, `kind`, `started_at`, `completed_at`, `cursor`, `git`, `codex`, and `review`.
-- Omit later-phase sections until that phase actually writes real data. Do not create fake `codex` or `review` data before Codex review execution exists.
-- Store artifact paths relative to the run directory.
-- Do not overwrite a completed agent turn merely to make state easier to read. Later `resume` must infer the next safe action from durable checkpoints.
+- At changed boundaries, connect durable intent, authorized effect, and verified
+  postcondition to actual restart/abort callers. Test convergence after outcomes
+  become known as well as safety while outcomes are uncertain.
+- Persist the Cursor chat before dispatch and bind reviewer B from authenticated
+  bootstrap evidence. Missing/conflicting identity must not cause silent
+  creation of replacement agents.
+- Preserve frozen repository identity, reviewed artifacts, and exact prompts
+  required by the supported checkpoint. Do not add continuous clean-baseline
+  requirements to normal implementation or partial-work continuation.
+- Record only the evidence required by the documented retry/recovery path.
+  Never classify eligibility from fuzzy summaries or synthesize approvals.
 
-## Artifact And Manifest Discipline
+## Legacy Compatibility
 
-- Write state, manifests, configs, checkpoint metadata, and schemas atomically.
-- Use sensitive file permissions for prompts, session IDs, agent output, review content, staged patches, and other proprietary context where supported.
-- Every artifact needed for recovery or audit should either be listed in `manifest.json`, recorded in `state.json`, or be discoverable by a documented deterministic path.
-- Full patches and agent outputs may contain proprietary code context. Do not print them by default in human CLI output.
-- Persisted summary fields should reference sensitive raw artifacts by relative path instead of copying raw artifact contents.
-- Preserve raw agent output after redaction even when parsing fails.
-- `codex/session-runtime.json` is the safe Phase 10 extraction artifact. It may contain only allowlisted runtime metadata and a shortened session ID; it must not contain transcript content or an absolute rollout path.
+- `RunState`, `state.json`, `manifest.json`, `iterations`, Phase 9/10
+  `session`/`explicit`/`legacy_inherit` runtime provenance, and legacy `recovery`
+  shapes remain compatibility contracts only where retained code/fixtures use
+  them. Preserve those readers when affected; do not reinterpret old null values
+  as session-derived or convert old runs automatically into scheduler runs.
+- `codex/session-runtime.json` was an allowlisted legacy extraction artifact;
+  it must not contain transcript content or an absolute rollout path. New
+  scheduler submissions use fresh-reviewer inputs and do not capture A's runtime.
+- The old top-level `recover`/`resume` and `FAILED -> INTERRUPTED` model are not
+  public scheduler recovery. Use `docs/referencia/cli.md` for current commands.
 
-## Recovery Compatibility
+## Validation
 
-- Design each checkpoint so `resume` can later answer one question: what is the next safe action that does not change agent identity or repeat completed work?
-- For boundaries changed by the active plan, connect durable intent, authorized
-  effect, and postcondition to the real restart/abort caller. Prove both safety
-  during uncertainty and convergence after the outcome is known; a helper that
-  is never called by production does not complete recovery.
-- Persist Cursor chat IDs immediately after creation and reuse them after recoverable failures.
-- Persist staged diff artifacts before any Codex review consumes them.
-- Persist Codex review results and correction prompts exactly as returned once review is implemented.
-- On ambiguous or partially written state, fail safely and preserve diagnostics rather than guessing.
-- Resume planners should make failure persistence part of the checkpoint contract: missing chat IDs, missing prompts, staged-patch drift, dirty worktrees, and invalid recorded artifacts must not exit without updating `state.json`.
-- Terminal failed runs are recovered by creating a successor run, not by mutating the source. Do not add `FAILED -> INTERRUPTED` to `ALLOWED_STATUS_TRANSITIONS`.
-- Successor creation must copy only artifacts required for deterministic continuation, keep relative paths under the successor run directory, and leave failed Codex attempt artifacts in the immutable source unless the recovered checkpoint is review-result processing.
-
-## Testing Requirements
-
-- Add or update tests for every persisted shape change.
-- Test allowed and rejected status transitions.
-- Test schema/model alignment for changed models.
-- Test recovery-relevant checkpoints using fake CLIs and temporary repositories.
-- Test checkpoint validation failures after status mutation persist `failed`, `last_error`, and an event/log diagnostic instead of leaving transient statuses behind.
-- Test that sensitive artifacts are not world-readable on chmod-capable filesystems.
-- Test that human output does not print full prompts, full patches, auth payloads, or full process environments by default.
-- Test that `result`, `last_error`, human logs, structured event logs, and CLI errors do not contain raw agent stdout/stderr, review Markdown, staged patches, fix prompts, or full session IDs.
+For changed contracts, test schema/model alignment, valid and rejected state
+transitions, idempotent publication/reconciliation, exact identity continuity,
+and recovery through real callers with fake CLIs and temporary repositories.
+Check failure persistence, sensitive permissions, and summary redaction.

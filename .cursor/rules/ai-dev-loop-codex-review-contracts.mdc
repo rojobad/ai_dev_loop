@@ -10,13 +10,22 @@ These contracts protect the automated review boundary of `ai_dev_loop`. They app
 
 ## Reviewer Identity
 
-- Codex is the architect, context owner, prompt author, and reviewer.
-- Every automated review must resume the exact original Codex session ID from prepared run state.
-- Use `state.codex.session_id` exactly. Do not infer, shorten, rewrite, search for, or guess a session ID.
+- Codex is the final reviewer; controller A is optional provenance only.
+- For new scheduler runs, reviewer B does not exist at submit time. Bootstrap
+  it once at the first review using `codex exec`, authenticate the emitted
+  identity, and bind it durably in the ledger and protected artifacts.
+- Subsequent reviews and eligible retries use the exact bound
+  `state.codex.reviewer_session_id` from scheduler state. Do not infer, shorten,
+  rewrite, search for, or guess a session ID. Legacy `RunState.codex.session_id`
+  is not the new-run identity source.
 - Never use `--last`.
-- Never use a plain new `codex exec` session for the final review.
+- Never bootstrap a second reviewer to bypass missing/uncertain identity or a
+  recoverable failure. Preserve evidence and use the supported recovery policy.
+- Do not pass `--codex-session-id` to submit, fork a reviewer in the app, or
+  contact reviewer B from a controller chat.
 - Never use subagents as the final reviewer.
-- The same resumed Codex session must author any `cursor_fix_prompt`.
+- The bound reviewer must author every `cursor_fix_prompt`, including one
+  returned by its first bootstrap review.
 - The orchestrator must only validate, store, and later forward the returned `cursor_fix_prompt`; it must not generate or rewrite it.
 
 ## Command Shape
@@ -24,34 +33,33 @@ These contracts protect the automated review boundary of `ai_dev_loop`. They app
 - Use the locally probed Codex CLI option order unless an explicit later probe proves otherwise.
 - Root `codex exec` options such as `--cd` and `--sandbox` must appear before `resume`.
 - Resume-specific options such as `--model`, `-c model_reasoning_effort="..."`, `--json`, `--output-schema`, and `--output-last-message` must appear after `resume`.
-- During Phase 10 `prepare`, locate the exact session UUID under trusted native WSL sessions and the validated `sessions/from-desktop` bridge. Parse only allowlisted `session_meta`, `thread_settings_applied`, and `turn_context` events, including supported `event_msg` wrappers.
-- `codex.review_model` and `codex.review_reasoning_effort` remain independent optional overrides. For new runs, omission or `null` resolves from `session_model` or `session_reasoning_effort` captured at `prepare`; never infer either value from WSL `config.toml` or a CLI default.
-- New Phase 10 runs must persist non-null effective `review_model` and `review_reasoning_effort` with provenance `session` or `explicit`, then always emit both `--model <effective-model>` and `-c model_reasoning_effort="<effective-effort>"`.
-- Historical Phase 9 runs with both review values null and no provenance retain the legacy no-override command path. Warn the user to re-prepare; never describe those nulls as session-derived.
+- `scheduler submit` requires `--codex-review-model` and
+  `--codex-review-reasoning-effort`; sequence preparation requires both per phase.
+  Freeze them in the submitted context and `codex/fresh-reviewer-input.json`.
+- YAML review overrides, controller session metadata, WSL `config.toml`, and
+  Codex CLI defaults do not substitute for these explicit new-run inputs.
+- Always pass both frozen values on bootstrap and resume. The scheduler enforces
+  `--sandbox workspace-write`, independently of legacy YAML sandbox settings.
 - Pass the TOML assignment as one argv entry with `shell=False`; never shell-interpolate it.
-- The Phase 10 command shape should remain equivalent to:
+- Use the scheduler builders in
+  `src/ai_dev_loop/scheduler/application/codex_argv.py`. Command shapes are:
 
 ```text
-codex exec
---cd
-<repo-root>
---sandbox
-<codex-sandbox>
-resume
---model
-<effective-model>
--c
-model_reasoning_effort="<effective-effort>"
---json
---output-schema
-<codex-review-result-v1.json>
---output-last-message
-<codex/reviews/NN.json>
-<session-id>
--
+# First review: create and bind B
+codex exec --cd <repo-root> --sandbox workspace-write
+  --model <frozen-model> -c model_reasoning_effort="<frozen-effort>"
+  --json --output-schema <schema-file> --output-last-message <result-file> -
+
+# Subsequent reviews / eligible retries: resume exact B
+codex exec --cd <repo-root> --sandbox workspace-write resume
+  --model <frozen-model> -c model_reasoning_effort="<frozen-effort>"
+  --json --output-schema <schema-file> --output-last-message <result-file>
+  <bound-reviewer-session-id> -
 ```
 
-- The historical Phase 9 compatibility shape may omit both `--model` and `-c`; it is not the primary behavior for newly prepared runs.
+- These are argv outlines, not multiline shell commands. Historical Phase 9/10
+  session-inheritance paths apply only to retained compatibility code and
+  fixtures; do not restore retired `prepare` or `resume` commands.
 
 - Supply the review instruction on stdin.
 - Do not shell-interpolate paths, prompts, session IDs, findings, or agent output.
@@ -79,6 +87,9 @@ model_reasoning_effort="<effective-effort>"
 - It must explicitly state when the latest Cursor final response could not be extracted.
 - It should include artifact paths for auditability, but must not require Codex to read files from the XDG state directory.
 - It must tell Codex to follow the configured review skill's read-only discipline.
+- Distinguish review authority from subprocess capability: `workspace-write`
+  permits test execution but does not cancel the wrapper's prohibition on
+  intentional repository edits, staging, deletion, or fixes to make tests pass.
 - It must require a final response conforming to `codex-review-result-v1.json`.
 - It must require a complete English `cursor_fix_prompt` when actionable findings exist.
 - It must require `cursor_fix_prompt: null` when there are no actionable findings.
@@ -113,46 +124,60 @@ model_reasoning_effort="<effective-effort>"
   - `findings_count == 0`;
   - `highest_severity: null`;
   - `cursor_fix_prompt: null`.
-- Invalid structured output must mark the run `failed` and preserve diagnostics.
+- Invalid output never implies acceptance. Preserve attempt diagnostics and
+  route through the scheduler's classified failure handling: eligible bound
+  reviews may wait in `waiting_codex_review_retry` or `waiting_codex_capacity`;
+  integrity or bootstrap-identity uncertainty blocks the run. Do not force the
+  retired engine's universal `failed` status onto scheduler states.
 
 ## Artifact And Privacy Contract
 
 - Store Codex artifacts under the run directory outside the target repository.
-- Store safe session extraction evidence as `codex/session-runtime.json`, containing only allowlisted metadata and a session ID prefix. Never persist the rollout path or transcript content.
-- Use relative run-directory paths in `state.json`.
+- Preserve fresh-reviewer input/binding, per-attempt events, results, and prompt
+  evidence under protected scheduler artifacts. Authenticate hashes and attempt
+  identity before using them as decisions.
+- `codex/session-runtime.json` belongs to legacy session extraction; new submit
+  does not read the controller's rollout. Never persist copied transcripts.
+- Use relative artifact paths in persisted scheduler bindings/checkpoints.
 - Treat Codex events, review JSON, Markdown reports, metadata, and fix prompts as sensitive.
 - Use user-only permissions where supported.
 - Do not store authentication tokens, API keys, full process environments, or copied Codex transcript contents.
 - Do not print full prompts, staged patches, review artifacts, fix prompts, or raw JSONL by default in human CLI output.
 - User-facing Codex failure and timeout messages must be concise summaries that point to artifact paths. They must not embed raw Codex stdout, stderr, JSONL event content, review Markdown, or fix prompts.
-- `state.last_error`, `logs/ai_dev_loop.log`, `logs/events.jsonl`, and CLI output are all human/output surfaces for privacy purposes; never route raw Codex process output through them.
-- `logs --component codex` must render summaries, artifact paths, sizes, counts, and redacted structured fields by default. It must not print raw `.jsonl`, `.md`, `.txt`, review JSON content fields, or stored fix prompts.
+- Scheduler status, history, timeline, errors, and integration summary projections
+  are public output surfaces. Keep raw content in protected artifacts. Explicit
+  `integration run review-content` / `output` reads are separate sensitive-content
+  interfaces, not permission to include content in default summaries.
 - Full Codex session IDs may be stored only in sensitive artifacts or state where required for recovery. Human log rendering should shorten or redact session IDs, including session-like values embedded in command args.
 - Structured event details must be redacted and must not contain full prompts, full patches, auth payloads, or obvious secrets.
 
-## State And Phase Boundary
+## State And Review Boundary
 
-- Phase 4 may transition successful fresh runs through `staging -> reviewing`.
-- When there are no actionable findings, leave final repository changes staged and set a completion status.
-- Use `completed` when tests passed or were not applicable.
-- Use `completed_with_residual_risk` when tests failed, were environmentally blocked, or the structured result reports residual risk without actionable findings.
-- In a Phase 4-only implementation, when actionable findings exist, set `waiting_for_cursor_fix`, persist the exact fix prompt, and stop.
-- In Phase 5 and later, `waiting_for_cursor_fix` is a durable checkpoint, not necessarily a terminal boundary. The shared loop may immediately continue to the next Cursor correction when the review limit allows.
-- The Codex review runner should persist review artifacts and fix prompts, but the workflow engine decides whether to stop, continue to Cursor, or mark `max_iterations_reached`.
-- Do not send a correction prompt to Cursor in Phase 4-only code paths.
-- Do not create or imply a Cursor correction turn in `state.iterations` before a real correction turn is executed.
-- Do not set `max_iterations_reached` in Phase 4 unless this phase explicitly implements the required bounded correction loop.
-- Preserve enough artifacts and state for later `resume` work to continue without changing Codex session identity or Cursor chat identity.
+- The runner persists evidence; scheduler workflow/reducers decide continuation.
+- No findings with `tests_status` of `passed` or `not_applicable` yields
+  `completed`; the other supported test statuses yield
+  `completed_with_residual_risk`. Prose alone does not change the outcome.
+- Findings produce the exact fix prompt and `waiting_for_cursor_fix` when the
+  effective budget permits another review; exhaustion produces
+  `max_iterations_reached` without an extra Cursor turn.
+- Standalone runs and final sequence phases leave the reviewed changes staged.
+  Accepted non-final sequence phases pass through the authorized checkpoint
+  commit/handoff contract before the next phase; see the loop rule.
+- Do not record completed corrections or reviews until their authenticated
+  results exist. Preserve exact agent identities across supported retries.
 
 ## Tests
 
 - Automated tests must use fake `codex` executables and must not invoke real Codex model activity.
 - Test the exact command shape and option order.
-- Test that the exact prepared session ID is used.
+- Test one fresh bootstrap, durable identity capture, and exact bound-session
+  resume, including failure/retry and uncertain-bootstrap paths.
 - Test that `--last` is absent.
 - Test wrapper prompt content, including configured review skill, original Cursor prompt content, and latest Cursor final response handling.
 - Test no-finding, finding, invalid JSON, nonzero exit, and timeout paths.
 - Test that structured JSON, not Markdown, drives status and fix-prompt decisions.
 - Test that Codex artifacts and structured event logs are written without leaking full prompts or auth data into default output.
 - Test that Codex nonzero exits and timeouts do not leak raw stdout/stderr into `state.last_error`, human logs, structured event logs, or CLI output.
-- Test that `logs --component codex` redacts review Markdown, fix prompts, raw JSONL, raw stderr/stdout text artifacts, and full session IDs.
+- Test that scheduler and integration summary projections redact review Markdown,
+  fix prompts, raw output, and full session IDs; test explicit content reads
+  through their separate authenticated artifact contracts.

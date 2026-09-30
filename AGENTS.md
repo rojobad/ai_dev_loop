@@ -1,5 +1,40 @@
 # ai_dev_loop Agent Guidance
 
+## Current workflow and source of truth
+
+- New work uses `scheduler submit` -> `scheduler start` -> `scheduler tick`,
+  or `scheduler sequence prepare` -> `scheduler sequence start` -> ticks.
+  Read `docs/referencia/cli.md` for the supported command surface.
+- Verify behavior against current code, schemas, CLI help, and tests. Keep
+  rules and `/docs` aligned with that evidence. Archived plans and findings
+  explain history; they do not reinstate retired commands or override the
+  user's approved scope. Report unresolved safety decisions before dependent
+  implementation; correcting an obsolete instruction is not such a decision.
+- The central `engine.sqlite3` ledger and protected `artifacts/` are the
+  scheduler's authority. Legacy `runs/.../state.json` is not live scheduler
+  state. Do not restore top-level `prepare`, `start`, `resume`, `recover`,
+  `launch`, or `pr-review` to satisfy historical instructions.
+
+## Reviewer identity and frozen configuration
+
+- Controller A is optional provenance. New submissions do not require a
+  desktop session, a fork, or a message to another chat.
+- `scheduler submit` requires explicit `--codex-review-model` and
+  `--codex-review-reasoning-effort`. Sequence manifests supply both per phase.
+  Freeze these inputs; do not inherit them from YAML defaults, controller
+  session metadata, or Codex CLI configuration.
+- Reviewer B does not exist at submission. The scheduler creates it once at
+  the first review with `codex exec`, captures its exact identity, and uses
+  `codex exec resume` for subsequent reviews and eligible retries. Never pass
+  a pre-existing B through `--codex-session-id`, use `--last`, or guess an ID.
+- The scheduler enforces `workspace-write` for the Codex subprocess. This
+  capability does not authorize reviewer edits: the current wrapper and
+  configured review skill require staged-only review without intentional
+  repository modifications and permit relevant automated tests.
+- Cursor remains the implementation agent and Codex the final reviewer.
+  Provider switching and a scheduler-managed Cursor master/executor stage
+  are not implemented configuration options.
+
 ## Product intent and Git authority
 
 `ai_dev_loop` is an orchestrator for a durable conversation between a Codex
@@ -22,6 +57,24 @@ become a general-purpose controller of every worktree change.
   reservation, immutable input and artifact integrity, exact agent identity,
   explicit review decisions, and no destructive or external Git actions unless
   the approved plan expressly authorizes them.
+- The supported runtime normalizes staging after Cursor. An explicitly started
+  sequence also authorizes the existing local checkpoint commit for each
+  accepted non-final phase. Standalone runs and final sequence phases leave
+  changes staged; acceptance does not authorize push, PR creation, or merge.
+
+## Recovery and operator actions
+
+- Use the durable state and safe next action: `scheduler cursor-retry` for an
+  eligible terminated Cursor timeout, `scheduler review retry` for eligible
+  review failures/capacity waits, and `scheduler extend` for an explicitly
+  increased review ceiling after `max_iterations_reached`.
+- Same-reviewer recovery preserves the authenticated reviewer binding. An
+  eligible blocked run may have a successor; the blocked source is immutable.
+  `scheduler extend` is a separate explicit same-run transition and does not
+  rewrite the submitted configuration.
+- Retired-state deletion is only the explicit `scheduler cutover cleanup`
+  operator flow. Do not run cleanup, live agents, timer changes, or integration
+  installation as a side effect of documentation or automated tests.
 
 ## Review standard
 
