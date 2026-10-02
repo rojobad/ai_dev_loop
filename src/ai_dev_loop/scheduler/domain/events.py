@@ -4,13 +4,25 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import Discriminator, Field, Tag, TypeAdapter, field_validator
+from pydantic import Discriminator, Field, Tag, TypeAdapter, field_validator, model_validator
 
 from ai_dev_loop.scheduler.domain.admission_contract import (
     ADMISSION_BLOCKED_EVENT_KIND,
     ADMISSION_EVENT_KIND,
 )
-from ai_dev_loop.scheduler.domain.common import DomainModel, NonEmptyStr, Sha256Hex, UuidSessionId
+from ai_dev_loop.scheduler.domain.codex_routing_policy import (
+    FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT,
+    ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS,
+    ROUTING_AUTO_RETRY_POLICY_VERSION,
+    ROUTING_FAILURE_POST_PROBE_REASONS,
+)
+from ai_dev_loop.scheduler.domain.common import (
+    DomainModel,
+    NonEmptyStr,
+    Sha256Hex,
+    UuidSessionId,
+    encode_utc_instant,
+)
 
 SUBMITTED_EVENT_KIND = "run_submitted"
 AUTHORIZED_EVENT_KIND = "run_authorized"
@@ -447,6 +459,84 @@ class CodexUsageCapacityDetectedEvent(DomainModel):
         "post_failure_capacity_probe",
     ] = "structured_error"
     operational_failure_kind: NonEmptyStr | None = None
+    preserved_failed_attempt_id: NonEmptyStr | None = None
+    preserved_retry_generation: int | None = None
+    routing_auto_retry_policy_version: NonEmptyStr | None = None
+    routing_auto_retry_eligible: bool = False
+    routing_auto_retry_authorizations_used: int = 0
+    routing_auto_retry_due_at: NonEmptyStr | None = None
+    routing_auto_retry_exhausted: bool = False
+    routing_failure_post_probe_status: (
+        Literal["available", "exhausted", "unavailable"] | None
+    ) = None
+    routing_failure_post_probe_reason: NonEmptyStr | None = None
+
+    @field_validator("routing_auto_retry_authorizations_used", mode="before")
+    @classmethod
+    def reject_bool_routing_authorizations_capacity(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("routing_auto_retry_authorizations_used must be an integer")
+        if isinstance(value, float):
+            raise ValueError("routing_auto_retry_authorizations_used must be an integer")
+        if isinstance(value, str):
+            raise ValueError("routing_auto_retry_authorizations_used must be an integer")
+        return value
+
+    @field_validator("routing_failure_post_probe_reason")
+    @classmethod
+    def routing_probe_reason_capacity(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value not in ROUTING_FAILURE_POST_PROBE_REASONS:
+            raise ValueError("routing_failure_post_probe_reason is not supported")
+        return value
+
+    @field_validator("routing_auto_retry_due_at")
+    @classmethod
+    def canonical_routing_due_at_capacity(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        canonical = encode_utc_instant(value)
+        if value != canonical:
+            raise ValueError("routing_auto_retry_due_at must use canonical UTC Z encoding")
+        return value
+
+    @field_validator("routing_auto_retry_policy_version")
+    @classmethod
+    def routing_policy_version_capacity(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value != ROUTING_AUTO_RETRY_POLICY_VERSION:
+            raise ValueError("routing_auto_retry_policy_version is not supported")
+        return value
+
+    @field_validator("routing_auto_retry_eligible", "routing_auto_retry_exhausted", mode="before")
+    @classmethod
+    def strict_routing_bools_capacity(cls, value: object) -> object:
+        if value is not None and not isinstance(value, bool):
+            raise ValueError("routing retry boolean fields must be booleans")
+        return value
+
+    @model_validator(mode="after")
+    def routing_capacity_event_consistent(self) -> CodexUsageCapacityDetectedEvent:
+        if self.routing_auto_retry_authorizations_used < 0:
+            raise ValueError("routing_auto_retry_authorizations_used must be >= 0")
+        if self.routing_auto_retry_authorizations_used > ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS:
+            raise ValueError("routing_auto_retry_authorizations_used exceeds policy limit")
+        if self.routing_auto_retry_due_at and not self.routing_auto_retry_eligible:
+            raise ValueError("routing_auto_retry_due_at requires routing_auto_retry_eligible")
+        if self.routing_auto_retry_exhausted and self.routing_auto_retry_eligible:
+            raise ValueError("routing_auto_retry_exhausted cannot be eligible")
+        if self.routing_auto_retry_eligible:
+            if self.operational_failure_kind != FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT:
+                raise ValueError("routing eligibility requires routing failure kind")
+            if self.routing_auto_retry_policy_version != ROUTING_AUTO_RETRY_POLICY_VERSION:
+                raise ValueError("routing eligibility requires fixed policy version")
+            if not self.routing_auto_retry_due_at:
+                raise ValueError("routing eligibility requires due time")
+            if self.routing_auto_retry_authorizations_used >= ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS:
+                raise ValueError("routing_auto_retry_eligible requires remaining allowance")
+        return self
 
     @field_validator("kind")
     @classmethod
@@ -463,6 +553,84 @@ class CodexReviewRetryableFailureEvent(DomainModel):
     failure_kind: NonEmptyStr
     attempt_id: NonEmptyStr
     retry_generation: int
+    routing_auto_retry_policy_version: NonEmptyStr | None = None
+    routing_auto_retry_eligible: bool = False
+    routing_auto_retry_authorizations_used: int = 0
+    routing_auto_retry_due_at: NonEmptyStr | None = None
+    routing_auto_retry_exhausted: bool = False
+    routing_failure_post_probe_status: (
+        Literal["available", "exhausted", "unavailable"] | None
+    ) = None
+    routing_failure_post_probe_reason: NonEmptyStr | None = None
+
+    @field_validator("routing_auto_retry_authorizations_used", mode="before")
+    @classmethod
+    def reject_bool_routing_authorizations_failure(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("routing_auto_retry_authorizations_used must be an integer")
+        if isinstance(value, float):
+            raise ValueError("routing_auto_retry_authorizations_used must be an integer")
+        if isinstance(value, str):
+            raise ValueError("routing_auto_retry_authorizations_used must be an integer")
+        return value
+
+    @field_validator("routing_failure_post_probe_reason")
+    @classmethod
+    def routing_probe_reason_failure(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value not in ROUTING_FAILURE_POST_PROBE_REASONS:
+            raise ValueError("routing_failure_post_probe_reason is not supported")
+        return value
+
+    @field_validator("routing_auto_retry_due_at")
+    @classmethod
+    def canonical_routing_due_at_failure(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        canonical = encode_utc_instant(value)
+        if value != canonical:
+            raise ValueError("routing_auto_retry_due_at must use canonical UTC Z encoding")
+        return value
+
+    @field_validator("routing_auto_retry_policy_version")
+    @classmethod
+    def routing_policy_version_failure(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value != ROUTING_AUTO_RETRY_POLICY_VERSION:
+            raise ValueError("routing_auto_retry_policy_version is not supported")
+        return value
+
+    @field_validator("routing_auto_retry_eligible", "routing_auto_retry_exhausted", mode="before")
+    @classmethod
+    def strict_routing_bools_failure(cls, value: object) -> object:
+        if value is not None and not isinstance(value, bool):
+            raise ValueError("routing retry boolean fields must be booleans")
+        return value
+
+    @model_validator(mode="after")
+    def routing_retryable_failure_consistent(self) -> CodexReviewRetryableFailureEvent:
+        if self.routing_auto_retry_authorizations_used < 0:
+            raise ValueError("routing_auto_retry_authorizations_used must be >= 0")
+        if self.routing_auto_retry_authorizations_used > ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS:
+            raise ValueError("routing_auto_retry_authorizations_used exceeds policy limit")
+        if self.routing_auto_retry_due_at and not self.routing_auto_retry_eligible:
+            raise ValueError("routing_auto_retry_due_at requires routing_auto_retry_eligible")
+        if self.routing_auto_retry_exhausted and self.routing_auto_retry_eligible:
+            raise ValueError("routing_auto_retry_exhausted cannot be eligible")
+        if self.routing_auto_retry_eligible:
+            if self.failure_kind != FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT:
+                raise ValueError("routing eligibility requires routing failure kind")
+            if self.routing_auto_retry_policy_version != ROUTING_AUTO_RETRY_POLICY_VERSION:
+                raise ValueError("routing eligibility requires fixed policy version")
+            if not self.routing_auto_retry_due_at:
+                raise ValueError("routing eligibility requires due time")
+            if self.retry_generation < 1:
+                raise ValueError("routing eligibility requires active retry generation")
+            if self.routing_auto_retry_authorizations_used >= ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS:
+                raise ValueError("routing_auto_retry_eligible requires remaining allowance")
+        return self
 
     @field_validator("kind")
     @classmethod
@@ -478,6 +646,7 @@ class CodexReviewRetryRequestedEvent(DomainModel):
     review_iteration: int
     retry_generation: int
     idempotent_replay: bool
+    authorization_source: Literal["manual", "automatic"] = "manual"
 
     @field_validator("kind")
     @classmethod

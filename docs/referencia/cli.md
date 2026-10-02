@@ -258,6 +258,17 @@ No vuelve a ejecutar una implementación Cursor ya completada para reintentar la
 review. Un reintento operativo no consume por sí solo una revisión completada.
 La repetición de una autorización ya registrada no debe duplicar el intento.
 
+Cuando el fallo clasificado es `codex_workspace_routing_timeout` (mensaje terminal
+exacto `workspace routing discovery timed out` en `turn.failed`), el scheduler
+puede autorizar hasta doce reintentos automáticos por iteración de review: el
+primer reintento queda debido 300 segundos después de registrar el fallo y cada
+fallo elegible posterior programa otro retraso de 300 segundos. Los ticks en o
+después de la hora debida comparten la misma autorización durable que
+`scheduler review retry` (origen `automatic` en el ledger). Agotado el cupo, el
+run permanece en `waiting_codex_review_retry` y requiere `scheduler review retry`
+manual; un timeout de la sonda de capacidad no bloquea un reintento de routing
+elegible. Los waits históricos no ganan autorización automática al actualizar.
+
 No todos los bloqueos admiten recuperación: una identidad B incierta o evidencia
 de integridad inválida no se resuelve creando otra sesión. Consulta `scheduler
 status` y su acción segura; conserva los artefactos de diagnóstico. Este comando

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import secrets
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from ai_dev_loop.iterations import correction_execution_envelope_path
@@ -18,6 +18,7 @@ from ai_dev_loop.runners.codex_failure import (
 )
 from ai_dev_loop.scheduler.application.codex_capacity_probe import (
     CodexAppServerCapacityProbe,
+    CodexCapacityObservation,
     CodexCapacityProbePort,
     CodexCapacityStatus,
 )
@@ -28,8 +29,13 @@ from ai_dev_loop.scheduler.application.codex_evidence import (
     load_validated_review_result,
     validate_codex_review_outcome_integrity,
 )
-from ai_dev_loop.scheduler.application.contracts import TickRunReceipt
+from ai_dev_loop.scheduler.application.codex_routing_auto_retry import (
+    classify_codex_workspace_routing_timeout_from_outcome,
+    routing_auto_retry_fields_for_new_failure,
+)
+from ai_dev_loop.scheduler.application.contracts import SchedulerEngineError, TickRunReceipt
 from ai_dev_loop.scheduler.application.review_budget import effective_review_ceiling_for_run
+from ai_dev_loop.scheduler.application.review_retry import ReviewRetryService
 from ai_dev_loop.scheduler.application.sequence_handoff import SequenceHandoffService
 from ai_dev_loop.scheduler.application.tick_fencing import tick_lease_is_active
 from ai_dev_loop.scheduler.domain.codex_contract import (
@@ -40,6 +46,11 @@ from ai_dev_loop.scheduler.domain.codex_contract import (
     SCHEDULER_CODEX_BINDING_ARTIFACT,
     SCHEDULER_CODEX_UNCERTAINTY_ARTIFACT,
 )
+from ai_dev_loop.scheduler.domain.codex_routing_policy import (
+    FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT,
+    ROUTING_AUTO_RETRY_DELAY_SECONDS,
+)
+from ai_dev_loop.scheduler.domain.common import encode_utc_instant
 from ai_dev_loop.scheduler.domain.events import (
     CodexBootstrapUncertainEvent,
     CodexCapacityAvailableEvent,
@@ -69,6 +80,7 @@ from ai_dev_loop.scheduler.domain.state import (
     AwaitingCodexReviewState,
     BlockedState,
     WaitingCodexCapacityState,
+    WaitingCodexReviewRetryState,
 )
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import (
     ProtectedArtifactError,
@@ -105,6 +117,13 @@ class CodexWorkflowService:
         run_id: str,
     ) -> list[TickRunReceipt]:
         receipts: list[TickRunReceipt] = []
+        auto_retry = self._maybe_authorize_automatic_routing_retry(
+            tick_owner_id,
+            tick_lease_generation,
+            run_id,
+        )
+        if auto_retry is not None:
+            receipts.append(auto_retry)
         capacity = self._maybe_probe_codex_capacity(
             tick_owner_id,
             tick_lease_generation,
@@ -477,6 +496,13 @@ class CodexWorkflowService:
         operational = self._operational_failure_from_outcome(outcome, attempt=attempt)
         if operational is not None:
             reason_kind, summary = operational
+            if reason_kind == "codex_routing_evidence_invalid":
+                return self._block_review(
+                    run_id,
+                    attempt_id=attempt_id,
+                    reason_kind=reason_kind,
+                    summary=summary,
+                )
             if is_operational_review_block_kind(reason_kind):
                 return self._handle_operational_review_failure(
                     run_id,
@@ -1094,12 +1120,89 @@ class CodexWorkflowService:
             "post_failure_capacity_probe",
         }
 
+    def _maybe_authorize_automatic_routing_retry(
+        self,
+        tick_owner_id: str,
+        tick_lease_generation: int,
+        run_id: str,
+    ) -> TickRunReceipt | None:
+        now = self._now_factory()
+        with self.store.begin_read() as conn:
+            if not tick_lease_is_active(
+                self.store,
+                conn,
+                owner_id=tick_owner_id,
+                generation=tick_lease_generation,
+                now=now,
+            ):
+                return None
+            state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            if not isinstance(state, WaitingCodexReviewRetryState):
+                return None
+            if state.codex.review_retry_failure_kind != FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT:
+                return None
+            due_at = state.codex.routing_auto_retry_due_at
+            if (
+                state.codex.routing_auto_retry_eligible
+                and due_at
+                and due_at > encode_utc_instant(now)
+            ):
+                return TickRunReceipt(
+                    run_id=run_id,
+                    action="codex_routing_auto_retry_waiting",
+                    detail=due_at,
+                )
+            expected_generation = state.codex.review_retry_generation
+
+        from ai_dev_loop.scheduler.application.review_retry_authorization import (
+            ReviewRetryAuthorizationRequest,
+        )
+
+        service = ReviewRetryService(
+            self.store,
+            self.artifacts,
+            now_factory=self._now_factory,
+            event_id_factory=self._event_id_factory,
+        )
+        request = ReviewRetryAuthorizationRequest(
+            run_id=run_id,
+            source="automatic",
+            expected_failure_generation=expected_generation,
+            tick_owner_id=tick_owner_id,
+            tick_lease_generation=tick_lease_generation,
+        )
+        try:
+            result = service.authorize_waiting_review_retry(run_id, request=request)
+        except SchedulerEngineError:
+            return None
+        action = (
+            "codex_routing_auto_retry_authorized"
+            if result.changed
+            else "codex_routing_auto_retry_idempotent"
+        )
+        return TickRunReceipt(run_id=run_id, action=action)
+
     def _operational_failure_from_outcome(
         self,
         outcome: dict[str, object],
         *,
         attempt: object,
     ) -> tuple[str, str] | None:
+        run_id = str(outcome.get("run_id", "")).strip()
+        if run_id:
+            run_root = self.artifacts.run_root(run_id)
+            if classify_codex_workspace_routing_timeout_from_outcome(run_root, outcome):
+                return (
+                    FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT,
+                    "codex workspace routing discovery timed out before review",
+                )
+            if str(outcome.get("operational_failure_kind", "")).strip() == (
+                FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT
+            ):
+                return (
+                    "codex_routing_evidence_invalid",
+                    "codex routing evidence failed authentication",
+                )
         if outcome.get("timed_out"):
             return (
                 "codex_review_timeout",
@@ -1173,12 +1276,14 @@ class CodexWorkflowService:
                 outcome=outcome,
             )
 
+        routing_auto = reason_kind == FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT
         return self._probe_then_route_review_failure(
             run_id,
             attempt_id=attempt_id,
             review_iteration=review_iteration,
             failure_kind=reason_kind,
             outcome=outcome,
+            routing_auto_retry=routing_auto,
         )
 
     def _probe_then_route_review_failure(
@@ -1189,6 +1294,7 @@ class CodexWorkflowService:
         review_iteration: int,
         failure_kind: str,
         outcome: dict[str, object] | None = None,
+        routing_auto_retry: bool = False,
     ) -> TickRunReceipt:
         with self.store.begin_read() as conn:
             state, _, _ = self.store.load_validated_snapshot(conn, run_id)
@@ -1211,18 +1317,59 @@ class CodexWorkflowService:
 
         observation = self._capacity_probe.probe(codex_command)
         if observation.status == CodexCapacityStatus.EXHAUSTED:
+            routing_preserve = None
+            if routing_auto_retry and failure_kind == FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT:
+                routing_preserve = self._routing_preserve_for_failure(
+                    run_id,
+                    attempt_id=attempt_id,
+                    review_iteration=review_iteration,
+                    probe_observation=observation,
+                )
             return self._enter_inferred_capacity_wait(
                 run_id,
                 attempt_id=attempt_id,
                 review_iteration=review_iteration,
                 operational_failure_kind=failure_kind,
+                routing_preserve=routing_preserve,
             )
         return self._enter_review_retry_wait(
             run_id,
             attempt_id=attempt_id,
             review_iteration=review_iteration,
             failure_kind=failure_kind,
+            probe_observation=observation,
+            routing_auto_retry=routing_auto_retry,
         )
+
+    def _routing_preserve_for_failure(
+        self,
+        run_id: str,
+        *,
+        attempt_id: str,
+        review_iteration: int,
+        probe_observation: CodexCapacityObservation,
+    ) -> dict[str, object]:
+        now = self._now_factory()
+        with self.store.begin_read() as conn:
+            state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            if not isinstance(state, AwaitingCodexReviewState):
+                raise ValueError("routing preserve requires awaiting_codex_review")
+            authorizations_used = state.codex.routing_auto_retry_authorizations_used
+            next_generation = max(state.codex.review_retry_generation, 0) + 1
+        due_text = encode_utc_instant(now + timedelta(seconds=ROUTING_AUTO_RETRY_DELAY_SECONDS))
+        routing_fields = routing_auto_retry_fields_for_new_failure(
+            authorizations_used=authorizations_used,
+            failure_kind=FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT,
+            due_at_text=due_text,
+        )
+        routing_fields["routing_failure_post_probe_status"] = probe_observation.status.value
+        routing_fields["routing_failure_post_probe_reason"] = (
+            probe_observation.reason.value if probe_observation.reason else None
+        )
+        routing_fields["preserved_failed_attempt_id"] = attempt_id
+        routing_fields["preserved_retry_generation"] = next_generation
+        routing_fields["review_iteration"] = review_iteration
+        return routing_fields
 
     def _enter_inferred_capacity_wait(
         self,
@@ -1231,15 +1378,39 @@ class CodexWorkflowService:
         attempt_id: str,
         review_iteration: int,
         operational_failure_kind: str,
+        routing_preserve: dict[str, object] | None = None,
     ) -> TickRunReceipt:
         now = self._now_factory()
         now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-        event = CodexUsageCapacityDetectedEvent(
-            run_id=run_id,
-            review_iteration=review_iteration,
-            evidence_source="post_failure_capacity_probe",
-            operational_failure_kind=operational_failure_kind,
-        )
+        event_kwargs: dict[str, object] = {
+            "run_id": run_id,
+            "review_iteration": review_iteration,
+            "evidence_source": "post_failure_capacity_probe",
+            "operational_failure_kind": operational_failure_kind,
+        }
+        if routing_preserve is not None:
+            event_kwargs.update(
+                {
+                    "preserved_failed_attempt_id": routing_preserve["preserved_failed_attempt_id"],
+                    "preserved_retry_generation": routing_preserve["preserved_retry_generation"],
+                    "routing_auto_retry_policy_version": routing_preserve[
+                        "routing_auto_retry_policy_version"
+                    ],
+                    "routing_auto_retry_eligible": routing_preserve["routing_auto_retry_eligible"],
+                    "routing_auto_retry_authorizations_used": routing_preserve[
+                        "routing_auto_retry_authorizations_used"
+                    ],
+                    "routing_auto_retry_due_at": routing_preserve["routing_auto_retry_due_at"],
+                    "routing_auto_retry_exhausted": routing_preserve["routing_auto_retry_exhausted"],
+                    "routing_failure_post_probe_status": routing_preserve[
+                        "routing_failure_post_probe_status"
+                    ],
+                    "routing_failure_post_probe_reason": routing_preserve[
+                        "routing_failure_post_probe_reason"
+                    ],
+                }
+            )
+        event = CodexUsageCapacityDetectedEvent.model_validate(event_kwargs)
         with self.store.begin_immediate() as conn:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
             if not isinstance(state, AwaitingCodexReviewState):
@@ -1280,6 +1451,8 @@ class CodexWorkflowService:
         attempt_id: str,
         review_iteration: int,
         failure_kind: str,
+        probe_observation: CodexCapacityObservation | None = None,
+        routing_auto_retry: bool = False,
     ) -> TickRunReceipt:
         now = self._now_factory()
         now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -1288,12 +1461,51 @@ class CodexWorkflowService:
             if not isinstance(state, AwaitingCodexReviewState):
                 return TickRunReceipt(run_id=run_id, action="codex_retry_state_changed")
             next_generation = max(state.codex.review_retry_generation, 0) + 1
+            authorizations_used = state.codex.routing_auto_retry_authorizations_used
+        routing_fields: dict[str, object] = {
+            "routing_auto_retry_policy_version": None,
+            "routing_auto_retry_eligible": False,
+            "routing_auto_retry_authorizations_used": authorizations_used,
+            "routing_auto_retry_due_at": None,
+            "routing_auto_retry_exhausted": False,
+            "routing_failure_post_probe_status": None,
+            "routing_failure_post_probe_reason": None,
+        }
+        if routing_auto_retry and failure_kind == FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT:
+            due_text = encode_utc_instant(now + timedelta(seconds=ROUTING_AUTO_RETRY_DELAY_SECONDS))
+            routing_fields = routing_auto_retry_fields_for_new_failure(
+                authorizations_used=authorizations_used,
+                failure_kind=failure_kind,
+                due_at_text=due_text,
+            )
+            if probe_observation is not None:
+                routing_fields["routing_failure_post_probe_status"] = probe_observation.status.value
+                routing_fields["routing_failure_post_probe_reason"] = (
+                    probe_observation.reason.value if probe_observation.reason else None
+                )
+        raw_authorizations = routing_fields["routing_auto_retry_authorizations_used"]
+        if not isinstance(raw_authorizations, int):
+            raise TypeError("routing_auto_retry_authorizations_used must be an integer")
+        recorded_authorizations = raw_authorizations
         event = CodexReviewRetryableFailureEvent(
             run_id=run_id,
             review_iteration=review_iteration,
             failure_kind=failure_kind,
             attempt_id=attempt_id,
             retry_generation=next_generation,
+            routing_auto_retry_policy_version=routing_fields[
+                "routing_auto_retry_policy_version"
+            ],  # type: ignore[arg-type]
+            routing_auto_retry_eligible=bool(routing_fields["routing_auto_retry_eligible"]),
+            routing_auto_retry_authorizations_used=recorded_authorizations,
+            routing_auto_retry_due_at=routing_fields["routing_auto_retry_due_at"],  # type: ignore[arg-type]
+            routing_auto_retry_exhausted=bool(routing_fields["routing_auto_retry_exhausted"]),
+            routing_failure_post_probe_status=routing_fields[
+                "routing_failure_post_probe_status"
+            ],  # type: ignore[arg-type]
+            routing_failure_post_probe_reason=routing_fields[
+                "routing_failure_post_probe_reason"
+            ],  # type: ignore[arg-type]
         )
         with self.store.begin_immediate() as conn:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)

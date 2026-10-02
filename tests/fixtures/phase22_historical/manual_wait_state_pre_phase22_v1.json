@@ -1,0 +1,110 @@
+{
+  "checkpoint": {
+    "admission_status_artifact_path": "git/admission-status.txt",
+    "admission_status_sha256": "d020137fde8515f69f4b7d92812cac6401e060fffbacb790d7f0dc56cb190294",
+    "admitted_at": "2026-10-02T12:00:00.000000Z",
+    "authorized_at": "2026-10-02T20:51:11.422099Z",
+    "authorized_controller_session_id": "11111111-1111-1111-1111-111111111111"
+  },
+  "codex": {
+    "binding_artifact_path": "codex/fresh-reviewer-binding.json",
+    "binding_artifact_sha256": "21531785e76b1ab73e9a2570e797ba216d8e269f7846ed2130ec49a37c613344",
+    "bootstrap_uncertainty_reason": null,
+    "capacity_evidence_source": null,
+    "capacity_retry_scheduled_generation": null,
+    "capacity_wait_generation": 0,
+    "codex_capacity_wait_started_at": null,
+    "inferred_operational_failure_kind": null,
+    "last_failed_attempt_id": "att-00000000000000000000000000000197",
+    "latest_correction_envelope_path": null,
+    "latest_correction_envelope_sha256": null,
+    "latest_fix_prompt_path": null,
+    "latest_fix_prompt_sha256": null,
+    "latest_review_result_path": null,
+    "latest_review_result_sha256": null,
+    "review_iteration": 1,
+    "review_retry_failure_kind": "codex_review_outcome_invalid",
+    "review_retry_generation": 1,
+    "review_retry_scheduled_generation": null,
+    "reviewer_session_id": "019def00-0000-0000-0000-0000000000bb",
+    "reviews_completed": 0
+  },
+  "context": {
+    "codex": {
+      "binding_artifact_path": "codex/fresh-reviewer-input.json",
+      "binding_sha256": "67c247e9a6de54adb349fe6676a20a04e1be8829b38b5985fc0c3605be7481cd",
+      "command": "/tmp/pytest-of-rojobad/pytest-75/test_historical_waiting_snapsh0/bin/codex",
+      "review_model": "gpt-5.6-sol",
+      "review_model_source": "explicit",
+      "review_reasoning_effort": "high",
+      "review_reasoning_source": "explicit",
+      "review_skill": "review-staged-cursor-execution",
+      "sandbox": "workspace-write"
+    },
+    "controller": {
+      "controller_session_id": "11111111-1111-1111-1111-111111111111"
+    },
+    "cursor": {
+      "command": "/tmp/pytest-of-rojobad/pytest-75/test_historical_waiting_snapsh0/bin/agent",
+      "force": true,
+      "model": "composer-2.5-fast",
+      "output_format": "stream-json",
+      "sandbox": "disabled",
+      "trust_workspace": true
+    },
+    "effective_config": {
+      "effective_config_artifact_path": "effective-config.yaml",
+      "effective_config_sha256": "2d29da6e815806973ebd6ad842bc96d716ec15884249e185c2ba8018fbef75f4",
+      "source_config_artifact_path": "source-config.yaml",
+      "source_config_sha256": "db4f70395a2a1015db7d5f16053538e310de351eae349aafa629de0176395d2a"
+    },
+    "plan_prompt": {
+      "plan_artifact_path": "plan/plan.md",
+      "plan_repository_path": "docs/plans/sample-plan.md",
+      "plan_sha256": "0ba8876fcb7d7e9672095388801988261ba0d998d0233d9c0e71947ba8834bd0",
+      "prompt_artifact_path": "prompts/cursor-initial.txt",
+      "prompt_sha256": "cb8104296f15453bbc5287bf7d6037e7bcb68294cd0cffa0621163a7d2ec0cfb",
+      "prompt_source_repository_path": "docs/plans/prompt_sample-plan.txt"
+    },
+    "project_name": "fixture-project",
+    "repository": {
+      "root": "/tmp/pytest-of-rojobad/pytest-75/test_historical_waiting_snapsh0/repo",
+      "worktree_key": "023eb9d4c1f18b43a896eda0bdb5e3a33343b567bbd47bb2890ae6f82c136173"
+    },
+    "schema_version": 3,
+    "workflow": {
+      "codex_timeout_minutes": 90,
+      "cursor_timeout_minutes": 90,
+      "max_review_iterations": 3,
+      "require_clean_worktree": true,
+      "stage_mode": "all"
+    }
+  },
+  "cursor": {
+    "chat_artifact_path": "cursor/chat.json",
+    "chat_artifact_sha256": "be0ac112e0ab52315c6f20e53402e8e95e4b6ca23554bf0d98af3a1922cdcb64",
+    "chat_id": "019abc00-1111-2222-3333-444444444444",
+    "continuation_envelope_path": null,
+    "continuation_envelope_sha256": null,
+    "cursor_output_fingerprint_path": "git/cursor-output/01.att-00000000000000000000000000000193.json",
+    "cursor_output_fingerprint_sha256": "e382f05035659656db16039c2b11607c735dc9474efa2ff102070e73e9e92636",
+    "iteration": 1,
+    "original_prompt_path": "prompts/cursor-initial.txt",
+    "original_prompt_sha256": "cb8104296f15453bbc5287bf7d6037e7bcb68294cd0cffa0621163a7d2ec0cfb",
+    "staged_patch_path": "git/diffs/01.patch",
+    "staged_patch_sha256": "36cfa8b6869057f08f33a78dfdd0b08f79c1419c71a621b3fbd5a05cce8cae85",
+    "timeout_attempt_id": null,
+    "timeout_automatic_retries": 0,
+    "usage_limit_fingerprint_path": null,
+    "usage_limit_fingerprint_sha256": null,
+    "wait_until": null
+  },
+  "idempotency_key": "85521b5545d0c3d609ae6fdf85dfc6d1e8d5b0abdf1ef2cc17b6ce86f776e807",
+  "kind": "waiting_codex_review_retry",
+  "recovery": null,
+  "run_id": "fixture-project-20261002T205111Z-55944b",
+  "schema_version": 4,
+  "submitted_at": "2026-10-02T20:51:11.336867Z",
+  "updated_at": "2026-10-02T12:00:00.000000Z",
+  "version": 9
+}

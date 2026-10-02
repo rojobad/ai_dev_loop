@@ -78,6 +78,12 @@ class SchedulerRunSummary(AppModel):
     safe_next_action: SafeNextAction
     cursor_wait_until: str | None = None
     block_reason_kind: str | None = None
+    codex_routing_auto_retry_eligible: bool | None = None
+    codex_routing_auto_retry_due_at: str | None = None
+    codex_routing_auto_retry_authorizations_used: int | None = None
+    codex_routing_auto_retry_limit: int | None = None
+    codex_routing_failure_post_probe_status: str | None = None
+    codex_routing_failure_post_probe_reason: str | None = None
     sequence_id_prefix: str | None = None
     sequence_ordinal: int | None = None
     sequence_total_phases: int | None = None
@@ -229,7 +235,41 @@ def awaiting_codex_review_safe_next_action() -> SafeNextAction:
     )
 
 
-def waiting_codex_review_retry_safe_next_action(run_id: str) -> SafeNextAction:
+def waiting_codex_review_retry_safe_next_action(
+    run_id: str,
+    *,
+    routing_auto_retry_eligible: bool = False,
+    routing_auto_retry_due_at: str | None = None,
+    routing_auto_retry_exhausted: bool = False,
+    routing_auto_retry_authorizations_used: int | None = None,
+) -> SafeNextAction:
+    if routing_auto_retry_eligible and routing_auto_retry_due_at:
+        from ai_dev_loop.scheduler.domain.codex_routing_policy import (
+            ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS,
+        )
+
+        limit = ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS
+        used = (
+            routing_auto_retry_authorizations_used
+            if routing_auto_retry_authorizations_used is not None
+            else 0
+        )
+        return SafeNextAction(
+            kind=SafeNextActionKind.SCHEDULER_TICK,
+            command=(
+                "ai_dev_loop scheduler tick "
+                f"(automatic Codex routing retry {used}/{limit} scheduled for "
+                f"{routing_auto_retry_due_at}; same reviewer and frozen inputs)."
+            ),
+        )
+    if routing_auto_retry_exhausted:
+        return SafeNextAction(
+            kind=SafeNextActionKind.SCHEDULER_TICK,
+            command=(
+                f"ai_dev_loop scheduler review retry {run_id} "
+                "(automatic routing retries exhausted; manual authorization required)."
+            ),
+        )
     return SafeNextAction(
         kind=SafeNextActionKind.SCHEDULER_TICK,
         command=(
@@ -451,15 +491,68 @@ def reviewer_session_id_prefix_for_projection(
     return None
 
 
+def _apply_codex_routing_projection(
+    codex: object,
+    projection: dict[str, str | None],
+    *,
+    block_reason_from_failure_kind: bool,
+) -> None:
+    from ai_dev_loop.scheduler.domain.codex_routing_policy import (
+        FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT,
+        ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS,
+    )
+    from ai_dev_loop.scheduler.domain.state import CodexWorkflowCheckpoint
+
+    if not isinstance(codex, CodexWorkflowCheckpoint):
+        return
+    routing_origin = (
+        codex.review_retry_failure_kind == FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT
+        or codex.inferred_operational_failure_kind == FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT
+        or codex.routing_auto_retry_eligible
+        or codex.routing_auto_retry_due_at is not None
+        or codex.routing_auto_retry_exhausted
+        or codex.routing_failure_post_probe_status is not None
+    )
+    if not routing_origin:
+        return
+    projection["codex_routing_auto_retry_eligible"] = (
+        "true" if codex.routing_auto_retry_eligible else "false"
+    )
+    projection["codex_routing_auto_retry_due_at"] = codex.routing_auto_retry_due_at
+    projection["codex_routing_auto_retry_authorizations_used"] = str(
+        codex.routing_auto_retry_authorizations_used
+    )
+    projection["codex_routing_auto_retry_limit"] = str(ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS)
+    projection["codex_routing_failure_post_probe_status"] = (
+        codex.routing_failure_post_probe_status
+    )
+    projection["codex_routing_failure_post_probe_reason"] = (
+        codex.routing_failure_post_probe_reason
+    )
+    if block_reason_from_failure_kind and codex.review_retry_failure_kind:
+        projection["block_reason_kind"] = codex.review_retry_failure_kind
+
+
 def scheduler_status_projection_from_state(state: object) -> dict[str, str | None]:
     from ai_dev_loop.scheduler.domain.state import (
         BlockedState,
         CursorReadyState,
+        WaitingCodexCapacityState,
+        WaitingCodexReviewRetryState,
         WaitingForCursorFixState,
         WaitingUsageLimitState,
     )
 
-    projection: dict[str, str | None] = {"cursor_wait_until": None, "block_reason_kind": None}
+    projection: dict[str, str | None] = {
+        "cursor_wait_until": None,
+        "block_reason_kind": None,
+        "codex_routing_auto_retry_eligible": None,
+        "codex_routing_auto_retry_due_at": None,
+        "codex_routing_auto_retry_authorizations_used": None,
+        "codex_routing_auto_retry_limit": None,
+        "codex_routing_failure_post_probe_status": None,
+        "codex_routing_failure_post_probe_reason": None,
+    }
     if isinstance(state, WaitingUsageLimitState):
         projection["cursor_wait_until"] = state.cursor.wait_until
     if (
@@ -470,6 +563,12 @@ def scheduler_status_projection_from_state(state: object) -> dict[str, str | Non
         projection["block_reason_kind"] = "cursor_timeout_retry"
     if isinstance(state, BlockedState):
         projection["block_reason_kind"] = state.block_reason_kind
+    if isinstance(state, (WaitingCodexReviewRetryState, WaitingCodexCapacityState)):
+        _apply_codex_routing_projection(
+            state.codex,
+            projection,
+            block_reason_from_failure_kind=isinstance(state, WaitingCodexReviewRetryState),
+        )
     return projection
 
 
@@ -487,6 +586,12 @@ def summary_from_context(
     submitted_max_review_iterations: int | None = None,
     cursor_wait_until: str | None = None,
     block_reason_kind: str | None = None,
+    codex_routing_auto_retry_eligible: bool | None = None,
+    codex_routing_auto_retry_due_at: str | None = None,
+    codex_routing_auto_retry_authorizations_used: int | None = None,
+    codex_routing_auto_retry_limit: int | None = None,
+    codex_routing_failure_post_probe_status: str | None = None,
+    codex_routing_failure_post_probe_reason: str | None = None,
 ) -> SchedulerRunSummary:
     reviewer_prefix = reviewer_session_id_prefix_for_projection(
         context,
@@ -522,6 +627,12 @@ def summary_from_context(
         safe_next_action=action,
         cursor_wait_until=cursor_wait_until,
         block_reason_kind=block_reason_kind,
+        codex_routing_auto_retry_eligible=codex_routing_auto_retry_eligible,
+        codex_routing_auto_retry_due_at=codex_routing_auto_retry_due_at,
+        codex_routing_auto_retry_authorizations_used=codex_routing_auto_retry_authorizations_used,
+        codex_routing_auto_retry_limit=codex_routing_auto_retry_limit,
+        codex_routing_failure_post_probe_status=codex_routing_failure_post_probe_status,
+        codex_routing_failure_post_probe_reason=codex_routing_failure_post_probe_reason,
         sequence_id_prefix=(
             sequence_binding.sequence_id[:8] if sequence_binding is not None else None
         ),

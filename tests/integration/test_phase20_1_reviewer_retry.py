@@ -79,6 +79,7 @@ def test_blocked_run_recovery_successor_completes_without_cursor(
             attempt_id: str,
             review_iteration: int,
             failure_kind: str,
+            **_kwargs: object,
         ):
             return workflow._block_review(
                 run_id,

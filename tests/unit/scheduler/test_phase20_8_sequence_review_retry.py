@@ -76,6 +76,7 @@ def _legacy_block_instead_of_retry(tick: TickService, monkeypatch: pytest.Monkey
         attempt_id: str,
         review_iteration: int,
         failure_kind: str,
+        **_kwargs: object,
     ):
         return workflow._block_review(
             run_id,

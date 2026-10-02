@@ -46,6 +46,9 @@ from ai_dev_loop.scheduler.application.codex_review_prompt_evidence import (
     CodexReviewPromptEvidenceError,
     publish_review_prompt_before_launch,
 )
+from ai_dev_loop.scheduler.application.codex_routing_auto_retry import (
+    annotate_codex_outcome_routing_evidence,
+)
 from ai_dev_loop.scheduler.application.codex_subprocess_env import sanitize_codex_subprocess_env
 from ai_dev_loop.scheduler.domain.codex_contract import (
     BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND,
@@ -458,6 +461,7 @@ def _run_codex_review(
         outcome["fix_prompt_sha256"] = sha256_bytes(review_result.cursor_fix_prompt.encode("utf-8"))
         outcome["execution_envelope_path"] = correction_execution_envelope_path(review_iteration)
         outcome["execution_envelope_sha256"] = envelope_sha
+    annotate_codex_outcome_routing_evidence(outcome, events_path)
     usage_limit = classify_codex_review_events_path(events_path)
     if usage_limit.is_usage_limit:
         outcome["failure_code"] = FAILURE_CODE_CODEX_USAGE_LIMIT

@@ -863,6 +863,22 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                     print(json.dumps({{"type": "thread.started", "thread_id": bootstrap_id}}), flush=True)
                 print("codex review failed", file=sys.stderr)
                 sys.exit(2)
+            if mode == "workspace_routing_timeout":
+                if "resume" not in args:
+                    bootstrap_id = os.environ.get(
+                        "FAKE_CODEX_BOOTSTRAP_SESSION_ID",
+                        "019def00-0000-0000-0000-0000000000bb",
+                    )
+                    print(json.dumps({{"type": "thread.started", "thread_id": bootstrap_id}}), flush=True)
+                print(
+                    json.dumps(
+                        {{
+                            "type": "turn.failed",
+                            "error": {{"message": "workspace routing discovery timed out"}},
+                        }}
+                    )
+                )
+                sys.exit(2)
             if mode == "output_artifact_fail":
                 if "resume" not in args:
                     bootstrap_id = os.environ.get(

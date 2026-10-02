@@ -17,6 +17,8 @@ _API_ERROR_TEXT_FIELDS = frozenset({"message", "param", "detail", "details"})
 # Codex exec --json wrappers that may carry a JSON-serialized API error envelope.
 _RECOGNIZED_FAILURE_WRAPPER_TYPES = frozenset({"error", "turn.failed"})
 
+WORKSPACE_ROUTING_DISCOVERY_TIMEOUT_MESSAGE = "workspace routing discovery timed out"
+
 # Bounded, case-folded markers for provider-message usage/rate-limit evidence.
 _PROVIDER_LIMIT_MESSAGE_MARKERS = (
     "usage limit",
@@ -268,3 +270,66 @@ def _error_text_mentions_unique_items(error: dict[str, Any]) -> bool:
                 if isinstance(item, str) and "uniqueItems" in item:
                     return True
     return False
+
+
+def events_text_verifies_workspace_routing_timeout(text: str) -> bool:
+    """Return True only for a complete, unambiguous routing-timeout terminal stream.
+
+    Every non-empty line must be valid JSON. Structured usage-limit evidence and any
+    other terminal ``turn.failed`` or recognized API error object reject routing.
+    """
+
+    if events_text_indicates_usage_limit_exceeded(text):
+        return False
+    if events_text_indicates_provider_message_limit(text):
+        return False
+    routing_hits = 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(payload, dict):
+            return False
+        top_type = payload.get("type")
+        if top_type == "turn.completed":
+            return False
+        if top_type == "turn.failed":
+            nested = payload.get("error")
+            if isinstance(nested, dict):
+                message = nested.get("message")
+                if (
+                    isinstance(message, str)
+                    and message.strip() == WORKSPACE_ROUTING_DISCOVERY_TIMEOUT_MESSAGE
+                ):
+                    routing_hits += 1
+                    if routing_hits > 1:
+                        return False
+                    continue
+            return False
+        if top_type in _RECOGNIZED_FAILURE_WRAPPER_TYPES:
+            for error in _recognized_api_error_objects(payload):
+                if error:
+                    return False
+    return routing_hits == 1
+
+
+def events_text_indicates_workspace_routing_timeout(text: str) -> bool:
+    """Strict routing-timeout classification for scheduler policy boundaries."""
+
+    return events_text_verifies_workspace_routing_timeout(text)
+
+
+def events_indicate_workspace_routing_timeout(events_path: Path) -> bool:
+    """File-based helper for Codex workspace routing timeout classification."""
+
+    if not events_path.is_file():
+        return False
+    try:
+        text = events_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return events_text_indicates_workspace_routing_timeout(text)

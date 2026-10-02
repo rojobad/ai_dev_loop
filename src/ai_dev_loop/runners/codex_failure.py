@@ -10,6 +10,9 @@ from ai_dev_loop.response_schema import (
     events_text_indicates_provider_message_limit,
     events_text_indicates_usage_limit_exceeded,
 )
+from ai_dev_loop.scheduler.domain.codex_routing_policy import (
+    FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT,
+)
 
 FAILURE_CODE_CODEX_USAGE_LIMIT = "codex_usage_limit"
 SAFE_CODEX_USAGE_LIMIT_SUMMARY = "Codex reached the account usage limit for review."
@@ -19,6 +22,7 @@ INTEGRITY_REVIEW_BLOCK_KINDS = frozenset(
         "outcome_evidence_invalid",
         "codex_bootstrap_uncertain",
         "codex_dispatch_payload_invalid",
+        "codex_routing_evidence_invalid",
         "reviewer_identity_conflict",
         "reviewer_binding_artifact_conflict",
         "codex_capacity_probe_unavailable",
@@ -33,6 +37,7 @@ OPERATIONAL_REVIEW_BLOCK_KINDS = frozenset(
         "codex_review_output_truncated",
         "codex_attempt_failed",
         "codex_review_outcome_invalid",
+        FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT,
     }
 )
 

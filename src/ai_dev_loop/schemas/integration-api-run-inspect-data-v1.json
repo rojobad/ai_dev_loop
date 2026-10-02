@@ -42,6 +42,14 @@
     "safeNextAction": {
       "$ref": "https://ai-dev-loop.local/schemas/integration-api-run-shared-v1.json#/$defs/safeNextAction"
     },
-    "attemptCount": { "type": "integer", "minimum": 0 }
+    "attemptCount": { "type": "integer", "minimum": 0 },
+    "codexReviewRetryFailureKind": { "type": ["string", "null"] },
+    "codexRoutingAutoRetryEligible": { "type": ["boolean", "null"] },
+    "codexRoutingAutoRetryDueAt": { "type": ["string", "null"] },
+    "codexRoutingAutoRetryAuthorizationsUsed": { "type": ["integer", "null"], "minimum": 0 },
+    "codexRoutingAutoRetryLimit": { "type": ["integer", "null"], "minimum": 0 },
+    "codexRoutingAutoRetryExhausted": { "type": ["boolean", "null"] },
+    "codexRoutingFailurePostProbeStatus": { "type": ["string", "null"] },
+    "codexRoutingFailurePostProbeReason": { "type": ["string", "null"] }
   }
 }

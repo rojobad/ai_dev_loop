@@ -116,6 +116,23 @@ def test_turn_failed_wrapper_with_serialized_envelope(tmp_path: Path) -> None:
     assert events_indicate_adjudication_schema_rejection(events) is True
 
 
+def test_events_indicate_workspace_routing_timeout(tmp_path: Path) -> None:
+    from ai_dev_loop.response_schema import events_indicate_workspace_routing_timeout
+
+    events = tmp_path / "events.jsonl"
+    events.write_text(
+        json.dumps(
+            {
+                "type": "turn.failed",
+                "error": {"message": "workspace routing discovery timed out"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    assert events_indicate_workspace_routing_timeout(events) is True
+
+
 def test_events_indicate_usage_limit_exceeded(tmp_path: Path) -> None:
     events = tmp_path / "events.jsonl"
     events.write_text(

@@ -14,6 +14,10 @@ from ai_dev_loop.scheduler.application.contracts import (
     SchedulerEngineErrorKind,
     redacted_session_prefix,
 )
+from ai_dev_loop.scheduler.domain.codex_routing_policy import (
+    FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT,
+    ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS,
+)
 from ai_dev_loop.scheduler.infrastructure.paths import default_engine_db_path
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
@@ -104,23 +108,61 @@ def _safe_detail_for_event(event_kind: str, payload_text: str) -> str:
     if event_kind in {"codex_usage_capacity_detected", "codex_capacity_available"}:
         iteration = payload.get("review_iteration")
         source = payload.get("evidence_source")
+        operational = payload.get("operational_failure_kind")
+        routing_eligible = payload.get("routing_auto_retry_eligible")
+        routing_due = payload.get("routing_auto_retry_due_at")
+        routing_used = payload.get("routing_auto_retry_authorizations_used")
+        probe_status = payload.get("routing_failure_post_probe_status")
+        probe_reason = payload.get("routing_failure_post_probe_reason")
+        parts = [f"review_iteration={iteration}"]
         if source:
-            return f"{event_kind}: review_iteration={iteration} evidence_source={source}"
-        return f"{event_kind}: review_iteration={iteration}"
+            parts.append(f"evidence_source={source}")
+        if operational:
+            parts.append(f"operational_failure_kind={operational}")
+        if routing_eligible is not None:
+            parts.append(f"routing_auto_retry_eligible={routing_eligible}")
+        if routing_due:
+            parts.append(f"routing_auto_retry_due_at={routing_due}")
+        if routing_used is not None:
+            parts.append(f"routing_auto_retry_authorizations_used={routing_used}")
+        if routing_used is not None or operational:
+            parts.append(f"routing_auto_retry_limit={ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS}")
+        if probe_status:
+            parts.append(f"routing_failure_post_probe_status={probe_status}")
+        if probe_reason:
+            parts.append(f"routing_failure_post_probe_reason={probe_reason}")
+        return f"{event_kind}: " + " ".join(parts)
     if event_kind == "codex_capacity_retry_authorized":
         return (
             f"{event_kind}: capacity_wait_generation={payload.get('capacity_wait_generation')} "
             f"idempotent_replay={payload.get('idempotent_replay')}"
         )
     if event_kind == "codex_review_retryable_failure":
+        failure_kind = payload.get("failure_kind")
+        routing_used = payload.get("routing_auto_retry_authorizations_used")
+        routing_eligible = payload.get("routing_auto_retry_eligible")
+        limit_suffix = ""
+        if (
+            failure_kind == FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT
+            or routing_eligible
+            or routing_used is not None
+        ):
+            limit_suffix = f" routing_auto_retry_limit={ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS}"
         return (
-            f"{event_kind}: failure_kind={payload.get('failure_kind')} "
-            f"retry_generation={payload.get('retry_generation')}"
+            f"{event_kind}: failure_kind={failure_kind} "
+            f"retry_generation={payload.get('retry_generation')} "
+            f"routing_auto_retry_eligible={routing_eligible} "
+            f"routing_auto_retry_due_at={payload.get('routing_auto_retry_due_at')} "
+            f"routing_auto_retry_authorizations_used={routing_used}"
+            f"{limit_suffix} "
+            f"routing_failure_post_probe_status={payload.get('routing_failure_post_probe_status')} "
+            f"routing_failure_post_probe_reason={payload.get('routing_failure_post_probe_reason')}"
         )
     if event_kind == "codex_review_retry_requested":
         return (
             f"{event_kind}: retry_generation={payload.get('retry_generation')} "
-            f"idempotent_replay={payload.get('idempotent_replay')}"
+            f"idempotent_replay={payload.get('idempotent_replay')} "
+            f"authorization_source={payload.get('authorization_source')}"
         )
     if event_kind == "codex_review_recovery_successor_created":
         return (

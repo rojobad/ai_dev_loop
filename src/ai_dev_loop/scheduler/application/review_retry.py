@@ -24,6 +24,10 @@ from ai_dev_loop.scheduler.application.review_recovery import (
     analyze_blocked_review_recovery,
     materialize_review_recovery_successor,
 )
+from ai_dev_loop.scheduler.application.review_retry_authorization import (
+    ReviewRetryAuthorizationRequest,
+    validate_review_retry_authorization,
+)
 from ai_dev_loop.scheduler.application.safe_actions import safe_next_action_for_scheduler_state
 from ai_dev_loop.scheduler.application.sequence_review_recovery import (
     recover_blocked_sequence_review_run,
@@ -364,119 +368,131 @@ class ReviewRetryService:
             safe_next_action=awaiting_codex_review_safe_next_action(),
         )
 
-    def _retry_waiting_state(
+    def authorize_waiting_review_retry(
         self,
-        state: WaitingCodexReviewRetryState,
+        run_id: str,
         *,
-        now: datetime,
+        request: ReviewRetryAuthorizationRequest,
+        now: datetime | None = None,
     ) -> ReviewRetryResult:
-        try:
-            verify_retry_state_repository(state, artifacts=self.artifacts)
-        except ReviewCheckpointVerificationError as exc:
-            raise SchedulerEngineError(
-                SchedulerEngineErrorKind.VALIDATION,
-                str(exc),
-            ) from exc
-
-        generation = state.codex.review_retry_generation
-        with self.store.begin_read() as conn:
-            existing_row = self.store.get_review_retry_generation_row(
-                conn,
-                run_id=state.run_id,
-                failure_generation=generation,
-            )
-        if existing_row is not None:
-            with self.store.begin_read() as conn:
-                current, _, _ = self.store.load_validated_snapshot(conn, state.run_id)
-            current_kind = current.kind
-            action = (
-                awaiting_codex_review_safe_next_action()
-                if current_kind == "awaiting_codex_review"
-                else waiting_codex_review_retry_safe_next_action(state.run_id)
-            )
-            return ReviewRetryResult(
-                run_id=state.run_id,
-                state_kind=current_kind,
-                changed=False,
-                idempotent_replay=True,
-                recovery_successor=False,
-                safe_next_action=action,
-            )
-
-        with self.store.begin_read() as conn:
-            if self.store.get_nonterminal_attempt_for_run(conn, state.run_id) is not None:
-                raise SchedulerEngineError(
-                    SchedulerEngineErrorKind.CONFLICT,
-                    "cannot authorize review retry while a Codex attempt is active",
-                )
-
-        event = CodexReviewRetryRequestedEvent(
-            run_id=state.run_id,
-            review_iteration=state.codex.review_iteration,
-            retry_generation=generation,
-            idempotent_replay=False,
-        )
         with self.store.begin_immediate() as conn:
-            current, version, _ = self.store.load_validated_snapshot(conn, state.run_id)
+            current, version, _ = self.store.load_validated_snapshot(conn, run_id)
             if not isinstance(current, WaitingCodexReviewRetryState):
                 raise SchedulerEngineError(
-                    SchedulerEngineErrorKind.CONFLICT,
-                    "review retry state changed concurrently",
+                    SchedulerEngineErrorKind.VALIDATION,
+                    f"run state {current.kind} is not eligible for review retry authorization",
                 )
-            new_state = apply_codex_review_retry_requested(
-                current, event, now_text=now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            generation = current.codex.review_retry_generation
+            existing_row = self.store.get_review_retry_generation_row(
+                conn,
+                run_id=run_id,
+                failure_generation=generation,
             )
+            if existing_row is not None:
+                replay_state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+                action = (
+                    awaiting_codex_review_safe_next_action()
+                    if replay_state.kind == "awaiting_codex_review"
+                    else waiting_codex_review_retry_safe_next_action(run_id)
+                )
+                return ReviewRetryResult(
+                    run_id=run_id,
+                    state_kind=replay_state.kind,
+                    changed=False,
+                    idempotent_replay=True,
+                    recovery_successor=False,
+                    safe_next_action=action,
+                )
+            try:
+                verify_retry_state_repository(current, artifacts=self.artifacts)
+            except ReviewCheckpointVerificationError as exc:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.VALIDATION,
+                    str(exc),
+                ) from exc
+            commit_now = self._now_factory()
+            validate_review_retry_authorization(
+                self.store,
+                self.artifacts,
+                conn,
+                current,
+                request=request,
+                now=commit_now,
+                skip_repository_verify=True,
+            )
+            event = CodexReviewRetryRequestedEvent(
+                run_id=run_id,
+                review_iteration=current.codex.review_iteration,
+                retry_generation=generation,
+                idempotent_replay=False,
+                authorization_source=request.source,
+            )
+            now_text = commit_now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            new_state = apply_codex_review_retry_requested(current, event, now_text=now_text)
             inserted = self.store.insert_review_retry_generation(
                 conn,
-                run_id=state.run_id,
+                run_id=run_id,
                 failure_generation=generation,
-                now=now,
+                now=commit_now,
             )
             if not inserted:
                 row = self.store.get_review_retry_generation_row(
                     conn,
-                    run_id=state.run_id,
+                    run_id=run_id,
                     failure_generation=generation,
                 )
                 if row is not None:
-                    current, _, _ = self.store.load_validated_snapshot(conn, state.run_id)
+                    replay_state, _, _ = self.store.load_validated_snapshot(conn, run_id)
                     return ReviewRetryResult(
-                        run_id=state.run_id,
-                        state_kind=current.kind,
+                        run_id=run_id,
+                        state_kind=replay_state.kind,
                         changed=False,
                         idempotent_replay=True,
                         recovery_successor=False,
                         safe_next_action=awaiting_codex_review_safe_next_action(),
                     )
             event_id = self._event_id_factory()
-            sequence = self.store.next_event_sequence(conn, state.run_id)
+            sequence = self.store.next_event_sequence(conn, run_id)
             self.store.append_event(
                 conn,
                 event_id=event_id,
-                run_id=state.run_id,
+                run_id=run_id,
                 sequence=sequence,
                 event=event,
-                now=now,
+                now=commit_now,
             )
             if not self.store.compare_and_swap_state(
                 conn,
-                run_id=state.run_id,
+                run_id=run_id,
                 expected_version=version,
                 new_state=new_state,
-                now=now,
+                now=commit_now,
             ):
                 raise SchedulerEngineError(
                     SchedulerEngineErrorKind.CONFLICT,
                     "review retry authorization lost a concurrent update",
                 )
         return ReviewRetryResult(
-            run_id=state.run_id,
+            run_id=run_id,
             state_kind="awaiting_codex_review",
             changed=True,
             idempotent_replay=False,
             recovery_successor=False,
             safe_next_action=awaiting_codex_review_safe_next_action(),
         )
+
+    def _retry_waiting_state(
+        self,
+        state: WaitingCodexReviewRetryState,
+        *,
+        now: datetime,
+    ) -> ReviewRetryResult:
+        request = ReviewRetryAuthorizationRequest(
+            run_id=state.run_id,
+            source="manual",
+            expected_failure_generation=state.codex.review_retry_generation,
+        )
+        return self.authorize_waiting_review_retry(state.run_id, request=request, now=now)
 
 
 def default_review_retry_service(

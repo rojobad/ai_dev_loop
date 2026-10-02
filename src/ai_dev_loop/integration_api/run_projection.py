@@ -138,6 +138,26 @@ def build_run_inspect_data(
         submitted_max_review_iterations=submitted_max,
         cursor_wait_until=projection["cursor_wait_until"],
         block_reason_kind=projection["block_reason_kind"],
+        codex_routing_auto_retry_eligible=(
+            projection["codex_routing_auto_retry_eligible"] == "true"
+            if projection["codex_routing_auto_retry_eligible"] is not None
+            else None
+        ),
+        codex_routing_auto_retry_due_at=projection["codex_routing_auto_retry_due_at"],
+        codex_routing_auto_retry_authorizations_used=int(
+            projection["codex_routing_auto_retry_authorizations_used"]
+        )
+        if projection["codex_routing_auto_retry_authorizations_used"] is not None
+        else None,
+        codex_routing_auto_retry_limit=int(projection["codex_routing_auto_retry_limit"])
+        if projection["codex_routing_auto_retry_limit"] is not None
+        else None,
+        codex_routing_failure_post_probe_status=projection[
+            "codex_routing_failure_post_probe_status"
+        ],
+        codex_routing_failure_post_probe_reason=projection[
+            "codex_routing_failure_post_probe_reason"
+        ],
     )
     review_budget = IntegrationReviewBudget(
         completed=reviews_completed,
@@ -149,6 +169,16 @@ def build_run_inspect_data(
         internal_summary.safe_next_action,
         cursor_wait_until=projection["cursor_wait_until"],
     )
+    from ai_dev_loop.scheduler.domain.state import (
+        WaitingCodexCapacityState,
+        WaitingCodexReviewRetryState,
+    )
+
+    routing_failure_kind = None
+    routing_exhausted = None
+    if isinstance(state, (WaitingCodexReviewRetryState, WaitingCodexCapacityState)):
+        routing_failure_kind = state.codex.review_retry_failure_kind
+        routing_exhausted = state.codex.routing_auto_retry_exhausted
     return IntegrationRunInspectData(
         run_id=state.run_id,
         project_name=state.context.project_name,
@@ -163,6 +193,28 @@ def build_run_inspect_data(
         cursor_wait_until=projection["cursor_wait_until"],
         safe_next_action=safe_action,
         attempt_count=store.count_attempts_for_run(conn, state.run_id),
+        codex_review_retry_failure_kind=routing_failure_kind,
+        codex_routing_auto_retry_eligible=(
+            projection["codex_routing_auto_retry_eligible"] == "true"
+            if projection["codex_routing_auto_retry_eligible"] is not None
+            else None
+        ),
+        codex_routing_auto_retry_due_at=projection["codex_routing_auto_retry_due_at"],
+        codex_routing_auto_retry_authorizations_used=int(
+            projection["codex_routing_auto_retry_authorizations_used"]
+        )
+        if projection["codex_routing_auto_retry_authorizations_used"] is not None
+        else None,
+        codex_routing_auto_retry_limit=int(projection["codex_routing_auto_retry_limit"])
+        if projection["codex_routing_auto_retry_limit"] is not None
+        else None,
+        codex_routing_auto_retry_exhausted=routing_exhausted,
+        codex_routing_failure_post_probe_status=projection[
+            "codex_routing_failure_post_probe_status"
+        ],
+        codex_routing_failure_post_probe_reason=projection[
+            "codex_routing_failure_post_probe_reason"
+        ],
     )
 
 

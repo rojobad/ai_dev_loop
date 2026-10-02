@@ -15,11 +15,18 @@ from pydantic import (
     model_validator,
 )
 
+from ai_dev_loop.scheduler.domain.codex_routing_policy import (
+    FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT,
+    ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS,
+    ROUTING_AUTO_RETRY_POLICY_VERSION,
+    ROUTING_FAILURE_POST_PROBE_REASONS,
+)
 from ai_dev_loop.scheduler.domain.common import (
     DomainModel,
     NonEmptyStr,
     Sha256Hex,
     UuidSessionId,
+    encode_utc_instant,
 )
 
 SUBMITTED_STATE_SCHEMA_VERSION = 1
@@ -354,18 +361,125 @@ class CodexWorkflowCheckpoint(DomainModel):
     review_retry_generation: int = Field(default=0)
     review_retry_scheduled_generation: int | None = None
     last_failed_attempt_id: NonEmptyStr | None = None
+    routing_auto_retry_policy_version: NonEmptyStr | None = None
+    routing_auto_retry_eligible: bool = False
+    routing_auto_retry_authorizations_used: int = Field(default=0)
+    routing_auto_retry_due_at: NonEmptyStr | None = None
+    routing_auto_retry_exhausted: bool = False
+    routing_failure_post_probe_status: (
+        Literal["available", "exhausted", "unavailable"] | None
+    ) = None
+    routing_failure_post_probe_reason: NonEmptyStr | None = None
 
     @field_validator(
         "review_iteration",
         "reviews_completed",
         "review_retry_generation",
         "capacity_wait_generation",
+        "routing_auto_retry_authorizations_used",
+        mode="before",
     )
     @classmethod
-    def non_negative_review_counters(cls, value: int) -> int:
+    def non_negative_review_counters(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("review counters must be integers")
+        if isinstance(value, float):
+            raise ValueError("review counters must be integers")
+        if isinstance(value, str):
+            raise ValueError("review counters must be integers")
+        return value
+
+    @field_validator(
+        "review_iteration",
+        "reviews_completed",
+        "review_retry_generation",
+        "capacity_wait_generation",
+        "routing_auto_retry_authorizations_used",
+    )
+    @classmethod
+    def non_negative_review_counters_int(cls, value: int) -> int:
         if value < 0:
             raise ValueError("review counters must be >= 0")
         return value
+
+    @field_validator("routing_auto_retry_due_at")
+    @classmethod
+    def canonical_routing_due_at(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        canonical = encode_utc_instant(value)
+        if value != canonical:
+            raise ValueError("routing_auto_retry_due_at must use canonical UTC Z encoding")
+        return value
+
+    @field_validator("routing_failure_post_probe_reason")
+    @classmethod
+    def routing_probe_reason_allowed(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value not in ROUTING_FAILURE_POST_PROBE_REASONS:
+            raise ValueError("routing_failure_post_probe_reason is not supported")
+        return value
+
+    @field_validator("routing_auto_retry_policy_version")
+    @classmethod
+    def routing_policy_version(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value != ROUTING_AUTO_RETRY_POLICY_VERSION:
+            raise ValueError("routing_auto_retry_policy_version is not supported")
+        return value
+
+    @field_validator("routing_auto_retry_eligible", "routing_auto_retry_exhausted", mode="before")
+    @classmethod
+    def strict_routing_bools(cls, value: object) -> object:
+        if value is not None and not isinstance(value, bool):
+            raise ValueError("routing retry boolean fields must be booleans")
+        return value
+
+    @model_validator(mode="after")
+    def routing_auto_retry_fields_consistent(self) -> CodexWorkflowCheckpoint:
+        if isinstance(self.routing_auto_retry_authorizations_used, bool):
+            raise ValueError("routing_auto_retry_authorizations_used must be an integer")
+        if self.routing_auto_retry_authorizations_used < 0:
+            raise ValueError("routing_auto_retry_authorizations_used must be >= 0")
+        if self.routing_auto_retry_due_at and not self.routing_auto_retry_eligible:
+            raise ValueError("routing_auto_retry_due_at requires routing_auto_retry_eligible")
+        if self.routing_auto_retry_eligible:
+            if self.review_retry_failure_kind != FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT:
+                raise ValueError("routing_auto_retry_eligible requires routing failure kind")
+            if self.routing_auto_retry_policy_version != ROUTING_AUTO_RETRY_POLICY_VERSION:
+                raise ValueError("routing_auto_retry_eligible requires fixed policy version")
+            if not self.reviewer_session_id:
+                raise ValueError("routing_auto_retry_eligible requires bound reviewer identity")
+            if self.review_retry_generation < 1:
+                raise ValueError(
+                    "routing_auto_retry_eligible requires active review_retry_generation"
+                )
+            if not self.routing_auto_retry_due_at:
+                raise ValueError("routing_auto_retry_eligible requires routing_auto_retry_due_at")
+            if (
+                self.review_retry_scheduled_generation is not None
+                and self.review_retry_scheduled_generation == self.review_retry_generation
+            ):
+                raise ValueError(
+                    "routing_auto_retry_eligible cannot remain after authorization for generation"
+                )
+        if self.routing_auto_retry_exhausted and self.routing_auto_retry_eligible:
+            raise ValueError("routing_auto_retry_exhausted cannot be eligible")
+        if self.routing_auto_retry_authorizations_used > ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS:
+            raise ValueError("routing_auto_retry_authorizations_used exceeds policy limit")
+        if (
+            self.routing_auto_retry_eligible
+            and self.routing_auto_retry_authorizations_used >= ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS
+        ):
+            raise ValueError("routing_auto_retry_eligible requires remaining allowance")
+        if (
+            self.review_retry_scheduled_generation is not None
+            and self.review_retry_scheduled_generation != self.review_retry_generation
+        ):
+            raise ValueError("review_retry_scheduled_generation must match review_retry_generation")
+        return self
 
 
 class ReviewRecoveryLineage(DomainModel):

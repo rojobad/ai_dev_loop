@@ -54,6 +54,26 @@ class SchedulerStatusService:
             submitted_max_review_iterations=submitted_max,
             cursor_wait_until=projection["cursor_wait_until"],
             block_reason_kind=projection["block_reason_kind"],
+            codex_routing_auto_retry_eligible=(
+                projection["codex_routing_auto_retry_eligible"] == "true"
+                if projection["codex_routing_auto_retry_eligible"] is not None
+                else None
+            ),
+            codex_routing_auto_retry_due_at=projection["codex_routing_auto_retry_due_at"],
+            codex_routing_auto_retry_authorizations_used=int(
+                projection["codex_routing_auto_retry_authorizations_used"]
+            )
+            if projection["codex_routing_auto_retry_authorizations_used"] is not None
+            else None,
+            codex_routing_auto_retry_limit=int(projection["codex_routing_auto_retry_limit"])
+            if projection["codex_routing_auto_retry_limit"] is not None
+            else None,
+            codex_routing_failure_post_probe_status=projection[
+                "codex_routing_failure_post_probe_status"
+            ],
+            codex_routing_failure_post_probe_reason=projection[
+                "codex_routing_failure_post_probe_reason"
+            ],
         )
 
     def get_status(self, run_id: str) -> SchedulerStatusResult:

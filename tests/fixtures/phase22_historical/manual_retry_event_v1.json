@@ -1,0 +1,8 @@
+{
+  "kind": "codex_review_retryable_failure",
+  "run_id": "fixture-project-20260901T120000Z-historical",
+  "review_iteration": 1,
+  "failure_kind": "codex_review_timeout",
+  "attempt_id": "att-00000000000000000000000000000001",
+  "retry_generation": 1
+}

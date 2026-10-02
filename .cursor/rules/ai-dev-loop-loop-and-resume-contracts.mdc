@@ -90,6 +90,11 @@ existing references; it does not imply a public `resume` command.
   eligible `waiting_codex_review_retry` and `waiting_codex_capacity` states, or
   authenticated recovery of an eligible blocked review source. Tick launches
   the actual review afterward.
+- For the narrow `codex_workspace_routing_timeout` failure only, ticks may
+  authorize up to twelve automatic same-run retries per review iteration (300s
+  minimum due time, shared generation deduplication with manual retry, no
+  recovery successors). Capacity probe `unavailable` does not veto an eligible
+  routing retry; historical waits stay manual.
 - Same-run retries preserve reviewer, model, reasoning, staged target, and review
   iteration. Use the returned safe next action; not every failure is retryable.
 - Blocked-source recovery creates or reuses an authenticated same-reviewer

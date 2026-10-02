@@ -207,6 +207,40 @@ class IntegrationRunInspectData(PublicWireModel):
     cursor_wait_until: str | None = Field(None, alias="cursorWaitUntil")
     safe_next_action: IntegrationSafeNextAction = Field(alias="safeNextAction")
     attempt_count: StrictInt = Field(alias="attemptCount", ge=0)
+    codex_review_retry_failure_kind: str | None = Field(
+        None,
+        alias="codexReviewRetryFailureKind",
+    )
+    codex_routing_auto_retry_eligible: bool | None = Field(
+        None,
+        alias="codexRoutingAutoRetryEligible",
+    )
+    codex_routing_auto_retry_due_at: str | None = Field(
+        None,
+        alias="codexRoutingAutoRetryDueAt",
+    )
+    codex_routing_auto_retry_authorizations_used: StrictInt | None = Field(
+        None,
+        alias="codexRoutingAutoRetryAuthorizationsUsed",
+        ge=0,
+    )
+    codex_routing_auto_retry_limit: StrictInt | None = Field(
+        None,
+        alias="codexRoutingAutoRetryLimit",
+        ge=0,
+    )
+    codex_routing_auto_retry_exhausted: bool | None = Field(
+        None,
+        alias="codexRoutingAutoRetryExhausted",
+    )
+    codex_routing_failure_post_probe_status: str | None = Field(
+        None,
+        alias="codexRoutingFailurePostProbeStatus",
+    )
+    codex_routing_failure_post_probe_reason: str | None = Field(
+        None,
+        alias="codexRoutingFailurePostProbeReason",
+    )
 
 
 class IntegrationAttemptItem(PublicWireModel):

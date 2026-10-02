@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
+from ai_dev_loop.scheduler.domain.codex_routing_policy import (
+    FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT,
+    reset_routing_auto_retry_for_new_review_iteration,
+)
 from ai_dev_loop.scheduler.domain.events import (
     AbortRequestedEvent,
     AttemptCompletedEvent,
@@ -480,16 +486,35 @@ def apply_codex_usage_capacity_detected(
     if not state.codex.reviewer_session_id:
         raise ValueError("codex usage capacity wait requires bound reviewer identity")
     next_wait_generation = max(state.codex.capacity_wait_generation, 0) + 1
-    codex = state.codex.model_copy(
-        update={
-            "review_iteration": event.review_iteration,
-            "codex_capacity_wait_started_at": now_text,
-            "capacity_evidence_source": event.evidence_source,
-            "inferred_operational_failure_kind": event.operational_failure_kind,
-            "capacity_wait_generation": next_wait_generation,
-            "capacity_retry_scheduled_generation": None,
-        }
-    )
+    update: dict[str, object] = {
+        "review_iteration": event.review_iteration,
+        "codex_capacity_wait_started_at": now_text,
+        "capacity_evidence_source": event.evidence_source,
+        "inferred_operational_failure_kind": event.operational_failure_kind,
+        "capacity_wait_generation": next_wait_generation,
+        "capacity_retry_scheduled_generation": None,
+    }
+    if (
+        event.operational_failure_kind == FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT
+        and event.preserved_failed_attempt_id
+        and event.preserved_retry_generation is not None
+    ):
+        update.update(
+                {
+                    "review_retry_failure_kind": event.operational_failure_kind,
+                    "last_failed_attempt_id": event.preserved_failed_attempt_id,
+                    "review_retry_generation": event.preserved_retry_generation,
+                    "review_retry_scheduled_generation": None,
+                    "routing_auto_retry_policy_version": event.routing_auto_retry_policy_version,
+                    "routing_auto_retry_eligible": event.routing_auto_retry_eligible,
+                    "routing_auto_retry_authorizations_used": event.routing_auto_retry_authorizations_used,
+                    "routing_auto_retry_due_at": event.routing_auto_retry_due_at,
+                    "routing_auto_retry_exhausted": event.routing_auto_retry_exhausted,
+                    "routing_failure_post_probe_status": event.routing_failure_post_probe_status,
+                    "routing_failure_post_probe_reason": event.routing_failure_post_probe_reason,
+                }
+        )
+    codex = state.codex.model_copy(update=update)
     return WaitingCodexCapacityState(
         run_id=state.run_id,
         version=state.version + 1,
@@ -523,6 +548,13 @@ def apply_codex_review_retryable_failure(
             "inferred_operational_failure_kind": None,
             "capacity_evidence_source": None,
             "codex_capacity_wait_started_at": None,
+            "routing_auto_retry_policy_version": event.routing_auto_retry_policy_version,
+            "routing_auto_retry_eligible": event.routing_auto_retry_eligible,
+            "routing_auto_retry_authorizations_used": event.routing_auto_retry_authorizations_used,
+            "routing_auto_retry_due_at": event.routing_auto_retry_due_at,
+            "routing_auto_retry_exhausted": event.routing_auto_retry_exhausted,
+            "routing_failure_post_probe_status": event.routing_failure_post_probe_status,
+            "routing_failure_post_probe_reason": event.routing_failure_post_probe_reason,
         }
     )
     return WaitingCodexReviewRetryState(
@@ -549,11 +581,16 @@ def apply_codex_review_retry_requested(
         raise ValueError("event run_id disagrees with state")
     if event.retry_generation != state.codex.review_retry_generation:
         raise ValueError("retry generation mismatch")
-    codex = state.codex.model_copy(
-        update={
-            "review_retry_scheduled_generation": event.retry_generation,
-        }
-    )
+    update: dict[str, object] = {
+        "review_retry_scheduled_generation": event.retry_generation,
+        "routing_auto_retry_eligible": False,
+        "routing_auto_retry_due_at": None,
+    }
+    if event.authorization_source == "automatic":
+        update["routing_auto_retry_authorizations_used"] = (
+            state.codex.routing_auto_retry_authorizations_used + 1
+        )
+    codex = state.codex.model_copy(update=update)
     return AwaitingCodexReviewState(
         run_id=state.run_id,
         version=state.version + 1,
@@ -573,7 +610,7 @@ def apply_codex_capacity_available(
     event: CodexCapacityAvailableEvent,
     *,
     now_text: str,
-) -> AwaitingCodexReviewState:
+) -> AwaitingCodexReviewState | WaitingCodexReviewRetryState:
     if event.run_id != state.run_id:
         raise ValueError("event run_id disagrees with state")
     codex = state.codex.model_copy(
@@ -582,16 +619,30 @@ def apply_codex_capacity_available(
             "codex_capacity_wait_started_at": None,
         }
     )
+    common = {
+        "run_id": state.run_id,
+        "version": state.version + 1,
+        "submitted_at": state.submitted_at,
+        "updated_at": now_text,
+        "idempotency_key": state.idempotency_key,
+        "context": state.context,
+        "checkpoint": state.checkpoint,
+        "cursor": state.cursor,
+        "codex": codex,
+    }
+    if (
+        codex.inferred_operational_failure_kind == FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT
+        and codex.capacity_evidence_source == "post_failure_capacity_probe"
+        and codex.review_retry_generation >= 1
+        and codex.last_failed_attempt_id
+        and codex.review_retry_scheduled_generation is None
+    ):
+        return WaitingCodexReviewRetryState(
+            **cast(Any, common),
+            recovery=getattr(state, "recovery", None),
+        )
     return AwaitingCodexReviewState(
-        run_id=state.run_id,
-        version=state.version + 1,
-        submitted_at=state.submitted_at,
-        updated_at=now_text,
-        idempotency_key=state.idempotency_key,
-        context=state.context,
-        checkpoint=state.checkpoint,
-        cursor=state.cursor,
-        codex=codex,
+        **cast(Any, common),
         recovery=getattr(state, "recovery", None),
     )
 
@@ -696,6 +747,7 @@ def apply_waiting_for_cursor_fix_entered(
             "latest_correction_envelope_sha256": event.correction_envelope_sha256,
             "review_iteration": event.review_iteration,
             "reviews_completed": state.codex.reviews_completed + 1,
+            **reset_routing_auto_retry_for_new_review_iteration(),
         }
     )
     cursor = state.cursor.model_copy(
@@ -869,6 +921,7 @@ def apply_review_budget_extended(
             "latest_fix_prompt_sha256": event.fix_prompt_sha256,
             "latest_correction_envelope_path": event.correction_envelope_path,
             "latest_correction_envelope_sha256": event.correction_envelope_sha256,
+            **reset_routing_auto_retry_for_new_review_iteration(),
         }
     )
     cursor = state.cursor.model_copy(

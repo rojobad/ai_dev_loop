@@ -10,8 +10,13 @@ from ai_dev_loop.scheduler.application.contracts import (
     aborted_pending_termination_safe_next_action,
     safe_next_action_for_state_kind,
     scheduler_status_projection_from_state,
+    waiting_codex_review_retry_safe_next_action,
 )
-from ai_dev_loop.scheduler.domain.state import AbortedState, SchedulerState
+from ai_dev_loop.scheduler.domain.state import (
+    AbortedState,
+    SchedulerState,
+    WaitingCodexReviewRetryState,
+)
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
 
@@ -26,6 +31,14 @@ def safe_next_action_for_scheduler_state(
         if store.has_unreleased_abort_resources(conn, state.run_id):
             return aborted_pending_resource_cleanup_safe_next_action(state.run_id)
     projection = scheduler_status_projection_from_state(state)
+    if isinstance(state, WaitingCodexReviewRetryState):
+        return waiting_codex_review_retry_safe_next_action(
+            state.run_id,
+            routing_auto_retry_eligible=state.codex.routing_auto_retry_eligible,
+            routing_auto_retry_due_at=state.codex.routing_auto_retry_due_at,
+            routing_auto_retry_exhausted=state.codex.routing_auto_retry_exhausted,
+            routing_auto_retry_authorizations_used=state.codex.routing_auto_retry_authorizations_used,
+        )
     return safe_next_action_for_state_kind(
         state.kind,
         state.run_id,
