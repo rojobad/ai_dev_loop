@@ -340,9 +340,14 @@ Acciones:
 sucesores automaticos desde runs `failed`. Ante un fallo:
 
 - inspecciona `scheduler status` y `scheduler history`;
+- `scheduler cursor-retry <run-id> --check` informa si un `cursor_failure`
+  autenticado admite `--force` (`recovery_supported`);
+- `--force` solo recupera un turno inicial independiente ya terminado, incluido
+  un sucesor inicial que volvió a fallar. No recupera correcciones ni secuencias
+  y no anuncia ejecución de agente mientras la publicación sigue pendiente;
 - preserva artefactos bajo `artifacts/` para auditoria manual;
-- para continuar trabajo, usa `scheduler submit` con `--resubmission-id <uuid>`
-  y los mismos inputs congelados si aun aplican.
+- para continuar trabajo fuera de ese alcance, usa `scheduler submit` con
+  `--resubmission-id <uuid>` y los mismos inputs congelados si aun aplican.
 
 ## Repetir submit tras abort sin crear un run nuevo
 

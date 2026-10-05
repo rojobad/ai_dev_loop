@@ -56,6 +56,9 @@ Los artefactos `sequence-checkpoints/intent.json` (inmutable),
 `sequence-checkpoints/evidence.json` (evidencia autenticada) y
 `sequence-checkpoints/result.json` viven solo bajo artefactos protegidos del scheduler.
 No se copian prompts, reviews completos ni session IDs completos en salida CLI por defecto.
+`scheduler cursor-retry --check` y `--force` siguen esa regla: el recibo y el
+resultado muestran estado, razones y el id del run, no el prompt ni el chat completo.
+El registro v1 del sucesor inicial vive solo en artefactos protegidos.
 
 `scheduler abort` durante `checkpoint_pending` impide nuevas mutaciones Git y deja la
 evidencia durable para reconciliacion manual si un ref ya avanzo.

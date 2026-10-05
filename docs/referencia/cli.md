@@ -201,17 +201,32 @@ el contexto enviado; la salida indica el limite enviado solo cuando difiere.
 ## `scheduler cursor-retry`
 
 ```bash
-ai_dev_loop scheduler cursor-retry <run-id> [--check] [--output text|json]
+ai_dev_loop scheduler cursor-retry <run-id> [--check | --force] [--output text|json]
 ```
+
+`--check` y `--force` son excluyentes. Sin ninguna de las dos banderas, el comando
+sigue autorizando solo el reintento de un timeout Cursor ya terminado, con el mismo
+prompt, chat y salida que antes.
 
 Con `--check`, el comando es solo lectura: abre el ledger en modo readonly, reconstruye
 la evidencia causal del fallo `cursor_failure` (si existe) y devuelve un recibo JSON
 acotado (`evidence_status`, `turn_kind`, `reason_code`, `safe_summary`,
-`sequence_id`, `ordinal`). `recovery_supported` es siempre `false` en esta fase: la
-evidencia autenticada no autoriza por sí sola un reintento forzado ni muta reservas,
-efectos ni artefactos. Un run inspeccionado pero no elegible devuelve recibo, no un
-fallo de proceso inventado. Los artefactos protegidos se resuelven con raíces confinadas
-existentes; no se crean directorios ni se alteran permisos.
+`sequence_id`, `ordinal`, `recovery_supported`). `recovery_supported` es `true` solo
+cuando la evidencia autenticada es un turno inicial independiente, sin reviewer B,
+sin reviews completadas y sin secuencia. Una corrección o una secuencia autenticada
+sigue en `false`: forzarlas no está implementado. Un run inspeccionado pero no
+elegible devuelve recibo, no un fallo de proceso inventado. Los artefactos protegidos
+se resuelven con raíces confinadas existentes; no se crean directorios ni se alteran
+permisos.
+
+Con `--force`, un fallo terminal autenticado de `cursor.run_turn` en un turno inicial
+independiente publica un sucesor del mismo chat. El prompt efectivo es el prompt
+exacto del intento fallido más una nota operativa fija. El sucesor conserva el
+índice y los archivos parciales; no hace admisión limpia ni `git add`. La publicación
+pendiente no despacha un agente. Solo el cierre listo instala un efecto
+`cursor.run_turn`. Un sucesor inicial que vuelva a fallar puede forzarse de nuevo
+con su propio intento y el prompt base original, sin apilar la nota. Correcciones,
+secuencias, abortos, procesos activos y dueños de worktree en conflicto se rechazan.
 
 `reason_code` estable (resumen): `authenticated_cursor_failure` (evidencia causal
 autenticada); `insufficient_evidence_history` / `insufficient_evidence_ambiguous_failure`

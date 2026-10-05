@@ -394,7 +394,15 @@ def scheduler_review_retry_command(
 
 @scheduler_app.command("cursor-retry")
 def scheduler_cursor_retry_command(
-    run_id: Annotated[str, typer.Argument(help="Run waiting after a Cursor timeout.")],
+    run_id: Annotated[
+        str,
+        typer.Argument(
+            help=(
+                "Run for a Cursor timeout retry, a read-only failure check, "
+                "or an eligible initial standalone recovery."
+            )
+        ),
+    ],
     check: Annotated[
         bool,
         typer.Option(
@@ -402,11 +410,24 @@ def scheduler_cursor_retry_command(
             help="Inspect authenticated Cursor failure evidence without mutating the run.",
         ),
     ] = False,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help=(
+                "Publish one same-chat successor for an eligible failed initial "
+                "standalone Cursor turn."
+            ),
+        ),
+    ] = False,
     output: OutputOption = DEFAULT_OUTPUT,
 ) -> None:
-    """Retry a terminated Cursor turn now, keeping its chat, prompt and partial changes."""
+    """Retry a Cursor timeout, check failure evidence, or force an initial recovery."""
 
     def run() -> None:
+        if check and force:
+            typer.echo("cursor-retry --check and --force are mutually exclusive", err=True)
+            raise typer.Exit(code=2)
         if check:
             from ai_dev_loop.scheduler.application.cursor_recovery_check import (
                 render_cursor_recovery_check_output,
@@ -415,6 +436,18 @@ def scheduler_cursor_retry_command(
 
             receipt = scheduler_cursor_recovery_check(run_id)
             typer.echo(render_cursor_recovery_check_output(receipt, output=output.value), nl=False)
+            return
+        if force:
+            from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
+                render_cursor_initial_recovery_output,
+                scheduler_cursor_initial_recovery_force,
+            )
+
+            recovery = scheduler_cursor_initial_recovery_force(run_id)
+            typer.echo(
+                render_cursor_initial_recovery_output(recovery, output=output.value),
+                nl=False,
+            )
             return
 
         from ai_dev_loop.scheduler.application.cursor_timeout_retry import scheduler_cursor_retry

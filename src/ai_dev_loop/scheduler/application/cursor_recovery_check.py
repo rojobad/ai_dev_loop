@@ -31,7 +31,9 @@ def render_cursor_recovery_check_output(receipt: CursorRecoveryCheckReceipt, *, 
     if receipt.turn_kind is not None:
         parts.append(f"turn={receipt.turn_kind}")
     parts.append(receipt.safe_summary)
-    parts.append("recovery_supported=no")
+    parts.append(
+        "recovery_supported=yes" if receipt.recovery_supported else "recovery_supported=no"
+    )
     return "; ".join(parts) + "\n"
 
 

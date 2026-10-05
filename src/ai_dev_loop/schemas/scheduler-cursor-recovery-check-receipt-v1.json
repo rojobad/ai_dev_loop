@@ -23,7 +23,6 @@
       "type": "string"
     },
     "recovery_supported": {
-      "const": false,
       "title": "Recovery Supported",
       "type": "boolean"
     },

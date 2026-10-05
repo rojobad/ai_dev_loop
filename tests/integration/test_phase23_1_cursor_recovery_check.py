@@ -89,7 +89,18 @@ def test_cli_check_repeated_preserves_ledger_and_reservations(
     db_path = scheduler_paths["db_path"]
     ledger_before = _ledger_snapshot(db_path)
     artifact_inventory_before = subprocess.check_output(
-        ["find", str(scheduler_paths["artifact_root"]), "-type", "f", "-exec", "stat", "-c", "%a %n", "{}", "+"],
+        [
+            "find",
+            str(scheduler_paths["artifact_root"]),
+            "-type",
+            "f",
+            "-exec",
+            "stat",
+            "-c",
+            "%a %n",
+            "{}",
+            "+",
+        ],
         text=True,
     )
     artifact_bytes_before = subprocess.check_output(
@@ -116,7 +127,18 @@ def test_cli_check_repeated_preserves_ledger_and_reservations(
         assert result.exit_code == 0, result.output
     assert _ledger_snapshot(db_path) == ledger_before
     artifact_inventory_after = subprocess.check_output(
-        ["find", str(scheduler_paths["artifact_root"]), "-type", "f", "-exec", "stat", "-c", "%a %n", "{}", "+"],
+        [
+            "find",
+            str(scheduler_paths["artifact_root"]),
+            "-type",
+            "f",
+            "-exec",
+            "stat",
+            "-c",
+            "%a %n",
+            "{}",
+            "+",
+        ],
         text=True,
     )
     assert artifact_inventory_after == artifact_inventory_before
@@ -162,7 +184,8 @@ def test_cli_check_authenticated_json(
     )
     jsonschema.Draft202012Validator(schema).validate(payload)
     assert payload["evidence_status"] == "authenticated"
-    assert payload["recovery_supported"] is False
+    assert payload["recovery_supported"] is True
+    assert payload["turn_kind"] == "initial"
     assert "prompt" not in result.output.lower()
     assert scheduler_paths["db_path"].read_bytes() == db_before
     artifact_inventory_after = subprocess.check_output(
@@ -300,6 +323,107 @@ def test_cli_check_sequence_blocked_run_reports_ordinal(
     assert payload["sequence_id"] == sequence_id
     assert payload["ordinal"] == 1
     assert payload["evidence_status"] == "authenticated"
+    assert payload["recovery_supported"] is False
+
+
+def test_cli_check_sequence_stale_leaf_is_ineligible(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.integration.test_phase17_4_cursor_workflow import _run_until, _tick_service
+    from tests.unit.scheduler.test_phase20_2_sequence_start import _prepare_sequence, _start_service
+    from tests.unit.scheduler.test_phase23_1_cursor_recovery_evidence import (
+        _normalize_run_artifact_permissions,
+    )
+
+    from ai_dev_loop.scheduler.domain.sequence import BlockedSequenceState
+    from ai_dev_loop.scheduler.domain.sequence_run_lineage import (
+        SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY,
+        SequenceRunAttempt,
+    )
+    from ai_dev_loop.scheduler.infrastructure.sequence_run_lineage_store import (
+        insert_sequence_run_attempt,
+    )
+
+    monkeypatch.setenv("FAKE_AGENT_RUN_MODE", "fail")
+    sequence_id = _prepare_sequence(git_repo, scheduler_paths)
+    start = _start_service(scheduler_paths).start(sequence_id)
+    run_id = start.run_id
+    tick = _tick_service(
+        git_repo,
+        scheduler_paths,
+        now=NOW,
+        backend=FakeAgentProcessBackend(
+            default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
+        ),
+    )
+    _run_until(tick, run_id, target_kind="blocked", max_ticks=40)
+    _normalize_run_artifact_permissions(scheduler_paths["artifact_root"], run_id)
+    store = SqliteSchedulerStore(scheduler_paths["db_path"])
+    with store.begin_read() as conn:
+        sequence_state = store.load_validated_sequence_state(conn, sequence_id)
+    assert isinstance(sequence_state, BlockedSequenceState)
+    assert sequence_state.current_run_id == run_id
+    replacement_run_id = f"{run_id}-later-leaf"
+    current_entry = next(
+        entry
+        for entry in sequence_state.materialized_entries
+        if entry.ordinal == sequence_state.current_ordinal
+    )
+    moved_entries = tuple(
+        entry.model_copy(update={"run_id": replacement_run_id})
+        if entry.ordinal == sequence_state.current_ordinal
+        else entry
+        for entry in sequence_state.materialized_entries
+    )
+    moved = sequence_state.model_copy(
+        update={
+            "version": sequence_state.version + 1,
+            "current_run_id": replacement_run_id,
+            "materialized_entries": moved_entries,
+        }
+    )
+    kind, payload, digest = store.dump_sequence_state(moved)
+    planned_run_id = sequence_state.definition.entries[
+        sequence_state.current_ordinal - 1
+    ].planned_run_id
+    with store.begin_immediate() as conn:
+        insert_sequence_run_attempt(
+            conn,
+            sequence_id=sequence_id,
+            ordinal=sequence_state.current_ordinal,
+            planned_run_id=planned_run_id,
+            attempt=SequenceRunAttempt(
+                schema_version=1,
+                generation=2,
+                run_id=replacement_run_id,
+                source_run_id=run_id,
+                attempt_kind=SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY,
+                materialized_at=current_entry.materialized_at,
+                terminal_outcome="blocked",
+                resolved_at=sequence_state.blocked_at,
+            ),
+        )
+        conn.execute(
+            """
+            UPDATE scheduler_sequences
+            SET state_kind = ?, payload = ?, payload_sha256 = ?, version = ?
+            WHERE sequence_id = ?
+            """,
+            (kind, payload, digest, moved.version, sequence_id),
+        )
+        store.load_validated_sequence_state(conn, sequence_id)
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["scheduler", "cursor-retry", run_id, "--check", "--output", "json"],
+    )
+    assert result.exit_code == 0, result.output
+    payload_out = json.loads(result.output)
+    assert payload_out["reason_code"] == "ineligible_sequence_stale_leaf"
+    assert payload_out["recovery_supported"] is False
 
 
 def test_cli_check_aborted_sequence_run_is_ineligible(
@@ -404,24 +528,14 @@ def test_cli_check_extended_correction_bundle(
     assert analysis.evidence.effective_review_ceiling == 3
 
 
-def test_capture_baseline_fixture_provenance(
-    git_repo: Path,
-    scheduler_paths: dict[str, Path],
-    fake_clis: dict[str, Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    run_id = _blocked_run(git_repo, scheduler_paths, fake_clis, monkeypatch)
-    FIXTURES.mkdir(parents=True, exist_ok=True)
-    provenance = {
-        "captured_from": "fake_agent_cursor_failure_block",
-        "run_id": run_id,
-        "git_head": subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-            cwd=Path(__file__).resolve().parents[2],
-            text=True,
-        ).strip(),
-    }
-    path = FIXTURES / "initial_cursor_failure_provenance.json"
-    if not path.is_file():
-        path.write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
-    assert path.is_file()
+def test_committed_dual_failure_fixture_is_present_and_not_rewritten() -> None:
+    manifest_path = FIXTURES / "dual_failure_replay_manifest.json"
+    engine_path = FIXTURES / "dual_failure_engine.sqlite3"
+    assert manifest_path.is_file(), "missing committed dual_failure_replay_manifest.json"
+    assert engine_path.is_file(), "missing committed dual_failure_engine.sqlite3"
+    before = manifest_path.read_bytes()
+    engine_before = engine_path.read_bytes()
+    manifest = json.loads(before.decode("utf-8"))
+    assert manifest["git_head"] == "47b58b545c2f87d14a1b7d5bbf34554ff972c225"
+    assert manifest_path.read_bytes() == before
+    assert engine_path.read_bytes() == engine_before

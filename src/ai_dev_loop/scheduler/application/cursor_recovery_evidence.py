@@ -10,6 +10,7 @@ from typing import Literal, Protocol
 
 from pydantic import Field, field_validator
 
+from ai_dev_loop.fresh_codex_reviewer import classify_bootstrap_session_id_from_text
 from ai_dev_loop.scheduler.application.attempt_backend import TerminationClass
 from ai_dev_loop.scheduler.application.codex_evidence import (
     CodexEvidenceError,
@@ -38,6 +39,10 @@ from ai_dev_loop.scheduler.application.review_recovery import (
     resolve_recovery_ledger_evidence_run_id,
 )
 from ai_dev_loop.scheduler.application.sequence_materializer import frozen_entry_hash
+from ai_dev_loop.scheduler.domain.codex_contract import (
+    BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND,
+    RESUME_CODEX_REVIEW_EFFECT_KIND,
+)
 from ai_dev_loop.scheduler.domain.common import canonical_json_sha256
 from ai_dev_loop.scheduler.domain.cursor_contract import RUN_CURSOR_TURN_EFFECT_KIND
 from ai_dev_loop.scheduler.domain.events import (
@@ -87,7 +92,9 @@ TurnKind = Literal["initial", "correction"]
 class _ArtifactReader(Protocol):
     def run_root(self, run_id: str) -> Path: ...
 
-    def read_verified_bytes(self, run_id: str, relative_path: str, *, expected_sha256: str) -> bytes: ...
+    def read_verified_bytes(
+        self, run_id: str, relative_path: str, *, expected_sha256: str
+    ) -> bytes: ...
 
 
 def _strict_positive_int(value: object, *, field_name: str) -> int | None:
@@ -104,7 +111,7 @@ class CursorRecoveryCheckReceipt(AppModel):
     schema_version: int = CURSOR_RECOVERY_CHECK_SCHEMA_VERSION
     run_id: str
     evidence_status: EvidenceStatus
-    recovery_supported: Literal[False] = False
+    recovery_supported: bool = False
     turn_kind: TurnKind | None
     reason_code: str
     safe_summary: str = Field(max_length=SAFE_SUMMARY_MAX_LEN)
@@ -152,6 +159,9 @@ class CursorRecoveryEvidenceBundle:
     sequence_id: str | None
     ordinal: int | None
     sequence_leaf_matches: bool | None
+    chat_owner_run_id: str
+    chat_artifact_path: str
+    chat_artifact_sha256: str
 
 
 @dataclass(frozen=True)
@@ -191,6 +201,7 @@ def receipt(
     safe_summary: str,
     sequence_id: str | None = None,
     ordinal: int | None = None,
+    recovery_supported: bool = False,
 ) -> CursorRecoveryCheckReceipt:
     return CursorRecoveryCheckReceipt(
         run_id=run_id,
@@ -200,6 +211,7 @@ def receipt(
         safe_summary=_bounded_summary(safe_summary),
         sequence_id=sequence_id,
         ordinal=ordinal,
+        recovery_supported=recovery_supported,
     )
 
 
@@ -558,7 +570,10 @@ def _resolve_codex_attempt_for_correction_review(
             continue
         if parsed.review_iteration != fix.review_iteration:
             continue
-        if fix.review_result_path is not None and parsed.review_result_path != fix.review_result_path:
+        if (
+            fix.review_result_path is not None
+            and parsed.review_result_path != fix.review_result_path
+        ):
             continue
         if (
             fix.review_result_sha256 is not None
@@ -704,7 +719,11 @@ def _scan_turn_context(
     events: list[sqlite3.Row],
     *,
     max_sequence_exclusive: int | None = None,
-) -> tuple[StagingCompletedEvent | None, WaitingForCursorFixEnteredEvent | None, CodexReviewerBoundEvent | None]:
+) -> tuple[
+    StagingCompletedEvent | None,
+    WaitingForCursorFixEnteredEvent | None,
+    CodexReviewerBoundEvent | None,
+]:
     staging_event: StagingCompletedEvent | None = None
     fix_event: WaitingForCursorFixEnteredEvent | None = None
     reviewer_bound: CodexReviewerBoundEvent | None = None
@@ -857,6 +876,18 @@ def _artifact_access_receipt(
                 ordinal=ordinal,
             )
         )
+    if isinstance(exc, CodexEvidenceError):
+        return CursorRecoveryAnalysisResult(
+            receipt=receipt(
+                run_id,
+                evidence_status="corrupt",
+                turn_kind=turn_kind,
+                reason_code="corrupt_review_evidence",
+                safe_summary="Review artifacts failed authentication for correction inspection.",
+                sequence_id=sequence_id,
+                ordinal=ordinal,
+            )
+        )
     if isinstance(exc, CursorEvidenceError):
         message = str(exc).lower()
         evidence_status: EvidenceStatus = "corrupt"
@@ -880,18 +911,6 @@ def _artifact_access_receipt(
                 turn_kind=turn_kind,
                 reason_code=code,
                 safe_summary="Cursor failure artifacts failed authentication.",
-                sequence_id=sequence_id,
-                ordinal=ordinal,
-            )
-        )
-    if isinstance(exc, CodexEvidenceError):
-        return CursorRecoveryAnalysisResult(
-            receipt=receipt(
-                run_id,
-                evidence_status="corrupt",
-                turn_kind=turn_kind,
-                reason_code="corrupt_review_evidence",
-                safe_summary="Review artifacts failed authentication for correction inspection.",
                 sequence_id=sequence_id,
                 ordinal=ordinal,
             )
@@ -1196,12 +1215,24 @@ def _authenticate_reviewer_b_binding(
     bootstrap_events_rel = str(outcome.get("events_path", "")).strip()
     if not bootstrap_events_rel:
         raise CursorEvidenceError("bootstrap outcome missing events artifact binding")
-    artifacts.read_verified_bytes(
+    events_bytes = artifacts.read_verified_bytes(
         b_owner_run_id,
         bootstrap_events_rel,
         expected_sha256=expected_events_sha,
     )
-    return bootstrap_session_id
+    try:
+        events_text = events_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise CursorEvidenceError("bootstrap events artifact is not valid text") from exc
+    capture = classify_bootstrap_session_id_from_text(events_text)
+    authenticated_session_id = str(capture.session_id or "").strip()
+    if capture.uncertainty_reason or not authenticated_session_id:
+        raise CursorEvidenceError("bootstrap events do not authenticate a reviewer session")
+    if authenticated_session_id != bootstrap_session_id or not authenticated_session_id.startswith(
+        prefix
+    ):
+        raise CodexEvidenceError("bootstrap outcome session disagrees with authenticated events")
+    return authenticated_session_id
 
 
 def _authenticate_correction_turn_evidence(
@@ -1270,6 +1301,13 @@ def _authenticate_correction_turn_evidence(
         effect_kind=review_effect_kind,
     )
     verify_pre_execution_codex_guards(codex_root, review_invocation, run_id=fix_owner_run_id)
+    pinned_session_id = str(review_invocation.get("reviewer_session_id", "")).strip()
+    if review_effect_kind == RESUME_CODEX_REVIEW_EFFECT_KIND and (
+        not pinned_session_id or pinned_session_id != bound_reviewer_session_id
+    ):
+        raise CursorEvidenceError("pinned invocation reviewer session disagrees with bootstrap")
+    if review_effect_kind == BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND and pinned_session_id:
+        raise CursorEvidenceError("bootstrap invocation must not pin a reviewer session")
     codex_outcome = load_authenticated_codex_outcome(
         codex_root,
         attempt_id=review_attempt_id,
@@ -1430,18 +1468,6 @@ def analyze_cursor_recovery_evidence(
                     ordinal=ordinal,
                 )
             )
-        if store.has_unresolved_abort_hold(conn, run_id):
-            return CursorRecoveryAnalysisResult(
-                receipt=receipt(
-                    run_id,
-                    evidence_status="ineligible",
-                    turn_kind=None,
-                    reason_code="ineligible_abort_hold",
-                    safe_summary="Run has unresolved abort reconciliation.",
-                    sequence_id=sequence_id,
-                    ordinal=ordinal,
-                )
-            )
         if store.has_checkpoint_reconciliation_hold(conn, run_id):
             return CursorRecoveryAnalysisResult(
                 receipt=receipt(
@@ -1450,6 +1476,18 @@ def analyze_cursor_recovery_evidence(
                     turn_kind=None,
                     reason_code="ineligible_checkpoint_hold",
                     safe_summary="Run has unresolved checkpoint reconciliation.",
+                    sequence_id=sequence_id,
+                    ordinal=ordinal,
+                )
+            )
+        if store.has_unresolved_abort_hold(conn, run_id):
+            return CursorRecoveryAnalysisResult(
+                receipt=receipt(
+                    run_id,
+                    evidence_status="ineligible",
+                    turn_kind=None,
+                    reason_code="ineligible_abort_hold",
+                    safe_summary="Run has unresolved abort reconciliation.",
                     sequence_id=sequence_id,
                     ordinal=ordinal,
                 )
@@ -1620,7 +1658,13 @@ def analyze_cursor_recovery_evidence(
             evidence_run_id=artifact_run_id,
             attempt=attempt,
         )
-    except (CursorEvidenceError, CodexEvidenceError, ProtectedArtifactError, ValueError, OSError) as exc:
+    except (
+        CursorEvidenceError,
+        CodexEvidenceError,
+        ProtectedArtifactError,
+        ValueError,
+        OSError,
+    ) as exc:
         mapped = _artifact_access_receipt(
             run_id,
             exc,
@@ -1802,7 +1846,13 @@ def analyze_cursor_recovery_evidence(
                 codex_attempt=codex_attempt,
                 cursor_iteration=iteration,
             )
-        except (CursorEvidenceError, CodexEvidenceError, ProtectedArtifactError, ValueError, OSError) as exc:
+        except (
+            CursorEvidenceError,
+            CodexEvidenceError,
+            ProtectedArtifactError,
+            ValueError,
+            OSError,
+        ) as exc:
             mapped = _artifact_access_receipt(
                 run_id,
                 exc,
@@ -1938,8 +1988,22 @@ def analyze_cursor_recovery_evidence(
         sequence_id=sequence_id,
         ordinal=ordinal,
         sequence_leaf_matches=sequence_leaf_matches,
+        chat_owner_run_id=chat_owner_run_id,
+        chat_artifact_path=chat_event.chat_artifact_path,
+        chat_artifact_sha256=chat_event.chat_artifact_sha256,
     )
     kind_label = "initial" if turn_kind == "initial" else "correction"
+    mutation_supported = (
+        turn_kind == "initial"
+        and sequence_id is None
+        and reviewer_bound_event is None
+        and reviews_completed == 0
+        and review_recovery_source is None
+    )
+    if mutation_supported:
+        support_text = "forced initial standalone recovery is supported."
+    else:
+        support_text = "forced recovery is not supported for this turn."
     return CursorRecoveryAnalysisResult(
         receipt=receipt(
             run_id,
@@ -1948,10 +2012,11 @@ def analyze_cursor_recovery_evidence(
             reason_code="authenticated_cursor_failure",
             safe_summary=(
                 f"Authenticated decisive {kind_label} cursor_failure at iteration {iteration}; "
-                "forced recovery is not implemented in this release."
+                f"{support_text}"
             ),
             sequence_id=sequence_id,
             ordinal=ordinal,
+            recovery_supported=mutation_supported,
         ),
         evidence=bundle,
     )

@@ -9,6 +9,8 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
+from pydantic import ValidationError as ModelValidationError
+
 from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.scheduler.application.abort_reconcile import (
     append_attempt_result_stale_event,
@@ -41,7 +43,7 @@ from ai_dev_loop.scheduler.application.codex_evidence import (
     verify_pre_execution_codex_guards,
 )
 from ai_dev_loop.scheduler.application.codex_workflow_service import CodexWorkflowService
-from ai_dev_loop.scheduler.application.contracts import TickRunReceipt
+from ai_dev_loop.scheduler.application.contracts import SchedulerEngineError, TickRunReceipt
 from ai_dev_loop.scheduler.application.cursor_evidence import (
     CursorEvidenceError,
     frozen_repository_identity,
@@ -107,6 +109,30 @@ _CODEX_ATTEMPT_STATES = (AwaitingCodexReviewState,)
 _ATTEMPT_RECONCILE_STATES = (AdmittedState, *_CURSOR_ATTEMPT_STATES, *_CODEX_ATTEMPT_STATES)
 
 
+def _initial_recovery_prompt_applies(
+    state: PreflightCompleteState | CursorReadyState | WaitingUsageLimitState,
+    recovery: object,
+    *,
+    iteration: int,
+) -> bool:
+    """Bind the recovery prompt only for its authorized initial retry."""
+
+    from ai_dev_loop.scheduler.domain.cursor_initial_recovery import (
+        CursorInitialRecoveryRecordV1,
+    )
+
+    if not isinstance(recovery, CursorInitialRecoveryRecordV1):
+        raise ValidationError("initial recovery launch record is not the v1 record")
+    if recovery.iteration != iteration:
+        return False
+    continuation = state.cursor.continuation_envelope_path
+    if continuation and continuation != recovery.effective_prompt_path:
+        return False
+    if recovery.chat_id != state.cursor.chat_id:
+        raise ValidationError("initial recovery record disagrees with the cursor checkpoint")
+    return True
+
+
 class AttemptService:
     def __init__(
         self,
@@ -122,6 +148,7 @@ class AttemptService:
         launch_nonce_factory: Callable[[], str],
         cursor_workflow: CursorWorkflowService | None = None,
         codex_workflow: CodexWorkflowService | None = None,
+        before_effect_claim: Callable[[], None] | None = None,
         build_agent_argv: Callable[[str, str, str, Path], list[str]] | None = None,
     ) -> None:
         self.store = store
@@ -135,6 +162,7 @@ class AttemptService:
         self._launch_nonce_factory = launch_nonce_factory
         self._cursor_workflow = cursor_workflow
         self._codex_workflow = codex_workflow
+        self._before_effect_claim = before_effect_claim
         self._build_agent_argv = build_agent_argv
 
     def process_run(
@@ -150,6 +178,16 @@ class AttemptService:
         )
         if cleanup is not None:
             return cleanup
+        from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
+            cursor_initial_recovery_blocks_dispatch,
+        )
+
+        with self.store.begin_read() as conn:
+            if cursor_initial_recovery_blocks_dispatch(self.store, conn, run_id):
+                return TickRunReceipt(
+                    run_id=run_id,
+                    action="cursor_initial_recovery_publication_pending",
+                )
         reconcile = self._reconcile_existing_attempt(
             tick_owner_id,
             tick_lease_generation,
@@ -335,6 +373,48 @@ class AttemptService:
             codex_attempt=True,
         )
 
+    def _initial_recovery_evidence_receipt(
+        self,
+        run_id: str,
+        exc: BaseException,
+    ) -> TickRunReceipt | None:
+        with self.store.begin_read() as conn:
+            row = self.store.get_cursor_initial_recovery_by_successor(
+                conn,
+                successor_run_id=run_id,
+            )
+        if row is None:
+            return None
+        return TickRunReceipt(
+            run_id=run_id,
+            action="cursor_initial_recovery_evidence_invalid",
+            detail=type(exc).__name__,
+        )
+
+    def _reauthenticate_initial_recovery_launch(
+        self,
+        conn: sqlite3.Connection,
+        run_id: str,
+    ) -> TickRunReceipt | None:
+        from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
+            authenticated_initial_recovery_launch,
+        )
+
+        try:
+            authenticated_initial_recovery_launch(self.store, self.artifacts, conn, run_id)
+        except (SchedulerEngineError, ModelValidationError) as exc:
+            if (
+                self.store.get_cursor_initial_recovery_by_successor(conn, successor_run_id=run_id)
+                is None
+            ):
+                raise
+            return TickRunReceipt(
+                run_id=run_id,
+                action="cursor_initial_recovery_evidence_invalid",
+                detail=type(exc).__name__,
+            )
+        return None
+
     def _maybe_launch_cursor_attempt(
         self,
         tick_owner_id: str,
@@ -396,7 +476,15 @@ class AttemptService:
                 )
             evidence["timeout_retry_of"] = cursor_state.cursor.timeout_attempt_id
         else:
-            evidence = self._cursor_binding(cursor_state, effect_kind=effect_kind, run_id=run_id)
+            try:
+                evidence = self._cursor_binding(
+                    cursor_state, effect_kind=effect_kind, run_id=run_id
+                )
+            except (SchedulerEngineError, ModelValidationError) as exc:
+                blocked = self._initial_recovery_evidence_receipt(run_id, exc)
+                if blocked is not None:
+                    return blocked
+                raise
         evidence.update(
             {
                 "attempt_id": attempt_id,
@@ -419,6 +507,8 @@ class AttemptService:
         )
         launch_intent_sha256 = payload_sha256(launch_intent)
 
+        if self._before_effect_claim is not None:
+            self._before_effect_claim()
         with self.store.begin_immediate() as conn:
             if not tick_lease_is_active(
                 self.store,
@@ -441,6 +531,9 @@ class AttemptService:
                 return None
             if version < scheduled_version:
                 return TickRunReceipt(run_id=run_id, action="attempt_stale")
+            blocked = self._reauthenticate_initial_recovery_launch(conn, run_id)
+            if blocked is not None:
+                return blocked
             if not self.store.try_acquire_capacity(
                 conn,
                 run_id=run_id,
@@ -664,6 +757,26 @@ class AttemptService:
                     ),
                 }
             )
+            from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
+                authenticated_initial_recovery_launch,
+            )
+
+            with self.store.begin_read() as conn:
+                recovery = authenticated_initial_recovery_launch(
+                    self.store,
+                    self.artifacts,
+                    conn,
+                    run_id,
+                )
+            if recovery is not None and _initial_recovery_prompt_applies(
+                state,
+                recovery,
+                iteration=iteration,
+            ):
+                binding["prompt_path"] = recovery.effective_prompt_path
+                binding["prompt_sha256"] = recovery.effective_prompt_sha256
+                binding["chat_id"] = recovery.chat_id
+                binding["iteration"] = recovery.iteration
         if (
             state.cursor.usage_limit_fingerprint_path
             and state.cursor.usage_limit_fingerprint_sha256

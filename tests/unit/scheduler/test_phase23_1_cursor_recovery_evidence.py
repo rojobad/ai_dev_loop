@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -104,9 +106,7 @@ def test_receipt_schema_and_strict_integers() -> None:
     schema = json.loads(
         schema_path("scheduler-cursor-recovery-check-receipt-v1.json").read_text(encoding="utf-8")
     )
-    jsonschema.Draft202012Validator(schema).validate(
-        json.loads(receipt.model_dump_json())
-    )
+    jsonschema.Draft202012Validator(schema).validate(json.loads(receipt.model_dump_json()))
     with pytest.raises(ValueError):
         CursorRecoveryCheckReceipt(
             run_id="run-test",
@@ -149,7 +149,7 @@ def test_resolve_decisive_attempt_ambiguous(
     analysis = analyze_cursor_recovery_evidence(store, artifacts, run_id)
     assert analysis.receipt.evidence_status == "authenticated", analysis.receipt.reason_code
     assert analysis.receipt.turn_kind == "initial"
-    assert analysis.receipt.recovery_supported is False
+    assert analysis.receipt.recovery_supported is True
     assert analysis.evidence is not None
 
 
@@ -167,9 +167,7 @@ def test_incomplete_history_pagination(
         "ai_dev_loop.scheduler.application.cursor_recovery_evidence._load_all_verified_events",
         return_value=([], False),
     ):
-        analysis = analyze_cursor_recovery_evidence(
-            store, artifacts, run_id, event_page_size=5
-        )
+        analysis = analyze_cursor_recovery_evidence(store, artifacts, run_id, event_page_size=5)
     assert analysis.receipt.evidence_status == "insufficient"
     assert analysis.receipt.reason_code == "incomplete_event_history"
 
@@ -296,7 +294,9 @@ def _blocked_second_correction_failure(
         with tick.store.begin_read() as conn:
             wait_count = sum(
                 1
-                for row in tick.store.list_events_for_run(conn, run_id, limit=500, newest_first=False)
+                for row in tick.store.list_events_for_run(
+                    conn, run_id, limit=500, newest_first=False
+                )
                 if str(row["event_kind"]) == WAITING_FOR_CURSOR_FIX_EVENT_KIND
             )
         if wait_count >= 2:
@@ -453,25 +453,168 @@ def test_dual_failure_live_run_reports_ambiguous_insufficient(
 
 
 def test_dual_failure_replay_from_committed_capture(tmp_path: Path) -> None:
+    import hashlib
     import shutil
 
     manifest_path = FIXTURES / "dual_failure_replay_manifest.json"
     assert manifest_path.is_file(), "missing dual_failure_replay_manifest.json fixture"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_before = manifest_path.read_bytes()
+    manifest = json.loads(manifest_before.decode("utf-8"))
     engine_src = FIXTURES / str(manifest["engine_sqlite"])
     artifact_src = FIXTURES / str(manifest["artifact_bundle"])
     assert engine_src.is_file(), "missing committed dual-failure engine capture"
     assert artifact_src.is_dir(), "missing committed dual-failure artifact capture"
+    engine_before = engine_src.read_bytes()
+    for sidecar_name in (engine_src.name + "-wal", engine_src.name + "-shm"):
+        sidecar = engine_src.parent / sidecar_name
+        if sidecar.is_file():
+            shutil.copy(sidecar, tmp_path / sidecar.name)
     db_dst = tmp_path / "engine.sqlite3"
     shutil.copy(engine_src, db_dst)
     shutil.copytree(artifact_src, tmp_path / "artifacts")
     run_id = str(manifest["run_id"])
     store = SqliteSchedulerStore.open_readonly(db_dst)
     artifacts = ReadOnlyProtectedArtifactStore(tmp_path / "artifacts")
+    with store.begin_read() as conn:
+        events = list(store.list_events_for_run(conn, run_id, limit=500, newest_first=False))
+        attempt_count = conn.execute(
+            "SELECT COUNT(*) AS n FROM scheduler_attempts WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        effect_count = conn.execute(
+            "SELECT COUNT(*) AS n FROM scheduler_effects WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+    assert events
+    assert int(attempt_count["n"]) > 0
+    assert int(effect_count["n"]) > 0
+    for row in events:
+        payload = str(row["event_payload"]).encode("utf-8")
+        assert hashlib.sha256(payload).hexdigest() == str(row["event_payload_sha256"])
     analysis = analyze_cursor_recovery_evidence(store, artifacts, run_id)
     assert analysis.receipt.evidence_status == "insufficient"
     assert analysis.receipt.reason_code == "insufficient_evidence_ambiguous_failure"
     assert manifest["expected_resolution"]["detail"] == "ambiguous_failed_attempts"
+    assert manifest_path.read_bytes() == manifest_before
+    assert engine_src.read_bytes() == engine_before
+
+
+def test_dual_failure_capture_authenticates_retained_attempt_artifacts(tmp_path: Path) -> None:
+    """Ambiguity stays unresolved, while each captured attempt's own bytes authenticate.
+
+    The replay above proves the ledger digest and the ambiguous receipt. It returns
+    before any invocation or outcome read, so a missing artifact bundle would still pass.
+    """
+
+    import shutil
+
+    from ai_dev_loop.scheduler.application.attempt_backend import TerminationClass
+    from ai_dev_loop.scheduler.application.cursor_evidence import (
+        CursorEvidenceError,
+        load_authenticated_cursor_outcome,
+        verify_cursor_invocation_evidence,
+    )
+    from ai_dev_loop.scheduler.domain.cursor_contract import (
+        RUN_CURSOR_TURN_EFFECT_KIND,
+        invocation_evidence_rel,
+    )
+
+    manifest_path = FIXTURES / "dual_failure_replay_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    engine_src = FIXTURES / str(manifest["engine_sqlite"])
+    artifact_src = FIXTURES / str(manifest["artifact_bundle"])
+    engine_before = engine_src.read_bytes()
+    source_bytes = {
+        path.relative_to(artifact_src): path.read_bytes()
+        for path in artifact_src.rglob("*")
+        if path.is_file()
+    }
+    shutil.copy(engine_src, tmp_path / "engine.sqlite3")
+    shutil.copytree(artifact_src, tmp_path / "artifacts")
+    run_id = str(manifest["run_id"])
+    store = SqliteSchedulerStore.open_readonly(tmp_path / "engine.sqlite3")
+    artifacts = ReadOnlyProtectedArtifactStore(tmp_path / "artifacts")
+    analysis = analyze_cursor_recovery_evidence(store, artifacts, run_id)
+    assert analysis.receipt.evidence_status == "insufficient"
+    assert analysis.receipt.reason_code == "insufficient_evidence_ambiguous_failure"
+    run_root = artifacts.run_root(run_id)
+
+    def authenticate(attempt: object) -> None:
+        with store.begin_read() as conn:
+            dispatch = store.get_effect_by_dispatch_id(conn, str(attempt["dispatch_id"]))
+        assert dispatch is not None
+        effect_kind = str(dispatch["effect_kind"])
+        assert effect_kind == RUN_CURSOR_TURN_EFFECT_KIND
+        binding = verify_cursor_invocation_evidence(
+            run_root,
+            attempt_id=str(attempt["attempt_id"]),
+            run_id=run_id,
+            dispatch_id=str(attempt["dispatch_id"]),
+            unit_identity=str(attempt["unit_identity"]),
+            launch_nonce=str(attempt["launch_nonce"]),
+            launch_intent_sha256=str(attempt["launch_intent_sha256"]),
+            effect_kind=effect_kind,
+        )
+        outcome = load_authenticated_cursor_outcome(
+            run_root,
+            attempt_id=str(attempt["attempt_id"]),
+            unit_identity=str(attempt["unit_identity"]),
+            result_rel=str(attempt["result_artifact_path"]),
+            stdout_rel=str(attempt["stdout_artifact_path"]),
+            stderr_rel=str(attempt["stderr_artifact_path"]),
+            observed_exit_code=int(attempt["exit_code"])
+            if attempt["exit_code"] is not None
+            else None,
+            observed_termination=TerminationClass(str(attempt["termination_class"]))
+            if attempt["termination_class"]
+            else None,
+            expected_envelope_sha256=str(attempt["completion_envelope_sha256"])
+            if attempt["completion_envelope_sha256"]
+            else None,
+            expected_dispatch_id=str(attempt["dispatch_id"]),
+            expected_effect_kind=effect_kind,
+        )
+        assert str(binding.get("prompt_path", "")).strip()
+        assert str(binding.get("prompt_sha256", "")).strip()
+        assert str(outcome.get("dispatch_id", "")) == str(attempt["dispatch_id"])
+
+    with store.begin_read() as conn:
+        attempts = [
+            row
+            for row in conn.execute(
+                """
+                SELECT * FROM scheduler_attempts
+                WHERE run_id = ? AND component = 'cursor' AND status = 'failed'
+                ORDER BY created_at ASC
+                """,
+                (run_id,),
+            ).fetchall()
+        ]
+    assert len(attempts) == 2
+    for attempt in attempts:
+        for relative in (
+            str(attempt["result_artifact_path"]),
+            str(attempt["stdout_artifact_path"]),
+            str(attempt["stderr_artifact_path"]),
+            invocation_evidence_rel(str(attempt["attempt_id"])),
+        ):
+            assert (run_root / relative).is_file(), relative
+        authenticate(attempt)
+    missing = run_root / str(attempts[0]["result_artifact_path"])
+    missing.unlink()
+    with pytest.raises((CursorEvidenceError, OSError)):
+        authenticate(attempts[0])
+    invocation = run_root / invocation_evidence_rel(str(attempts[1]["attempt_id"]))
+    invocation.write_bytes(invocation.read_bytes() + b"x")
+    os.chmod(invocation, 0o600)
+    with pytest.raises(CursorEvidenceError):
+        authenticate(attempts[1])
+    assert engine_src.read_bytes() == engine_before
+    assert {
+        path.relative_to(artifact_src): path.read_bytes()
+        for path in artifact_src.rglob("*")
+        if path.is_file()
+    } == source_bytes
 
 
 @pytest.mark.skipif(
@@ -786,8 +929,20 @@ def test_review_recovery_successor_second_correction_failure_authenticated(
     analysis = analyze_cursor_recovery_evidence(store, artifacts, successor_id)
     assert analysis.receipt.evidence_status == "authenticated", analysis.receipt.reason_code
     assert analysis.receipt.turn_kind == "correction"
+    assert analysis.receipt.recovery_supported is False
     assert analysis.evidence is not None
     assert analysis.evidence.reviews_completed >= 2
+    assert analysis.evidence.chat_owner_run_id
+    assert analysis.evidence.chat_id
+    inspected = analyze_cursor_recovery_for_inspection(
+        successor_id,
+        db_path=scheduler_paths["db_path"],
+        artifact_root=scheduler_paths["artifact_root"],
+    )
+    assert inspected.receipt.evidence_status == "authenticated"
+    assert inspected.evidence is not None
+    assert inspected.evidence.chat_id == analysis.evidence.chat_id
+    assert inspected.evidence.iteration == analysis.evidence.iteration
 
 
 def test_review_recovery_successor_correction_failure_authenticated(
@@ -914,7 +1069,9 @@ def test_correction_tampered_staged_patch_yields_corrupt(
             if isinstance(parsed, StagingCompletedEvent):
                 staging = parsed
     assert staging is not None
-    patch_path = run_artifact_root(scheduler_paths["artifact_root"], run_id) / staging.staged_patch_path
+    patch_path = (
+        run_artifact_root(scheduler_paths["artifact_root"], run_id) / staging.staged_patch_path
+    )
     patch_path.write_text("tampered staged patch\n", encoding="utf-8")
     os.chmod(patch_path, 0o600)
     analysis = analyze_cursor_recovery_evidence(
@@ -954,6 +1111,281 @@ def test_correction_missing_codex_review_result_yields_corrupt(
     )
     assert analysis.receipt.evidence_status in {"corrupt", "insufficient"}
     assert analysis.receipt.turn_kind == "correction"
+
+
+def _rewrite_codex_stdout_hash_consistent(
+    store: SqliteSchedulerStore,
+    run_root: Path,
+    attempt: object,
+    mutate,
+) -> None:
+    import hashlib
+    import os
+
+    from ai_dev_loop.scheduler.application.attempt_backend import TerminationClass
+    from ai_dev_loop.scheduler.application.attempt_envelope import (
+        build_result_envelope,
+        envelope_sha256,
+    )
+
+    row = attempt
+    stdout_path = run_root / str(row["stdout_artifact_path"])
+    outcome = json.loads(stdout_path.read_text(encoding="utf-8"))
+    mutate(outcome)
+    stdout_bytes = (json.dumps(outcome, sort_keys=True) + "\n").encode("utf-8")
+    stdout_path.write_bytes(stdout_bytes)
+    os.chmod(stdout_path, 0o600)
+    result_path = run_root / str(row["result_artifact_path"])
+    previous = json.loads(result_path.read_text(encoding="utf-8"))
+    stderr_path = run_root / str(row["stderr_artifact_path"])
+    stderr_sha = hashlib.sha256(stderr_path.read_bytes()).hexdigest()
+    content = build_result_envelope(
+        attempt_id=str(row["attempt_id"]),
+        unit_identity=str(row["unit_identity"]),
+        exit_code=int(previous["exit_code"]),
+        termination_class=TerminationClass(str(previous["termination_class"])),
+        stdout_artifact_path=str(previous["stdout_artifact_path"]),
+        stdout_sha256=hashlib.sha256(stdout_bytes).hexdigest(),
+        stderr_artifact_path=str(previous["stderr_artifact_path"]),
+        stderr_sha256=stderr_sha,
+    )
+    result_path.write_bytes(content)
+    os.chmod(result_path, 0o600)
+    with store.begin_immediate() as conn:
+        conn.execute(
+            """
+            UPDATE scheduler_attempts
+            SET completion_envelope_sha256 = ?
+            WHERE attempt_id = ?
+            """,
+            (envelope_sha256(content), str(row["attempt_id"])),
+        )
+
+
+def test_hash_consistent_resume_session_suffix_still_rejects(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = _blocked_second_correction_failure(git_repo, scheduler_paths, fake_clis, monkeypatch)
+    store = SqliteSchedulerStore(scheduler_paths["db_path"])
+    with store.begin_read() as conn:
+        codex_attempt = store.get_latest_recorded_codex_attempt(conn, run_id)
+    assert codex_attempt is not None
+    run_root = run_artifact_root(scheduler_paths["artifact_root"], run_id)
+
+    def mutate(outcome: dict[str, object]) -> None:
+        session = str(outcome.get("resume_session_id", "")).strip()
+        assert len(session) > 8
+        outcome["resume_session_id"] = session[:-1] + ("0" if session[-1] != "0" else "1")
+
+    _rewrite_codex_stdout_hash_consistent(store, run_root, codex_attempt, mutate)
+    analysis = analyze_cursor_recovery_for_inspection(
+        run_id,
+        db_path=scheduler_paths["db_path"],
+        artifact_root=scheduler_paths["artifact_root"],
+    )
+    assert analysis.receipt.evidence_status == "corrupt"
+    assert analysis.receipt.reason_code == "corrupt_review_evidence"
+
+
+def test_hash_consistent_review_iteration_still_rejects(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = _blocked_correction_failure(git_repo, scheduler_paths, fake_clis, monkeypatch)
+    store = SqliteSchedulerStore(scheduler_paths["db_path"])
+    with store.begin_read() as conn:
+        codex_attempt = store.get_latest_recorded_codex_attempt(conn, run_id)
+    assert codex_attempt is not None
+    run_root = run_artifact_root(scheduler_paths["artifact_root"], run_id)
+
+    def mutate(outcome: dict[str, object]) -> None:
+        outcome["review_iteration"] = 99
+
+    _rewrite_codex_stdout_hash_consistent(store, run_root, codex_attempt, mutate)
+    analysis = analyze_cursor_recovery_for_inspection(
+        run_id,
+        db_path=scheduler_paths["db_path"],
+        artifact_root=scheduler_paths["artifact_root"],
+    )
+    assert analysis.receipt.evidence_status == "corrupt"
+    assert analysis.receipt.reason_code == "corrupt_review_evidence"
+
+
+def test_hash_consistent_bootstrap_session_mismatch_leaves_binding_file(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = _blocked_correction_failure(git_repo, scheduler_paths, fake_clis, monkeypatch)
+    store = SqliteSchedulerStore(scheduler_paths["db_path"])
+    binding_path = run_artifact_root(scheduler_paths["artifact_root"], run_id) / (
+        "codex/fresh-reviewer-binding.json"
+    )
+    binding_before = binding_path.read_bytes()
+    with store.begin_read() as conn:
+        bootstrap = store.get_codex_bootstrap_attempt(conn, run_id)
+    assert bootstrap is not None
+    run_root = run_artifact_root(scheduler_paths["artifact_root"], run_id)
+
+    def mutate(outcome: dict[str, object]) -> None:
+        session = str(outcome.get("bootstrap_session_id", "")).strip()
+        assert session
+        outcome["bootstrap_session_id"] = session[:-1] + ("0" if session[-1] != "0" else "1")
+
+    _rewrite_codex_stdout_hash_consistent(store, run_root, bootstrap, mutate)
+    assert binding_path.read_bytes() == binding_before
+    analysis = analyze_cursor_recovery_for_inspection(
+        run_id,
+        db_path=scheduler_paths["db_path"],
+        artifact_root=scheduler_paths["artifact_root"],
+    )
+    assert analysis.receipt.evidence_status == "corrupt"
+    assert analysis.receipt.reason_code == "corrupt_review_evidence"
+
+
+def test_decisive_attempt_ignores_equal_and_reversed_timestamps(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = _blocked_initial_failure(git_repo, scheduler_paths, fake_clis, monkeypatch)
+    store = SqliteSchedulerStore(scheduler_paths["db_path"])
+
+    def resolved() -> str:
+        with store.begin_read() as conn:
+            events = list(store.list_events_for_run(conn, run_id, limit=500, newest_first=False))
+            attempt_id, detail, _sequence = resolve_decisive_failed_cursor_attempt(
+                store, conn, run_id, events
+            )
+        assert detail == "ok"
+        assert attempt_id is not None
+        return attempt_id
+
+    original = resolved()
+    with store.begin_immediate() as conn:
+        rows = conn.execute(
+            """
+            SELECT event_id, created_at FROM scheduler_events
+            WHERE run_id = ? ORDER BY sequence ASC
+            """,
+            (run_id,),
+        ).fetchall()
+        stamps = [str(row["created_at"]) for row in rows]
+        for row, stamp in zip(rows, reversed(stamps), strict=True):
+            conn.execute(
+                "UPDATE scheduler_events SET created_at = ? WHERE event_id = ?",
+                (stamp, str(row["event_id"])),
+            )
+        conn.execute(
+            """
+            UPDATE scheduler_attempts
+            SET updated_at = '2099-01-01T00:00:00.000000Z'
+            WHERE run_id = ? AND attempt_id != ?
+            """,
+            (run_id, original),
+        )
+        conn.execute(
+            """
+            UPDATE scheduler_attempts
+            SET updated_at = '2000-01-01T00:00:00.000000Z'
+            WHERE attempt_id = ?
+            """,
+            (original,),
+        )
+    assert resolved() == original
+    with store.begin_immediate() as conn:
+        conn.execute(
+            "UPDATE scheduler_events SET created_at = ? WHERE run_id = ?",
+            ("2026-01-01T00:00:00.000000Z", run_id),
+        )
+    assert resolved() == original
+
+
+def test_unrelated_later_attempt_does_not_replace_the_decisive_failure(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A new terminal attempt after the block must not become the decisive failure.
+
+    The earlier timestamp test only rewrote created_at/updated_at on attempts that
+    already existed, including the chat-creation attempt. It never inserted a later
+    unrelated attempt or called the read-only inspection entry.
+    """
+
+    run_id = _blocked_initial_failure(git_repo, scheduler_paths, fake_clis, monkeypatch)
+    store = SqliteSchedulerStore(scheduler_paths["db_path"])
+    with store.begin_read() as conn:
+        events = list(store.list_events_for_run(conn, run_id, limit=500, newest_first=False))
+        original, detail, _sequence = resolve_decisive_failed_cursor_attempt(
+            store, conn, run_id, events
+        )
+        assert detail == "ok"
+        assert original is not None
+        source = store.get_attempt_by_id(conn, original)
+    assert source is not None
+    run_root = run_artifact_root(scheduler_paths["artifact_root"], run_id)
+    result_path = run_root / str(source["result_artifact_path"])
+    result_before = result_path.read_bytes()
+    result_digest = hashlib.sha256(result_before).hexdigest()
+    later_id = f"later-{uuid.uuid4()}"
+    later_at = datetime(2099, 1, 1, tzinfo=UTC)
+    with store.begin_immediate() as conn:
+        columns = list(source.keys())
+        values = [
+            later_id
+            if column == "attempt_id"
+            else "2099-01-01T00:00:00.000000Z"
+            if column in {"created_at", "updated_at"}
+            else source[column]
+            for column in columns
+        ]
+        conn.execute(
+            f"INSERT INTO scheduler_attempts ({', '.join(columns)}) VALUES ({', '.join('?' for _ in columns)})",
+            values,
+        )
+        store.append_event(
+            conn,
+            event_id=f"evt-{uuid.uuid4()}",
+            run_id=run_id,
+            sequence=store.next_event_sequence(conn, run_id),
+            event=AttemptCompletedEvent(
+                run_id=run_id,
+                attempt_id=later_id,
+                dispatch_id=str(source["dispatch_id"]),
+                claim_id=str(source["capacity_claim_id"]),
+                completion_fence_id=str(source["completion_fence_id"]),
+                termination_class=str(source["termination_class"]),
+                exit_code=int(source["exit_code"]),
+            ),
+            now=later_at,
+        )
+    analysis = analyze_cursor_recovery_for_inspection(
+        run_id,
+        db_path=scheduler_paths["db_path"],
+        artifact_root=scheduler_paths["artifact_root"],
+    )
+    assert analysis.evidence is not None
+    assert analysis.evidence.failed_attempt_id == original
+    assert analysis.receipt.evidence_status == "authenticated"
+    assert analysis.receipt.recovery_supported is True
+    receipt = scheduler_cursor_recovery_check(
+        run_id,
+        db_path=scheduler_paths["db_path"],
+        artifact_root=scheduler_paths["artifact_root"],
+    )
+    assert receipt.evidence_status == "authenticated"
+    assert receipt.recovery_supported is True
+    assert result_path.read_bytes() == result_before
+    assert hashlib.sha256(result_path.read_bytes()).hexdigest() == result_digest
 
 
 def test_unknown_run_on_missing_database() -> None:

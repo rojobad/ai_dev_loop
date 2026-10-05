@@ -82,6 +82,7 @@ class TickService:
         launch_nonce_factory: Callable[[], str] | None = None,
         attempt_backend: AgentProcessBackend | None = None,
         preflight_port: SchedulerPreflightPort | None = None,
+        before_effect_claim: Callable[[], None] | None = None,
         lease_ttl_seconds: int = DEFAULT_TICK_LEASE_SECONDS,
     ) -> None:
         self.store = store
@@ -165,6 +166,7 @@ class TickService:
                 launch_nonce_factory=self._launch_nonce_factory,
                 cursor_workflow=self._cursor_workflow,
                 codex_workflow=self._codex_workflow,
+                before_effect_claim=before_effect_claim,
             )
 
     def run_once(self) -> TickReceipt:
@@ -228,6 +230,18 @@ class TickService:
                     receipts.extend(
                         self._sequence_restart_reconcile.reconcile_pending_restart_work(conn)
                     )
+
+            from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
+                reconcile_pending_cursor_initial_recoveries,
+            )
+
+            receipts.extend(
+                reconcile_pending_cursor_initial_recoveries(
+                    self.store,
+                    self.artifacts,
+                    now=self._now_factory(),
+                )
+            )
 
             for sequence_id in pending_report_sequence_ids:
                 self._reconcile_completion_report_publication(sequence_id)

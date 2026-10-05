@@ -122,6 +122,13 @@ class CursorWorkflowService:
         run_id: str,
     ) -> list[TickRunReceipt]:
         receipts: list[TickRunReceipt] = []
+        from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
+            cursor_initial_recovery_blocks_dispatch,
+        )
+
+        with self.store.begin_read() as conn:
+            if cursor_initial_recovery_blocks_dispatch(self.store, conn, run_id):
+                return receipts
         usage_limit = self._maybe_schedule_usage_limit_continuation(
             tick_owner_id,
             tick_lease_generation,
