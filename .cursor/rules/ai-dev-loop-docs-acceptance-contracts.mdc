@@ -33,6 +33,11 @@ and approved scope establish authority. Archives preserve historical evidence.
 
 ## Validation And Operator Work
 
+- Phase/subphase validation covers its mandatory contracts and affected
+  regressions. The repository-wide suite belongs to the pipeline/integration
+  gate; do not run it per implementation turn or review round. Rerun failed and
+  affected checks after corrections and broaden only for a concrete remaining
+  risk. Keep focused acceptance distinct from pending repository-wide validation.
 - Automated tests use fake `agent`/`codex`, fake process backends, temporary homes,
   XDG state, and repositories. Never invoke real models in automated tests.
 - Real model smoke tests and workstation changes require current explicit user

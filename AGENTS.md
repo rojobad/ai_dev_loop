@@ -78,6 +78,14 @@ become a general-purpose controller of every worktree change.
 
 ## Review standard
 
+During phase/subphase implementation and review, run the tests for the approved
+contracts and the regressions affected by the changed production paths. The
+repository-wide test suite belongs to the pipeline/integration gate, not every
+implementation turn or review round. After a correction, rerun the failed and
+affected tests; broaden the selection only to resolve a concrete remaining risk.
+Keep mandatory contract coverage intact. Report focused results and the separate
+pending pipeline gate honestly; neither implies repository-wide validation.
+
 Reviewers accept or reject staged changes based on the approved phase contract,
 normal orchestrator flow, artifact and state integrity, prohibited side effects,
 and user-visible safety. Do not block acceptance on exhaustive handling of rare

@@ -126,6 +126,46 @@ work, with closure mandatory inside revised 23.2.
   call real models in tests, install this feature, change timers/lingering or
   modify `ai_dev_loop.yaml` or planning/review skills during implementation.
 
+## Validation policy corrected on 2026-10-05
+
+The operator rejected repository-wide pytest as a phase/subphase development
+requirement. Revised 23.2–23.4 require their behavioral contract tests and affected
+regressions. Initial implementation/first review cover that focused selection;
+correction rounds rerun failed and affected checks, expanding only to resolve a
+concrete remaining risk. Referenced historical plans contribute their behavioral
+contracts, not their superseded full-suite command. Required lint, typing and
+documentation checks remain in the individual plans. Automated subphase acceptance
+is based on that scope and must report the separate pending integration gate.
+
+The operator authorized aborting `ai-dev-loop-seq-0e70cf5705e5`, preserving all
+partial work and relaunching with this policy. Its 23.2 run
+`ai-dev-loop-e3d0cf1723c9` completed one review (seven findings: three P1, four P2)
+before its unfinished second correction was stopped. None of that work is accepted.
+The preserved snapshot and closure instructions are in
+[the relaunch handoff](phase-23-2-focused-validation-relaunch-handoff.md).
+Frozen inputs for the aborted sequence remain unchanged. The replacement
+[manifest](phase-23-2-4-focused-sequence.yaml) retains the models, budgets,
+phase order, non-final checkpoint commits and final manual review.
+
+### Separate pipeline/integration gate
+
+After all three subphases are automatically accepted, the pipeline/integration
+operator runs the repository-wide suite once against the combined implementation,
+outside Cursor development turns and Codex subphase reviews, before final manual
+acceptance, merge or installation:
+
+```bash
+TMPDIR=/tmp TMP=/tmp TEMP=/tmp uv run python -m pytest
+```
+
+Record the exact result and resolve concrete failures with focused checks before
+rerunning the failed integration gate. This repository currently has no checked-in
+CI workflow; this assigns the gate and its timing, without claiming automation
+already exists or adding a CI implementation to Phase 23. The controller/operator
+can execute the gate as a separate validation step after the sequence. Governance
+policy and planning/review-skill edits are operator-authored control-plane changes,
+not part of Cursor's runtime implementation or its automated acceptance.
+
 ## Acceptance and reuse
 
 Proceed in order after each subphase's automated acceptance, using revised 23.2

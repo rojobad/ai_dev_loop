@@ -88,3 +88,13 @@ Cursor `grok-4.7-high` and reviewer `gpt-6.1-sol / high` for all three runs.
 Seven completed reviews and 90-minute attempt limits remain unchanged. The YAML
 change was directly authorized by the operator and is outside Cursor's scope.
 Final manual review remains planned after the three automated acceptances.
+
+## Updated validation policy on 2026-10-05
+
+The operative 23.2–23.4 plans now require focused contract/regression checks.
+Historical full-suite results above describe earlier execution, not a requirement
+for the replacement run. E-01–E-04 coverage remains mandatory under I-00; do not
+inherit the original 23.1 plan's generic repository-wide pytest command. The full
+suite belongs to the separate post-sequence integration gate in the overview.
+See [the 23.2 relaunch handoff](phase-23-2-focused-validation-relaunch-handoff.md)
+for the unaccepted implementation and unfinished correction preserved next.

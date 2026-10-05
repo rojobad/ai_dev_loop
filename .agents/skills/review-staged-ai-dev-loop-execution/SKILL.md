@@ -27,15 +27,26 @@ tests, and alignment with the approved plan.
    - `docs/referencia/configuracion.md` for configuration behavior;
    - `docs/referencia/cli.md` for user-visible CLI contracts;
    - `src/ai_dev_loop/schemas/` for structured-artifact compatibility.
-4. Run focused validation proportional to the diff. For Python/runtime changes,
-   prefer the documented commands:
+4. Run focused validation proportional to the diff: mandatory phase-contract
+   tests and the regressions affected by its production paths. The repository-wide
+   suite belongs to the separate pipeline/integration gate. Do not run it as the
+   default phase review or repeat it for each correction. After a fix, rerun the
+   failed and affected tests; broaden the selection only for a concrete remaining
+   risk. For Python/runtime changes, use the selected concrete test paths/node IDs
+   and the documented checks:
 
    ```bash
    uv run python -m ruff format --check .
    uv run python -m ruff check .
    uv run python -m mypy src
-   TMPDIR=/tmp TMP=/tmp TEMP=/tmp uv run python -m pytest -q
    ```
+
+   Run focused pytest as `TMPDIR=/tmp TMP=/tmp TEMP=/tmp uv run python -m pytest -q <selected-test-paths-or-node-ids>`, replacing the placeholder with the
+   plan's actual relevant selection. Do not invoke bare pytest for a subphase.
+   Verify mandatory observable contract coverage even when some source was
+   inherited from a committed partial implementation. Report exact selected
+   checks and any separate pipeline gate still pending; pending repository-wide
+   validation alone is not a correction finding for a focused subphase.
 
    For packaging or documentation changes, add `uv run python -m build` and/or
    `uv run mkdocs build --strict` as applicable. If `ai_dev_loop.yaml` changed,

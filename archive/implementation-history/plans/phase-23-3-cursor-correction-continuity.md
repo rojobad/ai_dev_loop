@@ -162,10 +162,19 @@ authenticated progression and finished acceptance, not merely a blocked outcome.
 
 ## Validation
 
+Run the selected subphase-contract tests and affected regressions below during
+initial implementation and first review. After each correction, rerun the failed
+and affected tests; expand the selection only for a concrete remaining risk.
+Do not run the repository-wide pytest suite during implementation or review.
+That suite is a separate pipeline/integration gate after the sequence, described
+in the overview. All mandatory behavioral coverage remains required; a pending
+pipeline gate alone does not block automated acceptance of this subphase.
+For referenced historical plans, inherit behavioral contracts, not their generic
+repository-wide validation command. Report exact selections and results.
+
 ```bash
 .venv/bin/python -m pytest tests/unit/scheduler/test_phase23_3*.py tests/integration/test_phase23_3*.py
 .venv/bin/python -m pytest tests/unit/scheduler/test_phase23_1*.py tests/unit/scheduler/test_phase23_2*.py tests/integration/test_phase23_1*.py tests/integration/test_phase23_2*.py tests/unit/scheduler/test_cursor_workflow_corrections.py tests/unit/scheduler/test_cursor_evidence_corrections.py tests/unit/scheduler/test_review_budget_extend.py tests/integration/test_phase20_8_sequence_review_retry.py
-TMPDIR=/tmp TMP=/tmp TEMP=/tmp .venv/bin/python -m pytest
 .venv/bin/python -m ruff check .
 .venv/bin/python -m mypy src/ai_dev_loop
 .venv/bin/python -m mkdocs build --strict

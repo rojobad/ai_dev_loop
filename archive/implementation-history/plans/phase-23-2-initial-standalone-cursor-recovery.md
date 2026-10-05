@@ -49,6 +49,21 @@ needed. Complete I-00 before dependent recovery publication work. An absent or
 conflicting prerequisite outside this explicitly authorized closure remains a
 blocker; the older combined abandoned patch does not satisfy it.
 
+### Relaunch after the validation-policy correction
+
+The operator also authorized stopping 23.2 run `ai-dev-loop-e3d0cf1723c9`,
+preserving its incomplete implementation/correction and launching this revision.
+Read [the relaunch handoff](phase-23-2-focused-validation-relaunch-handoff.md).
+The execution branch starts from the old clean admission baseline plus the
+controller-authored policy/planning revision. After normal admission, restore the
+preserved 23.2 patch with the exact handoff command, then inspect it and finish all
+E-01–E-04/I-00–I-04 contracts. This restores already authorized partial work into
+the new staged review target; it does not accept that work or waive defects.
+Any overlap with updated governance must retain the focused validation policy.
+Do not reset HEAD/index, restore obsolete plan/skill files, resume either old
+agent session or modify the aborted run's artifacts. The new run creates its own
+implementation chat and fresh reviewer under ordinary scheduler flow.
+
 The operator already approved and set `cursor.model: grok-4.7-high` in the YAML.
 Reviewers are explicitly frozen as `gpt-6.1-sol / high`. These control-plane
 changes are controller-authored launch inputs, not implementation work for Cursor.
@@ -228,10 +243,19 @@ legacy no-flag timeout prompt identity and existing review/abort behavior.
 
 ## Validation
 
+Run the selected subphase-contract tests and affected regressions below during
+initial implementation and first review. After each correction, rerun the failed
+and affected tests; expand the selection only for a concrete remaining risk.
+Do not run the repository-wide pytest suite during implementation or review.
+That suite is a separate pipeline/integration gate after the sequence, described
+in the overview. All mandatory behavioral coverage remains required; a pending
+pipeline gate alone does not block automated acceptance of this subphase.
+For referenced historical plans, inherit behavioral contracts, not their generic
+repository-wide validation command. Report exact selections and results.
+
 ```bash
 .venv/bin/python -m pytest tests/unit/scheduler/test_phase23_2*.py tests/integration/test_phase23_2*.py
 .venv/bin/python -m pytest tests/unit/scheduler/test_phase23_1*.py tests/integration/test_phase23_1*.py tests/integration/test_cursor_timeout_retry.py tests/integration/test_phase17_6_abort_lifecycle.py tests/integration/test_phase20_8_sequence_review_retry.py
-TMPDIR=/tmp TMP=/tmp TEMP=/tmp .venv/bin/python -m pytest
 .venv/bin/python -m ruff format --check .
 .venv/bin/python -m ruff check .
 .venv/bin/python -m mypy src/ai_dev_loop
