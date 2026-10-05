@@ -395,11 +395,28 @@ def scheduler_review_retry_command(
 @scheduler_app.command("cursor-retry")
 def scheduler_cursor_retry_command(
     run_id: Annotated[str, typer.Argument(help="Run waiting after a Cursor timeout.")],
+    check: Annotated[
+        bool,
+        typer.Option(
+            "--check",
+            help="Inspect authenticated Cursor failure evidence without mutating the run.",
+        ),
+    ] = False,
     output: OutputOption = DEFAULT_OUTPUT,
 ) -> None:
     """Retry a terminated Cursor turn now, keeping its chat, prompt and partial changes."""
 
     def run() -> None:
+        if check:
+            from ai_dev_loop.scheduler.application.cursor_recovery_check import (
+                render_cursor_recovery_check_output,
+                scheduler_cursor_recovery_check,
+            )
+
+            receipt = scheduler_cursor_recovery_check(run_id)
+            typer.echo(render_cursor_recovery_check_output(receipt, output=output.value), nl=False)
+            return
+
         from ai_dev_loop.scheduler.application.cursor_timeout_retry import scheduler_cursor_retry
 
         result = scheduler_cursor_retry(run_id)

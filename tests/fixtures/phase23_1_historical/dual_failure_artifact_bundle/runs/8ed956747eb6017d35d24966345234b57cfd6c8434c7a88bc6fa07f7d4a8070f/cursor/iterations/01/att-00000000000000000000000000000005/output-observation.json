@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "run_id": "fixture-project-20261005T151720Z-338174",
+  "attempt_id": "att-00000000000000000000000000000005",
+  "iteration": 1,
+  "stdout": {
+    "stored_bytes": 170,
+    "truncated": false
+  },
+  "stderr": {
+    "stored_bytes": 0,
+    "truncated": false
+  }
+}

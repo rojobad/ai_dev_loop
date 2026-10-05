@@ -1,0 +1,35 @@
+{
+  "args": [
+    "/tmp/pytest-of-rojobad/pytest-168/test_capture_dual_failure_hist0/bin/agent",
+    "-p",
+    "--force",
+    "--trust",
+    "--workspace",
+    "/tmp/pytest-of-rojobad/pytest-168/test_capture_dual_failure_hist0/repo",
+    "--resume",
+    "019abc00-1111-2222-3333-444444444444",
+    "--model",
+    "composer-2.5-fast",
+    "--output-format",
+    "stream-json",
+    "--sandbox",
+    "disabled",
+    "<prompt-redacted>"
+  ],
+  "exit_code": 2,
+  "elapsed_seconds": 0.0343481469899416,
+  "timed_out": false,
+  "parse_ok": false,
+  "has_completion_signal": false,
+  "errors": [
+    "ActionRequiredError: You've hit your usage limit for this model. Switch to Auto or another model to continue."
+  ],
+  "structured_errors": [
+    {
+      "type": "error",
+      "message": "ActionRequiredError: You've hit your usage limit for this model. Switch to Auto or another model to continue.",
+      "retry_after_seconds": 120
+    }
+  ],
+  "failure_code": "cursor_usage_limit"
+}

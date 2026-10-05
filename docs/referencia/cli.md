@@ -201,8 +201,26 @@ el contexto enviado; la salida indica el limite enviado solo cuando difiere.
 ## `scheduler cursor-retry`
 
 ```bash
-ai_dev_loop scheduler cursor-retry <run-id> [--output text|json]
+ai_dev_loop scheduler cursor-retry <run-id> [--check] [--output text|json]
 ```
+
+Con `--check`, el comando es solo lectura: abre el ledger en modo readonly, reconstruye
+la evidencia causal del fallo `cursor_failure` (si existe) y devuelve un recibo JSON
+acotado (`evidence_status`, `turn_kind`, `reason_code`, `safe_summary`,
+`sequence_id`, `ordinal`). `recovery_supported` es siempre `false` en esta fase: la
+evidencia autenticada no autoriza por sí sola un reintento forzado ni muta reservas,
+efectos ni artefactos. Un run inspeccionado pero no elegible devuelve recibo, no un
+fallo de proceso inventado. Los artefactos protegidos se resuelven con raíces confinadas
+existentes; no se crean directorios ni se alteran permisos.
+
+`reason_code` estable (resumen): `authenticated_cursor_failure` (evidencia causal
+autenticada); `insufficient_evidence_history` / `insufficient_evidence_ambiguous_failure`
+/ `incomplete_event_history` (historial incompleto o ambiguo); `insufficient_chat_binding`,
+`insufficient_reviewer_binding`, `insufficient_correction_envelope` (faltan enlaces);
+`insufficient_sequence_*` (secuencia/hash/ordinal no verificados); `ineligible_*`
+(estado, abort, reserva, hoja de secuencia obsoleta); `corrupt_*` (ledger o artefactos
+no autentican). `safe_summary` está acotado y no incluye prompts, parches ni salidas de
+agentes.
 
 Tras un timeout confirmado de un turno Cursor, el scheduler conserva el mismo run,
 chat, reviewer, prompt e iteracion, incluidos los cambios staged y unstaged. Programa

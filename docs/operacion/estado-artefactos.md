@@ -60,7 +60,9 @@ No existe `recover` publico en el scheduler central. Ante fallos:
 
 - usa `scheduler status` y `scheduler history` para el checkpoint durable;
 - usa `scheduler review retry` para una revisión recuperable, `scheduler
-  cursor-retry` para un timeout Cursor elegible o `scheduler extend` para
+  cursor-retry` para un timeout Cursor elegible, `scheduler cursor-retry <run-id>
+  --check` para inspeccionar evidencia de un fallo `cursor_failure` sin mutar el
+  ledger, o `scheduler extend` para
   autorizar más reviews tras agotar el presupuesto; consulta las condiciones en
   la [referencia CLI](../referencia/cli.md);
 - `scheduler abort` cancela sin borrar artefactos ni cambios staged;
