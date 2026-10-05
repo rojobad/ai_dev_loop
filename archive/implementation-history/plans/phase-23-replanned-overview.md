@@ -10,7 +10,31 @@ original prompt unchanged as historical inputs; do not launch them again.
 Planning baseline is accepted `main`, commit
 `b516abdc7aa6582e17ad88a6c4ee94c3896499a9`. None of the replacement capabilities
 below is implemented on that baseline. Each dependent plan requires its preceding
-subphase to be accepted and available in the actual execution checkout.
+subphase to be accepted and available in the actual execution checkout, subject
+to the operator-approved 2026-10-05 combined closure described below.
+
+### Approved 23.2–23.4 continuation on 2026-10-05
+
+The four-phase sequence `ai-dev-loop-seq-73fdcc91612f` was aborted at the
+operator's request while 23.1 run `ai-dev-loop-3b19276bb80a` was correcting for
+review 7. Six reviews were completed; the last had F-04 (P1) and F-09 (P2), with
+failed independent probes. The interrupted correction was not reviewed. Its
+work is preserved in commit `c443d8be8c71e6862bd3e806d051978602b0153d` on
+`codex/phase-23-sequence`, not accepted, merged or installed.
+
+The operator approved committing that partial work, setting the repository YAML
+to `grok-4.7-high`, and preparing/starting a new sequence of revised 23.2–23.4.
+Revised 23.2 owns full E-01–E-04 closure under I-00 before implementing I-01–I-04.
+Its acceptance covers both evidence inspection and initial standalone recovery.
+Later plans require that combined acceptance; they do not assume a separately
+accepted 23.1. See [the closure handoff](phase-23-1-to-23-2-handoff.md).
+
+The [new three-phase manifest](phase-23-2-4-grok-sequence.yaml) explicitly selects
+`grok-4.7-high` for Cursor and `gpt-6.1-sol / high` for each fresh reviewer.
+Budgets remain seven completed reviews and 90-minute Cursor/Codex timeouts.
+The stopped four-phase definition and its frozen inputs remain historical.
+Native start authorizes local non-final checkpoints for revised 23.2 and 23.3;
+23.4 leaves final changes staged for the agreed final manual review.
 
 ### Stopped execution and preserved work
 
@@ -50,23 +74,22 @@ wholesale, use it as an assumed prerequisite, or resume its reviewer/chat.
 
 Each plan has a separate `prompt_phase-23-N-*.txt` file in this directory,
 following the repository's intentionally ignored prompt convention. Planning
-does not authorize preparing/submitting/starting this replacement sequence or
-any run. Freeze explicit reviewer model/reasoning only when launching is approved.
-Current repo configuration remains Composer 2.5, seven completed reviews maximum,
-and 90-minute Cursor/Codex timeouts; this planning task changes none of those.
+alone does not authorize preparing/submitting/starting a replacement sequence or
+any run. The operator separately authorized the three-phase continuation above.
+Freeze explicit reviewer model/reasoning at preparation. Original planning used
+Composer 2.5; the approved continuation uses Grok 4.7 High with unchanged budgets.
 
 Handoff prompts: [23.1](prompt_phase-23-1-cursor-recovery-evidence.txt),
 [23.2](prompt_phase-23-2-initial-standalone-cursor-recovery.txt),
 [23.3](prompt_phase-23-3-cursor-correction-continuity.txt), and
 [23.4](prompt_phase-23-4-sequence-cursor-recovery.txt).
 
-The [four-phase sequence manifest](phase-23-replanned-sequence.yaml) records the
-operator's proposed `gpt-6.1-sol / high` reviewer settings for all four phases.
-Cursor and budgets inherit the current repository configuration. Preparing this
-file does not submit or start a scheduler sequence. Each phase has a fresh
-reviewer, normal automated acceptance and the predecessor's accepted checkpoint;
-the final phase leaves staged changes for operator finalization. Starting the
-sequence will authorize its existing non-final checkpoint commits.
+The [original four-phase sequence manifest](phase-23-replanned-sequence.yaml)
+records the stopped sequence's `gpt-6.1-sol / high` reviewer settings. It is
+superseded for execution by the three-phase manifest above. Each new phase has a
+fresh reviewer, normal automated acceptance and the predecessor's accepted
+checkpoint. The initial continuation baseline is explicitly unaccepted preserved
+work, with closure mandatory inside revised 23.2.
 
 ## Contracts carried across every subphase
 
@@ -105,8 +128,9 @@ sequence will authorize its existing non-final checkpoint commits.
 
 ## Acceptance and reuse
 
-Proceed in order after each subphase's automated acceptance. A final operator
-review may examine all four runs' evidence; all per-run mandatory contracts and
+Proceed in order after each subphase's automated acceptance, using revised 23.2
+as the combined evidence-inspection/initial-recovery acceptance boundary. A final
+operator review may examine all runs' evidence; all per-run mandatory contracts and
 checks must already pass. No new runtime gate, review budget policy, or automatic
 abort rule is introduced by this overview. Repeated unresolved P1 invariants are
 grounds for an operator to reconsider scope, rather than evidence of convergence.

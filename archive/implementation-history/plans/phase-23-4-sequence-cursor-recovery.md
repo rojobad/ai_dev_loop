@@ -28,11 +28,14 @@ and planning/review skills. Preserve old review replacement intent semantics.
 
 ## Required Context
 
-Read [the overview](phase-23-replanned-overview.md) and accepted
+Read [the overview](phase-23-replanned-overview.md) and the original
 [23.1](phase-23-1-cursor-recovery-evidence.md),
-[23.2](phase-23-2-initial-standalone-cursor-recovery.md),
+[revised 23.2](phase-23-2-initial-standalone-cursor-recovery.md),
 [23.3](phase-23-3-cursor-correction-continuity.md), `AGENTS.md`, current CLI,
-lineage, state, recovery and privacy docs. Verify in the checkout that standalone
+lineage, state, recovery and privacy docs, and
+[the revised handoff](phase-23-1-to-23-2-handoff.md). The preserved 23.1 commit is
+not independently accepted; revised 23.2 acceptance includes E-01–E-04 and I-00
+closure. Verify accepted revised 23.2 and 23.3 in the checkout, and that standalone
 initial/correction recovery has complete authenticated publication, v1/v2
 compatibility, exact-chat/B/budget continuity, abort/restart convergence and a
 real runnable effect. These are accepted dependencies, not assumed WIP.
@@ -193,4 +196,5 @@ No plan creates a live sequence or authorizes recovery of aborted runs.
 
 ## OpenQuestions
 
-None. Verify all three accepted predecessors before implementing sequence adoption.
+None. Verify accepted revised 23.2 (including the 23.1 closure) and 23.3 before
+implementing sequence adoption.

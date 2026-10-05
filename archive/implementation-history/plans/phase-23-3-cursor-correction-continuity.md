@@ -31,8 +31,12 @@ edits. Do not extend budgets by changing frozen submitted context.
 Read [the overview](phase-23-replanned-overview.md),
 [23.1](phase-23-1-cursor-recovery-evidence.md),
 [23.2](phase-23-2-initial-standalone-cursor-recovery.md), `AGENTS.md` and current
-CLI/state/recovery/privacy docs. Verify both predecessors are accepted in the
-checkout: the analyzer, exact-note v1 record, idempotent standalone publication,
+CLI/state/recovery/privacy docs and
+[the revised handoff](phase-23-1-to-23-2-handoff.md). The operator preserved 23.1
+without acceptance and moved its full closure into revised 23.2 contract I-00.
+Verify the combined evidence-inspection and initial-recovery deliverable was
+accepted under 23.2 in the actual checkout: E-01–E-04, I-00–I-04, the analyzer,
+exact-note v1 record, idempotent standalone publication,
 ready retry effect, protected input copying and actual restart/abort paths.
 Their existence cannot be inferred from the combined aborted patch.
 
@@ -184,4 +188,5 @@ Planning does not execute this phase or authorize model calls.
 
 ## OpenQuestions
 
-None. Acceptance of 23.1 and 23.2 is required before dependent implementation.
+None. Acceptance of revised 23.2, including its 23.1 closure under I-00, is
+required before dependent implementation.
