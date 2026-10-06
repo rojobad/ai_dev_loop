@@ -1,0 +1,14 @@
+{
+  "captured_from": "FAKE_AGENT_RUN_SEQUENCE=usage_limit_retry,fail",
+  "run_id": "fixture-project-20261005T151720Z-338174",
+  "git_head": "47b58b545c2f87d14a1b7d5bbf34554ff972c225",
+  "expected_resolution": {
+    "attempt_id": null,
+    "detail": "ambiguous_failed_attempts"
+  },
+  "failed_attempt_ids_in_order": [
+    "att-00000000000000000000000000000005",
+    "att-00000000000000000000000000000009"
+  ],
+  "events_artifact": "dual_failure_usage_limit_retry_events.json"
+}

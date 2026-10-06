@@ -14,6 +14,10 @@ from ai_dev_loop.scheduler.application.contracts import (
     scheduler_status_projection_from_state,
     summary_from_context,
 )
+from ai_dev_loop.scheduler.application.cursor_budget_carry import (
+    inherited_ceiling_for_run,
+    inherited_completed_for_blocked_run,
+)
 from ai_dev_loop.scheduler.application.review_budget import (
     load_review_budget_extensions,
     review_budget_projection,
@@ -36,10 +40,21 @@ class SchedulerStatusService:
         projection = scheduler_status_projection_from_state(state)
         ledger_reviews_completed = self.store.count_review_completion_events(conn, state.run_id)
         extension_events = load_review_budget_extensions(self.store, conn, state.run_id)
+        inherited_ceiling = inherited_ceiling_for_run(self.store, conn, state, None)
+        inherited_completed = None
+        if getattr(state, "codex", None) is None:
+            inherited_completed = inherited_completed_for_blocked_run(
+                self.store,
+                conn,
+                state.run_id,
+                None,
+            )
         reviews_completed, max_reviews, submitted_max = review_budget_projection(
             state,
             extension_events,
             ledger_reviews_completed=ledger_reviews_completed,
+            base_ceiling=inherited_ceiling,
+            inherited_reviews_completed=inherited_completed,
         )
         return summary_from_context(
             run_id=state.run_id,

@@ -127,6 +127,14 @@ When automated tests are required, the plan must specify:
 - fake or stub strategy for external CLIs, network calls, model calls, credentials, and timeouts
 - commands Cursor should run when tooling is available
 
+Keep phase/subphase `Validation` commands scoped to the mandatory behavioral
+contracts and affected regressions. Do not require the repository-wide suite in
+each implementation turn or review round. Assign that suite to the separate
+pipeline/integration gate and state its ownership/timing without inventing a CI
+workflow. After a correction, rerun failed and affected tests; expand the
+selection only for a concrete remaining risk. Deferred repository-wide testing
+does not waive any mandatory phase contract or justify claiming full validation.
+
 When automated tests are not appropriate, the plan must say why and provide manual validation steps. Do not leave test creation implicit.
 
 Acceptance tests must exercise the production path they claim to cover and use

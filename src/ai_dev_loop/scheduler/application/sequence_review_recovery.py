@@ -798,6 +798,17 @@ def complete_sequence_review_recovery(
                     )
                 successor_run_id = existing.intent.successor_run_id
             else:
+                from ai_dev_loop.scheduler.application.sequence_cursor_recovery import (
+                    assert_no_cursor_claim_for_leaf,
+                )
+
+                assert_no_cursor_claim_for_leaf(
+                    store,
+                    conn,
+                    sequence_id=blocked_sequence.sequence_id,
+                    ordinal=recovery_binding.ordinal,
+                    source_generation=recovery_binding.source_generation,
+                )
                 inserted = store.insert_sequence_execution_replacement_intent(
                     conn,
                     intent=intent,

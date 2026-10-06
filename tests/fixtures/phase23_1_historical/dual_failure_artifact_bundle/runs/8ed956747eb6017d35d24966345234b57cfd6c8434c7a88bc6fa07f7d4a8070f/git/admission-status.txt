@@ -1,0 +1,5 @@
+branch=master
+head=4bee03d84cdf902248d688ddd6251fe8f68f237d
+git_common_dir=/tmp/pytest-of-rojobad/pytest-168/test_capture_dual_failure_hist0/repo/.git
+git_dir=/tmp/pytest-of-rojobad/pytest-168/test_capture_dual_failure_hist0/repo/.git
+status_porcelain=

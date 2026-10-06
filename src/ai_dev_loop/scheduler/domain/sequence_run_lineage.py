@@ -26,11 +26,16 @@ from ai_dev_loop.scheduler.domain.sequence import (
 SEQUENCE_RUN_ATTEMPT_SCHEMA_VERSION = 1
 SEQUENCE_PHASE_EXECUTION_SCHEMA_VERSION = 1
 SEQUENCE_RUN_LINEAGE_SCHEMA_VERSION = 1
+SEQUENCE_RUN_ATTEMPT_SCHEMA_VERSION_V2 = 2
+SEQUENCE_PHASE_EXECUTION_SCHEMA_VERSION_V2 = 2
+SEQUENCE_RUN_LINEAGE_SCHEMA_VERSION_V2 = 2
 
 SEQUENCE_ATTEMPT_KIND_PLANNED = "planned_run"
 SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY = "same_reviewer_retry"
+SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY = "cursor_retry"
 
-SequenceAttemptKind = Literal["planned_run", "same_reviewer_retry"]
+SequenceAttemptKind = Literal["planned_run", "same_reviewer_retry", "cursor_retry"]
+SequenceLineageSchemaVersion = Literal[1, 2]
 
 SEQUENCE_ADVANCING_TERMINAL_OUTCOMES = frozenset({"completed", "completed_with_residual_risk"})
 SEQUENCE_NON_ADVANCING_TERMINAL_OUTCOMES = frozenset({"blocked", "aborted"})
@@ -77,10 +82,30 @@ def _coerce_json_integral_number(value: object, *, field_name: str) -> int:
 LineagePositiveInt = Annotated[int, Field(ge=1)]
 
 
+def _replacement_kinds(schema_version: int) -> frozenset[str]:
+    if schema_version == 1:
+        return frozenset({SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY})
+    return frozenset(
+        {SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY, SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY}
+    )
+
+
+def _reject_lax_v2_integers(value: object, field_names: tuple[str, ...]) -> None:
+    if not isinstance(value, dict):
+        return
+    raw_version = value.get("schema_version")
+    if raw_version != 2:
+        return
+    for field_name in field_names:
+        raw = value.get(field_name)
+        if isinstance(raw, bool) or not isinstance(raw, int):
+            raise ValueError(f"{field_name} must be an integer")
+
+
 class SequenceRunAttempt(DomainModel):
     """One scheduler run attempt within a materialized sequence phase."""
 
-    schema_version: Literal[1]
+    schema_version: SequenceLineageSchemaVersion
     generation: LineagePositiveInt
     run_id: NonEmptyStr
     source_run_id: NonEmptyStr | None
@@ -88,6 +113,12 @@ class SequenceRunAttempt(DomainModel):
     materialized_at: NonEmptyStr
     terminal_outcome: SequenceTerminalOutcome | None
     resolved_at: NonEmptyStr | None
+
+    @model_validator(mode="before")
+    @classmethod
+    def strict_v2_integers(cls, value: object) -> object:
+        _reject_lax_v2_integers(value, ("schema_version", "generation"))
+        return value
 
     @field_validator("schema_version", mode="before")
     @classmethod
@@ -119,20 +150,33 @@ class SequenceRunAttempt(DomainModel):
         else:
             if self.source_run_id is None:
                 raise ValueError("source_run_id required for generation >= 2")
-            if self.attempt_kind != SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY:
-                raise ValueError("same_reviewer_retry requires generation >= 2")
+            if self.attempt_kind not in _replacement_kinds(self.schema_version):
+                if self.schema_version == 1:
+                    raise ValueError("same_reviewer_retry requires generation >= 2")
+                raise ValueError("generation >= 2 attempt_kind is unsupported")
+        if self.attempt_kind == SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY:
+            if self.schema_version != SEQUENCE_RUN_ATTEMPT_SCHEMA_VERSION_V2:
+                raise ValueError("cursor_retry requires lineage schema version 2")
+            if self.generation < 2:
+                raise ValueError("cursor_retry requires generation >= 2")
         return self
 
 
 class SequencePhaseExecution(DomainModel):
     """Authoritative attempt lineage projection for one materialized ordinal."""
 
-    schema_version: Literal[1]
+    schema_version: SequenceLineageSchemaVersion
     ordinal: LineagePositiveInt
     planned_run_id: NonEmptyStr
     attempts: tuple[SequenceRunAttempt, ...] = Field(min_length=1)
     current_run_id: NonEmptyStr
     accepted_run_id: NonEmptyStr | None
+
+    @model_validator(mode="before")
+    @classmethod
+    def strict_v2_integers(cls, value: object) -> object:
+        _reject_lax_v2_integers(value, ("schema_version", "ordinal"))
+        return value
 
     @field_validator("schema_version", mode="before")
     @classmethod
@@ -161,23 +205,35 @@ class SequencePhaseExecution(DomainModel):
             raise ValueError("generation 1 attempt_kind must be planned_run")
         if first.source_run_id is not None:
             raise ValueError("generation 1 must not include source_run_id")
+        if first.schema_version != self.schema_version:
+            raise ValueError("attempt schema_version must match the phase execution")
         for index in range(1, len(self.attempts)):
             previous = self.attempts[index - 1]
             current = self.attempts[index]
             if current.source_run_id != previous.run_id:
                 raise ValueError("attempt source_run_id must reference immediately preceding leaf")
+            if current.schema_version != self.schema_version:
+                raise ValueError("attempt schema_version must match the phase execution")
             if current.attempt_kind not in {
                 SEQUENCE_ATTEMPT_KIND_PLANNED,
                 SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY,
+                SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY,
             }:
                 raise ValueError("attempt_kind is unsupported")
             if current.attempt_kind == SEQUENCE_ATTEMPT_KIND_PLANNED and current.generation != 1:
                 raise ValueError("planned_run kind is only valid for generation 1")
+            if current.attempt_kind not in _replacement_kinds(self.schema_version):
+                raise ValueError("attempt_kind is unsupported for this lineage schema")
             if (
                 current.attempt_kind == SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY
                 and current.generation < 2
             ):
                 raise ValueError("same_reviewer_retry requires generation >= 2")
+            if (
+                current.attempt_kind == SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY
+                and current.generation < 2
+            ):
+                raise ValueError("cursor_retry requires generation >= 2")
             if previous.terminal_outcome is None or previous.resolved_at is None:
                 raise ValueError("superseded attempt must be terminal")
         leaf = self.attempts[-1]
@@ -194,9 +250,15 @@ class SequencePhaseExecution(DomainModel):
 class SequenceRunLineage(DomainModel):
     """Complete unpaginated run-attempt lineage for one sequence."""
 
-    schema_version: Literal[1]
+    schema_version: SequenceLineageSchemaVersion
     sequence_id: NonEmptyStr
     phase_executions: tuple[SequencePhaseExecution, ...]
+
+    @model_validator(mode="before")
+    @classmethod
+    def strict_v2_integers(cls, value: object) -> object:
+        _reject_lax_v2_integers(value, ("schema_version",))
+        return value
 
     @field_validator("schema_version", mode="before")
     @classmethod
@@ -205,6 +267,9 @@ class SequenceRunLineage(DomainModel):
 
     @model_validator(mode="after")
     def validate_phase_ordinals(self) -> SequenceRunLineage:
+        for phase in self.phase_executions:
+            if phase.schema_version != self.schema_version:
+                raise ValueError("phase schema_version must match the lineage aggregate")
         ordinals = [phase.ordinal for phase in self.phase_executions]
         if len(set(ordinals)) != len(ordinals):
             raise ValueError("phase execution ordinals must be unique")
@@ -654,17 +719,17 @@ def _lineage_aggregate_format_checker(instance: object) -> bool:
         return False
 
 
-@lru_cache(maxsize=1)
-def _lineage_json_schema_validator() -> jsonschema.Draft202012Validator:
-    attempt_schema = json.loads(
-        schema_path("scheduler-sequence-run-attempt-v1.json").read_text(encoding="utf-8")
-    )
-    phase_schema = json.loads(
-        schema_path("scheduler-sequence-phase-execution-v1.json").read_text(encoding="utf-8")
-    )
-    lineage_schema = json.loads(
-        schema_path("scheduler-sequence-run-lineage-v1.json").read_text(encoding="utf-8")
-    )
+def _lineage_validator_for(
+    *,
+    attempt_name: str,
+    phase_name: str,
+    lineage_name: str,
+    phase_format: str,
+    lineage_format: str,
+) -> jsonschema.Draft202012Validator:
+    attempt_schema = json.loads(schema_path(attempt_name).read_text(encoding="utf-8"))
+    phase_schema = json.loads(schema_path(phase_name).read_text(encoding="utf-8"))
+    lineage_schema = json.loads(schema_path(lineage_name).read_text(encoding="utf-8"))
     registry = Registry().with_resources(
         [
             (attempt_schema["$id"], Resource.from_contents(attempt_schema)),
@@ -673,8 +738,8 @@ def _lineage_json_schema_validator() -> jsonschema.Draft202012Validator:
         ]
     )
     format_checker = jsonschema.FormatChecker()
-    format_checker.checks("scheduler-sequence-phase-execution-v1")(_phase_execution_format_checker)
-    format_checker.checks("scheduler-sequence-run-lineage-v1")(_lineage_aggregate_format_checker)
+    format_checker.checks(phase_format)(_phase_execution_format_checker)
+    format_checker.checks(lineage_format)(_lineage_aggregate_format_checker)
     return jsonschema.Draft202012Validator(
         lineage_schema,
         registry=registry,
@@ -682,9 +747,38 @@ def _lineage_json_schema_validator() -> jsonschema.Draft202012Validator:
     )
 
 
+@lru_cache(maxsize=1)
+def _lineage_json_schema_validator() -> jsonschema.Draft202012Validator:
+    return _lineage_validator_for(
+        attempt_name="scheduler-sequence-run-attempt-v1.json",
+        phase_name="scheduler-sequence-phase-execution-v1.json",
+        lineage_name="scheduler-sequence-run-lineage-v1.json",
+        phase_format="scheduler-sequence-phase-execution-v1",
+        lineage_format="scheduler-sequence-run-lineage-v1",
+    )
+
+
+@lru_cache(maxsize=1)
+def _lineage_json_schema_validator_v2() -> jsonschema.Draft202012Validator:
+    return _lineage_validator_for(
+        attempt_name="scheduler-sequence-run-attempt-v2.json",
+        phase_name="scheduler-sequence-phase-execution-v2.json",
+        lineage_name="scheduler-sequence-run-lineage-v2.json",
+        phase_format="scheduler-sequence-phase-execution-v2",
+        lineage_format="scheduler-sequence-run-lineage-v2",
+    )
+
+
 def validate_lineage_json_schema(payload: dict[str, object]) -> None:
+    version = payload.get("schema_version")
+    if version == 1:
+        validator = _lineage_json_schema_validator()
+    elif version == 2:
+        validator = _lineage_json_schema_validator_v2()
+    else:
+        raise SequenceRunLineageValidationError("lineage aggregate payload is invalid")
     try:
-        _lineage_json_schema_validator().validate(payload)
+        validator.validate(payload)
     except jsonschema.ValidationError as exc:
         raise SequenceRunLineageValidationError("lineage aggregate payload is invalid") from exc
     except (AttributeError, KeyError, TypeError, ValueError) as exc:

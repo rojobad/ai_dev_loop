@@ -1,0 +1,23 @@
+# Operator-authorized relaunch; focused contract/regression validation.
+# Operator-authorized continuation after preserving unaccepted 23.1.
+# Revised 23.2 must close E-01–E-04/F-04/F-09 under I-00 before initial recovery.
+schema_version: 1
+name: phase-23-2-4-focused-validation
+phases:
+  - name: phase-23-2-initial-standalone-cursor-recovery
+    plan_path: archive/implementation-history/plans/phase-23-2-initial-standalone-cursor-recovery.md
+    prompt_source_path: archive/implementation-history/plans/prompt_phase-23-2-initial-standalone-cursor-recovery.txt
+    commit_message: "feat: close Cursor recovery evidence and recover initial standalone turns"
+    cursor: {model: grok-4.7-high}
+    codex: {review_model: gpt-6.1-sol, review_reasoning_effort: high}
+  - name: phase-23-3-cursor-correction-continuity
+    plan_path: archive/implementation-history/plans/phase-23-3-cursor-correction-continuity.md
+    prompt_source_path: archive/implementation-history/plans/prompt_phase-23-3-cursor-correction-continuity.txt
+    commit_message: "feat: preserve reviewer and budget in Cursor correction recovery"
+    cursor: {model: grok-4.7-high}
+    codex: {review_model: gpt-6.1-sol, review_reasoning_effort: high}
+  - name: phase-23-4-sequence-cursor-recovery
+    plan_path: archive/implementation-history/plans/phase-23-4-sequence-cursor-recovery.md
+    prompt_source_path: archive/implementation-history/plans/prompt_phase-23-4-sequence-cursor-recovery.txt
+    cursor: {model: grok-4.7-high}
+    codex: {review_model: gpt-6.1-sol, review_reasoning_effort: high}

@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "run_id": {
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "evidence_status": {
+      "enum": [
+        "authenticated",
+        "insufficient",
+        "ineligible",
+        "corrupt"
+      ],
+      "title": "Evidence Status",
+      "type": "string"
+    },
+    "recovery_supported": {
+      "title": "Recovery Supported",
+      "type": "boolean"
+    },
+    "turn_kind": {
+      "anyOf": [
+        {
+          "enum": [
+            "initial",
+            "correction"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Turn Kind"
+    },
+    "reason_code": {
+      "minLength": 1,
+      "title": "Reason Code",
+      "type": "string"
+    },
+    "safe_summary": {
+      "maxLength": 320,
+      "minLength": 1,
+      "title": "Safe Summary",
+      "type": "string"
+    },
+    "sequence_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Sequence Id"
+    },
+    "ordinal": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Ordinal"
+    }
+  },
+  "required": [
+    "schema_version",
+    "run_id",
+    "evidence_status",
+    "recovery_supported",
+    "turn_kind",
+    "reason_code",
+    "safe_summary",
+    "sequence_id",
+    "ordinal"
+  ],
+  "title": "CursorRecoveryCheckReceipt",
+  "type": "object"
+}

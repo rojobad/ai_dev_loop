@@ -563,10 +563,14 @@ def _authenticate_bootstrap_and_resume_identity(
     failed_attempt: object,
     failed_outcome: dict[str, object],
     failed_effect_kind: str,
+    binding_run_id: str | None = None,
+    bootstrap_run_id: str | None = None,
 ) -> tuple[str, str, RecoveryCopyManifestEntry]:
+    binding_owner = binding_run_id or evidence_run_id
+    bootstrap_owner = bootstrap_run_id or evidence_run_id
     try:
         binding_bytes = artifacts.read_verified_bytes(
-            evidence_run_id,
+            binding_owner,
             reviewer_bound_event.binding_artifact_path,
             expected_sha256=reviewer_bound_event.binding_artifact_sha256,
         )
@@ -603,7 +607,7 @@ def _authenticate_bootstrap_and_resume_identity(
     bootstrap_outcome, bootstrap_effect_kind = _authenticate_codex_attempt(
         store,
         artifacts,
-        source_run_id=evidence_run_id,
+        source_run_id=bootstrap_owner,
         attempt=bootstrap_attempt,
     )
     if bootstrap_effect_kind != BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND:
@@ -625,7 +629,7 @@ def _authenticate_bootstrap_and_resume_identity(
         )
     _verify_bounded_artifact_digest(
         artifacts,
-        evidence_run_id,
+        bootstrap_owner,
         bootstrap_events_rel,
         expected_events_sha,
         max_bytes=MAX_CODEX_EVENTS_ARTIFACT_BYTES,
@@ -699,6 +703,40 @@ def _run_has_cursor_staging_ledger_evidence(
     return row is not None
 
 
+def _cursor_recovery_ancestor_run_ids(
+    store: SqliteSchedulerStore,
+    conn: sqlite3.Connection,
+    run_id: str,
+) -> tuple[str, ...]:
+    from ai_dev_loop.scheduler.application.recovery_ancestry import (
+        RecoveryAncestryError,
+        recovery_ancestor_edges,
+    )
+
+    try:
+        edges = recovery_ancestor_edges(store, conn, run_id)
+    except RecoveryAncestryError as exc:
+        raise SchedulerEngineError(
+            SchedulerEngineErrorKind.VALIDATION,
+            str(exc),
+        ) from exc
+    return tuple(edge.source_run_id for edge in edges)
+
+
+def _bound_reviewer_event_for_run(
+    store: SqliteSchedulerStore,
+    conn: sqlite3.Connection,
+    run_id: str,
+) -> CodexReviewerBoundEvent | None:
+    for row in store.list_events_for_run(conn, run_id, limit=500, newest_first=False):
+        if str(row["event_kind"]) != CODEX_REVIEWER_BOUND_EVENT_KIND:
+            continue
+        parsed = _parse_event_row(row)
+        if isinstance(parsed, CodexReviewerBoundEvent):
+            return parsed
+    return None
+
+
 def resolve_recovery_ledger_evidence_run_id(
     store: SqliteSchedulerStore,
     conn: sqlite3.Connection,
@@ -770,12 +808,15 @@ def analyze_blocked_review_recovery(
                 "blocked source already has a valid review decision",
             )
 
-    if (
-        chat_event is None
-        or staging_event is None
-        or turn_event is None
-        or reviewer_bound_event is None
-    ):
+    binding_run_id = evidence_run_id
+    if reviewer_bound_event is None:
+        with store.begin_read() as conn:
+            for ancestor_run_id in _cursor_recovery_ancestor_run_ids(store, conn, evidence_run_id):
+                reviewer_bound_event = _bound_reviewer_event_for_run(store, conn, ancestor_run_id)
+                if reviewer_bound_event is not None:
+                    binding_run_id = ancestor_run_id
+                    break
+    if chat_event is None or staging_event is None or turn_event is None or reviewer_bound_event is None:
         raise SchedulerEngineError(
             SchedulerEngineErrorKind.VALIDATION,
             "blocked source lacks completed cursor/staging/reviewer evidence",
@@ -789,6 +830,13 @@ def analyze_blocked_review_recovery(
     with store.begin_read() as conn:
         attempt = store.get_latest_recorded_codex_attempt(conn, source_run_id)
         bootstrap_attempt = store.get_codex_bootstrap_attempt(conn, evidence_run_id)
+        bootstrap_run_id = evidence_run_id
+        if bootstrap_attempt is None:
+            for ancestor_run_id in _cursor_recovery_ancestor_run_ids(store, conn, evidence_run_id):
+                bootstrap_attempt = store.get_codex_bootstrap_attempt(conn, ancestor_run_id)
+                if bootstrap_attempt is not None:
+                    bootstrap_run_id = ancestor_run_id
+                    break
         cursor_attempt = store.get_cursor_turn_attempt_for_iteration(
             conn,
             run_id=evidence_run_id,
@@ -848,6 +896,8 @@ def analyze_blocked_review_recovery(
             reviewer_bound_event=reviewer_bound_event,
             staging_iteration=staging_event.iteration,
             bootstrap_attempt=bootstrap_attempt,
+            binding_run_id=binding_run_id,
+            bootstrap_run_id=bootstrap_run_id,
             failed_attempt=attempt,
             failed_outcome=failed_outcome,
             failed_effect_kind=failed_effect_kind,
@@ -960,8 +1010,20 @@ def analyze_blocked_review_recovery(
         staged_patch_path=staging_event.staged_patch_path,
         staged_patch_sha256=staging_event.staged_patch_sha256,
     )
+    from ai_dev_loop.scheduler.application.cursor_budget_carry import (
+        authenticated_reviews_completed,
+    )
+
+    with store.begin_read() as conn:
+        reviews_completed = authenticated_reviews_completed(
+            store,
+            artifacts,
+            conn,
+            source_run_id,
+        )
     codex = CodexWorkflowCheckpoint(
         review_iteration=int(staging_event.iteration),
+        reviews_completed=reviews_completed,
         reviewer_session_id=reviewer_session_id,
         binding_artifact_path=reviewer_bound_event.binding_artifact_path,
         binding_artifact_sha256=reviewer_bound_event.binding_artifact_sha256,

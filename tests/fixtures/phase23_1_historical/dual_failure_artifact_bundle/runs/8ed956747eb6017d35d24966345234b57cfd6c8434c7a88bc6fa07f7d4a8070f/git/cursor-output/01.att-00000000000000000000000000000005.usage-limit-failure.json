@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "kind": "usage_limit_failure",
+  "iteration": 1,
+  "captured_at": "2026-10-05T15:17:22.658169+00:00",
+  "branch": "master",
+  "head": "4bee03d84cdf902248d688ddd6251fe8f68f237d",
+  "repository_root_matches_state": true,
+  "status_porcelain_sha256": "ec4d98405618548e640e6f24b84495cf12d3ecabbee9faaf3e7fb7cf100ba743",
+  "cached_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "worktree_diff_sha256": "f6e8480f358f69b3f1faad02efc03329a169a2cb0778354bcf75d89ef176116c",
+  "untracked_files": [],
+  "aggregate_sha256": "ba1e11a944a73ead0d8db91e794a67b96c162faf494974c08b9e6b5eb1c0c92a"
+}

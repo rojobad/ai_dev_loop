@@ -1,0 +1,7 @@
+source_commit: 6147340fba2102499165866235973b385b264b1a
+writer: CursorInitialRecoveryRecordV1
+writer_function: CursorInitialRecoveryService._publish_files
+schema: cursor-initial-recovery-record-v1.json
+record_sha256: d5aa0abb86c1fcee4171981684dea5a4d96cd723ff02314d037b7f68a58408a6
+capture: fake-agent production force through scheduler cursor-retry --force
+note: Immutable bytes from the accepted 23.2 v1 writer. The record constructor is unchanged from source_commit. Readers must not regenerate this file.

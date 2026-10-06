@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "turn_kind",
+    "reviewer_created",
+    "reviews_completed",
+    "source_run_id",
+    "successor_run_id",
+    "failed_attempt_id",
+    "dispatch_id",
+    "chat_id",
+    "iteration",
+    "admitted_artifact_path",
+    "admitted_artifact_sha256",
+    "plan_sha256",
+    "submitted_prompt_sha256",
+    "config_sha256",
+    "base_prompt_path",
+    "base_prompt_sha256",
+    "effective_prompt_path",
+    "effective_prompt_sha256",
+    "parent_source_run_id",
+    "parent_recovery_key",
+    "parent_record_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": 1, "type": "integer"},
+    "turn_kind": {"const": "initial", "type": "string"},
+    "reviewer_created": {"const": false, "type": "boolean"},
+    "reviews_completed": {"const": 0, "type": "integer"},
+    "source_run_id": {"minLength": 1, "type": "string"},
+    "successor_run_id": {"minLength": 1, "type": "string"},
+    "failed_attempt_id": {"minLength": 1, "type": "string"},
+    "dispatch_id": {"minLength": 1, "type": "string"},
+    "chat_id": {
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "type": "string"
+    },
+    "iteration": {"minimum": 1, "type": "integer"},
+    "admitted_artifact_path": {"minLength": 1, "type": "string"},
+    "admitted_artifact_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "plan_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "submitted_prompt_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "config_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "base_prompt_path": {"minLength": 1, "type": "string"},
+    "base_prompt_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "effective_prompt_path": {"minLength": 1, "type": "string"},
+    "effective_prompt_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "parent_source_run_id": {"minLength": 1, "type": ["string", "null"]},
+    "parent_recovery_key": {"pattern": "^[0-9a-f]{64}$", "type": ["string", "null"]},
+    "parent_record_sha256": {"pattern": "^[0-9a-f]{64}$", "type": ["string", "null"]}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"parent_source_run_id": {"type": "null"}},
+        "required": ["parent_source_run_id"]
+      },
+      "then": {
+        "properties": {
+          "parent_recovery_key": {"type": "null"},
+          "parent_record_sha256": {"type": "null"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"parent_source_run_id": {"type": "string"}},
+        "required": ["parent_source_run_id"]
+      },
+      "then": {
+        "properties": {
+          "parent_recovery_key": {"type": "string"},
+          "parent_record_sha256": {"type": "string"}
+        }
+      }
+    }
+  ]
+}

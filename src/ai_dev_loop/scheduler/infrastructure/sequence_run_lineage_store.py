@@ -25,9 +25,11 @@ from ai_dev_loop.scheduler.domain.sequence import (
     PreparedSequenceState,
 )
 from ai_dev_loop.scheduler.domain.sequence_run_lineage import (
+    SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY,
     SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY,
     MaterializedSequenceState,
     SequenceAttemptKind,
+    SequenceLineageSchemaVersion,
     SequencePhaseExecution,
     SequenceRunAttempt,
     SequenceRunLineage,
@@ -99,16 +101,31 @@ class SequenceExecutionCASExpectation:
     current_run_id: str
 
 
-def _row_to_attempt(row: sqlite3.Row) -> SequenceRunAttempt:
+def _document_schema_version(rows: list[sqlite3.Row]) -> SequenceLineageSchemaVersion:
+    for row in rows:
+        if str(row["attempt_kind"]) == SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY:
+            return 2
+    return 1
+
+
+def _row_to_attempt(
+    row: sqlite3.Row,
+    *,
+    schema_version: SequenceLineageSchemaVersion | None = None,
+) -> SequenceRunAttempt:
     try:
         terminal_outcome = row["terminal_outcome"]
         resolved_at = row["resolved_at"]
+        kind = str(row["attempt_kind"])
+        version = schema_version
+        if version is None:
+            version = 2 if kind == SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY else 1
         return SequenceRunAttempt(
-            schema_version=1,
+            schema_version=version,
             generation=int(row["generation"]),
             run_id=str(row["run_id"]),
             source_run_id=str(row["source_run_id"]) if row["source_run_id"] is not None else None,
-            attempt_kind=cast(SequenceAttemptKind, str(row["attempt_kind"])),
+            attempt_kind=cast(SequenceAttemptKind, kind),
             materialized_at=str(row["materialized_at"]),
             terminal_outcome=cast(SequenceTerminalOutcome | None, terminal_outcome),
             resolved_at=str(resolved_at) if resolved_at is not None else None,
@@ -140,6 +157,7 @@ def _build_phase_execution(
     attempts: list[SequenceRunAttempt],
     *,
     planned_run_id: str,
+    schema_version: SequenceLineageSchemaVersion = 1,
 ) -> SequencePhaseExecution:
     if not attempts:
         raise SequenceRunLineageValidationError("phase execution requires at least one attempt")
@@ -151,7 +169,7 @@ def _build_phase_execution(
     )
     try:
         return SequencePhaseExecution(
-            schema_version=1,
+            schema_version=schema_version,
             ordinal=ordinal,
             planned_run_id=planned_run_id,
             attempts=tuple(attempts),
@@ -177,6 +195,7 @@ def build_lineage_from_rows(
     for row in rows:
         if str(row["sequence_id"]) != sequence_id:
             raise SequenceRunLineageValidationError("lineage row references another sequence")
+    document_version = _document_schema_version(rows)
     phases: list[SequencePhaseExecution] = []
     current_ordinal: int | None = None
     current_attempts: list[SequenceRunAttempt] = []
@@ -197,11 +216,12 @@ def build_lineage_from_rows(
                     current_ordinal,
                     current_attempts,
                     planned_run_id=planned_run_id,
+                    schema_version=document_version,
                 )
             )
             current_ordinal = ordinal
             current_attempts = []
-        current_attempts.append(_row_to_attempt(row))
+        current_attempts.append(_row_to_attempt(row, schema_version=document_version))
     if current_ordinal is not None and current_attempts:
         planned_run_id = (
             definition.entries[current_ordinal - 1].planned_run_id
@@ -213,11 +233,12 @@ def build_lineage_from_rows(
                 current_ordinal,
                 current_attempts,
                 planned_run_id=planned_run_id,
+                schema_version=document_version,
             )
         )
     try:
         return SequenceRunLineage(
-            schema_version=1,
+            schema_version=document_version,
             sequence_id=sequence_id,
             phase_executions=tuple(phases),
         )
@@ -458,9 +479,12 @@ def authenticate_checkpoint_successor_replacement_chain(
         source_run_id = row["source_run_id"]
         if source_run_id is None or str(source_run_id) != previous_run_id:
             raise AppValidationError("checkpoint successor replacement chain is broken")
-        if str(row["attempt_kind"]) != SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY:
+        if str(row["attempt_kind"]) not in {
+            SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY,
+            SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY,
+        }:
             raise AppValidationError(
-                "checkpoint successor replacement requires same_reviewer_retry"
+                "checkpoint successor replacement kind is not authenticated"
             )
 
 
@@ -535,10 +559,16 @@ def compare_and_swap_sequence_execution_leaf(
             SchedulerEngineErrorKind.VALIDATION,
             "replacement attempt must reference expected current leaf",
         )
-    if replacement_attempt.attempt_kind != SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY:
+    if replacement_attempt.attempt_kind == SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY:
+        if replacement_attempt.schema_version != 2:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "cursor_retry replacement requires lineage schema version 2",
+            )
+    elif replacement_attempt.attempt_kind != SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY:
         raise SchedulerEngineError(
             SchedulerEngineErrorKind.VALIDATION,
-            "replacement attempt kind must be same_reviewer_retry",
+            "replacement attempt kind must be same_reviewer_retry or cursor_retry",
         )
     if updated_sequence_state.sequence_id != sequence_id:
         raise SchedulerEngineError(

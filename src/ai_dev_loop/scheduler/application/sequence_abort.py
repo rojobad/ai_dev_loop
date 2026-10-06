@@ -228,18 +228,74 @@ class SequenceAbortService:
             cancelled_ordinal_count=len(cancelled),
         )
         idempotent = False
-        with self.store.begin_immediate() as conn:
-            self.store.cancel_outstanding_sequence_execution_replacements(
-                conn,
-                sequence_id=state.sequence_id,
-                source_run_id=source_run_id,
-                now=now,
-            )
-            if not self.store.has_sequence_abort_requested_for_run(
-                conn,
-                run_id=source_run_id,
-                sequence_id=state.sequence_id,
-            ):
+        adopted_during_abort = False
+        try:
+            with self.store.begin_immediate() as conn:
+                from ai_dev_loop.scheduler.application.sequence_cursor_recovery import (
+                    cancel_pending_cursor_sequence_recovery,
+                )
+
+                cancel_pending_cursor_sequence_recovery(
+                    self.store,
+                    conn,
+                    sequence_id=state.sequence_id,
+                    source_run_id=source_run_id,
+                    now=now,
+                )
+                self.store.cancel_outstanding_sequence_execution_replacements(
+                    conn,
+                    sequence_id=state.sequence_id,
+                    source_run_id=source_run_id,
+                    now=now,
+                )
+                if not self.store.has_sequence_abort_requested_for_run(
+                    conn,
+                    run_id=source_run_id,
+                    sequence_id=state.sequence_id,
+                ):
+                    event_id = self._event_id_factory()
+                    sequence_num = self.store.next_event_sequence(conn, source_run_id)
+                    self.store.append_event(
+                        conn,
+                        event_id=event_id,
+                        run_id=source_run_id,
+                        sequence=sequence_num,
+                        event=abort_request,
+                        now=now,
+                    )
+                if not self.store.compare_and_swap_sequence_state(
+                    conn,
+                    sequence_id=state.sequence_id,
+                    expected_version=state.version,
+                    new_state=aborted,
+                    now=now,
+                ):
+                    refreshed = self.store.load_validated_sequence_state(
+                        conn,
+                        state.sequence_id,
+                        validate_lineage=False,
+                    )
+                    if isinstance(refreshed, AbortedSequenceState):
+                        return self._idempotent_aborted(refreshed)
+                    if isinstance(refreshed, ActiveSequenceState):
+                        cursor_row = self.store.get_sequence_cursor_replacement_by_successor(
+                            conn,
+                            refreshed.current_run_id,
+                        )
+                        if (
+                            cursor_row is not None
+                            and str(cursor_row["source_run_id"]) == source_run_id
+                            and cursor_row["adopted_at"] is not None
+                        ):
+                            adopted_during_abort = True
+                            raise SchedulerEngineError(
+                                SchedulerEngineErrorKind.CONFLICT,
+                                "sequence cursor leaf was adopted during blocked abort",
+                            )
+                    raise SchedulerEngineError(
+                        SchedulerEngineErrorKind.CONFLICT,
+                        "sequence changed during blocked abort",
+                    )
                 event_id = self._event_id_factory()
                 sequence_num = self.store.next_event_sequence(conn, source_run_id)
                 self.store.append_event(
@@ -247,41 +303,21 @@ class SequenceAbortService:
                     event_id=event_id,
                     run_id=source_run_id,
                     sequence=sequence_num,
-                    event=abort_request,
+                    event=aborted_event,
                     now=now,
                 )
-            if not self.store.compare_and_swap_sequence_state(
-                conn,
-                sequence_id=state.sequence_id,
-                expected_version=state.version,
-                new_state=aborted,
-                now=now,
-            ):
-                refreshed = self.store.load_validated_sequence_state(
-                    conn,
-                    state.sequence_id,
-                    validate_lineage=False,
-                )
-                if isinstance(refreshed, AbortedSequenceState):
-                    return self._idempotent_aborted(refreshed)
-                raise SchedulerEngineError(
-                    SchedulerEngineErrorKind.CONFLICT,
-                    "sequence changed during blocked abort",
-                )
-            event_id = self._event_id_factory()
-            sequence_num = self.store.next_event_sequence(conn, source_run_id)
-            self.store.append_event(
-                conn,
-                event_id=event_id,
-                run_id=source_run_id,
-                sequence=sequence_num,
-                event=aborted_event,
-                now=now,
-            )
-            worktree_key = state.definition.repository.worktree_key
-            reservation = self.store.get_reservation_for_run(conn, source_run_id)
-            if reservation is not None and str(reservation["worktree_key"]) == worktree_key:
-                self.store.release_reservation(conn, worktree_key=worktree_key, now=now)
+                worktree_key = state.definition.repository.worktree_key
+                reservation = self.store.get_reservation_for_run(conn, source_run_id)
+                if reservation is not None and str(reservation["worktree_key"]) == worktree_key:
+                    self.store.release_reservation(conn, worktree_key=worktree_key, now=now)
+        except SchedulerEngineError:
+            if not adopted_during_abort:
+                raise
+            with self.store.begin_read() as conn:
+                refreshed_active = self.store.load_validated_sequence_state(conn, state.sequence_id)
+            if isinstance(refreshed_active, ActiveSequenceState):
+                return self._abort_active(refreshed_active, reason=reason, now=now)
+            raise
         with self.store.begin_read() as conn:
             self.store.load_validated_sequence_state(conn, state.sequence_id)
         return SequenceAbortResult(

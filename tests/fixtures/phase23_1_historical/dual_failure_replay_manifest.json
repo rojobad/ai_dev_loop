@@ -1,0 +1,11 @@
+{
+  "captured_from": "FAKE_AGENT_RUN_SEQUENCE=usage_limit_retry,fail",
+  "git_head": "47b58b545c2f87d14a1b7d5bbf34554ff972c225",
+  "run_id": "fixture-project-20261005T151720Z-338174",
+  "engine_sqlite": "dual_failure_engine.sqlite3",
+  "artifact_bundle": "dual_failure_artifact_bundle",
+  "expected_resolution": {
+    "attempt_id": null,
+    "detail": "ambiguous_failed_attempts"
+  }
+}

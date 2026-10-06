@@ -65,9 +65,12 @@ become a general-purpose controller of every worktree change.
 ## Recovery and operator actions
 
 - Use the durable state and safe next action: `scheduler cursor-retry` for an
-  eligible terminated Cursor timeout, `scheduler review retry` for eligible
-  review failures/capacity waits, and `scheduler extend` for an explicitly
-  increased review ceiling after `max_iterations_reached`.
+  eligible terminated Cursor timeout, `scheduler cursor-retry --force` for an
+  eligible failed standalone or current sequence-leaf Cursor implementation or
+  correction turn, `scheduler review retry` for eligible review failures/capacity
+  waits, and `scheduler extend` for an explicitly increased review ceiling after
+  `max_iterations_reached`. `--force` on a sequence leaf reuses the same sequence
+  and ordinal; a stale leaf with no existing relation is rejected.
 - Same-reviewer recovery preserves the authenticated reviewer binding. An
   eligible blocked run may have a successor; the blocked source is immutable.
   `scheduler extend` is a separate explicit same-run transition and does not
@@ -77,6 +80,14 @@ become a general-purpose controller of every worktree change.
   installation as a side effect of documentation or automated tests.
 
 ## Review standard
+
+During phase/subphase implementation and review, run the tests for the approved
+contracts and the regressions affected by the changed production paths. The
+repository-wide test suite belongs to the pipeline/integration gate, not every
+implementation turn or review round. After a correction, rerun the failed and
+affected tests; broaden the selection only to resolve a concrete remaining risk.
+Keep mandatory contract coverage intact. Report focused results and the separate
+pending pipeline gate honestly; neither implies repository-wide validation.
 
 Reviewers accept or reject staged changes based on the approved phase contract,
 normal orchestrator flow, artifact and state integrity, prohibited side effects,

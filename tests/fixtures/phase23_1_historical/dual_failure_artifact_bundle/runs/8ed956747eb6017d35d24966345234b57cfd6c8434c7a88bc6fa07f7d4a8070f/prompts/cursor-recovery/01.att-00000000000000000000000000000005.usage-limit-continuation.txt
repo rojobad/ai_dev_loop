@@ -1,0 +1,16 @@
+This is an ai_dev_loop Cursor recovery turn in the existing chat.
+
+The previous Cursor turn stopped because its configured model reached a usage limit.
+Continue this same task using the currently selected model.
+
+Inspect the current repository state before editing. Existing tracked unstaged changes
+and untracked non-ignored files are partial work from the interrupted turn. Preserve
+and complete valid work; do not discard it or start the implementation over.
+
+Do not commit, amend, reset, checkout/switch branches, stash, clean, merge, rebase,
+tag, push, or change repository identity. The orchestrator will normalize staging and
+Codex will review the complete staged result after this turn succeeds.
+
+Previous orchestrator prompt follows verbatim:
+
+Implement the sample plan exactly as written.

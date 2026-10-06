@@ -67,6 +67,10 @@ an unresolved decision would change safety behavior.
   success. For critical regressions, explain how the test detects the defect.
 - Report exact validation commands/results and unexecuted checks. A focused
   rerun after a fix is not evidence that the full suite was rerun successfully.
+- Run mandatory phase-contract tests and affected regressions during development
+  and review. Reserve the repository-wide suite for the pipeline/integration
+  gate. Do not duplicate full-suite runs during correction rounds; expand focused
+  checks only for an identified remaining risk.
 - A contract blocker in the response is information for the reviewer/operator,
   not a scheduler pause or new authorization. Do not change runtime schemas,
   control live runs, or broaden Git authority to implement this reporting.

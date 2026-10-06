@@ -1,0 +1,26 @@
+{
+  "args": [
+    "/tmp/pytest-of-rojobad/pytest-168/test_capture_dual_failure_hist0/bin/agent",
+    "-p",
+    "--force",
+    "--trust",
+    "--workspace",
+    "/tmp/pytest-of-rojobad/pytest-168/test_capture_dual_failure_hist0/repo",
+    "--resume",
+    "019abc00-1111-2222-3333-444444444444",
+    "--model",
+    "composer-2.5-fast",
+    "--output-format",
+    "stream-json",
+    "--sandbox",
+    "disabled",
+    "<prompt-redacted>"
+  ],
+  "exit_code": 2,
+  "elapsed_seconds": 0.045573919982416555,
+  "timed_out": false,
+  "parse_ok": true,
+  "has_completion_signal": false,
+  "errors": [],
+  "structured_errors": []
+}

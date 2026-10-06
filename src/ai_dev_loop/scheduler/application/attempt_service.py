@@ -9,6 +9,8 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
+from pydantic import ValidationError as ModelValidationError
+
 from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.scheduler.application.abort_reconcile import (
     append_attempt_result_stale_event,
@@ -41,7 +43,7 @@ from ai_dev_loop.scheduler.application.codex_evidence import (
     verify_pre_execution_codex_guards,
 )
 from ai_dev_loop.scheduler.application.codex_workflow_service import CodexWorkflowService
-from ai_dev_loop.scheduler.application.contracts import TickRunReceipt
+from ai_dev_loop.scheduler.application.contracts import SchedulerEngineError, TickRunReceipt
 from ai_dev_loop.scheduler.application.cursor_evidence import (
     CursorEvidenceError,
     frozen_repository_identity,
@@ -107,6 +109,54 @@ _CODEX_ATTEMPT_STATES = (AwaitingCodexReviewState,)
 _ATTEMPT_RECONCILE_STATES = (AdmittedState, *_CURSOR_ATTEMPT_STATES, *_CODEX_ATTEMPT_STATES)
 
 
+def _initial_recovery_prompt_applies(
+    state: PreflightCompleteState | CursorReadyState | WaitingUsageLimitState,
+    recovery: object,
+    *,
+    iteration: int,
+) -> bool:
+    """Bind the recovery prompt only for its authorized initial retry."""
+
+    from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
+        InitialRecoveryAuthority,
+    )
+    from ai_dev_loop.scheduler.domain.cursor_initial_recovery import (
+        CursorInitialRecoveryRecordV1,
+    )
+
+    if not isinstance(recovery, (CursorInitialRecoveryRecordV1, InitialRecoveryAuthority)):
+        raise ValidationError("initial recovery launch record is not an initial recovery record")
+    if recovery.iteration != iteration:
+        return False
+    continuation = state.cursor.continuation_envelope_path
+    if continuation and continuation != recovery.effective_prompt_path:
+        return False
+    if recovery.chat_id != state.cursor.chat_id:
+        raise ValidationError("initial recovery record disagrees with the cursor checkpoint")
+    return True
+
+
+def _correction_recovery_prompt_applies(
+    state: PreflightCompleteState | CursorReadyState | WaitingUsageLimitState,
+    recovery: object,
+    *,
+    iteration: int,
+) -> bool:
+    """Bind the recovered correction envelope only for its authorized retry."""
+
+    from ai_dev_loop.scheduler.domain.cursor_recovery_v2 import CursorRecoveryRecordV2
+
+    if not isinstance(recovery, CursorRecoveryRecordV2):
+        raise ValidationError("correction recovery launch record is not the v2 record")
+    if recovery.turn_kind != "correction" or recovery.iteration != iteration:
+        return False
+    if recovery.chat_id != state.cursor.chat_id:
+        raise ValidationError("correction recovery record disagrees with the cursor checkpoint")
+    if recovery.raw_fix is None or recovery.staged_patch is None:
+        raise ValidationError("correction recovery record is missing fix or staged evidence")
+    return True
+
+
 class AttemptService:
     def __init__(
         self,
@@ -122,6 +172,7 @@ class AttemptService:
         launch_nonce_factory: Callable[[], str],
         cursor_workflow: CursorWorkflowService | None = None,
         codex_workflow: CodexWorkflowService | None = None,
+        before_effect_claim: Callable[[], None] | None = None,
         build_agent_argv: Callable[[str, str, str, Path], list[str]] | None = None,
     ) -> None:
         self.store = store
@@ -135,6 +186,7 @@ class AttemptService:
         self._launch_nonce_factory = launch_nonce_factory
         self._cursor_workflow = cursor_workflow
         self._codex_workflow = codex_workflow
+        self._before_effect_claim = before_effect_claim
         self._build_agent_argv = build_agent_argv
 
     def process_run(
@@ -150,6 +202,16 @@ class AttemptService:
         )
         if cleanup is not None:
             return cleanup
+        from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
+            cursor_initial_recovery_blocks_dispatch,
+        )
+
+        with self.store.begin_read() as conn:
+            if cursor_initial_recovery_blocks_dispatch(self.store, conn, run_id):
+                return TickRunReceipt(
+                    run_id=run_id,
+                    action="cursor_initial_recovery_publication_pending",
+                )
         reconcile = self._reconcile_existing_attempt(
             tick_owner_id,
             tick_lease_generation,
@@ -335,6 +397,56 @@ class AttemptService:
             codex_attempt=True,
         )
 
+    def _initial_recovery_evidence_receipt(
+        self,
+        run_id: str,
+        exc: BaseException,
+    ) -> TickRunReceipt | None:
+        with self.store.begin_read() as conn:
+            row = self.store.get_cursor_initial_recovery_by_successor(
+                conn,
+                successor_run_id=run_id,
+            )
+        if row is None:
+            return None
+        return TickRunReceipt(
+            run_id=run_id,
+            action="cursor_initial_recovery_evidence_invalid",
+            detail=type(exc).__name__,
+        )
+
+    def _reauthenticate_initial_recovery_launch(
+        self,
+        conn: sqlite3.Connection,
+        run_id: str,
+    ) -> TickRunReceipt | None:
+        from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
+            authenticated_initial_recovery_launch,
+        )
+
+        try:
+            from ai_dev_loop.scheduler.application.cursor_correction_recovery import (
+                authenticated_correction_launch,
+            )
+
+            if (
+                authenticated_initial_recovery_launch(self.store, self.artifacts, conn, run_id)
+                is None
+            ):
+                authenticated_correction_launch(self.store, self.artifacts, conn, run_id)
+        except (SchedulerEngineError, ModelValidationError) as exc:
+            if (
+                self.store.get_cursor_initial_recovery_by_successor(conn, successor_run_id=run_id)
+                is None
+            ):
+                raise
+            return TickRunReceipt(
+                run_id=run_id,
+                action="cursor_initial_recovery_evidence_invalid",
+                detail=type(exc).__name__,
+            )
+        return None
+
     def _maybe_launch_cursor_attempt(
         self,
         tick_owner_id: str,
@@ -396,7 +508,15 @@ class AttemptService:
                 )
             evidence["timeout_retry_of"] = cursor_state.cursor.timeout_attempt_id
         else:
-            evidence = self._cursor_binding(cursor_state, effect_kind=effect_kind, run_id=run_id)
+            try:
+                evidence = self._cursor_binding(
+                    cursor_state, effect_kind=effect_kind, run_id=run_id
+                )
+            except (SchedulerEngineError, ModelValidationError) as exc:
+                blocked = self._initial_recovery_evidence_receipt(run_id, exc)
+                if blocked is not None:
+                    return blocked
+                raise
         evidence.update(
             {
                 "attempt_id": attempt_id,
@@ -419,6 +539,8 @@ class AttemptService:
         )
         launch_intent_sha256 = payload_sha256(launch_intent)
 
+        if self._before_effect_claim is not None:
+            self._before_effect_claim()
         with self.store.begin_immediate() as conn:
             if not tick_lease_is_active(
                 self.store,
@@ -441,6 +563,18 @@ class AttemptService:
                 return None
             if version < scheduled_version:
                 return TickRunReceipt(run_id=run_id, action="attempt_stale")
+            blocked = self._reauthenticate_initial_recovery_launch(conn, run_id)
+            if blocked is not None:
+                return blocked
+            from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
+                cursor_initial_recovery_blocks_dispatch,
+            )
+
+            if cursor_initial_recovery_blocks_dispatch(self.store, conn, run_id):
+                return TickRunReceipt(
+                    run_id=run_id,
+                    action="cursor_initial_recovery_publication_pending",
+                )
             if not self.store.try_acquire_capacity(
                 conn,
                 run_id=run_id,
@@ -539,7 +673,12 @@ class AttemptService:
         )
         codex = context.codex
         with self.store.begin_read() as conn:
-            max_reviews = effective_review_ceiling_for_run(self.store, conn, state)
+            max_reviews = effective_review_ceiling_for_run(
+                self.store,
+                conn,
+                state,
+                artifacts=self.artifacts,
+            )
         binding: dict[str, object] = {
             "effect_kind": effect_kind,
             "repository_root": identity.root,
@@ -664,6 +803,84 @@ class AttemptService:
                     ),
                 }
             )
+            from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
+                authenticated_initial_recovery_launch,
+            )
+
+            with self.store.begin_read() as conn:
+                recovery = authenticated_initial_recovery_launch(
+                    self.store,
+                    self.artifacts,
+                    conn,
+                    run_id,
+                )
+            if recovery is not None and _initial_recovery_prompt_applies(
+                state,
+                recovery,
+                iteration=iteration,
+            ):
+                binding["prompt_path"] = recovery.effective_prompt_path
+                binding["prompt_sha256"] = recovery.effective_prompt_sha256
+                binding["chat_id"] = recovery.chat_id
+                binding["iteration"] = recovery.iteration
+            else:
+                from ai_dev_loop.scheduler.application.cursor_correction_recovery import (
+                    authenticated_correction_launch,
+                )
+
+                with self.store.begin_read() as conn:
+                    correction = authenticated_correction_launch(
+                        self.store,
+                        self.artifacts,
+                        conn,
+                        run_id,
+                    )
+                if correction is not None and _correction_recovery_prompt_applies(
+                    state,
+                    correction,
+                    iteration=iteration,
+                ):
+                    assert correction.raw_fix is not None
+                    assert correction.staged_patch is not None
+                    prompt_path = correction.effective_prompt_path
+                    prompt_sha = correction.effective_prompt_sha256
+                    continuation = state.cursor.continuation_envelope_path
+                    if continuation and continuation != correction.effective_prompt_path:
+                        if not state.cursor.continuation_envelope_sha256:
+                            raise ValidationError(
+                                "usage-limit continuation is missing its digest"
+                            )
+                        wrapped = self.artifacts.read_verified_bytes(
+                            run_id,
+                            continuation,
+                            expected_sha256=state.cursor.continuation_envelope_sha256,
+                        )
+                        recovered = self.artifacts.read_verified_bytes(
+                            run_id,
+                            correction.effective_prompt_path,
+                            expected_sha256=correction.effective_prompt_sha256,
+                        )
+                        if recovered not in wrapped:
+                            raise ValidationError(
+                                "usage-limit continuation dropped the recovered correction envelope"
+                            )
+                        prompt_path = continuation
+                        prompt_sha = state.cursor.continuation_envelope_sha256
+                    binding.update(
+                        {
+                            "prompt_path": prompt_path,
+                            "prompt_sha256": prompt_sha,
+                            "chat_id": correction.chat_id,
+                            "iteration": correction.iteration,
+                            "fix_prompt_path": correction.raw_fix.relative_path,
+                            "fix_prompt_sha256": correction.raw_fix.sha256,
+                            "staged_patch_path": correction.staged_patch.relative_path,
+                            "staged_patch_sha256": correction.staged_patch.sha256,
+                            "cursor_recovery_base_prompt_path": correction.base_prompt.relative_path,
+                            "cursor_recovery_base_prompt_sha256": correction.base_prompt.sha256,
+                            "cursor_recovery_record_sha256": correction.canonical_sha256(),
+                        }
+                    )
         if (
             state.cursor.usage_limit_fingerprint_path
             and state.cursor.usage_limit_fingerprint_sha256

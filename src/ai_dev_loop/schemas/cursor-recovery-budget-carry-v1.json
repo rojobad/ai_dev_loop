@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "successor_run_id",
+    "source_run_id",
+    "recovery_key",
+    "submitted_max_review_iterations",
+    "inherited_effective_ceiling",
+    "inherited_reviews_completed",
+    "authority",
+    "extension_events",
+    "parent_carry_owner_run_id",
+    "parent_carry_path",
+    "parent_carry_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": 1, "type": "integer"},
+    "successor_run_id": {"minLength": 1, "type": "string"},
+    "source_run_id": {"minLength": 1, "type": "string"},
+    "recovery_key": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "submitted_max_review_iterations": {"minimum": 1, "type": "integer"},
+    "inherited_effective_ceiling": {"minimum": 1, "type": "integer"},
+    "inherited_reviews_completed": {"minimum": 0, "type": "integer"},
+    "authority": {"enum": ["extension_events", "parent_carry"], "type": "string"},
+    "extension_events": {
+      "items": {"$ref": "#/$defs/extension_event"},
+      "type": "array"
+    },
+    "parent_carry_owner_run_id": {"minLength": 1, "type": ["string", "null"]},
+    "parent_carry_path": {"minLength": 1, "type": ["string", "null"]},
+    "parent_carry_sha256": {"pattern": "^[0-9a-f]{64}$", "type": ["string", "null"]}
+  },
+  "$defs": {
+    "extension_event": {
+      "additionalProperties": false,
+      "properties": {
+        "owner_run_id": {"minLength": 1, "type": "string"},
+        "event_id": {"minLength": 1, "type": "string"},
+        "sequence": {"minimum": 1, "type": "integer"},
+        "payload_sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+        "previous_effective_total": {"minimum": 1, "type": "integer"},
+        "new_effective_total": {"minimum": 1, "type": "integer"}
+      },
+      "required": [
+        "owner_run_id",
+        "event_id",
+        "sequence",
+        "payload_sha256",
+        "previous_effective_total",
+        "new_effective_total"
+      ],
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"authority": {"const": "extension_events"}},
+        "required": ["authority"]
+      },
+      "then": {
+        "properties": {
+          "parent_carry_owner_run_id": {"type": "null"},
+          "parent_carry_path": {"type": "null"},
+          "parent_carry_sha256": {"type": "null"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"authority": {"const": "parent_carry"}},
+        "required": ["authority"]
+      },
+      "then": {
+        "properties": {
+          "parent_carry_owner_run_id": {"type": "string"},
+          "parent_carry_path": {"type": "string"},
+          "parent_carry_sha256": {"type": "string"}
+        }
+      }
+    }
+  ]
+}

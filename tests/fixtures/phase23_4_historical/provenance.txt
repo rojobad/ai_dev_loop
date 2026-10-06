@@ -1,0 +1,11 @@
+source_commit: 0203f777043e02b390500ffe46f9324f96a37428
+writer: SequenceRunLineage
+writer_function: SequenceRunLineage.model_dump
+review_writer: SequenceExecutionReplacementIntent
+review_writer_function: SequenceExecutionReplacementIntent.model_dump
+schema: scheduler-sequence-run-lineage-v1.json
+review_schema_version: 1
+lineage_sha256: 5d181242eada3ee1da14ff3160a1d5bd5a8dbd7f2ac46bfef5138d024996629d
+review_intent_sha256: b43d8dee8e8335f138dbe106e8d94c93c2fc9b859f169d353d9921ea9638e7d0
+capture: v1 domain writers still used for planned_run and same_reviewer_retry
+note: Immutable bytes from the pre-23.4 v1 writers. Readers must not regenerate this file.

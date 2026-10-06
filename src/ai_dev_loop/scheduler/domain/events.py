@@ -35,6 +35,7 @@ TICK_STALE_REJECTED_EVENT_KIND = "tick_stale_rejected"
 PREFLIGHT_COMPLETED_EVENT_KIND = "preflight_completed"
 PREFLIGHT_BLOCKED_EVENT_KIND = "preflight_blocked"
 CURSOR_CHAT_CREATED_EVENT_KIND = "cursor_chat_created"
+CURSOR_INITIAL_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND = "cursor_initial_recovery_successor_created"
 CURSOR_CHAT_BLOCKED_EVENT_KIND = "cursor_chat_blocked"
 CURSOR_TURN_COMPLETED_EVENT_KIND = "cursor_turn_completed"
 CURSOR_TURN_BLOCKED_EVENT_KIND = "cursor_turn_blocked"
@@ -260,6 +261,33 @@ class PreflightBlockedEvent(DomainModel):
         return value
 
 
+class CursorInitialRecoverySuccessorCreatedEvent(DomainModel):
+    """Successor created for a failed initial standalone Cursor turn."""
+
+    kind: str = Field(default=CURSOR_INITIAL_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND)
+    source_run_id: str
+    successor_run_id: str
+    recovery_key: NonEmptyStr
+    failed_attempt_id: NonEmptyStr
+    iteration: int
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_cursor_initial_recovery_successor_created(cls, value: str) -> str:
+        if value != CURSOR_INITIAL_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND:
+            raise ValueError("kind must be cursor_initial_recovery_successor_created")
+        return value
+
+    @field_validator("iteration", mode="before")
+    @classmethod
+    def iteration_is_strict_int(cls, value: object) -> object:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("iteration must be a JSON integer")
+        if value < 1:
+            raise ValueError("iteration must be >= 1")
+        return value
+
+
 class CursorChatCreatedEvent(DomainModel):
     kind: str = Field(default=CURSOR_CHAT_CREATED_EVENT_KIND)
     run_id: str
@@ -466,9 +494,9 @@ class CodexUsageCapacityDetectedEvent(DomainModel):
     routing_auto_retry_authorizations_used: int = 0
     routing_auto_retry_due_at: NonEmptyStr | None = None
     routing_auto_retry_exhausted: bool = False
-    routing_failure_post_probe_status: (
-        Literal["available", "exhausted", "unavailable"] | None
-    ) = None
+    routing_failure_post_probe_status: Literal["available", "exhausted", "unavailable"] | None = (
+        None
+    )
     routing_failure_post_probe_reason: NonEmptyStr | None = None
 
     @field_validator("routing_auto_retry_authorizations_used", mode="before")
@@ -558,9 +586,9 @@ class CodexReviewRetryableFailureEvent(DomainModel):
     routing_auto_retry_authorizations_used: int = 0
     routing_auto_retry_due_at: NonEmptyStr | None = None
     routing_auto_retry_exhausted: bool = False
-    routing_failure_post_probe_status: (
-        Literal["available", "exhausted", "unavailable"] | None
-    ) = None
+    routing_failure_post_probe_status: Literal["available", "exhausted", "unavailable"] | None = (
+        None
+    )
     routing_failure_post_probe_reason: NonEmptyStr | None = None
 
     @field_validator("routing_auto_retry_authorizations_used", mode="before")
@@ -963,6 +991,10 @@ SchedulerEvent = Annotated[
     | Annotated[PreflightCompletedEvent, Tag(PREFLIGHT_COMPLETED_EVENT_KIND)]
     | Annotated[PreflightBlockedEvent, Tag(PREFLIGHT_BLOCKED_EVENT_KIND)]
     | Annotated[CursorChatCreatedEvent, Tag(CURSOR_CHAT_CREATED_EVENT_KIND)]
+    | Annotated[
+        CursorInitialRecoverySuccessorCreatedEvent,
+        Tag(CURSOR_INITIAL_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND),
+    ]
     | Annotated[CursorChatBlockedEvent, Tag(CURSOR_CHAT_BLOCKED_EVENT_KIND)]
     | Annotated[CursorTurnCompletedEvent, Tag(CURSOR_TURN_COMPLETED_EVENT_KIND)]
     | Annotated[CursorTurnBlockedEvent, Tag(CURSOR_TURN_BLOCKED_EVENT_KIND)]

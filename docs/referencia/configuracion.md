@@ -157,6 +157,10 @@ operativos documentados son:
   valores congelados de modelo y razonamiento.
 - `scheduler cursor-retry`: adelanta o autoriza otro intento de un turno Cursor
   con timeout confirmado, conservando chat, modelo, prompt y trabajo parcial.
+  `--force` publica un sucesor del mismo chat para un fallo inicial o una
+  corrección, también cuando el run es la hoja bloqueada actual de una secuencia.
+  La secuencia conserva el ordinal y la entrada congelada. Una hoja obsoleta,
+  un aborto o una reserva ajena se rechazan.
 - `scheduler abort`: cancelacion no destructiva; preserva artefactos y cambios staged.
 - Runs interrumpidos o bloqueados: inspecciona `scheduler status` y
   `scheduler history`; la accion segura depende del checkpoint durable en el ledger.

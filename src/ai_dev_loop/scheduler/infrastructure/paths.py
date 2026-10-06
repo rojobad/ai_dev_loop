@@ -51,8 +51,11 @@ def apply_database_permissions(db_path: Path) -> None:
     set_sensitive_file_mode(db_path)
     for suffix in ("-wal", "-shm"):
         sidecar = Path(f"{db_path}{suffix}")
-        if sidecar.exists():
-            set_sensitive_file_mode(sidecar)
+        try:
+            if sidecar.exists():
+                set_sensitive_file_mode(sidecar)
+        except FileNotFoundError:
+            continue
 
 
 def _reject_symlink_component(path: Path, *, label: str) -> None:

@@ -122,6 +122,13 @@ class CursorWorkflowService:
         run_id: str,
     ) -> list[TickRunReceipt]:
         receipts: list[TickRunReceipt] = []
+        from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
+            cursor_initial_recovery_blocks_dispatch,
+        )
+
+        with self.store.begin_read() as conn:
+            if cursor_initial_recovery_blocks_dispatch(self.store, conn, run_id):
+                return receipts
         usage_limit = self._maybe_schedule_usage_limit_continuation(
             tick_owner_id,
             tick_lease_generation,
@@ -1035,12 +1042,21 @@ class CursorWorkflowService:
                 usage_limit_continuation_path_for_attempt(iteration, attempt_id)
             )
         else:
-            original_prompt_path = (
-                state.cursor.original_prompt_path or state.context.plan_prompt.prompt_artifact_path
-            )
-            original_prompt_sha = (
-                state.cursor.original_prompt_sha256 or state.context.plan_prompt.prompt_sha256
-            )
+            if (
+                state.cursor.continuation_envelope_path
+                and state.cursor.continuation_envelope_sha256
+            ):
+                original_prompt_path = state.cursor.continuation_envelope_path
+                original_prompt_sha = state.cursor.continuation_envelope_sha256
+            else:
+                original_prompt_path = (
+                    state.cursor.original_prompt_path
+                    or state.context.plan_prompt.prompt_artifact_path
+                )
+                original_prompt_sha = (
+                    state.cursor.original_prompt_sha256
+                    or state.context.plan_prompt.prompt_sha256
+                )
             try:
                 original_prompt = self.artifacts.read_verified_bytes(
                     run_id,

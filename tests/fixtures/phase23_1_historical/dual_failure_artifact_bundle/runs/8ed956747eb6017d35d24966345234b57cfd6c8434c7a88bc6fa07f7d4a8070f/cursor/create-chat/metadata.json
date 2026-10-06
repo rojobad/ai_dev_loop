@@ -1,0 +1,9 @@
+{
+  "args": [
+    "/tmp/pytest-of-rojobad/pytest-168/test_capture_dual_failure_hist0/bin/agent",
+    "create-chat"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 0.05229498801054433,
+  "timed_out": false
+}

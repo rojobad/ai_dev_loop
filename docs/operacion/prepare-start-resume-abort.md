@@ -13,6 +13,7 @@ ai_dev_loop scheduler list
 ai_dev_loop scheduler history <run-id>
 ai_dev_loop scheduler timeline <run-id>
 ai_dev_loop scheduler abort <run-id>
+ai_dev_loop scheduler cursor-retry <run-id> [--check | --force]
 ai_dev_loop controller status --repo-path /path/al/repo --run-id <run-id>
 ```
 

@@ -1,0 +1,128 @@
+[
+  {
+    "event_id": "evt-e24aac6986843289014705c2490f956e",
+    "run_id": "fixture-project-20261005T151720Z-338174",
+    "sequence": 1,
+    "event_kind": "run_submitted",
+    "event_payload": "{\"kind\":\"run_submitted\",\"run_id\":\"fixture-project-20261005T151720Z-338174\",\"idempotency_key\":\"02fddeb97ad3886ed8a951a61f5a3625c0fcff1fa820a0c478644681d0d0bba2\",\"worktree_key\":\"c03306bd56858ca47fcb3206c81f3263059f4cce14558a1ba43c7be19a802375\",\"reused_existing\":false}",
+    "event_payload_sha256": "4682a52835dc13433bbc19a149282985959d40775c145664b535f74cee38ffac",
+    "created_at": "2026-10-05T15:17:20.893568Z"
+  },
+  {
+    "event_id": "evt-4c58a776e0627f0a7b39453c0a93958b",
+    "run_id": "fixture-project-20261005T151720Z-338174",
+    "sequence": 2,
+    "event_kind": "run_authorized",
+    "event_payload": "{\"kind\":\"run_authorized\",\"run_id\":\"fixture-project-20261005T151720Z-338174\",\"controller_session_id\":\"11111111-1111-1111-1111-111111111111\",\"idempotent_replay\":false}",
+    "event_payload_sha256": "a315033cfc1a632b7e63ffcd752ca28069a02c03c4cbe61bded688bab6b8de52",
+    "created_at": "2026-10-05T15:17:20.996921Z"
+  },
+  {
+    "event_id": "evt-4e64243f3ad5013750112dba6038d340",
+    "run_id": "fixture-project-20261005T151720Z-338174",
+    "sequence": 3,
+    "event_kind": "worktree_admitted",
+    "event_payload": "{\"kind\":\"worktree_admitted\",\"run_id\":\"fixture-project-20261005T151720Z-338174\",\"admission_status_artifact_path\":\"git/admission-status.txt\",\"admission_status_sha256\":\"c91cc86cde91f15123817ff6c53434dcfd4ebaee9af72c96a16c4851650e4f15\",\"resolved_root\":\"/tmp/pytest-of-rojobad/pytest-168/test_capture_dual_failure_hist0/repo\"}",
+    "event_payload_sha256": "c990fd7969714e446509186156b59db289570b8a93786fd761e6d0e3f0a7beca",
+    "created_at": "2026-09-08T12:00:00.000000Z"
+  },
+  {
+    "event_id": "evt-9edf03f5f499a347f495f864342d83b3",
+    "run_id": "fixture-project-20261005T151720Z-338174",
+    "sequence": 4,
+    "event_kind": "preflight_completed",
+    "event_payload": "{\"kind\":\"preflight_completed\",\"run_id\":\"fixture-project-20261005T151720Z-338174\"}",
+    "event_payload_sha256": "c82e3023238c9ba659f596d9490ef60d47293a7d0e7502c82fb47a3100dc3427",
+    "created_at": "2026-09-08T12:00:00.000000Z"
+  },
+  {
+    "event_id": "evt-f3cbf1ae78ad430b94558eff6dd267e6",
+    "run_id": "fixture-project-20261005T151720Z-338174",
+    "sequence": 5,
+    "event_kind": "attempt_launch_requested",
+    "event_payload": "{\"kind\":\"attempt_launch_requested\",\"run_id\":\"fixture-project-20261005T151720Z-338174\",\"attempt_id\":\"att-00000000000000000000000000000002\",\"dispatch_id\":\"fx-a04bddf601466d58791a31ab32184872\",\"claim_id\":\"clm-7cea42153c9da0a97be7864b8ee7f270\",\"unit_identity\":\"ai-dev-loop-attempt-att-00000000000000000000000000000002.service\",\"launch_nonce\":\"6b4b60618770e98abe9eba2a741d8f71\",\"launch_intent_sha256\":\"78bffa81224eb94baa6cd96bd32e054d87638e01f737fa159e4ea284b775d042\"}",
+    "event_payload_sha256": "cfdc7305851f0bbf1e2ff3c7f0f01ddca7c75fcd35e3a6e133a7a8f49c4aaa68",
+    "created_at": "2026-09-08T12:00:00.000000Z"
+  },
+  {
+    "event_id": "evt-6af2008e72efb30dcae0685ac408f530",
+    "run_id": "fixture-project-20261005T151720Z-338174",
+    "sequence": 6,
+    "event_kind": "attempt_completed",
+    "event_payload": "{\"kind\":\"attempt_completed\",\"run_id\":\"fixture-project-20261005T151720Z-338174\",\"attempt_id\":\"att-00000000000000000000000000000002\",\"dispatch_id\":\"fx-a04bddf601466d58791a31ab32184872\",\"claim_id\":\"clm-7cea42153c9da0a97be7864b8ee7f270\",\"completion_fence_id\":\"fnc-025da1137040cbb49628d5529c61eee1\",\"termination_class\":\"success\",\"exit_code\":0}",
+    "event_payload_sha256": "a98990d9078ec31c5e6971e0d462f3db1025a7cfb16282f0f21945fd49cb665b",
+    "created_at": "2026-09-08T12:00:00.000000Z"
+  },
+  {
+    "event_id": "evt-c7b7af30e3fa67cb653f4c73a39dd6d9",
+    "run_id": "fixture-project-20261005T151720Z-338174",
+    "sequence": 7,
+    "event_kind": "cursor_chat_created",
+    "event_payload": "{\"kind\":\"cursor_chat_created\",\"run_id\":\"fixture-project-20261005T151720Z-338174\",\"chat_id\":\"019abc00-1111-2222-3333-444444444444\",\"chat_artifact_path\":\"cursor/chat.json\",\"chat_artifact_sha256\":\"1610946d4850145e36d88c12324364a806770fcc6e991440ba348eea44877226\"}",
+    "event_payload_sha256": "f5847461c2ab1a1f3c62b32f2eb661c064b8ca90ccd6bf75bd2ccdcde9d60d3e",
+    "created_at": "2026-09-08T12:00:00.000000Z"
+  },
+  {
+    "event_id": "evt-7cd9baa8f2a1a30633f5e0bc73271e74",
+    "run_id": "fixture-project-20261005T151720Z-338174",
+    "sequence": 8,
+    "event_kind": "attempt_launch_requested",
+    "event_payload": "{\"kind\":\"attempt_launch_requested\",\"run_id\":\"fixture-project-20261005T151720Z-338174\",\"attempt_id\":\"att-00000000000000000000000000000005\",\"dispatch_id\":\"fx-e4b72e5cef119718514e04ec8608a8c4\",\"claim_id\":\"clm-90ef1ef62ffdd6d7ef5ad99deff79d10\",\"unit_identity\":\"ai-dev-loop-attempt-att-00000000000000000000000000000005.service\",\"launch_nonce\":\"874c91df5ab215933c09525020334b3e\",\"launch_intent_sha256\":\"e05825a00f77cdf397c3241b71a86b939d00988283f8c8e57e6d7b8890758ace\"}",
+    "event_payload_sha256": "39565f3e515f0e6d5af46a8240b3bc8ff65dbc7bbcb1ed61fad538664dbf1a83",
+    "created_at": "2026-09-08T12:00:00.000000Z"
+  },
+  {
+    "event_id": "evt-be8452faff34864ec53aad5099d05596",
+    "run_id": "fixture-project-20261005T151720Z-338174",
+    "sequence": 9,
+    "event_kind": "attempt_completed",
+    "event_payload": "{\"kind\":\"attempt_completed\",\"run_id\":\"fixture-project-20261005T151720Z-338174\",\"attempt_id\":\"att-00000000000000000000000000000005\",\"dispatch_id\":\"fx-e4b72e5cef119718514e04ec8608a8c4\",\"claim_id\":\"clm-90ef1ef62ffdd6d7ef5ad99deff79d10\",\"completion_fence_id\":\"fnc-b2fd4271466ec95d3ed607e198941086\",\"termination_class\":\"nonzero_exit\",\"exit_code\":2}",
+    "event_payload_sha256": "1937dc5bd9a82f09dc5cb1e67ffea3553db8ec304f93b99600089f24fb9f3f21",
+    "created_at": "2026-09-08T12:00:00.000000Z"
+  },
+  {
+    "event_id": "evt-8c8b805ad17e374d77a5252ef9ef377f",
+    "run_id": "fixture-project-20261005T151720Z-338174",
+    "sequence": 10,
+    "event_kind": "cursor_usage_limit_detected",
+    "event_payload": "{\"kind\":\"cursor_usage_limit_detected\",\"run_id\":\"fixture-project-20261005T151720Z-338174\",\"iteration\":1,\"wait_until\":\"2026-09-08T12:02:00.000000Z\",\"usage_limit_fingerprint_path\":\"git/cursor-output/01.att-00000000000000000000000000000005.usage-limit-failure.json\",\"usage_limit_fingerprint_sha256\":\"ba1e11a944a73ead0d8db91e794a67b96c162faf494974c08b9e6b5eb1c0c92a\",\"continuation_envelope_path\":\"prompts/cursor-recovery/01.att-00000000000000000000000000000005.usage-limit-continuation.txt\",\"continuation_envelope_sha256\":\"f204635a1919c55bf71e7b1e71178e8e927eb0d3f78fc163c75471f785666487\"}",
+    "event_payload_sha256": "3897c40c2b0a3b3718bb18535b5fdf4427fc3bbd4084fd56de005d4b3a68145d",
+    "created_at": "2026-09-08T12:00:00.000000Z"
+  },
+  {
+    "event_id": "evt-7a34f3bd29b56e75878ad97d8ec0d908",
+    "run_id": "fixture-project-20261005T151720Z-338174",
+    "sequence": 11,
+    "event_kind": "timer_fired",
+    "event_payload": "{\"kind\":\"timer_fired\",\"run_id\":\"fixture-project-20261005T151720Z-338174\",\"timer_id\":\"tmr-002767aab1ae481f825d081cdae8dca0\",\"target_effect_id\":\"cursor-run-turn\",\"expected_run_version\":6}",
+    "event_payload_sha256": "1e733d1f8b069c8d4614b37763a8f4dfbb047246b193630d867f775e46671c56",
+    "created_at": "2026-09-08T12:02:01.000000Z"
+  },
+  {
+    "event_id": "evt-74a19307de3940d626e760af23f1bc22",
+    "run_id": "fixture-project-20261005T151720Z-338174",
+    "sequence": 12,
+    "event_kind": "attempt_launch_requested",
+    "event_payload": "{\"kind\":\"attempt_launch_requested\",\"run_id\":\"fixture-project-20261005T151720Z-338174\",\"attempt_id\":\"att-00000000000000000000000000000009\",\"dispatch_id\":\"fx-79864802fcb23a1ffdd281a48419deec\",\"claim_id\":\"clm-9c66789d13dd9e9cdbb944cd56da1c5d\",\"unit_identity\":\"ai-dev-loop-attempt-att-00000000000000000000000000000009.service\",\"launch_nonce\":\"be217383f75d30e98c70877a74666934\",\"launch_intent_sha256\":\"71e8a63eab9ee38cef5a17c7755b8e7ed2a7610c699a60b46b35032e1500cbbb\"}",
+    "event_payload_sha256": "e32af896836538b040fbdc5eaca9e691473399ca39f3ad47cb18a817cf74d574",
+    "created_at": "2026-09-08T12:02:01.000000Z"
+  },
+  {
+    "event_id": "evt-f6d96c0fafeb8a28225eb41ab06f5aad",
+    "run_id": "fixture-project-20261005T151720Z-338174",
+    "sequence": 13,
+    "event_kind": "attempt_completed",
+    "event_payload": "{\"kind\":\"attempt_completed\",\"run_id\":\"fixture-project-20261005T151720Z-338174\",\"attempt_id\":\"att-00000000000000000000000000000009\",\"dispatch_id\":\"fx-79864802fcb23a1ffdd281a48419deec\",\"claim_id\":\"clm-9c66789d13dd9e9cdbb944cd56da1c5d\",\"completion_fence_id\":\"fnc-d969a837b1d783eeb818d3dd3c0d7f38\",\"termination_class\":\"nonzero_exit\",\"exit_code\":2}",
+    "event_payload_sha256": "4edc77ccd81d11079ab81db3dc12f9ba1e98029992a74653a7a8f6098a36d279",
+    "created_at": "2026-09-08T12:02:01.000000Z"
+  },
+  {
+    "event_id": "evt-11122cef7836c0f00dadedbb69a905e9",
+    "run_id": "fixture-project-20261005T151720Z-338174",
+    "sequence": 14,
+    "event_kind": "cursor_turn_blocked",
+    "event_payload": "{\"kind\":\"cursor_turn_blocked\",\"run_id\":\"fixture-project-20261005T151720Z-338174\",\"block_reason_kind\":\"cursor_failure\",\"block_reason_summary\":\"Cursor turn failed with an unclassified error\"}",
+    "event_payload_sha256": "e6337875ee887e405fa9daf3aae853a1378970522dcf435e03aa13e22708fea7",
+    "created_at": "2026-09-08T12:02:01.000000Z"
+  }
+]

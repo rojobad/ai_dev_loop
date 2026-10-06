@@ -122,7 +122,9 @@ ai_dev_loop integration sequence report SEQUENCE_ID [--offset BYTE_OFFSET --limi
 - Las lecturas usan el ledger y artefactos de secuencia en modo **solo lectura**;
   no migran la base de datos, no publican informes ni ejecutan Git.
 - `inspect` incluye fases, linaje materializado (hasta 100 intentos por fase en
-  línea) y disponibilidad del informe publicado.
+  línea) y disponibilidad del informe publicado. `attemptKind` puede ser
+  `planned_run`, `same_reviewer_retry` o `cursor_retry`. El resumen no incluye
+  prompts, parches ni el identificador completo del reviewer.
 - `phase-plan` / `phase-prompt` leen la definición congelada de la secuencia, no
   el binding de un run materializado.
 - `report` solo sirve `reports/completion-v1.json` ya publicado; ausencia explícita

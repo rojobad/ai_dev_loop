@@ -1,0 +1,25 @@
+# Four scoped runs from accepted main plus accepted predecessors.
+# Reviewer choice: gpt-6.1-sol / high for all four phases.
+# Cursor and budgets inherit ai_dev_loop.yaml. Authoring is not scheduler start.
+schema_version: 1
+name: phase-23-manual-cursor-recovery-replanned
+phases:
+  - name: phase-23-1-cursor-recovery-evidence
+    plan_path: archive/implementation-history/plans/phase-23-1-cursor-recovery-evidence.md
+    prompt_source_path: archive/implementation-history/plans/prompt_phase-23-1-cursor-recovery-evidence.txt
+    commit_message: "feat: add read-only Cursor recovery evidence inspection"
+    codex: {review_model: gpt-6.1-sol, review_reasoning_effort: high}
+  - name: phase-23-2-initial-standalone-cursor-recovery
+    plan_path: archive/implementation-history/plans/phase-23-2-initial-standalone-cursor-recovery.md
+    prompt_source_path: archive/implementation-history/plans/prompt_phase-23-2-initial-standalone-cursor-recovery.txt
+    commit_message: "feat: recover failed initial standalone Cursor turns"
+    codex: {review_model: gpt-6.1-sol, review_reasoning_effort: high}
+  - name: phase-23-3-cursor-correction-continuity
+    plan_path: archive/implementation-history/plans/phase-23-3-cursor-correction-continuity.md
+    prompt_source_path: archive/implementation-history/plans/prompt_phase-23-3-cursor-correction-continuity.txt
+    commit_message: "feat: preserve reviewer and budget in Cursor correction recovery"
+    codex: {review_model: gpt-6.1-sol, review_reasoning_effort: high}
+  - name: phase-23-4-sequence-cursor-recovery
+    plan_path: archive/implementation-history/plans/phase-23-4-sequence-cursor-recovery.md
+    prompt_source_path: archive/implementation-history/plans/prompt_phase-23-4-sequence-cursor-recovery.txt
+    codex: {review_model: gpt-6.1-sol, review_reasoning_effort: high}

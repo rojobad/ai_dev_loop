@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/scheduler-sequence-run-lineage-v2.json",
+  "title": "SequenceRunLineageV2",
+  "type": "object",
+  "format": "scheduler-sequence-run-lineage-v2",
+  "additionalProperties": false,
+  "required": ["schema_version", "sequence_id", "phase_executions"],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "sequence_id": { "$ref": "#/$defs/nonEmptyString" },
+    "phase_executions": {
+      "type": "array",
+      "items": {
+        "$ref": "https://ai-dev-loop.local/schemas/scheduler-sequence-phase-execution-v2.json"
+      }
+    }
+  },
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": ".*\\S.*"
+    }
+  },
+  "allOf": [
+    {
+      "not": {
+        "properties": {
+          "phase_executions": {
+            "contains": { "properties": { "ordinal": { "const": 1 } } },
+            "minContains": 2
+          }
+        }
+      }
+    },
+    {
+      "not": {
+        "properties": {
+          "phase_executions": {
+            "contains": { "properties": { "ordinal": { "const": 2 } } },
+            "minContains": 2
+          }
+        }
+      }
+    },
+    {
+      "not": {
+        "properties": {
+          "phase_executions": {
+            "contains": { "properties": { "ordinal": { "const": 3 } } },
+            "minContains": 2
+          }
+        }
+      }
+    },
+    {
+      "not": {
+        "properties": {
+          "phase_executions": {
+            "contains": { "properties": { "ordinal": { "const": 4 } } },
+            "minContains": 2
+          }
+        }
+      }
+    },
+    {
+      "not": {
+        "properties": {
+          "phase_executions": {
+            "contains": { "properties": { "ordinal": { "const": 5 } } },
+            "minContains": 2
+          }
+        }
+      }
+    },
+    {
+      "not": {
+        "properties": {
+          "phase_executions": {
+            "contains": { "properties": { "ordinal": { "const": 6 } } },
+            "minContains": 2
+          }
+        }
+      }
+    },
+    {
+      "not": {
+        "properties": {
+          "phase_executions": {
+            "contains": { "properties": { "ordinal": { "const": 7 } } },
+            "minContains": 2
+          }
+        }
+      }
+    },
+    {
+      "not": {
+        "properties": {
+          "phase_executions": {
+            "contains": { "properties": { "ordinal": { "const": 8 } } },
+            "minContains": 2
+          }
+        }
+      }
+    }
+  ]
+}

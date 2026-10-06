@@ -78,6 +78,16 @@ existing references; it does not imply a public `resume` command.
 - Confirmed Cursor turn timeouts support three automatic retries per turn at
   30-minute intervals. `scheduler cursor-retry` can advance the wait or continue
   after automatic retries are exhausted, without creating a new chat or review.
+- `scheduler cursor-retry --force` publishes one same-chat successor for an
+  eligible terminated standalone `cursor_failure` or the current blocked sequence
+  leaf, including a failed recovery successor. Initial turns and corrections both
+  append one fixed note to the exact failed prompt and keep partial work.
+  Correction recovery also carries the authenticated reviewer, raw fix, completed
+  reviews, and effective budget. Sequence recovery adopts that successor at the
+  same ordinal before dispatch and then uses the ordinary checkpoint and
+  next-phase flow. A duplicate command returns the existing relation. A new
+  replacement of a stale leaf is rejected. Pending publication is not
+  dispatchable. No-flag timeout retry is unchanged.
 - A prior process must be confirmed terminated and the reservation retained.
   Abort, uncertain termination, integrity failures, and create-chat timeouts
   must not be bypassed through the timeout-retry command.

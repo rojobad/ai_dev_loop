@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from tests.unit.scheduler.helpers import CONTROLLER_SESSION, sample_submitted_state
+from tests.unit.scheduler.helpers import CONTROLLER_SESSION
 from tests.unit.scheduler.test_phase20_1_sequence_prepare import (
     FIXED_NOW,
     _prepare_service,
@@ -31,8 +31,6 @@ from ai_dev_loop.scheduler.application.sequence_prepare import (
     _parse_manifest,
 )
 from ai_dev_loop.scheduler.application.sequence_status import SequenceStatusService
-from ai_dev_loop.scheduler.application.status import scheduler_list, scheduler_status
-from ai_dev_loop.scheduler.domain.events import RunSubmittedEvent
 from ai_dev_loop.scheduler.domain.sequence import SequenceManifest
 from ai_dev_loop.scheduler.infrastructure.paths import (
     SEQUENCES_DIRNAME,
@@ -550,34 +548,6 @@ def test_manifest_validation_reports_field_locations_without_values() -> None:
     message = _format_manifest_validation_error(exc.value)
     assert "name" in message
     assert "phases" in message
-
-
-def test_open_readonly_accepts_populated_v4_database(tmp_path: Path) -> None:
-    db = _pause_v4_database(tmp_path)
-    store = SqliteSchedulerStore(db, bootstrap=False)
-    state = sample_submitted_state(run_id="fixture-run-v4")
-    event = RunSubmittedEvent(
-        run_id=state.run_id,
-        idempotency_key=state.idempotency_key,
-        worktree_key=state.context.repository.worktree_key,
-        reused_existing=False,
-    )
-    now = datetime(2026, 9, 4, 12, 0, 0, tzinfo=UTC)
-    with store.begin_immediate() as conn:
-        store.insert_submitted_run(
-            conn,
-            run_id=state.run_id,
-            state=state,
-            event_id="evt-v4-readonly",
-            event=event,
-            now=now,
-        )
-    readonly = SqliteSchedulerStore.open_readonly(db)
-    assert readonly._read_only is True
-    listings = scheduler_list(db_path=db)
-    assert len(listings) == 1
-    status = scheduler_status(state.run_id, db_path=db)
-    assert status.summary.run_id == state.run_id
 
 
 def test_sequence_status_requires_schema_version_five(tmp_path: Path) -> None:

@@ -67,6 +67,21 @@ class SequenceRestartReconcileService:
             receipt = self.reconcile_terminal_current_leaf(conn, run_id)
             if receipt is not None:
                 receipts.append(receipt)
+        if self.store.schema_supports_cursor_sequence_replacement(conn):
+            from ai_dev_loop.scheduler.application.sequence_cursor_recovery import (
+                reconcile_unadopted_cursor_sequence_intent,
+            )
+
+            for row in self.store.list_unadopted_sequence_cursor_replacements(conn):
+                receipts.append(
+                    reconcile_unadopted_cursor_sequence_intent(
+                        self.store,
+                        self.artifacts,
+                        conn,
+                        row,
+                        now=self._now_factory(),
+                    )
+                )
         return receipts
 
     def reconcile_run(self, conn: sqlite3.Connection, run_id: str) -> TickRunReceipt | None:
