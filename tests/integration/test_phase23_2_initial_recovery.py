@@ -124,8 +124,11 @@ def test_force_publishes_one_successor_and_preserves_worktree(
     record_path = artifacts.run_root(successor) / RECORD_REL
     record = json.loads(record_path.read_text(encoding="utf-8"))
     assert record["chat_id"] == analysis.evidence.chat_id
+    assert record["schema_version"] == 2
+    assert record["turn_kind"] == "initial"
     assert record["reviews_completed"] == 0
-    assert record["reviewer_created"] is False
+    assert record["reviewer"]["form"] == "not_created"
+    assert record["raw_fix"] is None
     effective = (artifacts.run_root(successor) / record["effective_prompt_path"]).read_bytes()
     assert effective == expected_prompt
     assert effective.count(b"Recovery note:") == 1
@@ -143,7 +146,7 @@ def test_force_publishes_one_successor_and_preserves_worktree(
     tick = _tick_service(
         git_repo,
         scheduler_paths,
-        now=datetime(2026, 10, 6, tzinfo=UTC),
+        now=datetime(2027, 1, 1, tzinfo=UTC),
         backend=FakeAgentProcessBackend(
             default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
         ),
@@ -197,7 +200,7 @@ def test_failed_successor_appends_the_note_once_and_keeps_the_chat(
     tick = _tick_service(
         git_repo,
         scheduler_paths,
-        now=datetime(2026, 10, 6, tzinfo=UTC),
+        now=datetime(2027, 1, 1, tzinfo=UTC),
         backend=FakeAgentProcessBackend(
             default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
         ),
@@ -277,7 +280,7 @@ def test_crash_after_artifacts_converges_to_one_effect(
     tick = _tick_service(
         git_repo,
         scheduler_paths,
-        now=datetime(2026, 10, 6, tzinfo=UTC),
+        now=datetime(2027, 1, 1, tzinfo=UTC),
         backend=FakeAgentProcessBackend(
             default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
         ),
@@ -369,7 +372,22 @@ def test_abort_pending_successor_cancels_without_effect(
     assert _state_kind(store, run_id) == "blocked"
 
 
-def test_force_rejects_correction_and_sequence(
+def test_force_accepts_standalone_correction(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.unit.scheduler.test_phase23_1_cursor_recovery_evidence import (
+        _blocked_correction_failure,
+    )
+
+    correction = _blocked_correction_failure(git_repo, scheduler_paths, fake_clis, monkeypatch)
+    accepted = CliRunner().invoke(app, ["scheduler", "cursor-retry", correction, "--force"])
+    assert accepted.exit_code == 0, accepted.output
+
+
+def test_force_rejects_sequence(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
     fake_clis: dict[str, Path],
@@ -378,15 +396,8 @@ def test_force_rejects_correction_and_sequence(
     from tests.integration.test_phase17_4_cursor_workflow import _tick_service as tick_factory
     from tests.unit.scheduler.test_phase20_2_sequence_start import _prepare_sequence, _start_service
     from tests.unit.scheduler.test_phase23_1_cursor_recovery_evidence import (
-        _blocked_correction_failure,
         _normalize_run_artifact_permissions,
     )
-
-    correction = _blocked_correction_failure(git_repo, scheduler_paths, fake_clis, monkeypatch)
-    runner = CliRunner()
-    rejected = runner.invoke(app, ["scheduler", "cursor-retry", correction, "--force"])
-    assert rejected.exit_code == 4, rejected.output
-    assert "correction" in rejected.output.lower()
 
     monkeypatch.setenv("FAKE_AGENT_RUN_MODE", "fail")
     sequence_id = _prepare_sequence(git_repo, scheduler_paths)
@@ -401,7 +412,7 @@ def test_force_rejects_correction_and_sequence(
     )
     _run_until(tick, started.run_id, target_kind="blocked", max_ticks=40)
     _normalize_run_artifact_permissions(scheduler_paths["artifact_root"], started.run_id)
-    sequence_rejected = runner.invoke(
+    sequence_rejected = CliRunner().invoke(
         app,
         ["scheduler", "cursor-retry", started.run_id, "--force"],
     )
@@ -589,7 +600,9 @@ def test_tampered_record_and_missing_parent_reject_replay_and_creation(
     record_path.write_bytes(original)
     os.chmod(record_path, 0o600)
 
-    record = CursorInitialRecoveryRecordV1.model_validate_json(original)
+    from ai_dev_loop.scheduler.domain.cursor_recovery_v2 import CursorRecoveryRecordV2
+
+    record = CursorRecoveryRecordV2.model_validate_json(original)
     rewritten = record.model_copy(update={"successor_run_id": f"{successor}-other"})
     rewritten_bytes = rewritten.canonical_bytes()
     record_path.write_bytes(rewritten_bytes)
@@ -648,7 +661,7 @@ def test_tampered_record_and_missing_parent_reject_replay_and_creation(
     tick = _tick_service(
         git_repo,
         scheduler_paths,
-        now=datetime(2026, 10, 6, tzinfo=UTC),
+        now=datetime(2027, 1, 1, tzinfo=UTC),
         backend=FakeAgentProcessBackend(
             default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
         ),
@@ -661,6 +674,106 @@ def test_tampered_record_and_missing_parent_reject_replay_and_creation(
     with store.begin_read() as conn:
         created = store.list_cursor_initial_recoveries_for_source(conn, source_run_id=successor)
     assert created == []
+
+
+def test_v2_initial_budget_fields_reject_hash_consistent_tamper(
+    git_repo: Path,
+    scheduler_paths: dict[str, Path],
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_dev_loop.scheduler.domain.cursor_recovery_v2 import CursorRecoveryRecordV2
+
+    run_id = _blocked_run(git_repo, scheduler_paths, fake_clis, monkeypatch)
+    store = SqliteSchedulerStore(scheduler_paths["db_path"])
+    artifacts = ProtectedArtifactStore(scheduler_paths["artifact_root"])
+    runner = CliRunner()
+    published = runner.invoke(
+        app,
+        ["scheduler", "cursor-retry", run_id, "--force", "--output", "json"],
+    )
+    assert published.exit_code == 0, published.output
+    successor = str(json.loads(published.output)["successor_run_id"])
+    record_path = artifacts.run_root(successor) / RECORD_REL
+    original = record_path.read_bytes()
+    record = CursorRecoveryRecordV2.model_validate_json(original)
+    carry_path = artifacts.run_root(successor) / record.budget_carry_path
+    carry_bytes = carry_path.read_bytes()
+    assert record.turn_kind == "initial"
+    assert record.reviewer.form == "not_created"
+
+    def publish(updated: CursorRecoveryRecordV2) -> None:
+        payload = updated.canonical_bytes()
+        record_path.write_bytes(payload)
+        os.chmod(record_path, 0o600)
+        digest = hashlib.sha256(payload).hexdigest()
+        with store.begin_immediate() as conn:
+            row = store.get_cursor_initial_recovery_by_successor(conn, successor_run_id=successor)
+            assert row is not None
+            intent = CursorInitialRecoveryPublicationIntentV1.model_validate_json(
+                str(row["intent_payload"])
+            )
+            updated_intent = intent.model_copy(update={"record_sha256": digest})
+            intent_bytes = updated_intent.canonical_bytes()
+            conn.execute(
+                """
+                UPDATE scheduler_cursor_initial_recoveries
+                SET record_sha256 = ?, intent_payload = ?, intent_payload_sha256 = ?
+                WHERE successor_run_id = ?
+                """,
+                (
+                    digest,
+                    intent_bytes.decode("utf-8"),
+                    hashlib.sha256(intent_bytes).hexdigest(),
+                    successor,
+                ),
+            )
+
+    tick = _tick_service(
+        git_repo,
+        scheduler_paths,
+        now=datetime(2027, 1, 1, tzinfo=UTC),
+        backend=FakeAgentProcessBackend(
+            default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
+        ),
+    )
+    for updated in (
+        record.model_copy(
+            update={
+                "submitted_max_review_iterations": record.submitted_max_review_iterations - 1,
+            }
+        ),
+        record.model_copy(
+            update={"effective_review_ceiling": record.effective_review_ceiling + 2}
+        ),
+    ):
+        assert updated.budget_carry_sha256 == record.budget_carry_sha256
+        publish(updated)
+        assert carry_path.read_bytes() == carry_bytes
+        rejected = runner.invoke(app, ["scheduler", "cursor-retry", run_id, "--force"])
+        assert rejected.exit_code == 1, rejected.output
+        assert "budget disagrees with submitted configuration" in rejected.output
+        receipt = tick.run_once()
+        assert any(
+            item.run_id == successor and item.action == "cursor_initial_recovery_evidence_invalid"
+            for item in receipt.run_receipts
+        )
+        with store.begin_read() as conn:
+            attempts = conn.execute(
+                "SELECT attempt_id FROM scheduler_attempts WHERE run_id = ?",
+                (successor,),
+            ).fetchall()
+        assert attempts == []
+
+    record_path.write_bytes(original)
+    os.chmod(record_path, 0o600)
+    publish(record)
+    accepted = runner.invoke(
+        app,
+        ["scheduler", "cursor-retry", run_id, "--force", "--output", "json"],
+    )
+    assert accepted.exit_code == 0, accepted.output
+    assert json.loads(accepted.output)["idempotent_replay"] is True
 
 
 def test_check_and_force_are_mutually_exclusive() -> None:
@@ -894,7 +1007,7 @@ def _drive_until(
 
     from ai_dev_loop.scheduler.application.tick import TickService
 
-    clock = [datetime(2026, 10, 6, tzinfo=UTC)]
+    clock = [datetime(2027, 1, 1, tzinfo=UTC)]
     store = SqliteSchedulerStore(scheduler_paths["db_path"])
     artifacts = ProtectedArtifactStore(scheduler_paths["artifact_root"])
     tick = TickService(
@@ -1023,8 +1136,40 @@ def _rewrite_ready_record(
     effective_bytes: bytes | None = None,
 ) -> None:
     path = artifacts.run_root(successor) / RECORD_REL
-    record = CursorInitialRecoveryRecordV1.model_validate_json(path.read_bytes())
-    rewritten = record.model_copy(update=record_updates)
+    raw = path.read_bytes()
+    payload = json.loads(raw)
+    if payload.get("schema_version") == 2:
+        from ai_dev_loop.scheduler.domain.cursor_recovery_v2 import CursorRecoveryRecordV2
+
+        record_v2 = CursorRecoveryRecordV2.model_validate_json(raw)
+        updates = dict(record_updates)
+        if "admitted_artifact_path" in updates or "admitted_artifact_sha256" in updates:
+            updates["admitted"] = record_v2.admitted.model_copy(
+                update={
+                    "relative_path": updates.pop(
+                        "admitted_artifact_path",
+                        record_v2.admitted.relative_path,
+                    ),
+                    "sha256": updates.pop(
+                        "admitted_artifact_sha256",
+                        record_v2.admitted.sha256,
+                    ),
+                }
+            )
+        if "base_prompt_path" in updates or "base_prompt_sha256" in updates:
+            updates["base_prompt"] = record_v2.base_prompt.model_copy(
+                update={
+                    "relative_path": updates.pop(
+                        "base_prompt_path",
+                        record_v2.base_prompt.relative_path,
+                    ),
+                    "sha256": updates.pop("base_prompt_sha256", record_v2.base_prompt.sha256),
+                }
+            )
+        rewritten = record_v2.model_copy(update=updates)
+    else:
+        record_v1 = CursorInitialRecoveryRecordV1.model_validate_json(raw)
+        rewritten = record_v1.model_copy(update=record_updates)
     payload = rewritten.canonical_bytes()
     _replace_bytes(path, payload)
     if effective_bytes is not None:
@@ -1073,10 +1218,10 @@ def test_hash_consistent_binding_changes_fail_against_durable_authority(
     successor = str(json.loads(published.output)["successor_run_id"])
     record_path = artifacts.run_root(successor) / RECORD_REL
     original_record = record_path.read_bytes()
-    record = CursorInitialRecoveryRecordV1.model_validate_json(original_record)
-    effective_path = artifacts.run_root(successor) / record.effective_prompt_path
+    record = json.loads(original_record)
+    effective_path = artifacts.run_root(successor) / record["effective_prompt_path"]
     original_effective = effective_path.read_bytes()
-    tampered_dispatch = f"{record.dispatch_id}-tampered"
+    tampered_dispatch = f"{record['dispatch_id']}-tampered"
     _rewrite_ready_record(
         store,
         artifacts,
@@ -1101,7 +1246,7 @@ def test_hash_consistent_binding_changes_fail_against_durable_authority(
         str(row["intent_payload"])
     ).model_copy(
         update={
-            "dispatch_id": record.dispatch_id,
+            "dispatch_id": record["dispatch_id"],
             "record_sha256": hashlib.sha256(original_record).hexdigest(),
         }
     )
@@ -1114,7 +1259,7 @@ def test_hash_consistent_binding_changes_fail_against_durable_authority(
             WHERE successor_run_id = ?
             """,
             (
-                record.dispatch_id,
+                record["dispatch_id"],
                 hashlib.sha256(original_record).hexdigest(),
                 restored_intent_bytes.decode("utf-8"),
                 hashlib.sha256(restored_intent_bytes).hexdigest(),
@@ -1270,7 +1415,7 @@ def test_ready_commit_and_launch_recheck_causal_evidence(
     tick = _tick_service(
         git_repo,
         scheduler_paths,
-        now=datetime(2026, 10, 6, tzinfo=UTC),
+        now=datetime(2027, 1, 1, tzinfo=UTC),
         backend=_backend(),
     )
     receipt = tick.run_once()
@@ -1310,7 +1455,7 @@ def test_published_grandchild_rejects_missing_parent_and_replays_when_intact(
     tick = _tick_service(
         git_repo,
         scheduler_paths,
-        now=datetime(2026, 10, 6, tzinfo=UTC),
+        now=datetime(2027, 1, 1, tzinfo=UTC),
         backend=_backend(),
     )
     _run_until(tick, successor, target_kind="blocked", max_ticks=20)
@@ -1417,7 +1562,7 @@ def test_literal_note_preserves_sentinels_and_separate_publishers(
     tick = _tick_service(
         git_repo,
         scheduler_paths,
-        now=datetime(2026, 10, 6, tzinfo=UTC),
+        now=datetime(2027, 1, 1, tzinfo=UTC),
         backend=_backend(),
     )
     _run_until(tick, successor, target_kind="completed", max_ticks=40)
@@ -1572,7 +1717,7 @@ def test_parent_must_be_the_immediate_source_successor(
     tick = _tick_service(
         git_repo,
         scheduler_paths,
-        now=datetime(2026, 10, 6, tzinfo=UTC),
+        now=datetime(2027, 1, 1, tzinfo=UTC),
         backend=_backend(),
     )
     _run_until(tick, first, target_kind="blocked", max_ticks=30)
@@ -1685,7 +1830,7 @@ def test_corrupt_ready_intent_isolates_tick_until_restored(
     tick = _tick_service(
         git_repo,
         scheduler_paths,
-        now=datetime(2026, 10, 6, tzinfo=UTC),
+        now=datetime(2027, 1, 1, tzinfo=UTC),
         backend=_backend(),
     )
     receipt = tick.run_once()
@@ -1775,7 +1920,7 @@ def test_abort_wins_ready_publication_race_without_installing_an_effect(
     tick = _tick_service(
         git_repo,
         scheduler_paths,
-        now=datetime(2026, 10, 6, tzinfo=UTC),
+        now=datetime(2027, 1, 1, tzinfo=UTC),
         backend=_backend(),
     )
     tick.run_once()
@@ -1817,7 +1962,7 @@ def test_abort_before_effect_claim_prevents_late_launch(
         store,
         artifacts,
         FakeGitAdmissionPort(resolved_root=str(git_repo.resolve())),
-        now_factory=lambda: datetime(2026, 10, 6, tzinfo=UTC),
+        now_factory=lambda: datetime(2027, 1, 1, tzinfo=UTC),
         tick_owner_factory=lambda: f"tick-23-2-claim-{uuid.uuid4()}",
         attempt_backend=_backend(),
         preflight_port=OkPreflightPort(),

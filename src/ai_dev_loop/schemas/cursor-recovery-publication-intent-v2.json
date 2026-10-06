@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "turn_kind",
+    "recovery_key",
+    "source_run_id",
+    "successor_run_id",
+    "failed_attempt_id",
+    "dispatch_id",
+    "status",
+    "parent_recovery_key",
+    "record_sha256",
+    "budget_carry_sha256",
+    "base_prompt_path",
+    "base_prompt_sha256",
+    "base_prompt_owner_run_id",
+    "chat_id",
+    "chat_owner_run_id",
+    "chat_artifact_path",
+    "chat_artifact_sha256",
+    "iteration",
+    "admitted_artifact_path",
+    "admitted_artifact_sha256",
+    "admitted_owner_run_id",
+    "plan_sha256",
+    "submitted_prompt_sha256",
+    "config_sha256",
+    "reviews_completed",
+    "submitted_max_review_iterations",
+    "effective_review_ceiling",
+    "reviewer_session_id",
+    "bootstrap_run_id",
+    "bootstrap_attempt_id",
+    "bootstrap_events_path",
+    "bootstrap_events_sha256",
+    "binding_run_id",
+    "binding_artifact_path",
+    "binding_artifact_sha256",
+    "fix_owner_run_id",
+    "fix_prompt_path",
+    "fix_prompt_sha256",
+    "staged_owner_run_id",
+    "staged_patch_path",
+    "staged_patch_sha256",
+    "review_owner_run_id",
+    "review_result_path",
+    "review_result_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": 2, "type": "integer"},
+    "turn_kind": {"const": "correction", "type": "string"},
+    "recovery_key": {"$ref": "#/$defs/sha256"},
+    "source_run_id": {"minLength": 1, "type": "string"},
+    "successor_run_id": {"minLength": 1, "type": "string"},
+    "failed_attempt_id": {"minLength": 1, "type": "string"},
+    "dispatch_id": {"minLength": 1, "type": "string"},
+    "status": {"enum": ["pending", "ready", "cancelled"], "type": "string"},
+    "parent_recovery_key": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "record_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "budget_carry_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "base_prompt_path": {"minLength": 1, "type": "string"},
+    "base_prompt_sha256": {"$ref": "#/$defs/sha256"},
+    "base_prompt_owner_run_id": {"minLength": 1, "type": "string"},
+    "chat_id": {"$ref": "#/$defs/uuid"},
+    "chat_owner_run_id": {"minLength": 1, "type": "string"},
+    "chat_artifact_path": {"minLength": 1, "type": "string"},
+    "chat_artifact_sha256": {"$ref": "#/$defs/sha256"},
+    "iteration": {"minimum": 1, "type": "integer"},
+    "admitted_artifact_path": {"minLength": 1, "type": "string"},
+    "admitted_artifact_sha256": {"$ref": "#/$defs/sha256"},
+    "admitted_owner_run_id": {"minLength": 1, "type": "string"},
+    "plan_sha256": {"$ref": "#/$defs/sha256"},
+    "submitted_prompt_sha256": {"$ref": "#/$defs/sha256"},
+    "config_sha256": {"$ref": "#/$defs/sha256"},
+    "reviews_completed": {"minimum": 1, "type": "integer"},
+    "submitted_max_review_iterations": {"minimum": 1, "type": "integer"},
+    "effective_review_ceiling": {"minimum": 1, "type": "integer"},
+    "reviewer_session_id": {"$ref": "#/$defs/uuid"},
+    "bootstrap_run_id": {"minLength": 1, "type": "string"},
+    "bootstrap_attempt_id": {"minLength": 1, "type": "string"},
+    "bootstrap_events_path": {"minLength": 1, "type": "string"},
+    "bootstrap_events_sha256": {"$ref": "#/$defs/sha256"},
+    "binding_run_id": {"minLength": 1, "type": "string"},
+    "binding_artifact_path": {"minLength": 1, "type": "string"},
+    "binding_artifact_sha256": {"$ref": "#/$defs/sha256"},
+    "fix_owner_run_id": {"minLength": 1, "type": "string"},
+    "fix_prompt_path": {"minLength": 1, "type": "string"},
+    "fix_prompt_sha256": {"$ref": "#/$defs/sha256"},
+    "staged_owner_run_id": {"minLength": 1, "type": "string"},
+    "staged_patch_path": {"minLength": 1, "type": "string"},
+    "staged_patch_sha256": {"$ref": "#/$defs/sha256"},
+    "review_owner_run_id": {"minLength": 1, "type": "string"},
+    "review_result_path": {"minLength": 1, "type": "string"},
+    "review_result_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "uuid": {
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "type": "string"
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "ready"}}, "required": ["status"]},
+      "then": {
+        "properties": {
+          "record_sha256": {"type": "string"},
+          "budget_carry_sha256": {"type": "string"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"status": {"enum": ["pending", "cancelled"]}}, "required": ["status"]},
+      "then": {
+        "properties": {
+          "record_sha256": {"type": "null"},
+          "budget_carry_sha256": {"type": "null"}
+        }
+      }
+    }
+  ]
+}

@@ -16,8 +16,9 @@ from ai_dev_loop.scheduler.application.contracts import (
     SchedulerEngineErrorKind,
     waiting_for_cursor_fix_safe_next_action,
 )
+from ai_dev_loop.scheduler.application.cursor_budget_carry import inherited_ceiling_for_run
 from ai_dev_loop.scheduler.application.review_budget import (
-    effective_review_ceiling_for_state,
+    effective_review_ceiling_for_run,
     find_extension_event_for_target,
     load_review_budget_extensions,
     validate_extension_target_for_exhausted_state,
@@ -78,7 +79,18 @@ class ReviewBudgetExtendService:
         with self.store.begin_read() as conn:
             state, _, _ = self.store.load_validated_snapshot(conn, run_id)
             extension_events = load_review_budget_extensions(self.store, conn, run_id)
-            effective_total = effective_review_ceiling_for_state(state, extension_events)
+            inherited_ceiling = inherited_ceiling_for_run(
+                self.store,
+                conn,
+                state,
+                self.artifacts,
+            )
+            effective_total = effective_review_ceiling_for_run(
+                self.store,
+                conn,
+                state,
+                artifacts=self.artifacts,
+            )
             if target_total < effective_total:
                 raise SchedulerEngineError(
                     SchedulerEngineErrorKind.VALIDATION,
@@ -107,6 +119,7 @@ class ReviewBudgetExtendService:
             state,
             target_total=target_total,
             extension_events=extension_events,
+            base_ceiling=inherited_ceiling,
         )
 
         exhausted = load_exhausted_review_artifacts(self.store, self.artifacts, state)
@@ -156,7 +169,12 @@ class ReviewBudgetExtendService:
         with self.store.begin_immediate() as conn:
             current, version, _ = self.store.load_validated_snapshot(conn, run_id)
             current_extensions = load_review_budget_extensions(self.store, conn, run_id)
-            current_effective = effective_review_ceiling_for_state(current, current_extensions)
+            current_effective = effective_review_ceiling_for_run(
+                self.store,
+                conn,
+                current,
+                artifacts=self.artifacts,
+            )
             if target_total <= current_effective:
                 replay = self._replay_exact_target(
                     run_id,

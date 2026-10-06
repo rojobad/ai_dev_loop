@@ -135,8 +135,14 @@ def load_review_budget_extensions(
 def effective_review_ceiling_for_state(
     state: SchedulerState,
     extension_events: Iterable[ReviewBudgetExtendedEvent],
+    *,
+    base_ceiling: int | None = None,
 ) -> int:
-    base = state.context.workflow.max_review_iterations
+    base = (
+        state.context.workflow.max_review_iterations
+        if base_ceiling is None
+        else base_ceiling
+    )
     return fold_review_budget_extensions(base, extension_events)
 
 
@@ -144,9 +150,20 @@ def effective_review_ceiling_for_run(
     store: SqliteSchedulerStore,
     conn: sqlite3.Connection,
     state: SchedulerState,
+    *,
+    artifacts: object | None = None,
 ) -> int:
+    from ai_dev_loop.scheduler.application.cursor_budget_carry import inherited_ceiling_for_run
+    from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
+
+    artifact_store = artifacts if isinstance(artifacts, ProtectedArtifactStore) else None
+    inherited = inherited_ceiling_for_run(store, conn, state, artifact_store)
     extensions = load_review_budget_extensions(store, conn, state.run_id)
-    return effective_review_ceiling_for_state(state, extensions)
+    return effective_review_ceiling_for_state(
+        state,
+        extensions,
+        base_ceiling=inherited,
+    )
 
 
 def validate_extension_target_for_exhausted_state(
@@ -154,8 +171,13 @@ def validate_extension_target_for_exhausted_state(
     *,
     target_total: int,
     extension_events: Iterable[ReviewBudgetExtendedEvent],
+    base_ceiling: int | None = None,
 ) -> int:
-    effective_total = effective_review_ceiling_for_state(state, extension_events)
+    effective_total = effective_review_ceiling_for_state(
+        state,
+        extension_events,
+        base_ceiling=base_ceiling,
+    )
     if state.codex.review_iteration != state.codex.reviews_completed:
         raise SchedulerEngineError(
             SchedulerEngineErrorKind.VALIDATION,
@@ -206,15 +228,23 @@ def review_budget_projection(
     extension_events: Iterable[ReviewBudgetExtendedEvent],
     *,
     ledger_reviews_completed: int | None = None,
+    base_ceiling: int | None = None,
+    inherited_reviews_completed: int | None = None,
 ) -> tuple[int, int, int | None]:
     from ai_dev_loop.scheduler.application.contracts import review_budget_from_state
 
     base = state.context.workflow.max_review_iterations
-    effective = effective_review_ceiling_for_state(state, extension_events)
+    effective = effective_review_ceiling_for_state(
+        state,
+        extension_events,
+        base_ceiling=base_ceiling,
+    )
     reviews_completed, _ = review_budget_from_state(
         state,
         ledger_reviews_completed=ledger_reviews_completed,
         effective_max_review_iterations=effective,
     )
+    if inherited_reviews_completed is not None and getattr(state, "codex", None) is None:
+        reviews_completed = inherited_reviews_completed + (ledger_reviews_completed or 0)
     submitted_max = base if effective > base else None
     return reviews_completed, effective, submitted_max

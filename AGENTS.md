@@ -66,10 +66,10 @@ become a general-purpose controller of every worktree change.
 
 - Use the durable state and safe next action: `scheduler cursor-retry` for an
   eligible terminated Cursor timeout, `scheduler cursor-retry --force` for an
-  eligible failed initial standalone Cursor turn, `scheduler review retry` for
-  eligible review failures/capacity waits, and `scheduler extend` for an
-  explicitly increased review ceiling after `max_iterations_reached`.
-  `--force` does not recover corrections or sequence runs.
+  eligible failed standalone Cursor implementation or correction turn,
+  `scheduler review retry` for eligible review failures/capacity waits, and
+  `scheduler extend` for an explicitly increased review ceiling after
+  `max_iterations_reached`. `--force` does not recover sequence runs.
 - Same-reviewer recovery preserves the authenticated reviewer binding. An
   eligible blocked run may have a successor; the blocked source is immutable.
   `scheduler extend` is a separate explicit same-run transition and does not

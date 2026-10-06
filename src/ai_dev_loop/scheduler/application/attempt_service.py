@@ -117,12 +117,15 @@ def _initial_recovery_prompt_applies(
 ) -> bool:
     """Bind the recovery prompt only for its authorized initial retry."""
 
+    from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
+        InitialRecoveryAuthority,
+    )
     from ai_dev_loop.scheduler.domain.cursor_initial_recovery import (
         CursorInitialRecoveryRecordV1,
     )
 
-    if not isinstance(recovery, CursorInitialRecoveryRecordV1):
-        raise ValidationError("initial recovery launch record is not the v1 record")
+    if not isinstance(recovery, (CursorInitialRecoveryRecordV1, InitialRecoveryAuthority)):
+        raise ValidationError("initial recovery launch record is not an initial recovery record")
     if recovery.iteration != iteration:
         return False
     continuation = state.cursor.continuation_envelope_path
@@ -130,6 +133,27 @@ def _initial_recovery_prompt_applies(
         return False
     if recovery.chat_id != state.cursor.chat_id:
         raise ValidationError("initial recovery record disagrees with the cursor checkpoint")
+    return True
+
+
+def _correction_recovery_prompt_applies(
+    state: PreflightCompleteState | CursorReadyState | WaitingUsageLimitState,
+    recovery: object,
+    *,
+    iteration: int,
+) -> bool:
+    """Bind the recovered correction envelope only for its authorized retry."""
+
+    from ai_dev_loop.scheduler.domain.cursor_recovery_v2 import CursorRecoveryRecordV2
+
+    if not isinstance(recovery, CursorRecoveryRecordV2):
+        raise ValidationError("correction recovery launch record is not the v2 record")
+    if recovery.turn_kind != "correction" or recovery.iteration != iteration:
+        return False
+    if recovery.chat_id != state.cursor.chat_id:
+        raise ValidationError("correction recovery record disagrees with the cursor checkpoint")
+    if recovery.raw_fix is None or recovery.staged_patch is None:
+        raise ValidationError("correction recovery record is missing fix or staged evidence")
     return True
 
 
@@ -401,7 +425,15 @@ class AttemptService:
         )
 
         try:
-            authenticated_initial_recovery_launch(self.store, self.artifacts, conn, run_id)
+            from ai_dev_loop.scheduler.application.cursor_correction_recovery import (
+                authenticated_correction_launch,
+            )
+
+            if (
+                authenticated_initial_recovery_launch(self.store, self.artifacts, conn, run_id)
+                is None
+            ):
+                authenticated_correction_launch(self.store, self.artifacts, conn, run_id)
         except (SchedulerEngineError, ModelValidationError) as exc:
             if (
                 self.store.get_cursor_initial_recovery_by_successor(conn, successor_run_id=run_id)
@@ -632,7 +664,12 @@ class AttemptService:
         )
         codex = context.codex
         with self.store.begin_read() as conn:
-            max_reviews = effective_review_ceiling_for_run(self.store, conn, state)
+            max_reviews = effective_review_ceiling_for_run(
+                self.store,
+                conn,
+                state,
+                artifacts=self.artifacts,
+            )
         binding: dict[str, object] = {
             "effect_kind": effect_kind,
             "repository_root": identity.root,
@@ -777,6 +814,64 @@ class AttemptService:
                 binding["prompt_sha256"] = recovery.effective_prompt_sha256
                 binding["chat_id"] = recovery.chat_id
                 binding["iteration"] = recovery.iteration
+            else:
+                from ai_dev_loop.scheduler.application.cursor_correction_recovery import (
+                    authenticated_correction_launch,
+                )
+
+                with self.store.begin_read() as conn:
+                    correction = authenticated_correction_launch(
+                        self.store,
+                        self.artifacts,
+                        conn,
+                        run_id,
+                    )
+                if correction is not None and _correction_recovery_prompt_applies(
+                    state,
+                    correction,
+                    iteration=iteration,
+                ):
+                    assert correction.raw_fix is not None
+                    assert correction.staged_patch is not None
+                    prompt_path = correction.effective_prompt_path
+                    prompt_sha = correction.effective_prompt_sha256
+                    continuation = state.cursor.continuation_envelope_path
+                    if continuation and continuation != correction.effective_prompt_path:
+                        if not state.cursor.continuation_envelope_sha256:
+                            raise ValidationError(
+                                "usage-limit continuation is missing its digest"
+                            )
+                        wrapped = self.artifacts.read_verified_bytes(
+                            run_id,
+                            continuation,
+                            expected_sha256=state.cursor.continuation_envelope_sha256,
+                        )
+                        recovered = self.artifacts.read_verified_bytes(
+                            run_id,
+                            correction.effective_prompt_path,
+                            expected_sha256=correction.effective_prompt_sha256,
+                        )
+                        if recovered not in wrapped:
+                            raise ValidationError(
+                                "usage-limit continuation dropped the recovered correction envelope"
+                            )
+                        prompt_path = continuation
+                        prompt_sha = state.cursor.continuation_envelope_sha256
+                    binding.update(
+                        {
+                            "prompt_path": prompt_path,
+                            "prompt_sha256": prompt_sha,
+                            "chat_id": correction.chat_id,
+                            "iteration": correction.iteration,
+                            "fix_prompt_path": correction.raw_fix.relative_path,
+                            "fix_prompt_sha256": correction.raw_fix.sha256,
+                            "staged_patch_path": correction.staged_patch.relative_path,
+                            "staged_patch_sha256": correction.staged_patch.sha256,
+                            "cursor_recovery_base_prompt_path": correction.base_prompt.relative_path,
+                            "cursor_recovery_base_prompt_sha256": correction.base_prompt.sha256,
+                            "cursor_recovery_record_sha256": correction.canonical_sha256(),
+                        }
+                    )
         if (
             state.cursor.usage_limit_fingerprint_path
             and state.cursor.usage_limit_fingerprint_sha256

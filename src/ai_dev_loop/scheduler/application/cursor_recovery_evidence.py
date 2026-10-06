@@ -6,9 +6,9 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 
-from pydantic import Field, field_validator
+from pydantic import Field, ValidationError, field_validator
 
 from ai_dev_loop.fresh_codex_reviewer import classify_bootstrap_session_id_from_text
 from ai_dev_loop.scheduler.application.attempt_backend import TerminationClass
@@ -29,6 +29,7 @@ from ai_dev_loop.scheduler.application.cursor_evidence import (
     verify_correction_envelope_binding,
     verify_cursor_invocation_evidence,
 )
+from ai_dev_loop.scheduler.application.recovery_ancestry import RecoveryAncestorEdge
 from ai_dev_loop.scheduler.application.review_budget import (
     load_review_budget_extensions,
     review_budget_projection,
@@ -44,7 +45,10 @@ from ai_dev_loop.scheduler.domain.codex_contract import (
     RESUME_CODEX_REVIEW_EFFECT_KIND,
 )
 from ai_dev_loop.scheduler.domain.common import canonical_json_sha256
-from ai_dev_loop.scheduler.domain.cursor_contract import RUN_CURSOR_TURN_EFFECT_KIND
+from ai_dev_loop.scheduler.domain.cursor_contract import (
+    RUN_CURSOR_TURN_EFFECT_ID,
+    RUN_CURSOR_TURN_EFFECT_KIND,
+)
 from ai_dev_loop.scheduler.domain.events import (
     ATTEMPT_COMPLETED_EVENT_KIND,
     CODEX_REVIEW_COMPLETED_EVENT_KIND,
@@ -52,6 +56,7 @@ from ai_dev_loop.scheduler.domain.events import (
     CURSOR_CHAT_CREATED_EVENT_KIND,
     CURSOR_TURN_BLOCKED_EVENT_KIND,
     CURSOR_TURN_COMPLETED_EVENT_KIND,
+    CURSOR_USAGE_LIMIT_DETECTED_EVENT_KIND,
     STAGING_COMPLETED_EVENT_KIND,
     WAITING_FOR_CURSOR_FIX_EVENT_KIND,
     AttemptCompletedEvent,
@@ -59,6 +64,7 @@ from ai_dev_loop.scheduler.domain.events import (
     CodexReviewerBoundEvent,
     CursorChatCreatedEvent,
     CursorTurnBlockedEvent,
+    CursorUsageLimitDetectedEvent,
     ReviewBudgetExtendedEvent,
     StagingCompletedEvent,
     WaitingForCursorFixEnteredEvent,
@@ -78,6 +84,7 @@ from ai_dev_loop.scheduler.domain.state import (
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactError
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import (
     ATTEMPT_STATUS_FAILED,
+    TIMER_STATUS_FIRED,
     SqliteSchedulerStore,
 )
 
@@ -162,12 +169,45 @@ class CursorRecoveryEvidenceBundle:
     chat_owner_run_id: str
     chat_artifact_path: str
     chat_artifact_sha256: str
+    submitted_max_review_iterations: int = 0
+    fix_owner_run_id: str | None = None
+    fix_prompt_path: str | None = None
+    fix_prompt_sha256: str | None = None
+    staged_owner_run_id: str | None = None
+    staged_patch_path: str | None = None
+    staged_patch_sha256: str | None = None
+    review_result_owner_run_id: str | None = None
+    review_result_path: str | None = None
+    review_result_sha256: str | None = None
+    reviewer_session_id: str | None = None
+    reviewer_binding_run_id: str | None = None
+    reviewer_bootstrap_run_id: str | None = None
+    binding_artifact_path: str | None = None
+    binding_artifact_sha256: str | None = None
+    bootstrap_attempt_id: str | None = None
+    bootstrap_events_path: str | None = None
+    bootstrap_events_sha256: str | None = None
+    admitted_owner_run_id: str | None = None
+    admitted_artifact_path: str | None = None
+    admitted_artifact_sha256: str | None = None
 
 
 @dataclass(frozen=True)
 class CursorRecoveryAnalysisResult:
     receipt: CursorRecoveryCheckReceipt
     evidence: CursorRecoveryEvidenceBundle | None = None
+
+
+@dataclass(frozen=True)
+class ReviewerBootstrapProof:
+    session_id: str
+    binding_run_id: str
+    bootstrap_run_id: str
+    bootstrap_attempt_id: str
+    bootstrap_events_path: str
+    bootstrap_events_sha256: str
+    binding_artifact_path: str
+    binding_artifact_sha256: str
 
 
 @dataclass(frozen=True)
@@ -224,6 +264,8 @@ def _load_all_verified_events(
 ) -> tuple[list[sqlite3.Row], bool]:
     offset = 0
     collected: list[sqlite3.Row] = []
+    previous_sequence: int | None = None
+    expecting_more = False
     while True:
         page, has_more = store.list_events_for_run_offset(
             conn,
@@ -232,12 +274,17 @@ def _load_all_verified_events(
             limit=page_size,
         )
         if not page:
-            return collected, True
+            return collected, not expecting_more
         for row in page:
             _verify_event_row(row)
+            sequence = int(row["sequence"])
+            if previous_sequence is not None and sequence <= previous_sequence:
+                return collected, False
+            previous_sequence = sequence
         collected.extend(page)
         if not has_more:
             return collected, True
+        expecting_more = True
         offset += len(page)
 
 
@@ -339,8 +386,636 @@ def resolve_decisive_failed_cursor_attempt(
     if not candidates:
         return None, "no_failed_attempt_precedes_block", None
     if len(candidates) > 1:
-        return None, "ambiguous_failed_attempts", None
+        return None, "ambiguous_failed_attempts", block_sequence
     return candidates[0], "ok", block_sequence
+
+
+def _correction_recovery_row(
+    store: SqliteSchedulerStore,
+    conn: sqlite3.Connection,
+    run_id: str,
+) -> sqlite3.Row | None:
+    """Return a correction-recovery row, or none when that relation table is absent.
+
+    Historical captures predate the table. Absence is not a record, so ambiguous
+    cursor histories stay unresolved.
+    """
+
+    try:
+        return store.get_cursor_initial_recovery_by_successor(conn, successor_run_id=run_id)
+    except sqlite3.OperationalError as exc:
+        if "no such table" not in str(exc):
+            raise
+        return None
+
+
+def _attempt_completed_sequence(events: list[sqlite3.Row], attempt_id: str) -> int | None:
+    for row in events:
+        if str(row["event_kind"]) != ATTEMPT_COMPLETED_EVENT_KIND:
+            continue
+        parsed = _parse_event_row(row)
+        if isinstance(parsed, AttemptCompletedEvent) and parsed.attempt_id == attempt_id:
+            return int(row["sequence"])
+    return None
+
+
+def _cursor_attempt_outcome(
+    store: SqliteSchedulerStore,
+    artifacts: _ArtifactReader,
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    attempt_id: str,
+) -> tuple[dict[str, object], dict[str, object]]:
+    attempt = store.get_attempt_by_id(conn, attempt_id)
+    if attempt is None or str(attempt["run_id"]) != run_id:
+        raise CursorEvidenceError("usage-limit continuation attempt is missing")
+    dispatch_id = str(attempt["dispatch_id"])
+    dispatch = store.get_effect_by_dispatch_id(conn, dispatch_id)
+    if dispatch is None:
+        raise CursorEvidenceError("usage-limit continuation dispatch is missing")
+    run_root = artifacts.run_root(run_id)
+    unit_identity = str(attempt["unit_identity"])
+    exit_code = attempt["exit_code"]
+    observed_exit = int(exit_code) if exit_code is not None else None
+    observed_termination: TerminationClass | None = None
+    termination_raw = attempt["termination_class"]
+    if termination_raw is not None:
+        observed_termination = TerminationClass(str(termination_raw))
+    envelope_sha = attempt["completion_envelope_sha256"]
+    binding = verify_cursor_invocation_evidence(
+        run_root,
+        attempt_id=attempt_id,
+        run_id=run_id,
+        dispatch_id=dispatch_id,
+        unit_identity=unit_identity,
+        launch_nonce=str(attempt["launch_nonce"]),
+        launch_intent_sha256=str(attempt["launch_intent_sha256"]),
+        effect_kind=str(dispatch["effect_kind"]),
+    )
+    outcome = load_authenticated_cursor_outcome(
+        run_root,
+        attempt_id=attempt_id,
+        unit_identity=unit_identity,
+        result_rel=str(attempt["result_artifact_path"]),
+        stdout_rel=str(attempt["stdout_artifact_path"]),
+        stderr_rel=str(attempt["stderr_artifact_path"]),
+        observed_exit_code=observed_exit,
+        observed_termination=observed_termination,
+        expected_envelope_sha256=str(envelope_sha) if envelope_sha else None,
+        expected_dispatch_id=dispatch_id,
+        expected_effect_kind=str(dispatch["effect_kind"]),
+    )
+    return binding, outcome
+
+
+def _usage_limit_transition(
+    store: SqliteSchedulerStore,
+    artifacts: _ArtifactReader,
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    events: list[sqlite3.Row],
+    predecessor_id: str,
+    successor_id: str,
+) -> CursorUsageLimitDetectedEvent | None:
+    """Return the usage-limit event that durably scheduled the successor attempt."""
+
+    predecessor_sequence = _attempt_completed_sequence(events, predecessor_id)
+    successor_sequence = _attempt_completed_sequence(events, successor_id)
+    if (
+        predecessor_sequence is None
+        or successor_sequence is None
+        or predecessor_sequence >= successor_sequence
+    ):
+        return None
+    detected: list[tuple[sqlite3.Row, CursorUsageLimitDetectedEvent]] = []
+    for row in events:
+        sequence = int(row["sequence"])
+        if sequence <= predecessor_sequence or sequence >= successor_sequence:
+            continue
+        if str(row["event_kind"]) != CURSOR_USAGE_LIMIT_DETECTED_EVENT_KIND:
+            continue
+        parsed = _parse_event_row(row)
+        if isinstance(parsed, CursorUsageLimitDetectedEvent) and parsed.run_id == run_id:
+            detected.append((row, parsed))
+    if len(detected) != 1:
+        return None
+    event_row, event = detected[0]
+    timers = conn.execute(
+        """
+        SELECT * FROM scheduler_timers
+        WHERE source_event_id = ? AND run_id = ? AND timer_kind = 'retry_due'
+        """,
+        (str(event_row["event_id"]), run_id),
+    ).fetchall()
+    if len(timers) != 1:
+        return None
+    timer = timers[0]
+    fired_event_id = timer["fired_event_id"]
+    if str(timer["status"]) != TIMER_STATUS_FIRED or fired_event_id is None:
+        return None
+    if str(timer["target_effect_id"]) != RUN_CURSOR_TURN_EFFECT_ID:
+        return None
+    effects = conn.execute(
+        """
+        SELECT * FROM scheduler_effects
+        WHERE source_event_id = ? AND run_id = ? AND effect_kind = ?
+        """,
+        (str(fired_event_id), run_id, RUN_CURSOR_TURN_EFFECT_KIND),
+    ).fetchall()
+    if len(effects) != 1:
+        return None
+    successor = store.get_attempt_by_id(conn, successor_id)
+    if successor is None or str(successor["dispatch_id"]) != str(effects[0]["dispatch_id"]):
+        return None
+    predecessor = store.get_attempt_by_id(conn, predecessor_id)
+    if predecessor is None or not int(predecessor["ingested"]):
+        return None
+    _predecessor_binding, predecessor_outcome = _cursor_attempt_outcome(
+        store,
+        artifacts,
+        conn,
+        run_id=run_id,
+        attempt_id=predecessor_id,
+    )
+    if predecessor_outcome.get("failure_code") != "cursor_usage_limit":
+        return None
+    successor_binding, _successor_outcome = _cursor_attempt_outcome(
+        store,
+        artifacts,
+        conn,
+        run_id=run_id,
+        attempt_id=successor_id,
+    )
+    prompt_path = str(successor_binding.get("prompt_path", "")).strip()
+    prompt_sha = str(successor_binding.get("prompt_sha256", "")).strip()
+    if (
+        prompt_path != event.continuation_envelope_path
+        or prompt_sha != event.continuation_envelope_sha256
+    ):
+        return None
+    return event
+
+
+def _usage_limit_candidate_chain(
+    store: SqliteSchedulerStore,
+    artifacts: _ArtifactReader,
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    events: list[sqlite3.Row],
+) -> tuple[list[str], CursorUsageLimitDetectedEvent, int] | None:
+    """Return one timer-linked usage-limit chain and its non-limit terminal attempt."""
+
+    _attempt_id, detail, block_sequence = resolve_decisive_failed_cursor_attempt(
+        store,
+        conn,
+        run_id,
+        events,
+    )
+    if detail != "ambiguous_failed_attempts" or block_sequence is None:
+        return None
+    last_turn_completed_sequence = 0
+    pending_failed: list[tuple[int, str]] = []
+    for row in events:
+        sequence = int(row["sequence"])
+        if sequence >= block_sequence:
+            break
+        kind = str(row["event_kind"])
+        if kind == CURSOR_TURN_COMPLETED_EVENT_KIND:
+            last_turn_completed_sequence = sequence
+            pending_failed = []
+            continue
+        if kind != ATTEMPT_COMPLETED_EVENT_KIND:
+            continue
+        parsed = _parse_event_row(row)
+        if isinstance(parsed, AttemptCompletedEvent) and _attempt_row_matches_completion(
+            store,
+            conn,
+            run_id,
+            parsed,
+        ):
+            pending_failed.append((sequence, parsed.attempt_id))
+    candidates = [
+        attempt_id
+        for sequence, attempt_id in pending_failed
+        if sequence > last_turn_completed_sequence
+    ]
+    if len(candidates) < 2:
+        return None
+    last_event: CursorUsageLimitDetectedEvent | None = None
+    for predecessor_id, successor_id in zip(candidates, candidates[1:], strict=False):
+        last_event = _usage_limit_transition(
+            store,
+            artifacts,
+            conn,
+            run_id=run_id,
+            events=events,
+            predecessor_id=predecessor_id,
+            successor_id=successor_id,
+        )
+        if last_event is None:
+            return None
+    terminal_id = candidates[-1]
+    _terminal_binding, terminal_outcome = _cursor_attempt_outcome(
+        store,
+        artifacts,
+        conn,
+        run_id=run_id,
+        attempt_id=terminal_id,
+    )
+    if terminal_outcome.get("failure_code") == "cursor_usage_limit":
+        return None
+    assert last_event is not None
+    return candidates, last_event, last_turn_completed_sequence
+
+
+def _authenticated_recovery_prompt(
+    artifacts: _ArtifactReader,
+    *,
+    run_id: str,
+    record_path: str,
+    record_sha: str,
+) -> tuple[str, str, bytes, bytes | None]:
+    """Authenticate a ready recovery record and return its prompt authority.
+
+    The last item is the raw fix when the record is a correction. Authentication
+    failure raises; it is not treated as a different turn.
+    """
+
+    from ai_dev_loop.scheduler.domain.cursor_initial_recovery import (
+        RECORD_REL,
+        CursorInitialRecoveryRecordV1,
+    )
+    from ai_dev_loop.scheduler.domain.cursor_recovery_v2 import (
+        CORRECTION_RECORD_REL,
+        CursorRecoveryRecordV2,
+    )
+
+    if not record_sha or record_path not in {CORRECTION_RECORD_REL, RECORD_REL}:
+        raise CursorEvidenceError("recovery record failed authentication")
+    try:
+        payload = artifacts.read_verified_bytes(
+            run_id,
+            record_path,
+            expected_sha256=record_sha,
+        )
+        decoded = json.loads(payload)
+        if not isinstance(decoded, dict):
+            raise CursorEvidenceError("recovery record failed authentication")
+        schema = decoded.get("schema_version")
+        if record_path == CORRECTION_RECORD_REL or schema == 2:
+            record = CursorRecoveryRecordV2.model_validate(decoded)
+            effective_path = record.effective_prompt_path
+            effective_sha = record.effective_prompt_sha256
+            raw_fix = record.raw_fix if record.turn_kind == "correction" else None
+        elif schema == 1:
+            initial = CursorInitialRecoveryRecordV1.model_validate(decoded)
+            effective_path = initial.effective_prompt_path
+            effective_sha = initial.effective_prompt_sha256
+            raw_fix = None
+        else:
+            raise CursorEvidenceError("recovery record failed authentication")
+        effective = artifacts.read_verified_bytes(
+            run_id,
+            effective_path,
+            expected_sha256=effective_sha,
+        )
+        raw_fix_bytes = None
+        if raw_fix is not None:
+            raw_fix_bytes = artifacts.read_verified_bytes(
+                raw_fix.owner_run_id,
+                raw_fix.relative_path,
+                expected_sha256=raw_fix.sha256,
+            )
+    except (
+        CursorEvidenceError,
+        ProtectedArtifactError,
+        OSError,
+        ValidationError,
+        UnicodeError,
+        json.JSONDecodeError,
+    ) as exc:
+        raise CursorEvidenceError("recovery record failed authentication") from exc
+    return effective_path, effective_sha, effective, raw_fix_bytes
+
+
+def _verified_initial_recovery_authority(
+    store: SqliteSchedulerStore,
+    artifacts: _ArtifactReader,
+    row: sqlite3.Row,
+) -> tuple[str, str]:
+    """Apply the same initial record authority used by force replay.
+
+    Schema-1 publication intents still carry v2 initial records. Intent version
+    does not skip budget, carry, or parent checks. A valid later correction may
+    continue only after this authority succeeds.
+    """
+
+    from ai_dev_loop.scheduler.application.cursor_initial_recovery import _verified_record
+    from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
+    from ai_dev_loop.scheduler.infrastructure.readonly_protected_artifacts import (
+        ReadOnlyProtectedArtifactStore,
+    )
+
+    if not isinstance(artifacts, (ProtectedArtifactStore, ReadOnlyProtectedArtifactStore)):
+        raise CursorEvidenceError("recovery record failed authentication")
+    authority = _verified_record(store, cast(ProtectedArtifactStore, artifacts), row)
+    return authority.effective_prompt_path, authority.effective_prompt_sha256
+
+
+def _require_initial_ancestor_authority(
+    store: SqliteSchedulerStore,
+    artifacts: _ArtifactReader,
+    run_id: str,
+) -> None:
+    """Authenticate required initial ancestors before any causal classification.
+
+    One ordinary failed attempt never reaches usage-limit attribution. The
+    ancestor check still runs, including when the record belongs to an earlier
+    turn and its publication intent remains schema 1.
+    """
+
+    from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
+        authenticate_required_initial_ancestors,
+    )
+    from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
+    from ai_dev_loop.scheduler.infrastructure.readonly_protected_artifacts import (
+        ReadOnlyProtectedArtifactStore,
+    )
+
+    if not isinstance(artifacts, (ProtectedArtifactStore, ReadOnlyProtectedArtifactStore)):
+        return
+    authenticate_required_initial_ancestors(
+        store,
+        cast(ProtectedArtifactStore, artifacts),
+        run_id,
+    )
+
+
+def _recovery_record_attributes_continuation(
+    store: SqliteSchedulerStore,
+    artifacts: _ArtifactReader,
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    first_attempt_id: str,
+    continuation: bytes,
+) -> bool | None:
+    """Return whether the ready recovery record owns this continuation.
+
+    True means an authenticated correction record launched this chain and its
+    effective prompt and raw fix are inside the continuation. False means that
+    governing record does not prove the continuation. None means there is no
+    ready record, or a fully authenticated record belongs to another logical
+    turn. Initial authority, including v2 budget and carry, is required first.
+    """
+
+    row = _correction_recovery_row(store, conn, run_id)
+    if row is None or str(row["status"]) != "ready":
+        return None
+    record_path = str(row["record_artifact_path"] or "")
+    from ai_dev_loop.scheduler.domain.cursor_initial_recovery import RECORD_REL
+
+    if record_path == RECORD_REL:
+        effective_path, effective_sha = _verified_initial_recovery_authority(
+            store,
+            artifacts,
+            row,
+        )
+        effective = artifacts.read_verified_bytes(
+            run_id,
+            effective_path,
+            expected_sha256=effective_sha,
+        )
+        raw_fix = None
+    else:
+        effective_path, effective_sha, effective, raw_fix = _authenticated_recovery_prompt(
+            artifacts,
+            run_id=run_id,
+            record_path=record_path,
+            record_sha=str(row["record_sha256"] or ""),
+        )
+    binding, _outcome = _cursor_attempt_outcome(
+        store,
+        artifacts,
+        conn,
+        run_id=run_id,
+        attempt_id=first_attempt_id,
+    )
+    prompt_path = str(binding.get("prompt_path", "")).strip()
+    prompt_sha = str(binding.get("prompt_sha256", "")).strip()
+    if prompt_path != effective_path or prompt_sha != effective_sha:
+        return None
+    if raw_fix is None:
+        return False
+    return effective in continuation and raw_fix in effective
+
+
+def _original_correction_checkpoint_attributes(
+    store: SqliteSchedulerStore,
+    artifacts: _ArtifactReader,
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    events: list[sqlite3.Row],
+    candidates: list[str],
+    last_turn_completed_sequence: int,
+    continuation: bytes,
+) -> bool:
+    """Bind the chain to the correction checkpoint that scheduled its first attempt."""
+
+    first_id = candidates[0]
+    first_sequence = _attempt_completed_sequence(events, first_id)
+    attempt = store.get_attempt_by_id(conn, first_id)
+    if attempt is None or first_sequence is None:
+        return False
+    dispatch = store.get_effect_by_dispatch_id(conn, str(attempt["dispatch_id"]))
+    if dispatch is None or dispatch["source_event_id"] is None:
+        return False
+    source_event_id = str(dispatch["source_event_id"])
+    checkpoints = [
+        (int(row["sequence"]), parsed)
+        for row in events
+        if str(row["event_id"]) == source_event_id
+        and isinstance(
+            parsed := _parse_event_row(row),
+            (WaitingForCursorFixEnteredEvent, ReviewBudgetExtendedEvent),
+        )
+        and parsed.run_id == run_id
+    ]
+    if len(checkpoints) != 1:
+        return False
+    sequence, checkpoint = checkpoints[0]
+    if sequence <= last_turn_completed_sequence or sequence >= first_sequence:
+        return False
+    binding, outcome = _cursor_attempt_outcome(
+        store,
+        artifacts,
+        conn,
+        run_id=run_id,
+        attempt_id=first_id,
+    )
+    prompt_path = str(binding.get("prompt_path", "")).strip()
+    prompt_sha = str(binding.get("prompt_sha256", "")).strip()
+    if (
+        prompt_path != checkpoint.correction_envelope_path
+        or prompt_sha != checkpoint.correction_envelope_sha256
+        or outcome.get("failure_code") != "cursor_usage_limit"
+    ):
+        return False
+    envelope = artifacts.read_verified_bytes(
+        run_id,
+        checkpoint.correction_envelope_path,
+        expected_sha256=checkpoint.correction_envelope_sha256,
+    )
+    raw_fix = artifacts.read_verified_bytes(
+        run_id,
+        checkpoint.fix_prompt_path,
+        expected_sha256=checkpoint.fix_prompt_sha256,
+    )
+    return envelope in continuation and raw_fix in envelope
+
+
+def _attributed_usage_limit_continuation_attempt(
+    store: SqliteSchedulerStore,
+    artifacts: _ArtifactReader,
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    events: list[sqlite3.Row],
+) -> str | None:
+    """Select the terminal failure of one usage-limit chain attributed to a correction.
+
+    A ready record owns the chain only when it launched the first attempt.
+    An authenticated record for an earlier turn does not. The current
+    waiting-for-fix or budget-extension checkpoint can then own the chain.
+    A record that fails authentication is rejected instead of bypassed.
+    """
+
+    chain = _usage_limit_candidate_chain(
+        store,
+        artifacts,
+        conn,
+        run_id=run_id,
+        events=events,
+    )
+    if chain is None:
+        return None
+    candidates, last_event, last_turn_completed_sequence = chain
+    continuation = artifacts.read_verified_bytes(
+        run_id,
+        last_event.continuation_envelope_path,
+        expected_sha256=last_event.continuation_envelope_sha256,
+    )
+    recorded = _recovery_record_attributes_continuation(
+        store,
+        artifacts,
+        conn,
+        run_id=run_id,
+        first_attempt_id=candidates[0],
+        continuation=continuation,
+    )
+    if recorded is True:
+        return candidates[-1]
+    if recorded is False:
+        return None
+    if _original_correction_checkpoint_attributes(
+        store,
+        artifacts,
+        conn,
+        run_id=run_id,
+        events=events,
+        candidates=candidates,
+        last_turn_completed_sequence=last_turn_completed_sequence,
+        continuation=continuation,
+    ):
+        return candidates[-1]
+    return None
+
+
+def assert_successor_reviewer_continuity(
+    store: SqliteSchedulerStore,
+    conn: sqlite3.Connection,
+    successor_run_id: str,
+    evidence: CursorRecoveryEvidenceBundle,
+) -> None:
+    """Require the successor checkpoint or its own bound event to match derived B."""
+
+    state, _, _ = store.load_validated_snapshot(conn, successor_run_id)
+    codex = getattr(state, "codex", None)
+    session = getattr(codex, "reviewer_session_id", None) if codex is not None else None
+    if session:
+        if (
+            session != evidence.reviewer_session_id
+            or getattr(codex, "binding_artifact_path", None) != evidence.binding_artifact_path
+            or getattr(codex, "binding_artifact_sha256", None) != evidence.binding_artifact_sha256
+        ):
+            raise CursorEvidenceError("successor checkpoint lost reviewer continuity")
+        return
+    events, complete = _load_all_verified_events(store, conn, successor_run_id)
+    if not complete:
+        raise CursorEvidenceError("successor checkpoint lost reviewer continuity")
+    bound = [
+        parsed
+        for row in events
+        if str(row["event_kind"]) == CODEX_REVIEWER_BOUND_EVENT_KIND
+        and isinstance(parsed := _parse_event_row(row), CodexReviewerBoundEvent)
+        and parsed.run_id == successor_run_id
+    ]
+    expected = evidence.reviewer_session_id or ""
+    if (
+        len(bound) != 1
+        or not expected
+        or bound[0].reviewer_session_id_prefix != expected[:8]
+        or bound[0].binding_artifact_path != evidence.binding_artifact_path
+        or bound[0].binding_artifact_sha256 != evidence.binding_artifact_sha256
+    ):
+        raise CursorEvidenceError("successor checkpoint lost reviewer continuity")
+
+
+def resolve_authenticated_decisive_attempt(
+    store: SqliteSchedulerStore,
+    artifacts: _ArtifactReader,
+    conn: sqlite3.Connection,
+    run_id: str,
+    *,
+    event_page_size: int = EVENT_PAGE_SIZE,
+) -> tuple[str | None, str, int | None]:
+    """Resolve one failed cursor attempt from the complete authenticated event history."""
+
+    from ai_dev_loop.scheduler.application.contracts import SchedulerEngineError
+
+    try:
+        events, complete = _load_all_verified_events(
+            store,
+            conn,
+            run_id,
+            page_size=event_page_size,
+        )
+    except SchedulerEngineError as exc:
+        raise CursorEvidenceError("event page failed authentication") from exc
+    if not complete:
+        raise CursorEvidenceError("event history pagination did not complete")
+    attempt_id, detail, block_sequence = resolve_decisive_failed_cursor_attempt(
+        store,
+        conn,
+        run_id,
+        events,
+    )
+    if attempt_id is not None or detail != "ambiguous_failed_attempts":
+        return attempt_id, detail, block_sequence
+    continued = _attributed_usage_limit_continuation_attempt(
+        store,
+        artifacts,
+        conn,
+        run_id=run_id,
+        events=events,
+    )
+    if continued is None:
+        return None, detail, block_sequence
+    return continued, "ok", block_sequence
 
 
 def _normalize_effect_payload(payload: object) -> dict[str, object]:
@@ -437,6 +1112,77 @@ def _resolve_correction_fix_binding(
     if last_wait is not None:
         return _fix_evidence_from_waiting(last_wait, causal_sequence=last_wait_sequence)
     return None
+
+
+def _fix_from_matching_recovery_record(
+    store: SqliteSchedulerStore,
+    artifacts: _ArtifactReader,
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    prompt_path: str,
+    prompt_sha256: str,
+) -> tuple[_CorrectionFixEvidence, list[sqlite3.Row]] | None:
+    """Treat a failed recovered correction retry as the same causal correction."""
+
+    from ai_dev_loop.scheduler.domain.cursor_recovery_v2 import (
+        CORRECTION_RECORD_REL,
+        CursorRecoveryRecordV2,
+    )
+
+    row = _correction_recovery_row(store, conn, run_id)
+    if row is None or str(row["status"]) != "ready":
+        return None
+    record_sha = str(row["record_sha256"] or "")
+    record_path = str(row["record_artifact_path"] or "")
+    if not record_sha or record_path != CORRECTION_RECORD_REL:
+        return None
+    try:
+        payload = artifacts.read_verified_bytes(
+            run_id,
+            record_path,
+            expected_sha256=record_sha,
+        )
+        record = CursorRecoveryRecordV2.model_validate_json(payload)
+    except (ProtectedArtifactError, OSError, ValidationError, UnicodeError) as exc:
+        raise CursorEvidenceError("correction recovery record failed authentication") from exc
+    if record.turn_kind != "correction" or record.raw_fix is None:
+        return None
+    if record.effective_prompt_sha256 != prompt_sha256:
+        if not prompt_path:
+            return None
+        sent = artifacts.read_verified_bytes(
+            run_id,
+            prompt_path,
+            expected_sha256=prompt_sha256,
+        )
+        effective = artifacts.read_verified_bytes(
+            run_id,
+            record.effective_prompt_path,
+            expected_sha256=record.effective_prompt_sha256,
+        )
+        raw_fix = artifacts.read_verified_bytes(
+            record.raw_fix.owner_run_id,
+            record.raw_fix.relative_path,
+            expected_sha256=record.raw_fix.sha256,
+        )
+        if effective not in sent or raw_fix not in effective:
+            return None
+    owner_events, complete = _load_all_verified_events(store, conn, record.raw_fix.owner_run_id)
+    if not complete:
+        raise CursorEvidenceError("incomplete event history")
+    fix = _resolve_correction_fix_binding(
+        owner_events,
+        owner_run_id=record.raw_fix.owner_run_id,
+        block_sequence=None,
+    )
+    if (
+        fix is None
+        or fix.fix_prompt_sha256 != record.raw_fix.sha256
+        or fix.correction_envelope_sha256 != record.base_prompt.sha256
+    ):
+        return None
+    return fix, owner_events
 
 
 def _resolve_active_correction_fix(
@@ -764,27 +1510,16 @@ def _resolve_cursor_chat_for_run(
         parsed = _parse_event_row(row)
         if isinstance(parsed, CursorChatCreatedEvent):
             return parsed, run_id
-    current = run_id
-    visited: set[str] = set()
-    while current not in visited:
-        visited.add(current)
-        recovery_row = store.get_review_recovery_source_for_successor(
-            conn,
-            successor_run_id=current,
-        )
-        if recovery_row is None:
-            break
-        ancestor = str(recovery_row["source_run_id"])
-        ancestor_events = list(
-            store.list_events_for_run(conn, ancestor, limit=500, newest_first=False)
-        )
+    for edge in _ancestor_edges(store, conn, run_id):
+        ancestor_events, complete = _load_all_verified_events(store, conn, edge.source_run_id)
+        if not complete:
+            raise CursorEvidenceError("incomplete event history")
         for ancestor_row in ancestor_events:
             if str(ancestor_row["event_kind"]) != CURSOR_CHAT_CREATED_EVENT_KIND:
                 continue
             parsed = _parse_event_row(ancestor_row)
             if isinstance(parsed, CursorChatCreatedEvent):
-                return parsed, ancestor
-        current = ancestor
+                return parsed, edge.source_run_id
     return None, None
 
 
@@ -802,22 +1537,48 @@ def _resolve_reviewer_bound_for_run(
     )
     if reviewer_bound is not None:
         return reviewer_bound, run_id
-    current = run_id
+    for edge in _ancestor_edges(store, conn, run_id):
+        ancestor_events, complete = _load_all_verified_events(store, conn, edge.source_run_id)
+        if not complete:
+            raise CursorEvidenceError("incomplete event history")
+        _, _, ancestor_bound = _scan_turn_context(ancestor_events)
+        if ancestor_bound is not None:
+            return ancestor_bound, edge.source_run_id
+    return None, None
+
+
+def _ancestor_edges(
+    store: SqliteSchedulerStore,
+    conn: sqlite3.Connection,
+    run_id: str,
+) -> tuple[RecoveryAncestorEdge, ...]:
+    from ai_dev_loop.scheduler.application.recovery_ancestry import (
+        RecoveryAncestryError,
+        recovery_ancestor_edges,
+    )
+
+    try:
+        return recovery_ancestor_edges(store, conn, run_id)
+    except RecoveryAncestryError as exc:
+        raise CursorEvidenceError(str(exc)) from exc
+
+
+def _find_bootstrap_run_id(
+    store: SqliteSchedulerStore,
+    conn: sqlite3.Connection,
+    start_run_id: str,
+) -> str:
+    current = start_run_id
     visited: set[str] = set()
     while current not in visited:
         visited.add(current)
-        row = store.get_review_recovery_source_for_successor(conn, successor_run_id=current)
-        if row is None:
+        if store.get_codex_bootstrap_attempt(conn, current) is not None:
+            return current
+        edges = _ancestor_edges(store, conn, current)
+        if not edges:
             break
-        ancestor = str(row["source_run_id"])
-        ancestor_events = list(
-            store.list_events_for_run(conn, ancestor, limit=500, newest_first=False)
-        )
-        _, _, ancestor_bound = _scan_turn_context(ancestor_events)
-        if ancestor_bound is not None:
-            return ancestor_bound, ancestor
-        current = ancestor
-    return None, None
+        current = edges[0].source_run_id
+    raise CursorEvidenceError("reviewer B bootstrap attempt is missing")
 
 
 def _ledger_reviews_completed_with_ancestry(
@@ -825,16 +1586,9 @@ def _ledger_reviews_completed_with_ancestry(
     conn: sqlite3.Connection,
     run_id: str,
 ) -> int:
-    total = 0
-    current = run_id
-    visited: set[str] = set()
-    while current not in visited:
-        visited.add(current)
-        total += store.count_review_completion_events(conn, current)
-        row = store.get_review_recovery_source_for_successor(conn, successor_run_id=current)
-        if row is None:
-            break
-        current = str(row["source_run_id"])
+    total = store.count_review_completion_events(conn, run_id)
+    for edge in _ancestor_edges(store, conn, run_id):
+        total += store.count_review_completion_events(conn, edge.source_run_id)
     return total
 
 
@@ -844,15 +1598,9 @@ def _review_budget_extensions_with_ancestry(
     run_id: str,
 ) -> tuple[ReviewBudgetExtendedEvent, ...]:
     collected: list[ReviewBudgetExtendedEvent] = []
-    current = run_id
-    visited: set[str] = set()
-    while current not in visited:
-        visited.add(current)
+    runs = [run_id, *[edge.source_run_id for edge in _ancestor_edges(store, conn, run_id)]]
+    for current in reversed(runs):
         collected.extend(load_review_budget_extensions(store, conn, current))
-        row = store.get_review_recovery_source_for_successor(conn, successor_run_id=current)
-        if row is None:
-            break
-        current = str(row["source_run_id"])
     return tuple(collected)
 
 
@@ -1150,7 +1898,7 @@ def _authenticate_reviewer_b_binding(
     *,
     b_owner_run_id: str,
     reviewer_bound: CodexReviewerBoundEvent,
-) -> str:
+) -> ReviewerBootstrapProof:
     binding_bytes = artifacts.read_verified_bytes(
         b_owner_run_id,
         reviewer_bound.binding_artifact_path,
@@ -1166,10 +1914,11 @@ def _authenticate_reviewer_b_binding(
     if not prefix or prefix != reviewer_bound.reviewer_session_id_prefix:
         raise CursorEvidenceError("reviewer binding artifact prefix disagrees with ledger event")
     with store.begin_read() as conn:
-        bootstrap_attempt = store.get_codex_bootstrap_attempt(conn, b_owner_run_id)
+        bootstrap_run_id = _find_bootstrap_run_id(store, conn, b_owner_run_id)
+        bootstrap_attempt = store.get_codex_bootstrap_attempt(conn, bootstrap_run_id)
     if bootstrap_attempt is None:
         raise CursorEvidenceError("reviewer B bootstrap attempt is missing")
-    run_root = artifacts.run_root(b_owner_run_id)
+    run_root = artifacts.run_root(bootstrap_run_id)
     attempt_id = str(bootstrap_attempt["attempt_id"])
     dispatch_id = str(bootstrap_attempt["dispatch_id"])
     unit_identity = str(bootstrap_attempt["unit_identity"])
@@ -1186,14 +1935,14 @@ def _authenticate_reviewer_b_binding(
     invocation = verify_codex_invocation_evidence(
         run_root,
         attempt_id=attempt_id,
-        run_id=b_owner_run_id,
+        run_id=bootstrap_run_id,
         dispatch_id=dispatch_id,
         unit_identity=unit_identity,
         launch_nonce=launch_nonce,
         launch_intent_sha256=launch_intent_sha256,
         effect_kind=effect_kind,
     )
-    verify_pre_execution_codex_guards(run_root, invocation, run_id=b_owner_run_id)
+    verify_pre_execution_codex_guards(run_root, invocation, run_id=bootstrap_run_id)
     outcome = load_authenticated_codex_outcome(
         run_root,
         attempt_id=attempt_id,
@@ -1216,7 +1965,7 @@ def _authenticate_reviewer_b_binding(
     if not bootstrap_events_rel:
         raise CursorEvidenceError("bootstrap outcome missing events artifact binding")
     events_bytes = artifacts.read_verified_bytes(
-        b_owner_run_id,
+        bootstrap_run_id,
         bootstrap_events_rel,
         expected_sha256=expected_events_sha,
     )
@@ -1232,7 +1981,16 @@ def _authenticate_reviewer_b_binding(
         prefix
     ):
         raise CodexEvidenceError("bootstrap outcome session disagrees with authenticated events")
-    return authenticated_session_id
+    return ReviewerBootstrapProof(
+        session_id=authenticated_session_id,
+        binding_run_id=b_owner_run_id,
+        bootstrap_run_id=bootstrap_run_id,
+        bootstrap_attempt_id=attempt_id,
+        bootstrap_events_path=bootstrap_events_rel,
+        bootstrap_events_sha256=expected_events_sha,
+        binding_artifact_path=reviewer_bound.binding_artifact_path,
+        binding_artifact_sha256=reviewer_bound.binding_artifact_sha256,
+    )
 
 
 def _authenticate_correction_turn_evidence(
@@ -1246,7 +2004,7 @@ def _authenticate_correction_turn_evidence(
     staging_owner_run_id: str,
     codex_attempt: sqlite3.Row,
     cursor_iteration: int,
-) -> None:
+) -> tuple[ReviewerBootstrapProof, str, str]:
     if cursor_iteration <= fix.review_iteration:
         raise CursorEvidenceError("failed cursor iteration disagrees with correction review")
     fix_root = artifacts.run_root(fix.owner_run_id)
@@ -1272,12 +2030,13 @@ def _authenticate_correction_turn_evidence(
         staging_event.staged_patch_path,
         expected_sha256=staging_event.staged_patch_sha256,
     )
-    bound_reviewer_session_id = _authenticate_reviewer_b_binding(
+    reviewer_proof = _authenticate_reviewer_b_binding(
         store,
         artifacts,
         b_owner_run_id=b_owner_run_id,
         reviewer_bound=reviewer_bound,
     )
+    bound_reviewer_session_id = reviewer_proof.session_id
     fix_owner_run_id = fix.owner_run_id
     codex_root = artifacts.run_root(fix_owner_run_id)
     review_attempt_id = str(codex_attempt["attempt_id"])
@@ -1341,6 +2100,44 @@ def _authenticate_correction_turn_evidence(
         expected_sha256=review_result_sha,
     )
     load_validated_review_result(codex_root, codex_outcome)
+    return reviewer_proof, review_result_path, review_result_sha
+
+
+def _review_budget_for_blocked_run(
+    store: SqliteSchedulerStore,
+    artifacts: _ArtifactReader,
+    conn: sqlite3.Connection,
+    state: BlockedState,
+) -> tuple[int, int]:
+    from ai_dev_loop.scheduler.application.contracts import SchedulerEngineError
+    from ai_dev_loop.scheduler.application.cursor_budget_carry import load_budget_carry_for_run
+    from ai_dev_loop.scheduler.application.review_budget import fold_review_budget_extensions
+
+    try:
+        carry = load_budget_carry_for_run(
+            store,
+            artifacts,  # type: ignore[arg-type]
+            conn,
+            state.run_id,
+        )
+    except SchedulerEngineError as exc:
+        raise CursorEvidenceError("review budget carry failed authentication") from exc
+    if carry is not None:
+        local_completed = store.count_review_completion_events(conn, state.run_id)
+        local_extensions = load_review_budget_extensions(store, conn, state.run_id)
+        ceiling = fold_review_budget_extensions(
+            carry.inherited_effective_ceiling,
+            local_extensions,
+        )
+        return carry.inherited_reviews_completed + local_completed, ceiling
+    ledger_reviews_completed = _ledger_reviews_completed_with_ancestry(store, conn, state.run_id)
+    extensions = _review_budget_extensions_with_ancestry(store, conn, state.run_id)
+    reviews_completed, effective_ceiling, _submitted = review_budget_projection(
+        state,
+        extensions,
+        ledger_reviews_completed=ledger_reviews_completed,
+    )
+    return reviews_completed, effective_ceiling
 
 
 def analyze_cursor_recovery_evidence(
@@ -1349,6 +2146,7 @@ def analyze_cursor_recovery_evidence(
     run_id: str,
     *,
     event_page_size: int = EVENT_PAGE_SIZE,
+    reservation_must_match_run: bool = True,
 ) -> CursorRecoveryAnalysisResult:
     sequence_id: str | None = None
     ordinal: int | None = None
@@ -1366,6 +2164,7 @@ def analyze_cursor_recovery_evidence(
                     safe_summary="Run is not in blocked state; Cursor failure evidence does not apply.",
                 )
             )
+        _require_initial_ancestor_authority(store, artifacts, run_id)
 
         binding = state.context.sequence
         if binding is not None:
@@ -1495,7 +2294,11 @@ def analyze_cursor_recovery_evidence(
 
         worktree_key = state.context.repository.worktree_key
         active = store.get_active_reservation(conn, worktree_key)
-        if active is not None and str(active["run_id"]) != run_id:
+        if (
+            reservation_must_match_run
+            and active is not None
+            and str(active["run_id"]) != run_id
+        ):
             return CursorRecoveryAnalysisResult(
                 receipt=receipt(
                     run_id,
@@ -1509,12 +2312,29 @@ def analyze_cursor_recovery_evidence(
             )
 
         evidence_run_id = resolve_recovery_ledger_evidence_run_id(store, conn, run_id)
-        source_events, history_complete = _load_all_verified_events(
-            store,
-            conn,
-            run_id,
-            page_size=event_page_size,
-        )
+        from ai_dev_loop.scheduler.application.contracts import SchedulerEngineError
+
+        try:
+            source_events, history_complete = _load_all_verified_events(
+                store,
+                conn,
+                run_id,
+                page_size=event_page_size,
+            )
+        except SchedulerEngineError as exc:
+            if "digest" not in str(exc):
+                raise
+            return CursorRecoveryAnalysisResult(
+                receipt=receipt(
+                    run_id,
+                    evidence_status="corrupt",
+                    turn_kind=None,
+                    reason_code="corrupt_event_page",
+                    safe_summary="Event page failed authentication.",
+                    sequence_id=sequence_id,
+                    ordinal=ordinal,
+                )
+            )
         if not history_complete:
             return CursorRecoveryAnalysisResult(
                 receipt=receipt(
@@ -1532,12 +2352,72 @@ def analyze_cursor_recovery_evidence(
             conn,
             successor_run_id=run_id,
         )
-        failed_attempt_id, causal_detail, block_sequence = resolve_decisive_failed_cursor_attempt(
-            store,
-            conn,
-            run_id,
-            source_events,
-        )
+        try:
+            failed_attempt_id, causal_detail, block_sequence = (
+                resolve_authenticated_decisive_attempt(
+                    store,
+                    artifacts,
+                    conn,
+                    run_id,
+                    event_page_size=event_page_size,
+                )
+            )
+        except CursorEvidenceError as exc:
+            if str(exc) == "event history pagination did not complete":
+                return CursorRecoveryAnalysisResult(
+                    receipt=receipt(
+                        run_id,
+                        evidence_status="insufficient",
+                        turn_kind=None,
+                        reason_code="incomplete_event_history",
+                        safe_summary=(
+                            "Event history pagination did not complete; causal evidence is incomplete."
+                        ),
+                        sequence_id=sequence_id,
+                        ordinal=ordinal,
+                    )
+                )
+            if str(exc) == "event page failed authentication":
+                return CursorRecoveryAnalysisResult(
+                    receipt=receipt(
+                        run_id,
+                        evidence_status="corrupt",
+                        turn_kind=None,
+                        reason_code="corrupt_event_page",
+                        safe_summary="Event page failed authentication.",
+                        sequence_id=sequence_id,
+                        ordinal=ordinal,
+                    )
+                )
+            return CursorRecoveryAnalysisResult(
+                receipt=receipt(
+                    run_id,
+                    evidence_status="corrupt",
+                    turn_kind=None,
+                    reason_code="corrupt_artifacts",
+                    safe_summary="Usage-limit continuation evidence failed authentication.",
+                    sequence_id=sequence_id,
+                    ordinal=ordinal,
+                )
+            )
+        except (
+            CodexEvidenceError,
+            ProtectedArtifactError,
+            ValidationError,
+            ValueError,
+            OSError,
+        ):
+            return CursorRecoveryAnalysisResult(
+                receipt=receipt(
+                    run_id,
+                    evidence_status="corrupt",
+                    turn_kind=None,
+                    reason_code="corrupt_artifacts",
+                    safe_summary="Usage-limit continuation evidence failed authentication.",
+                    sequence_id=sequence_id,
+                    ordinal=ordinal,
+                )
+            )
         if failed_attempt_id is None:
             code = {
                 "ambiguous_failed_attempts": "insufficient_evidence_ambiguous_failure",
@@ -1583,13 +2463,25 @@ def analyze_cursor_recovery_evidence(
                 )
             )
 
-        ledger_reviews_completed = _ledger_reviews_completed_with_ancestry(store, conn, run_id)
-        extensions = _review_budget_extensions_with_ancestry(store, conn, run_id)
-        reviews_completed, effective_ceiling, _ = review_budget_projection(
-            state,
-            extensions,
-            ledger_reviews_completed=ledger_reviews_completed,
-        )
+        try:
+            reviews_completed, effective_ceiling = _review_budget_for_blocked_run(
+                store,
+                artifacts,
+                conn,
+                state,
+            )
+        except CursorEvidenceError:
+            return CursorRecoveryAnalysisResult(
+                receipt=receipt(
+                    run_id,
+                    evidence_status="corrupt",
+                    turn_kind=None,
+                    reason_code="corrupt_review_evidence",
+                    safe_summary="Review budget evidence failed authentication.",
+                    sequence_id=sequence_id,
+                    ordinal=ordinal,
+                )
+            )
         inherited_events, inherited_complete = _load_all_verified_events(
             store,
             conn,
@@ -1686,6 +2578,21 @@ def analyze_cursor_recovery_evidence(
             )
         )
 
+    fix_owner_events: list[sqlite3.Row] | None = None
+    if turn_kind == "initial" and fix_binding is None:
+        with store.begin_read() as conn:
+            recovered = _fix_from_matching_recovery_record(
+                store,
+                artifacts,
+                conn,
+                run_id=run_id,
+                prompt_path=str(binding_evidence.get("prompt_path") or ""),
+                prompt_sha256=str(binding_evidence.get("prompt_sha256") or ""),
+            )
+        if recovered is not None:
+            fix_binding, fix_owner_events = recovered
+            turn_kind = "correction"
+
     with store.begin_read() as conn:
         chat_event, chat_owner_run_id = _resolve_cursor_chat_for_run(
             store,
@@ -1763,6 +2670,12 @@ def analyze_cursor_recovery_evidence(
             )
         )
 
+    reviewer_proof: ReviewerBootstrapProof | None = None
+    captured_fix: _CorrectionFixEvidence | None = None
+    captured_staging: StagingCompletedEvent | None = None
+    captured_staging_owner: str | None = None
+    captured_review_result_path = ""
+    captured_review_result_sha = ""
     if turn_kind == "correction":
         if fix_binding is None:
             return CursorRecoveryAnalysisResult(
@@ -1778,17 +2691,21 @@ def analyze_cursor_recovery_evidence(
             )
         assert reviewer_bound_event is not None
         b_owner_run_id = reviewer_bound_event.run_id
-        fix_context_events = (
-            source_events if fix_binding.owner_run_id == run_id else inherited_events
-        )
+        if fix_owner_events is not None:
+            fix_context_events = fix_owner_events
+        else:
+            fix_context_events = (
+                source_events if fix_binding.owner_run_id == run_id else inherited_events
+            )
         staging_sources: list[tuple[str, list[sqlite3.Row]]] = []
         if evidence_run_id != fix_binding.owner_run_id:
             staging_sources.append((evidence_run_id, inherited_events))
         staging_sources.append((fix_binding.owner_run_id, fix_context_events))
+        causal_block = block_sequence if fix_binding.owner_run_id == run_id else None
         staging_for_fix, staging_owner_run_id = _resolve_staging_for_correction(
             staging_sources,
             fix=fix_binding,
-            block_sequence=block_sequence,
+            block_sequence=causal_block,
         )
         if staging_for_fix is None or staging_owner_run_id is None:
             return CursorRecoveryAnalysisResult(
@@ -1810,7 +2727,7 @@ def analyze_cursor_recovery_evidence(
                     fix_context_events,
                     fix_owner_run_id=fix_binding.owner_run_id,
                     fix=fix_binding,
-                    block_sequence=block_sequence,
+                    block_sequence=causal_block,
                     artifacts=artifacts,
                 )
             except CursorEvidenceError as exc:
@@ -1835,7 +2752,7 @@ def analyze_cursor_recovery_evidence(
                     )
                 )
         try:
-            _authenticate_correction_turn_evidence(
+            correction_proof_result = _authenticate_correction_turn_evidence(
                 store,
                 artifacts,
                 fix=fix_binding,
@@ -1873,11 +2790,21 @@ def analyze_cursor_recovery_evidence(
                     ordinal=ordinal,
                 )
             )
-        prompt_path = fix_binding.correction_envelope_path
-        prompt_sha = fix_binding.correction_envelope_sha256
+        reviewer_proof, captured_review_result_path, captured_review_result_sha = (
+            correction_proof_result
+        )
+        captured_fix = fix_binding
+        captured_staging = staging_for_fix
+        captured_staging_owner = staging_owner_run_id
         binding_path = str(binding_evidence.get("prompt_path", "")).strip()
         binding_sha = str(binding_evidence.get("prompt_sha256", "")).strip()
-        if binding_path != prompt_path or binding_sha != prompt_sha:
+        if fix_owner_events is not None:
+            prompt_path = binding_path
+            prompt_sha = binding_sha
+        else:
+            prompt_path = fix_binding.correction_envelope_path
+            prompt_sha = fix_binding.correction_envelope_sha256
+        if fix_owner_events is None and (binding_path != prompt_path or binding_sha != prompt_sha):
             return CursorRecoveryAnalysisResult(
                 receipt=receipt(
                     run_id,
@@ -1909,12 +2836,21 @@ def analyze_cursor_recovery_evidence(
         state, _, _ = store.load_validated_snapshot(conn, run_id)
         assert isinstance(state, BlockedState)
         with store.begin_read() as conn:
-            chat_owner_events = list(
-                store.list_events_for_run(
-                    conn,
-                    chat_owner_run_id,
-                    limit=500,
-                    newest_first=False,
+            chat_owner_events, history_complete = _load_all_verified_events(
+                store,
+                conn,
+                chat_owner_run_id,
+            )
+        if not history_complete:
+            return CursorRecoveryAnalysisResult(
+                receipt=receipt(
+                    run_id,
+                    evidence_status="insufficient",
+                    turn_kind=turn_kind,
+                    reason_code="incomplete_event_history",
+                    safe_summary="Chat owner event history is incomplete.",
+                    sequence_id=sequence_id,
+                    ordinal=ordinal,
                 )
             )
         checkpoint = _admission_checkpoint_from_events(
@@ -1991,17 +2927,64 @@ def analyze_cursor_recovery_evidence(
         chat_owner_run_id=chat_owner_run_id,
         chat_artifact_path=chat_event.chat_artifact_path,
         chat_artifact_sha256=chat_event.chat_artifact_sha256,
+        submitted_max_review_iterations=state.context.workflow.max_review_iterations,
+        fix_owner_run_id=None if captured_fix is None else captured_fix.owner_run_id,
+        fix_prompt_path=None if captured_fix is None else captured_fix.fix_prompt_path,
+        fix_prompt_sha256=None if captured_fix is None else captured_fix.fix_prompt_sha256,
+        staged_owner_run_id=captured_staging_owner,
+        staged_patch_path=None if captured_staging is None else captured_staging.staged_patch_path,
+        staged_patch_sha256=(
+            None if captured_staging is None else captured_staging.staged_patch_sha256
+        ),
+        review_result_owner_run_id=None if captured_fix is None else captured_fix.owner_run_id,
+        review_result_path=captured_review_result_path or None,
+        review_result_sha256=captured_review_result_sha or None,
+        reviewer_session_id=None if reviewer_proof is None else reviewer_proof.session_id,
+        reviewer_binding_run_id=None if reviewer_proof is None else reviewer_proof.binding_run_id,
+        reviewer_bootstrap_run_id=(
+            None if reviewer_proof is None else reviewer_proof.bootstrap_run_id
+        ),
+        binding_artifact_path=(
+            None if reviewer_proof is None else reviewer_proof.binding_artifact_path
+        ),
+        binding_artifact_sha256=(
+            None if reviewer_proof is None else reviewer_proof.binding_artifact_sha256
+        ),
+        bootstrap_attempt_id=None if reviewer_proof is None else reviewer_proof.bootstrap_attempt_id,
+        bootstrap_events_path=(
+            None if reviewer_proof is None else reviewer_proof.bootstrap_events_path
+        ),
+        bootstrap_events_sha256=(
+            None if reviewer_proof is None else reviewer_proof.bootstrap_events_sha256
+        ),
+        admitted_owner_run_id=chat_owner_run_id if checkpoint is not None else None,
+        admitted_artifact_path=(
+            None if checkpoint is None else checkpoint.admission_status_artifact_path
+        ),
+        admitted_artifact_sha256=(
+            None if checkpoint is None else checkpoint.admission_status_sha256
+        ),
     )
     kind_label = "initial" if turn_kind == "initial" else "correction"
-    mutation_supported = (
+    initial_supported = (
         turn_kind == "initial"
         and sequence_id is None
         and reviewer_bound_event is None
         and reviews_completed == 0
         and review_recovery_source is None
     )
-    if mutation_supported:
+    correction_supported = (
+        turn_kind == "correction"
+        and sequence_id is None
+        and reviewer_proof is not None
+        and captured_fix is not None
+        and captured_staging is not None
+    )
+    mutation_supported = initial_supported or correction_supported
+    if initial_supported:
         support_text = "forced initial standalone recovery is supported."
+    elif correction_supported:
+        support_text = "forced correction standalone recovery is supported."
     else:
         support_text = "forced recovery is not supported for this turn."
     return CursorRecoveryAnalysisResult(

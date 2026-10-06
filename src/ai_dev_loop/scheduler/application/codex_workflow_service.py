@@ -839,7 +839,12 @@ class CodexWorkflowService:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
             if not isinstance(state, AwaitingCodexReviewState):
                 return TickRunReceipt(run_id=run_id, action="codex_decision_state_changed")
-            max_reviews = effective_review_ceiling_for_run(self.store, conn, state)
+            max_reviews = effective_review_ceiling_for_run(
+                self.store,
+                conn,
+                state,
+                artifacts=self.artifacts,
+            )
 
         if review.has_actionable_findings and review_iteration >= max_reviews:
             fix_path = str(outcome.get("fix_prompt_path", "")).strip()

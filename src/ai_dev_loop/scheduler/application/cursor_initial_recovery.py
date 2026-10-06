@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 import sqlite3
 import threading
 from collections.abc import Callable
+from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -28,7 +31,7 @@ from ai_dev_loop.scheduler.application.cursor_recovery_evidence import (
     CursorRecoveryEvidenceBundle,
     _authenticate_failed_cursor_turn,
     analyze_cursor_recovery_evidence,
-    resolve_decisive_failed_cursor_attempt,
+    resolve_authenticated_decisive_attempt,
 )
 from ai_dev_loop.scheduler.domain.cursor_contract import (
     RUN_CURSOR_TURN_EFFECT_ID,
@@ -36,7 +39,6 @@ from ai_dev_loop.scheduler.domain.cursor_contract import (
 )
 from ai_dev_loop.scheduler.domain.cursor_initial_recovery import (
     CURSOR_INITIAL_RECOVERY_INTENT_SCHEMA_VERSION,
-    CURSOR_INITIAL_RECOVERY_RECORD_SCHEMA_VERSION,
     EFFECTIVE_PROMPT_REL,
     RECORD_REL,
     CursorInitialRecoveryPublicationIntentV1,
@@ -44,6 +46,7 @@ from ai_dev_loop.scheduler.domain.cursor_initial_recovery import (
     effective_prompt_bytes,
     recovery_key_for,
 )
+from ai_dev_loop.scheduler.domain.cursor_recovery_v2 import CursorRecoveryRecordV2
 from ai_dev_loop.scheduler.domain.events import (
     CursorChatCreatedEvent,
     CursorInitialRecoverySuccessorCreatedEvent,
@@ -68,6 +71,37 @@ MAX_RECOVERY_ARTIFACT_BYTES = 8 * 1024 * 1024
 PublicationStatus = Literal["pending", "ready", "cancelled"]
 
 
+@dataclass(frozen=True)
+class InitialRecoveryAuthority:
+    """Shared fields of an authenticated v1 or v2 initial recovery record."""
+
+    schema_version: int
+    source_run_id: str
+    successor_run_id: str
+    failed_attempt_id: str
+    dispatch_id: str
+    chat_id: str
+    iteration: int
+    admitted_artifact_path: str
+    admitted_artifact_sha256: str
+    plan_sha256: str
+    submitted_prompt_sha256: str
+    config_sha256: str
+    base_prompt_path: str
+    base_prompt_sha256: str
+    effective_prompt_path: str
+    effective_prompt_sha256: str
+    parent_source_run_id: str | None
+    parent_recovery_key: str | None
+    parent_record_sha256: str | None
+    reviews_completed: int
+    reviewer_created: bool
+    file_bytes: bytes
+
+    def canonical_bytes(self) -> bytes:
+        return self.file_bytes
+
+
 class CursorInitialRecoveryFault(Exception):
     """Injected interruption between publication boundaries."""
 
@@ -84,6 +118,7 @@ class CursorInitialRecoveryResult(AppModel):
     publication_status: PublicationStatus
     agent_execution_ready: bool
     safe_next_action: SafeNextAction
+    turn_kind: Literal["initial", "correction"] = "initial"
 
 
 def _invalid(message: str) -> SchedulerEngineError:
@@ -112,11 +147,11 @@ def authenticated_initial_recovery_launch(
     artifacts: ProtectedArtifactStore,
     conn: sqlite3.Connection,
     run_id: str,
-) -> CursorInitialRecoveryRecordV1 | None:
+) -> InitialRecoveryAuthority | None:
     """Return the ready record when this run is an initial recovery successor."""
 
     row = store.get_cursor_initial_recovery_by_successor(conn, successor_run_id=run_id)
-    if row is None:
+    if row is None or _intent_schema_version(row) != 1:
         return None
     if str(row["status"]) != "ready":
         raise _invalid("cursor initial recovery publication is not dispatchable")
@@ -161,6 +196,16 @@ class CursorInitialRecoveryService:
         if len(active) == 1:
             return self._resume(active[0])
         analysis = analyze_cursor_recovery_evidence(self.store, self.artifacts, run_id)
+        if (
+            analysis.evidence is not None
+            and analysis.evidence.turn_kind == "correction"
+            and analysis.receipt.recovery_supported
+        ):
+            from ai_dev_loop.scheduler.application.cursor_correction_recovery import (
+                force_correction,
+            )
+
+            return force_correction(self, run_id, analysis)
         self._reject_unless_eligible(analysis)
         assert analysis.evidence is not None
         evidence = analysis.evidence
@@ -416,6 +461,12 @@ class CursorInitialRecoveryService:
                 return self._resume_locked(current)
 
     def _resume_locked(self, row: sqlite3.Row) -> CursorInitialRecoveryResult:
+        if _intent_schema_version(row) == 2:
+            from ai_dev_loop.scheduler.application.cursor_correction_recovery import (
+                resume_correction_publication,
+            )
+
+            return resume_correction_publication(self, row)
         intent = _verified_intent(row)
         status = str(row["status"])
         if status == "cancelled":
@@ -443,14 +494,14 @@ class CursorInitialRecoveryService:
         self,
         row: sqlite3.Row,
         intent: CursorInitialRecoveryPublicationIntentV1,
-    ) -> CursorInitialRecoveryRecordV1:
+    ) -> InitialRecoveryAuthority:
         self._require_current_source_authority(
             intent.source_run_id,
             failed_attempt_id=intent.failed_attempt_id,
             dispatch_id=intent.dispatch_id,
             allowed_reservation_owners={intent.source_run_id, intent.successor_run_id},
         )
-        parent: CursorInitialRecoveryRecordV1 | None = None
+        parent: InitialRecoveryAuthority | None = None
         if intent.parent_recovery_key:
             with self.store.begin_read() as conn:
                 parent_row = self.store.get_cursor_initial_recovery_by_key(
@@ -486,31 +537,13 @@ class CursorInitialRecoveryService:
             effective,
             max_bytes=MAX_RECOVERY_ARTIFACT_BYTES,
         )
-        record = CursorInitialRecoveryRecordV1(
-            schema_version=CURSOR_INITIAL_RECOVERY_RECORD_SCHEMA_VERSION,
-            turn_kind="initial",
-            reviewer_created=False,
-            reviews_completed=0,
-            source_run_id=intent.source_run_id,
-            successor_run_id=intent.successor_run_id,
-            failed_attempt_id=intent.failed_attempt_id,
-            dispatch_id=intent.dispatch_id,
-            chat_id=intent.chat_id,
-            iteration=intent.iteration,
-            admitted_artifact_path=intent.admitted_artifact_path,
-            admitted_artifact_sha256=intent.admitted_artifact_sha256,
-            plan_sha256=intent.plan_sha256,
-            submitted_prompt_sha256=intent.submitted_prompt_sha256,
-            config_sha256=intent.config_sha256,
-            base_prompt_path=intent.base_prompt_path,
-            base_prompt_sha256=intent.base_prompt_sha256,
-            effective_prompt_path=EFFECTIVE_PROMPT_REL,
-            effective_prompt_sha256=effective_sha,
-            parent_source_run_id=None if parent is None else parent.source_run_id,
-            parent_recovery_key=None if parent is None else intent.parent_recovery_key,
-            parent_record_sha256=(
-                None if parent is None else hashlib.sha256(parent.canonical_bytes()).hexdigest()
-            ),
+        record = _v2_initial_record(
+            self.store,
+            self.artifacts,
+            row,
+            intent,
+            parent=parent,
+            effective_sha=effective_sha,
         )
         self.artifacts.publish_or_verify_bytes(
             intent.successor_run_id,
@@ -518,7 +551,7 @@ class CursorInitialRecoveryService:
             record.canonical_bytes(),
             max_bytes=MAX_RECOVERY_ARTIFACT_BYTES,
         )
-        return record
+        return _authority_from_payload(record.canonical_bytes())
 
     def _copy_tree(self, intent: CursorInitialRecoveryPublicationIntentV1) -> None:
         with self.store.begin_read() as conn:
@@ -576,6 +609,13 @@ class CursorInitialRecoveryService:
                 payload,
                 max_bytes=MAX_RECOVERY_ARTIFACT_BYTES,
             )
+        _publish_fresh_reviewer_input(
+            self.store,
+            self.artifacts,
+            successor_run_id=intent.successor_run_id,
+            start_run_id=intent.source_run_id,
+            context=context,
+        )
 
     def _require_current_source_authority(
         self,
@@ -640,15 +680,28 @@ class CursorInitialRecoveryService:
         active = self.store.get_active_reservation(conn, state.context.repository.worktree_key)
         if active is not None and str(active["run_id"]) not in allowed_reservation_owners:
             raise _conflict("repository reservation is held by another run")
-        events = list(
-            self.store.list_events_for_run(conn, source_id, limit=500, newest_first=False)
-        )
-        attempt_id, detail, _sequence = resolve_decisive_failed_cursor_attempt(
-            self.store,
-            conn,
-            source_id,
-            events,
-        )
+        try:
+            attempt_id, detail, _sequence = resolve_authenticated_decisive_attempt(
+                self.store,
+                self.artifacts,
+                conn,
+                source_id,
+            )
+        except CursorEvidenceError as exc:
+            message = str(exc)
+            if message in {
+                "event history pagination did not complete",
+                "event page failed authentication",
+            }:
+                raise _corrupt(message) from exc
+            raise _corrupt("source failure no longer matches the recovery intent") from exc
+        except (
+            ProtectedArtifactError,
+            ValidationError,
+            ValueError,
+            OSError,
+        ) as exc:
+            raise _corrupt("source failure no longer matches the recovery intent") from exc
         if detail != "ok" or attempt_id != expected_attempt:
             raise _corrupt("source failure no longer matches the recovery intent")
 
@@ -670,13 +723,10 @@ class CursorInitialRecoveryService:
             record_bytes = (
                 self.artifacts.run_root(intent.successor_run_id) / RECORD_REL
             ).read_bytes()
-            try:
-                record = CursorInitialRecoveryRecordV1.model_validate_json(record_bytes)
-            except ValidationError as exc:
-                raise _corrupt("initial recovery record failed authentication") from exc
-            if record.canonical_bytes() != record_bytes:
-                raise _corrupt("initial recovery record is not canonical")
+            record = _authority_from_payload(record_bytes)
             _assert_record_matches_durable_authority(self.store, self.artifacts, record, intent)
+            if record.schema_version == 2:
+                _assert_v2_initial_budget(self.store, self.artifacts, record)
             record_sha = hashlib.sha256(record_bytes).hexdigest()
             ready_intent = intent.model_copy(
                 update={"status": "ready", "record_sha256": record_sha}
@@ -870,6 +920,88 @@ def _result(
     )
 
 
+_initial_ancestor_verification: ContextVar[frozenset[str]] = ContextVar(
+    "initial_ancestor_verification",
+    default=frozenset(),
+)
+
+
+def authenticate_required_initial_ancestors(
+    store: SqliteSchedulerStore,
+    artifacts: ProtectedArtifactStore,
+    run_id: str,
+) -> None:
+    """Authenticate every ready initial recovery record required by this run.
+
+    v2 initial records are published with schema-1 intents. That intent version
+    does not skip the record, frozen configuration, budget-carry bytes, or
+    parent authority. A later logical turn stays eligible after those checks
+    succeed. Historical databases without the recovery table have no such
+    records.
+    """
+
+    from ai_dev_loop.scheduler.application.recovery_ancestry import (
+        RecoveryAncestryError,
+        recovery_ancestor_edges,
+    )
+
+    try:
+        with store.begin_read() as conn:
+            try:
+                edges = recovery_ancestor_edges(store, conn, run_id)
+            except RecoveryAncestryError as exc:
+                raise _corrupt(str(exc)) from exc
+            candidate_ids = [run_id]
+            candidate_ids.extend(edge.successor_run_id for edge in edges)
+            candidate_ids.extend(edge.source_run_id for edge in edges)
+            rows: list[sqlite3.Row] = []
+            seen: set[str] = set()
+            for candidate in candidate_ids:
+                if candidate in seen:
+                    continue
+                seen.add(candidate)
+                row = store.get_cursor_initial_recovery_by_successor(
+                    conn,
+                    successor_run_id=candidate,
+                )
+                if row is None or str(row["status"]) != "ready":
+                    continue
+                if _intent_schema_version(row) != 1:
+                    continue
+                key = str(row["recovery_key"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append(row)
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc):
+            return
+        raise
+    active = _initial_ancestor_verification.get()
+    for row in rows:
+        key = str(row["recovery_key"])
+        if key in active:
+            raise _corrupt("initial recovery ancestry cycle")
+        token = _initial_ancestor_verification.set(active | {key})
+        try:
+            _verified_record(store, artifacts, row)
+        finally:
+            _initial_ancestor_verification.reset(token)
+
+
+def _intent_schema_version(row: sqlite3.Row) -> int:
+    try:
+        payload = json.loads(str(row["intent_payload"]))
+    except json.JSONDecodeError as exc:
+        raise _corrupt("cursor recovery publication intent is not valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise _corrupt("cursor recovery publication intent is not an object")
+    version = payload.get("schema_version")
+    if isinstance(version, bool) or not isinstance(version, int):
+        raise _corrupt("cursor recovery publication intent version is invalid")
+    return version
+
+
 def _verified_intent(row: sqlite3.Row) -> CursorInitialRecoveryPublicationIntentV1:
     payload = str(row["intent_payload"]).encode("utf-8")
     digest = hashlib.sha256(payload).hexdigest()
@@ -918,7 +1050,7 @@ def _last_parsed_event(
 def _assert_record_matches_durable_authority(
     store: SqliteSchedulerStore,
     artifacts: ProtectedArtifactStore,
-    record: CursorInitialRecoveryRecordV1,
+    record: InitialRecoveryAuthority,
     intent: CursorInitialRecoveryPublicationIntentV1,
 ) -> None:
     """Reject hash-consistent records that disagree with ledger authority."""
@@ -988,11 +1120,337 @@ def _assert_record_matches_durable_authority(
         raise _corrupt(mismatch)
 
 
+def _publish_fresh_reviewer_input(
+    store: SqliteSchedulerStore,
+    artifacts: ProtectedArtifactStore,
+    *,
+    successor_run_id: str,
+    start_run_id: str,
+    context: object,
+) -> None:
+    from ai_dev_loop.scheduler.domain.state import FreshCodexReviewerBinding
+
+    codex = getattr(context, "codex", None)
+    if not isinstance(codex, FreshCodexReviewerBinding):
+        return
+    _publish_ancestry_bytes(
+        store,
+        artifacts,
+        successor_run_id=successor_run_id,
+        start_run_id=start_run_id,
+        relative_path=codex.binding_artifact_path,
+        digest=codex.binding_sha256,
+    )
+
+
+def _publish_ancestry_bytes(
+    store: SqliteSchedulerStore,
+    artifacts: ProtectedArtifactStore,
+    *,
+    successor_run_id: str,
+    start_run_id: str,
+    relative_path: str,
+    digest: str,
+) -> None:
+    from ai_dev_loop.scheduler.application.recovery_ancestry import (
+        RecoveryAncestryError,
+        recovery_ancestor_edges,
+    )
+
+    candidates = [start_run_id]
+    with store.begin_read() as conn:
+        try:
+            edges = recovery_ancestor_edges(store, conn, start_run_id)
+        except RecoveryAncestryError as exc:
+            raise _corrupt(str(exc)) from exc
+    candidates.extend(edge.source_run_id for edge in edges)
+    last_error: ProtectedArtifactError | None = None
+    for owner in candidates:
+        try:
+            payload = artifacts.read_verified_bytes(
+                owner,
+                relative_path,
+                expected_sha256=digest,
+            )
+        except ProtectedArtifactError as exc:
+            last_error = exc
+            continue
+        artifacts.publish_or_verify_bytes(
+            successor_run_id,
+            relative_path,
+            payload,
+            max_bytes=MAX_RECOVERY_ARTIFACT_BYTES,
+        )
+        return
+    raise _corrupt("frozen reviewer input is not owned by the recovery ancestry") from last_error
+
+
+def _authority_from_payload(payload: bytes) -> InitialRecoveryAuthority:
+    from ai_dev_loop.scheduler.domain.cursor_recovery_v2 import ReviewerNotCreatedV2
+
+    try:
+        parsed = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise _corrupt("initial recovery record failed authentication") from exc
+    if not isinstance(parsed, dict):
+        raise _corrupt("initial recovery record failed authentication")
+    version = parsed.get("schema_version")
+    if version == 1:
+        try:
+            record = CursorInitialRecoveryRecordV1.model_validate_json(payload)
+        except ValidationError as exc:
+            raise _corrupt("initial recovery record failed authentication") from exc
+        if record.canonical_bytes() != payload:
+            raise _corrupt("initial recovery record is not canonical")
+        return InitialRecoveryAuthority(
+            schema_version=1,
+            source_run_id=record.source_run_id,
+            successor_run_id=record.successor_run_id,
+            failed_attempt_id=record.failed_attempt_id,
+            dispatch_id=record.dispatch_id,
+            chat_id=record.chat_id,
+            iteration=record.iteration,
+            admitted_artifact_path=record.admitted_artifact_path,
+            admitted_artifact_sha256=record.admitted_artifact_sha256,
+            plan_sha256=record.plan_sha256,
+            submitted_prompt_sha256=record.submitted_prompt_sha256,
+            config_sha256=record.config_sha256,
+            base_prompt_path=record.base_prompt_path,
+            base_prompt_sha256=record.base_prompt_sha256,
+            effective_prompt_path=record.effective_prompt_path,
+            effective_prompt_sha256=record.effective_prompt_sha256,
+            parent_source_run_id=record.parent_source_run_id,
+            parent_recovery_key=record.parent_recovery_key,
+            parent_record_sha256=record.parent_record_sha256,
+            reviews_completed=record.reviews_completed,
+            reviewer_created=record.reviewer_created,
+            file_bytes=payload,
+        )
+    if version != 2:
+        raise _corrupt("initial recovery record schema is unsupported")
+    try:
+        record_v2 = CursorRecoveryRecordV2.model_validate_json(payload)
+    except ValidationError as exc:
+        raise _corrupt("initial recovery record failed authentication") from exc
+    if record_v2.canonical_bytes() != payload:
+        raise _corrupt("initial recovery record is not canonical")
+    if record_v2.turn_kind != "initial" or not isinstance(record_v2.reviewer, ReviewerNotCreatedV2):
+        raise _corrupt("initial recovery record is not the v2 initial form")
+    if (
+        record_v2.reviews_completed != 0
+        or record_v2.raw_fix is not None
+        or record_v2.staged_patch is not None
+        or record_v2.review_result is not None
+    ):
+        raise _corrupt("initial recovery record invented correction or budget history")
+    return InitialRecoveryAuthority(
+        schema_version=2,
+        source_run_id=record_v2.source_run_id,
+        successor_run_id=record_v2.successor_run_id,
+        failed_attempt_id=record_v2.failed_attempt_id,
+        dispatch_id=record_v2.dispatch_id,
+        chat_id=record_v2.chat_id,
+        iteration=record_v2.iteration,
+        admitted_artifact_path=record_v2.admitted.relative_path,
+        admitted_artifact_sha256=record_v2.admitted.sha256,
+        plan_sha256=record_v2.plan_sha256,
+        submitted_prompt_sha256=record_v2.submitted_prompt_sha256,
+        config_sha256=record_v2.config_sha256,
+        base_prompt_path=record_v2.base_prompt.relative_path,
+        base_prompt_sha256=record_v2.base_prompt.sha256,
+        effective_prompt_path=record_v2.effective_prompt_path,
+        effective_prompt_sha256=record_v2.effective_prompt_sha256,
+        parent_source_run_id=record_v2.parent_source_run_id,
+        parent_recovery_key=record_v2.parent_recovery_key,
+        parent_record_sha256=record_v2.parent_record_sha256,
+        reviews_completed=0,
+        reviewer_created=False,
+        file_bytes=payload,
+    )
+
+
+def _v2_initial_record(
+    store: SqliteSchedulerStore,
+    artifacts: ProtectedArtifactStore,
+    row: sqlite3.Row,
+    intent: CursorInitialRecoveryPublicationIntentV1,
+    *,
+    parent: InitialRecoveryAuthority | None,
+    effective_sha: str,
+) -> CursorRecoveryRecordV2:
+    from ai_dev_loop.scheduler.application.cursor_budget_carry import build_budget_carry
+    from ai_dev_loop.scheduler.application.recovery_ancestry import (
+        RecoveryAncestryError,
+        recovery_ancestor_edges,
+    )
+    from ai_dev_loop.scheduler.domain.cursor_recovery_v2 import (
+        CORRECTION_BUDGET_CARRY_REL,
+        CURSOR_RECOVERY_RECORD_SCHEMA_VERSION,
+        AncestorEdgeV2,
+        ArtifactBindingV2,
+        ReviewerNotCreatedV2,
+    )
+
+    recovery_key = str(row["recovery_key"])
+    with store.begin_read() as conn:
+        carry = build_budget_carry(
+            store,
+            artifacts,
+            conn,
+            source_run_id=intent.source_run_id,
+            successor_run_id=intent.successor_run_id,
+            recovery_key=recovery_key,
+        )
+        try:
+            edges = recovery_ancestor_edges(store, conn, intent.source_run_id)
+        except RecoveryAncestryError as exc:
+            raise _corrupt(str(exc)) from exc
+    if carry.inherited_reviews_completed != 0:
+        raise _corrupt("initial recovery cannot invent completed reviews")
+    artifacts.publish_or_verify_bytes(
+        intent.successor_run_id,
+        CORRECTION_BUDGET_CARRY_REL,
+        carry.canonical_bytes(),
+        max_bytes=MAX_RECOVERY_ARTIFACT_BYTES,
+    )
+    record = CursorRecoveryRecordV2(
+        schema_version=CURSOR_RECOVERY_RECORD_SCHEMA_VERSION,
+        turn_kind="initial",
+        reviewer=ReviewerNotCreatedV2(form="not_created"),
+        reviews_completed=0,
+        submitted_max_review_iterations=carry.submitted_max_review_iterations,
+        effective_review_ceiling=carry.inherited_effective_ceiling,
+        source_run_id=intent.source_run_id,
+        successor_run_id=intent.successor_run_id,
+        failed_attempt_id=intent.failed_attempt_id,
+        dispatch_id=intent.dispatch_id,
+        chat_id=intent.chat_id,
+        chat_owner_run_id=intent.chat_owner_run_id,
+        iteration=intent.iteration,
+        admitted=ArtifactBindingV2(
+            owner_run_id=intent.source_run_id,
+            relative_path=intent.admitted_artifact_path,
+            sha256=intent.admitted_artifact_sha256,
+        ),
+        plan_sha256=intent.plan_sha256,
+        submitted_prompt_sha256=intent.submitted_prompt_sha256,
+        config_sha256=intent.config_sha256,
+        base_prompt=ArtifactBindingV2(
+            owner_run_id=intent.source_run_id,
+            relative_path=intent.base_prompt_path,
+            sha256=intent.base_prompt_sha256,
+        ),
+        effective_prompt_path=EFFECTIVE_PROMPT_REL,
+        effective_prompt_sha256=effective_sha,
+        raw_fix=None,
+        staged_patch=None,
+        review_result=None,
+        parent_source_run_id=None if parent is None else parent.source_run_id,
+        parent_recovery_key=None if parent is None else intent.parent_recovery_key,
+        parent_record_sha256=(
+            None if parent is None else hashlib.sha256(parent.canonical_bytes()).hexdigest()
+        ),
+        budget_carry_path=CORRECTION_BUDGET_CARRY_REL,
+        budget_carry_sha256=carry.canonical_sha256(),
+        ancestors=[
+            AncestorEdgeV2(
+                relation=edge.relation,
+                source_run_id=edge.source_run_id,
+                successor_run_id=edge.successor_run_id,
+                recovery_key=edge.recovery_key,
+            )
+            for edge in edges
+        ],
+    )
+    return record
+
+
+def _assert_v2_initial_budget(
+    store: SqliteSchedulerStore,
+    artifacts: ProtectedArtifactStore,
+    record: InitialRecoveryAuthority,
+) -> None:
+    from ai_dev_loop.scheduler.application.cursor_budget_carry import build_budget_carry
+    from ai_dev_loop.scheduler.application.recovery_ancestry import (
+        RecoveryAncestryError,
+        recovery_ancestor_edges,
+    )
+    from ai_dev_loop.scheduler.domain.cursor_recovery_v2 import (
+        AncestorEdgeV2,
+        BudgetCarryV1,
+        CursorRecoveryRecordV2,
+        ReviewerNotCreatedV2,
+    )
+
+    try:
+        stored = CursorRecoveryRecordV2.model_validate_json(record.file_bytes)
+    except ValidationError as exc:
+        raise _corrupt("initial recovery record failed authentication") from exc
+    if not isinstance(stored.reviewer, ReviewerNotCreatedV2) or stored.turn_kind != "initial":
+        raise _corrupt("initial recovery record is not the v2 initial form")
+    try:
+        carry_bytes = artifacts.read_verified_bytes(
+            record.successor_run_id,
+            stored.budget_carry_path,
+            expected_sha256=stored.budget_carry_sha256,
+        )
+        carry = BudgetCarryV1.model_validate_json(carry_bytes)
+    except (ProtectedArtifactError, OSError, ValidationError, UnicodeError) as exc:
+        raise _corrupt("initial recovery budget carry failed authentication") from exc
+    if carry.canonical_bytes() != carry_bytes:
+        raise _corrupt("initial recovery budget carry is not canonical")
+    if carry.inherited_reviews_completed != 0 or stored.reviews_completed != 0:
+        raise _corrupt("initial recovery budget carry invented completed reviews")
+    with store.begin_read() as conn:
+        source, _, _ = store.load_validated_snapshot(conn, record.source_run_id)
+    submitted = source.context.workflow.max_review_iterations
+    if (
+        stored.submitted_max_review_iterations != submitted
+        or stored.submitted_max_review_iterations != carry.submitted_max_review_iterations
+        or stored.effective_review_ceiling != carry.inherited_effective_ceiling
+    ):
+        raise _corrupt(
+            "initial recovery record budget disagrees with submitted configuration"
+        )
+    with store.begin_read() as conn:
+        row = store.get_cursor_initial_recovery_by_successor(
+            conn,
+            successor_run_id=record.successor_run_id,
+        )
+        if row is None:
+            raise _corrupt("initial recovery relation disappeared")
+        expected = build_budget_carry(
+            store,
+            artifacts,
+            conn,
+            source_run_id=record.source_run_id,
+            successor_run_id=record.successor_run_id,
+            recovery_key=str(row["recovery_key"]),
+        )
+        try:
+            edges = recovery_ancestor_edges(store, conn, record.source_run_id)
+        except RecoveryAncestryError as exc:
+            raise _corrupt(str(exc)) from exc
+    if carry.canonical_bytes() != expected.canonical_bytes():
+        raise _corrupt("initial recovery budget carry does not match extension authority")
+    expected_edges = [
+        AncestorEdgeV2(
+            relation=edge.relation,
+            source_run_id=edge.source_run_id,
+            successor_run_id=edge.successor_run_id,
+            recovery_key=edge.recovery_key,
+        )
+        for edge in edges
+    ]
+    if stored.ancestors != expected_edges:
+        raise _corrupt("initial recovery ancestry does not match the ledger")
+
+
 def _verified_record(
     store: SqliteSchedulerStore,
     artifacts: ProtectedArtifactStore,
     row: sqlite3.Row,
-) -> CursorInitialRecoveryRecordV1:
+) -> InitialRecoveryAuthority:
     intent = _verified_intent(row)
     if intent.status != "ready" or not intent.record_sha256:
         raise _corrupt("initial recovery record is not published")
@@ -1007,10 +1465,7 @@ def _verified_record(
         )
     except (ProtectedArtifactError, OSError) as exc:
         raise _corrupt("initial recovery record failed authentication") from exc
-    try:
-        record = CursorInitialRecoveryRecordV1.model_validate_json(payload)
-    except ValidationError as exc:
-        raise _corrupt("initial recovery record failed authentication") from exc
+    record = _authority_from_payload(payload)
     if hashlib.sha256(record.canonical_bytes()).hexdigest() != intent.record_sha256:
         raise _corrupt("initial recovery record bytes do not match the ledger digest")
     if (
@@ -1031,6 +1486,8 @@ def _verified_record(
         or (record.parent_recovery_key or None) != (intent.parent_recovery_key or None)
     ):
         raise _corrupt("initial recovery record disagrees with publication intent")
+    if record.schema_version == 2:
+        _assert_v2_initial_budget(store, artifacts, record)
     try:
         base = artifacts.read_verified_bytes(
             record.successor_run_id,
@@ -1089,7 +1546,7 @@ def _parent_recovery(
     store: SqliteSchedulerStore,
     artifacts: ProtectedArtifactStore,
     source_run_id: str,
-) -> tuple[str, CursorInitialRecoveryRecordV1] | None:
+) -> tuple[str, InitialRecoveryAuthority] | None:
     with store.begin_read() as conn:
         row = store.get_cursor_initial_recovery_by_successor(conn, successor_run_id=source_run_id)
     if row is None:
@@ -1102,7 +1559,7 @@ def _parent_recovery(
 def _base_prompt_binding(
     artifacts: ProtectedArtifactStore,
     evidence: CursorRecoveryEvidenceBundle,
-    parent: tuple[str, CursorInitialRecoveryRecordV1] | None,
+    parent: tuple[str, InitialRecoveryAuthority] | None,
 ) -> tuple[str, str]:
     if parent is None:
         artifacts.read_verified_bytes(

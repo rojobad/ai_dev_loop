@@ -385,7 +385,7 @@ def test_authenticated_correction_failure_counts_review(
     assert analysis.receipt.turn_kind == "correction"
     assert analysis.evidence is not None
     assert analysis.evidence.reviews_completed == 1
-    assert analysis.receipt.recovery_supported is False
+    assert analysis.receipt.recovery_supported is True
 
 
 def test_real_pagination_beyond_first_page(
@@ -929,7 +929,7 @@ def test_review_recovery_successor_second_correction_failure_authenticated(
     analysis = analyze_cursor_recovery_evidence(store, artifacts, successor_id)
     assert analysis.receipt.evidence_status == "authenticated", analysis.receipt.reason_code
     assert analysis.receipt.turn_kind == "correction"
-    assert analysis.receipt.recovery_supported is False
+    assert analysis.receipt.recovery_supported is True
     assert analysis.evidence is not None
     assert analysis.evidence.reviews_completed >= 2
     assert analysis.evidence.chat_owner_run_id

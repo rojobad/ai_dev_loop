@@ -47,11 +47,16 @@ def scheduler_cursor_recovery_check(
     resolved_db = db_path or default_engine_db_path()
     store = SqliteSchedulerStore.open_readonly(resolved_db)
     artifacts = ReadOnlyProtectedArtifactStore(artifact_root or default_artifact_root())
-    kwargs: dict[str, int] = {}
-    if event_page_size is not None:
-        kwargs["event_page_size"] = event_page_size
     try:
-        analysis = analyze_cursor_recovery_evidence(store, artifacts, run_id, **kwargs)
+        if event_page_size is None:
+            analysis = analyze_cursor_recovery_evidence(store, artifacts, run_id)
+        else:
+            analysis = analyze_cursor_recovery_evidence(
+                store,
+                artifacts,
+                run_id,
+                event_page_size=event_page_size,
+            )
     except SchedulerEngineError:
         raise
     except Exception as exc:
@@ -74,7 +79,11 @@ def analyze_cursor_recovery_for_inspection(
     resolved_db = db_path or default_engine_db_path()
     store = SqliteSchedulerStore.open_readonly(resolved_db)
     artifacts = ReadOnlyProtectedArtifactStore(artifact_root or default_artifact_root())
-    kwargs: dict[str, int] = {}
-    if event_page_size is not None:
-        kwargs["event_page_size"] = event_page_size
-    return analyze_cursor_recovery_evidence(store, artifacts, run_id, **kwargs)
+    if event_page_size is None:
+        return analyze_cursor_recovery_evidence(store, artifacts, run_id)
+    return analyze_cursor_recovery_evidence(
+        store,
+        artifacts,
+        run_id,
+        event_page_size=event_page_size,
+    )

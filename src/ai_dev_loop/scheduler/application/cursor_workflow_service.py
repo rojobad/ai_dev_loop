@@ -1042,12 +1042,21 @@ class CursorWorkflowService:
                 usage_limit_continuation_path_for_attempt(iteration, attempt_id)
             )
         else:
-            original_prompt_path = (
-                state.cursor.original_prompt_path or state.context.plan_prompt.prompt_artifact_path
-            )
-            original_prompt_sha = (
-                state.cursor.original_prompt_sha256 or state.context.plan_prompt.prompt_sha256
-            )
+            if (
+                state.cursor.continuation_envelope_path
+                and state.cursor.continuation_envelope_sha256
+            ):
+                original_prompt_path = state.cursor.continuation_envelope_path
+                original_prompt_sha = state.cursor.continuation_envelope_sha256
+            else:
+                original_prompt_path = (
+                    state.cursor.original_prompt_path
+                    or state.context.plan_prompt.prompt_artifact_path
+                )
+                original_prompt_sha = (
+                    state.cursor.original_prompt_sha256
+                    or state.context.plan_prompt.prompt_sha256
+                )
             try:
                 original_prompt = self.artifacts.read_verified_bytes(
                     run_id,

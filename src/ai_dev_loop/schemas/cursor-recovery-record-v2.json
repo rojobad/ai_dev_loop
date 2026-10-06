@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "schema_version",
+    "turn_kind",
+    "reviewer",
+    "reviews_completed",
+    "submitted_max_review_iterations",
+    "effective_review_ceiling",
+    "source_run_id",
+    "successor_run_id",
+    "failed_attempt_id",
+    "dispatch_id",
+    "chat_id",
+    "chat_owner_run_id",
+    "iteration",
+    "admitted",
+    "plan_sha256",
+    "submitted_prompt_sha256",
+    "config_sha256",
+    "base_prompt",
+    "effective_prompt_path",
+    "effective_prompt_sha256",
+    "raw_fix",
+    "staged_patch",
+    "review_result",
+    "parent_source_run_id",
+    "parent_recovery_key",
+    "parent_record_sha256",
+    "budget_carry_path",
+    "budget_carry_sha256",
+    "ancestors"
+  ],
+  "properties": {
+    "schema_version": {"const": 2, "type": "integer"},
+    "turn_kind": {"enum": ["initial", "correction"], "type": "string"},
+    "reviewer": {"oneOf": [{"$ref": "#/$defs/reviewer_not_created"}, {"$ref": "#/$defs/reviewer_bound"}]},
+    "reviews_completed": {"minimum": 0, "type": "integer"},
+    "submitted_max_review_iterations": {"minimum": 1, "type": "integer"},
+    "effective_review_ceiling": {"minimum": 1, "type": "integer"},
+    "source_run_id": {"minLength": 1, "type": "string"},
+    "successor_run_id": {"minLength": 1, "type": "string"},
+    "failed_attempt_id": {"minLength": 1, "type": "string"},
+    "dispatch_id": {"minLength": 1, "type": "string"},
+    "chat_id": {"$ref": "#/$defs/uuid"},
+    "chat_owner_run_id": {"minLength": 1, "type": "string"},
+    "iteration": {"minimum": 1, "type": "integer"},
+    "admitted": {"$ref": "#/$defs/artifact"},
+    "plan_sha256": {"$ref": "#/$defs/sha256"},
+    "submitted_prompt_sha256": {"$ref": "#/$defs/sha256"},
+    "config_sha256": {"$ref": "#/$defs/sha256"},
+    "base_prompt": {"$ref": "#/$defs/artifact"},
+    "effective_prompt_path": {"minLength": 1, "type": "string"},
+    "effective_prompt_sha256": {"$ref": "#/$defs/sha256"},
+    "raw_fix": {"oneOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+    "staged_patch": {"oneOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+    "review_result": {"oneOf": [{"$ref": "#/$defs/artifact"}, {"type": "null"}]},
+    "parent_source_run_id": {"minLength": 1, "type": ["string", "null"]},
+    "parent_recovery_key": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "parent_record_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "budget_carry_path": {"minLength": 1, "type": "string"},
+    "budget_carry_sha256": {"$ref": "#/$defs/sha256"},
+    "ancestors": {"items": {"$ref": "#/$defs/ancestor"}, "type": "array"}
+  },
+  "$defs": {
+    "sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"},
+    "uuid": {
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "type": "string"
+    },
+    "artifact": {
+      "additionalProperties": false,
+      "properties": {
+        "owner_run_id": {"minLength": 1, "type": "string"},
+        "relative_path": {"minLength": 1, "type": "string"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "required": ["owner_run_id", "relative_path", "sha256"],
+      "type": "object"
+    },
+    "reviewer_not_created": {
+      "additionalProperties": false,
+      "properties": {"form": {"const": "not_created", "type": "string"}},
+      "required": ["form"],
+      "type": "object"
+    },
+    "reviewer_bound": {
+      "additionalProperties": false,
+      "properties": {
+        "form": {"const": "bound", "type": "string"},
+        "session_id": {"$ref": "#/$defs/uuid"},
+        "bootstrap_run_id": {"minLength": 1, "type": "string"},
+        "bootstrap_attempt_id": {"minLength": 1, "type": "string"},
+        "bootstrap_events_path": {"minLength": 1, "type": "string"},
+        "bootstrap_events_sha256": {"$ref": "#/$defs/sha256"},
+        "binding_run_id": {"minLength": 1, "type": "string"},
+        "binding_artifact_path": {"minLength": 1, "type": "string"},
+        "binding_artifact_sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "required": [
+        "form",
+        "session_id",
+        "bootstrap_run_id",
+        "bootstrap_attempt_id",
+        "bootstrap_events_path",
+        "bootstrap_events_sha256",
+        "binding_run_id",
+        "binding_artifact_path",
+        "binding_artifact_sha256"
+      ],
+      "type": "object"
+    },
+    "ancestor": {
+      "additionalProperties": false,
+      "properties": {
+        "relation": {"enum": ["cursor_recovery", "review_recovery"], "type": "string"},
+        "source_run_id": {"minLength": 1, "type": "string"},
+        "successor_run_id": {"minLength": 1, "type": "string"},
+        "recovery_key": {"minLength": 1, "type": "string"}
+      },
+      "required": ["relation", "source_run_id", "successor_run_id", "recovery_key"],
+      "type": "object",
+      "allOf": [
+        {
+          "if": {
+            "properties": {"relation": {"const": "cursor_recovery"}},
+            "required": ["relation"]
+          },
+          "then": {"properties": {"recovery_key": {"$ref": "#/$defs/sha256"}}}
+        },
+        {
+          "if": {
+            "properties": {"relation": {"const": "review_recovery"}},
+            "required": ["relation"]
+          },
+          "then": {
+            "properties": {
+              "recovery_key": {
+                "pattern": "^[^:\\s]+:[^:\\s]+$",
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"turn_kind": {"const": "correction"}},
+        "required": ["turn_kind"]
+      },
+      "then": {
+        "properties": {
+          "reviewer": {"$ref": "#/$defs/reviewer_bound"},
+          "reviews_completed": {"minimum": 1},
+          "raw_fix": {"$ref": "#/$defs/artifact"},
+          "staged_patch": {"$ref": "#/$defs/artifact"},
+          "review_result": {"$ref": "#/$defs/artifact"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"turn_kind": {"const": "initial"}},
+        "required": ["turn_kind"]
+      },
+      "then": {
+        "properties": {
+          "reviewer": {"$ref": "#/$defs/reviewer_not_created"},
+          "reviews_completed": {"const": 0},
+          "raw_fix": {"type": "null"},
+          "staged_patch": {"type": "null"},
+          "review_result": {"type": "null"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"parent_source_run_id": {"type": "null"}},
+        "required": ["parent_source_run_id"]
+      },
+      "then": {
+        "properties": {
+          "parent_recovery_key": {"type": "null"},
+          "parent_record_sha256": {"type": "null"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"parent_source_run_id": {"type": "string"}},
+        "required": ["parent_source_run_id"]
+      },
+      "then": {
+        "properties": {
+          "parent_recovery_key": {"type": "string"},
+          "parent_record_sha256": {"type": "string"}
+        }
+      }
+    }
+  ]
+}

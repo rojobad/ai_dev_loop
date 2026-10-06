@@ -7,7 +7,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ai_dev_loop.iterations import extract_correction_fix_prompt, iteration_label
+from ai_dev_loop.iterations import (
+    CORRECTION_ENVELOPE_HEADER,
+    build_correction_execution_envelope,
+    extract_correction_fix_prompt,
+    iteration_label,
+)
 from ai_dev_loop.runners.cursor_output import (
     fingerprints_match,
     load_fingerprint_artifact,
@@ -128,6 +133,47 @@ def validate_frozen_repository_identity(
         expected_head=identity.initial_head,
         context=context,
     )
+
+
+def verify_recovered_correction_prompt(
+    run_root: Path,
+    *,
+    effective_path: str,
+    effective_sha256: str,
+    base_path: str,
+    base_sha256: str,
+    fix_prompt_path: str,
+    fix_prompt_sha256: str,
+) -> None:
+    """Accept the failed envelope plus one authenticated note without rewriting the fix."""
+
+    from ai_dev_loop.scheduler.domain.cursor_initial_recovery import effective_prompt_bytes
+
+    verify_prompt_binding(run_root, prompt_path=effective_path, prompt_sha256=effective_sha256)
+    verify_prompt_binding(run_root, prompt_path=base_path, prompt_sha256=base_sha256)
+    base = (run_root / base_path).read_bytes()
+    effective = (run_root / effective_path).read_bytes()
+    expected = effective_prompt_bytes(base)
+    if effective != expected and expected not in effective:
+        raise CursorEvidenceError(
+            "recovered correction prompt is not the authenticated base plus one note"
+        )
+    fix_abs = run_root / fix_prompt_path
+    if not fix_abs.is_file():
+        raise CursorEvidenceError("fix prompt artifact missing for correction binding")
+    fix_bytes = fix_abs.read_bytes()
+    if sha256_bytes(fix_bytes) != fix_prompt_sha256:
+        raise CursorEvidenceError("fix prompt artifact hash does not match binding")
+    base_text = base.decode("utf-8")
+    header = CORRECTION_ENVELOPE_HEADER + "\n"
+    if base_text.startswith(header):
+        embedded = extract_correction_fix_prompt(base_text)
+        if sha256_bytes(embedded.encode("utf-8")) != fix_prompt_sha256:
+            raise CursorEvidenceError("correction envelope does not embed exact fix prompt")
+    else:
+        envelope = build_correction_execution_envelope(fix_bytes.decode("utf-8"))
+        if envelope.encode("utf-8") not in base:
+            raise CursorEvidenceError("wrapped continuation dropped the authenticated correction")
 
 
 def verify_correction_envelope_binding(
@@ -290,7 +336,19 @@ def verify_pre_execution_cursor_guards(
         )
         fix_prompt_path = evidence.get("fix_prompt_path")
         fix_prompt_sha = evidence.get("fix_prompt_sha256")
-        if fix_prompt_path and fix_prompt_sha:
+        recovery_base_path = evidence.get("cursor_recovery_base_prompt_path")
+        recovery_base_sha = evidence.get("cursor_recovery_base_prompt_sha256")
+        if fix_prompt_path and fix_prompt_sha and recovery_base_path and recovery_base_sha:
+            verify_recovered_correction_prompt(
+                run_root,
+                effective_path=str(evidence["prompt_path"]),
+                effective_sha256=str(evidence["prompt_sha256"]),
+                base_path=str(recovery_base_path),
+                base_sha256=str(recovery_base_sha),
+                fix_prompt_path=str(fix_prompt_path),
+                fix_prompt_sha256=str(fix_prompt_sha),
+            )
+        elif fix_prompt_path and fix_prompt_sha:
             verify_correction_envelope_binding(
                 run_root,
                 envelope_path=str(evidence["prompt_path"]),
@@ -308,7 +366,9 @@ def verify_pre_execution_cursor_guards(
             digest = sha256_bytes(patch_abs.read_bytes())
             if digest != str(staged_patch_sha):
                 raise CursorEvidenceError("staged patch artifact hash does not match binding")
-            if not evidence.get("timeout_retry_of"):
+            if not evidence.get("timeout_retry_of") and not evidence.get(
+                "cursor_recovery_record_sha256"
+            ):
                 validate_staged_patch_matches_artifact(repo_root, patch_abs)
 
 
