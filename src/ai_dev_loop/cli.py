@@ -399,7 +399,7 @@ def scheduler_cursor_retry_command(
         typer.Argument(
             help=(
                 "Run for a Cursor timeout retry, a read-only failure check, "
-                "or an eligible standalone initial or correction recovery."
+                "or an eligible standalone or sequence initial or correction recovery."
             )
         ),
     ],
@@ -416,13 +416,13 @@ def scheduler_cursor_retry_command(
             "--force",
             help=(
                 "Publish one same-chat successor for an eligible failed standalone "
-                "Cursor implementation or correction turn."
+                "or current sequence-leaf Cursor implementation or correction turn."
             ),
         ),
     ] = False,
     output: OutputOption = DEFAULT_OUTPUT,
 ) -> None:
-    """Retry a Cursor timeout, check failure evidence, or force a standalone recovery."""
+    """Retry a Cursor timeout, check failure evidence, or force a same-chat recovery."""
 
     def run() -> None:
         if check and force:

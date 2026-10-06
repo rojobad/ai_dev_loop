@@ -387,7 +387,7 @@ def test_force_accepts_standalone_correction(
     assert accepted.exit_code == 0, accepted.output
 
 
-def test_force_rejects_sequence(
+def test_force_accepts_eligible_sequence_leaf(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
     fake_clis: dict[str, Path],
@@ -412,12 +412,12 @@ def test_force_rejects_sequence(
     )
     _run_until(tick, started.run_id, target_kind="blocked", max_ticks=40)
     _normalize_run_artifact_permissions(scheduler_paths["artifact_root"], started.run_id)
-    sequence_rejected = CliRunner().invoke(
+    accepted = CliRunner().invoke(
         app,
         ["scheduler", "cursor-retry", started.run_id, "--force"],
     )
-    assert sequence_rejected.exit_code == 4, sequence_rejected.output
-    assert "sequence" in sequence_rejected.output.lower()
+    assert accepted.exit_code == 0, accepted.output
+    assert "publication=ready" in accepted.output
 
 
 def _check_reason(run_id: str) -> str:

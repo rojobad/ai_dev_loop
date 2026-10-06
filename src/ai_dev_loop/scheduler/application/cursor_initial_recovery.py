@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
 import sqlite3
 import threading
@@ -139,7 +140,20 @@ def cursor_initial_recovery_blocks_dispatch(
     run_id: str,
 ) -> bool:
     row = store.get_cursor_initial_recovery_by_successor(conn, successor_run_id=run_id)
-    return row is not None and str(row["status"]) != "ready"
+    if row is None:
+        return False
+    if str(row["status"]) != "ready":
+        return True
+    from ai_dev_loop.scheduler.domain.state import SCHEDULER_TERMINAL_STATE_KINDS
+
+    state, _, _ = store.load_validated_snapshot(conn, run_id)
+    if state.kind in SCHEDULER_TERMINAL_STATE_KINDS:
+        return False
+    from ai_dev_loop.scheduler.application.sequence_cursor_recovery import (
+        sequence_cursor_adoption_blocks_dispatch,
+    )
+
+    return sequence_cursor_adoption_blocks_dispatch(store, conn, run_id)
 
 
 def authenticated_initial_recovery_launch(
@@ -169,6 +183,7 @@ class CursorInitialRecoveryService:
         event_id_factory: Callable[[], str] | None = None,
         dispatch_id_factory: Callable[[], str] | None = None,
         before_create: Callable[[], None] | None = None,
+        before_adoption_commit: Callable[[], None] | None = None,
         before_ready_commit: Callable[[], None] | None = None,
         fault_point: str | None = None,
     ) -> None:
@@ -179,6 +194,7 @@ class CursorInitialRecoveryService:
         self._event_id_factory = event_id_factory or (lambda: f"evt-{secrets.token_hex(16)}")
         self._dispatch_id_factory = dispatch_id_factory or (lambda: f"dsp-{secrets.token_hex(16)}")
         self._before_create = before_create
+        self._before_adoption_commit = before_adoption_commit
         self._before_ready_commit = before_ready_commit
         self._fault_point = fault_point
         self._publication_lock = threading.Lock()
@@ -245,8 +261,6 @@ class CursorInitialRecoveryService:
     def _reject_unless_eligible(self, analysis: CursorRecoveryAnalysisResult) -> None:
         evidence = analysis.evidence
         receipt = analysis.receipt
-        if evidence is not None and evidence.sequence_id is not None:
-            raise _invalid("forced Cursor recovery does not support sequence runs")
         if evidence is not None and evidence.turn_kind == "correction":
             raise _invalid("forced Cursor recovery does not support correction turns")
         if evidence is not None and (evidence.reviewer_bound or evidence.reviews_completed != 0):
@@ -383,9 +397,17 @@ class CursorInitialRecoveryService:
                 if current is None:
                     raise _conflict("initial recovery relation was not recorded")
                 return current
+            self._bind_sequence_replacement(
+                conn,
+                source_run_id=source_run_id,
+                successor_run_id=successor_run_id,
+                recovery_key=recovery_key,
+                now=now,
+            )
             row = self.store.get_cursor_initial_recovery_by_key(conn, recovery_key=recovery_key)
         if row is None:
             raise _conflict("initial recovery relation disappeared after insert")
+        self._raise_fault("after_sequence_intent")
         return row
 
     def _insert_successor(
@@ -479,6 +501,12 @@ class CursorInitialRecoveryService:
             raise _conflict("initial recovery successor was aborted before publication")
         self._publish_files(row, intent)
         self._raise_fault("after_artifacts")
+        if self._adopt_sequence_replacement(
+            source_run_id=intent.source_run_id,
+            successor_run_id=intent.successor_run_id,
+            recovery_key=intent.recovery_key,
+        ):
+            self._raise_fault("after_sequence_adoption")
         ready = self._mark_ready(row, intent)
         self._raise_fault("after_ready")
         return ready
@@ -745,6 +773,16 @@ class CursorInitialRecoveryService:
                 raise _conflict("initial recovery publication was cancelled")
             if self.store.has_abort_requested_for_run(conn, intent.successor_run_id):
                 raise _conflict("initial recovery successor was aborted")
+            from ai_dev_loop.scheduler.application.sequence_cursor_recovery import (
+                sequence_cursor_adoption_blocks_dispatch,
+            )
+
+            if sequence_cursor_adoption_blocks_dispatch(
+                self.store,
+                conn,
+                intent.successor_run_id,
+            ):
+                raise _conflict("sequence cursor successor is not an active uncancelled leaf")
             self._guard_publication_ledger(
                 conn,
                 intent,
@@ -834,6 +872,19 @@ class CursorInitialRecoveryService:
         payload = cancelled.canonical_bytes()
         now = self._now_factory()
         with self.store.begin_immediate() as conn:
+            from ai_dev_loop.scheduler.application.sequence_cursor_recovery import (
+                cancel_pending_cursor_sequence_recovery,
+            )
+
+            source, _, _ = self.store.load_validated_snapshot(conn, intent.source_run_id)
+            if source.context.sequence is not None:
+                cancel_pending_cursor_sequence_recovery(
+                    self.store,
+                    conn,
+                    sequence_id=source.context.sequence.sequence_id,
+                    source_run_id=intent.source_run_id,
+                    now=now,
+                )
             self.store.update_cursor_initial_recovery_status(
                 conn,
                 recovery_key=str(row["recovery_key"]),
@@ -849,6 +900,50 @@ class CursorInitialRecoveryService:
     def _raise_fault(self, point: str) -> None:
         if self._fault_point == point:
             raise CursorInitialRecoveryFault(point)
+
+    def _bind_sequence_replacement(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_run_id: str,
+        successor_run_id: str,
+        recovery_key: str,
+        now: datetime,
+    ) -> None:
+        from ai_dev_loop.scheduler.application.sequence_cursor_recovery import (
+            bind_pending_cursor_sequence_intent,
+        )
+
+        bind_pending_cursor_sequence_intent(
+            self.store,
+            conn,
+            source_run_id=source_run_id,
+            successor_run_id=successor_run_id,
+            recovery_key=recovery_key,
+            now=now,
+        )
+
+    def _adopt_sequence_replacement(
+        self,
+        *,
+        source_run_id: str,
+        successor_run_id: str,
+        recovery_key: str,
+    ) -> bool:
+        from ai_dev_loop.scheduler.application.sequence_cursor_recovery import (
+            ensure_sequence_cursor_adoption,
+        )
+
+        if self._before_adoption_commit is not None:
+            self._before_adoption_commit()
+        return ensure_sequence_cursor_adoption(
+            self.store,
+            self.artifacts,
+            source_run_id=source_run_id,
+            successor_run_id=successor_run_id,
+            recovery_key=recovery_key,
+            now=self._now_factory(),
+        )
 
 
 def reconcile_pending_cursor_initial_recoveries(
@@ -1029,6 +1124,157 @@ def _verified_intent(row: sqlite3.Row) -> CursorInitialRecoveryPublicationIntent
     if (intent.parent_recovery_key or None) != (str(parent) if parent else None):
         raise _corrupt("initial recovery parent provenance disagrees with the ledger relation")
     return intent
+
+
+def read_private_record_bytes(
+    artifacts: ProtectedArtifactStore,
+    run_id: str,
+    relative_path: str,
+) -> bytes | None:
+    """Read one private record after permission checks. Missing files return None."""
+
+    from ai_dev_loop.scheduler.infrastructure.paths import resolve_run_relative_path
+
+    try:
+        path = resolve_run_relative_path(artifacts.run_root(run_id), relative_path)
+    except ValueError as exc:
+        raise _corrupt("cursor recovery record path is invalid") from exc
+    if not path.exists():
+        return None
+    if not path.is_file() or path.is_symlink():
+        raise _corrupt("cursor recovery record is not a regular file")
+    if os.name != "nt":
+        mode = path.stat().st_mode & 0o777
+        if mode & 0o077:
+            raise _corrupt("cursor recovery record has unsafe permissions")
+    return path.read_bytes()
+
+
+def authenticate_initial_publication_for_adoption(
+    store: SqliteSchedulerStore,
+    artifacts: ProtectedArtifactStore,
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+) -> str | None:
+    """Return the canonical record digest, or None when the record is not published yet."""
+
+    intent = _verified_intent(row)
+    if intent.status == "cancelled":
+        raise _conflict("initial recovery publication was cancelled")
+    payload = read_private_record_bytes(artifacts, intent.successor_run_id, RECORD_REL)
+    if payload is None:
+        return None
+    record = _authority_from_payload(payload)
+    if (
+        record.source_run_id != intent.source_run_id
+        or record.successor_run_id != intent.successor_run_id
+        or record.failed_attempt_id != intent.failed_attempt_id
+        or record.dispatch_id != intent.dispatch_id
+        or record.chat_id != intent.chat_id
+        or record.iteration != intent.iteration
+    ):
+        raise _corrupt("initial recovery record disagrees with the durable relation")
+    _assert_record_matches_durable_authority(store, artifacts, record, intent)
+    if record.schema_version == 2:
+        _assert_v2_initial_budget(store, artifacts, record)
+    try:
+        base = artifacts.read_verified_bytes(
+            record.successor_run_id,
+            record.base_prompt_path,
+            expected_sha256=record.base_prompt_sha256,
+        )
+        effective = artifacts.read_verified_bytes(
+            record.successor_run_id,
+            record.effective_prompt_path,
+            expected_sha256=record.effective_prompt_sha256,
+        )
+        artifacts.read_verified_bytes(
+            record.successor_run_id,
+            record.admitted_artifact_path,
+            expected_sha256=record.admitted_artifact_sha256,
+        )
+    except (ProtectedArtifactError, OSError) as exc:
+        raise _corrupt("initial recovery private inputs failed authentication") from exc
+    if effective != effective_prompt_bytes(base):
+        raise _corrupt("effective recovery prompt is not the authenticated base plus one note")
+    try:
+        attempt_id, detail, _sequence = resolve_authenticated_decisive_attempt(
+            store,
+            artifacts,
+            conn,
+            intent.source_run_id,
+        )
+    except CursorEvidenceError as exc:
+        raise _corrupt("source failure no longer matches the recovery intent") from exc
+    if detail != "ok" or attempt_id != intent.failed_attempt_id:
+        raise _corrupt("source failure no longer matches the recovery intent")
+    source, _, _ = store.load_validated_snapshot(conn, intent.source_run_id)
+    authenticate_materialized_recovery_inputs(
+        artifacts,
+        intent.successor_run_id,
+        [
+            *materialized_frozen_input_bindings(source.context),
+            (intent.admitted_artifact_path, intent.admitted_artifact_sha256),
+            (intent.chat_artifact_path, intent.chat_artifact_sha256),
+            (record.base_prompt_path, record.base_prompt_sha256),
+            (record.effective_prompt_path, record.effective_prompt_sha256),
+        ],
+    )
+    digest = hashlib.sha256(record.canonical_bytes()).hexdigest()
+    if intent.record_sha256 is not None and intent.record_sha256 != digest:
+        raise _corrupt("initial recovery record bytes do not match the ledger digest")
+    return digest
+
+
+def materialized_frozen_input_bindings(context: object) -> list[tuple[str, str]]:
+    """Durable hashes for every frozen input copied onto a recovery successor."""
+
+    from ai_dev_loop.scheduler.domain.state import FreshCodexReviewerBinding, SubmittedRunContext
+
+    if not isinstance(context, SubmittedRunContext):
+        raise _corrupt("recovery successor is missing frozen submitted context")
+    bindings = [
+        (context.plan_prompt.plan_artifact_path, context.plan_prompt.plan_sha256),
+        (context.plan_prompt.prompt_artifact_path, context.plan_prompt.prompt_sha256),
+        (
+            context.effective_config.effective_config_artifact_path,
+            context.effective_config.effective_config_sha256,
+        ),
+        (
+            context.effective_config.source_config_artifact_path,
+            context.effective_config.source_config_sha256,
+        ),
+    ]
+    if context.baseline_status_artifact_path and context.baseline_status_sha256:
+        bindings.append(
+            (context.baseline_status_artifact_path, context.baseline_status_sha256)
+        )
+    if isinstance(context.codex, FreshCodexReviewerBinding):
+        bindings.append((context.codex.binding_artifact_path, context.codex.binding_sha256))
+    return bindings
+
+
+def authenticate_materialized_recovery_inputs(
+    artifacts: ProtectedArtifactStore,
+    successor_run_id: str,
+    bindings: list[tuple[str, str]],
+) -> None:
+    """Read every copied recovery input on the successor against its durable hash."""
+
+    seen: set[tuple[str, str]] = set()
+    try:
+        for relative_path, digest in bindings:
+            key = (relative_path, digest)
+            if key in seen:
+                continue
+            seen.add(key)
+            artifacts.read_verified_bytes(
+                successor_run_id,
+                relative_path,
+                expected_sha256=digest,
+            )
+    except (ProtectedArtifactError, OSError) as exc:
+        raise _corrupt("materialized recovery inputs failed authentication") from exc
 
 
 def _last_parsed_event(

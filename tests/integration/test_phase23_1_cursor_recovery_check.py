@@ -323,7 +323,7 @@ def test_cli_check_sequence_blocked_run_reports_ordinal(
     assert payload["sequence_id"] == sequence_id
     assert payload["ordinal"] == 1
     assert payload["evidence_status"] == "authenticated"
-    assert payload["recovery_supported"] is False
+    assert payload["recovery_supported"] is True
 
 
 def test_cli_check_sequence_stale_leaf_is_ineligible(

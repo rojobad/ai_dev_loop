@@ -212,27 +212,34 @@ Con `--check`, el comando es solo lectura: abre el ledger en modo readonly, reco
 la evidencia causal del fallo `cursor_failure` (si existe) y devuelve un recibo JSON
 acotado (`evidence_status`, `turn_kind`, `reason_code`, `safe_summary`,
 `sequence_id`, `ordinal`, `recovery_supported`). `recovery_supported` es `true` para
-un turno inicial independiente autenticado, sin reviewer B y sin reviews completadas,
-y también para una corrección independiente autenticada con reviewer B, el fix exacto,
-el sobre fallido y el presupuesto autorizado. Una secuencia autenticada sigue en
-`false`. Un run inspeccionado pero no elegible devuelve recibo, no un fallo de proceso
-inventado. Los artefactos protegidos se resuelven con raíces confinadas existentes; no
-se crean directorios ni se alteran permisos.
+un turno inicial autenticado, sin reviewer B y sin reviews completadas, y también
+para una corrección autenticada con reviewer B, el fix exacto, el sobre fallido y
+el presupuesto autorizado. Eso incluye la hoja actual de una secuencia bloqueada
+en el mismo ordinal. Una hoja de secuencia que ya no es la actual, una secuencia
+abortada, un proceso activo o una reserva ajena siguen en `false`. Un run
+inspeccionado pero no elegible devuelve recibo, no un fallo de proceso inventado.
+Los artefactos protegidos se resuelven con raíces confinadas existentes; no se
+crean directorios ni se alteran permisos.
 
 Con `--force`, un fallo terminal autenticado de `cursor.run_turn` en un turno inicial
-o una corrección independiente publica un sucesor del mismo chat. El prompt efectivo
-es el sobre exacto del intento fallido más una nota operativa fija. Una corrección
-conserva el fix crudo, el reviewer B, la iteración, las reviews completadas y el techo
-efectivo; no reescribe la configuración enviada. El sucesor conserva el índice y los
-archivos parciales; no hace admisión limpia ni `git add`. La publicación pendiente no
-despacha un agente. Solo el cierre listo instala un efecto `cursor.run_turn`. Un
-sucesor que vuelva a fallar puede forzarse de nuevo con su propio intento y el prompt
-base original, sin apilar la nota. La inspección, la publicación `--force`, la
-repetición de un registro listo y el despacho autentican cada registro inicial
-ancestro exigido, su configuración congelada y los bytes del acarreo de
-presupuesto, aunque el fallo sea un solo intento ordinario y el intent siga en
-schema 1. Secuencias, abortos, procesos activos y dueños de worktree en conflicto
-se rechazan.
+o una corrección publica un sucesor del mismo chat. En una secuencia, el sucesor
+ocupa el mismo ordinal y la misma entrada congelada; no crea otra fase ni reordena
+las entradas. El prompt efectivo es el sobre exacto del intento fallido más una
+nota operativa fija. Una corrección conserva el fix crudo, el reviewer B, la
+iteración, las reviews completadas y el techo efectivo, incluido un techo extendido;
+no reescribe la configuración enviada. El turno inicial de secuencia no inventa
+reviewer ni parche staged. El sucesor conserva el índice y los archivos parciales;
+`--force` no hace admisión limpia, `git add` ni commit. La publicación pendiente no
+despacha un agente: la secuencia tiene que adoptar el sucesor y el cierre listo
+instala un solo efecto `cursor.run_turn`. Repetir `--force` sobre el origen
+devuelve la relación ya autenticada aunque la secuencia haya avanzado. Un origen
+obsoleto sin esa relación se rechaza. Un sucesor que vuelva a fallar puede
+forzarse de nuevo con su propio intento y el prompt base original, sin apilar la
+nota. La inspección, la publicación `--force`, la repetición de un registro listo
+y el despacho autentican cada registro inicial ancestro exigido, su configuración
+congelada y los bytes del acarreo de presupuesto. Abortos, procesos activos,
+holds sin resolver y dueños de worktree en conflicto se rechazan. `scheduler
+sequence abort` cancela un reemplazo pendiente y no materializa fases futuras.
 
 `reason_code` estable (resumen): `authenticated_cursor_failure` (evidencia causal
 autenticada); `insufficient_evidence_history` / `insufficient_evidence_ambiguous_failure`

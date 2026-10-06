@@ -566,6 +566,15 @@ class AttemptService:
             blocked = self._reauthenticate_initial_recovery_launch(conn, run_id)
             if blocked is not None:
                 return blocked
+            from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
+                cursor_initial_recovery_blocks_dispatch,
+            )
+
+            if cursor_initial_recovery_blocks_dispatch(self.store, conn, run_id):
+                return TickRunReceipt(
+                    run_id=run_id,
+                    action="cursor_initial_recovery_publication_pending",
+                )
             if not self.store.try_acquire_capacity(
                 conn,
                 run_id=run_id,

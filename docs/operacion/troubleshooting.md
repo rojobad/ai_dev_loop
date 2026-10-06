@@ -342,9 +342,11 @@ sucesores automaticos desde runs `failed`. Ante un fallo:
 - inspecciona `scheduler status` y `scheduler history`;
 - `scheduler cursor-retry <run-id> --check` informa si un `cursor_failure`
   autenticado admite `--force` (`recovery_supported`);
-- `--force` recupera un turno inicial o una corrección independiente ya terminados,
-  incluido un sucesor que volvió a fallar. No recupera secuencias y no anuncia
-  ejecución de agente mientras la publicación sigue pendiente;
+- `--force` recupera un turno inicial o una corrección ya terminados, incluido
+  un sucesor que volvió a fallar y la hoja bloqueada actual de una secuencia.
+  Repetirlo devuelve la relación existente. Una hoja que ya no es la actual se
+  rechaza. No anuncia ejecución de agente mientras la publicación o la adopción
+  de secuencia siguen pendientes;
 - preserva artefactos bajo `artifacts/` para auditoria manual;
 - para continuar trabajo fuera de ese alcance, usa `scheduler submit` con
   `--resubmission-id <uuid>` y los mismos inputs congelados si aun aplican.

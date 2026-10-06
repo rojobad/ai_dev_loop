@@ -1789,7 +1789,11 @@ def _verify_sequence_binding(
     store: SqliteSchedulerStore,
     conn: sqlite3.Connection,
     binding: SequenceRunBinding,
+    *,
+    require_current_ordinal: bool = True,
 ) -> str | None:
+    """Authenticate the frozen entry. Current-ordinal equality is fresh eligibility."""
+
     try:
         store.require_sequence_schema(conn)
         sequence_state = store.load_validated_sequence_state(conn, binding.sequence_id)
@@ -1805,6 +1809,8 @@ def _verify_sequence_binding(
     entry = definition.entries[binding.ordinal - 1]
     if frozen_entry_hash(entry) != binding.entry_hash:
         return "insufficient_sequence_entry_hash"
+    if not require_current_ordinal:
+        return None
     current_ordinal = getattr(sequence_state, "current_ordinal", None)
     if current_ordinal is not None and int(current_ordinal) != binding.ordinal:
         return "insufficient_sequence_ordinal"
@@ -2147,6 +2153,7 @@ def analyze_cursor_recovery_evidence(
     *,
     event_page_size: int = EVENT_PAGE_SIZE,
     reservation_must_match_run: bool = True,
+    require_current_sequence_leaf: bool = True,
 ) -> CursorRecoveryAnalysisResult:
     sequence_id: str | None = None
     ordinal: int | None = None
@@ -2170,7 +2177,12 @@ def analyze_cursor_recovery_evidence(
         if binding is not None:
             sequence_id = binding.sequence_id
             ordinal = binding.ordinal
-            sequence_issue = _verify_sequence_binding(store, conn, binding)
+            sequence_issue = _verify_sequence_binding(
+                store,
+                conn,
+                binding,
+                require_current_ordinal=require_current_sequence_leaf,
+            )
             if sequence_issue is not None:
                 if sequence_issue == "ineligible_sequence_aborted":
                     return CursorRecoveryAnalysisResult(
@@ -2865,11 +2877,23 @@ def analyze_cursor_recovery_evidence(
                 artifacts=artifacts,  # type: ignore[arg-type]
                 checkpoint=checkpoint,
             )
-            validate_frozen_repository_identity(
-                Path(state.context.repository.root),
-                identity,
-                context="cursor recovery evidence",
-            )
+            if require_current_sequence_leaf:
+                validate_frozen_repository_identity(
+                    Path(state.context.repository.root),
+                    identity,
+                    context="cursor recovery evidence",
+                )
+            else:
+                from ai_dev_loop.runners.git import validate_repository_layout
+
+                validate_repository_layout(
+                    Path(state.context.repository.root),
+                    expected_root=identity.root,
+                    expected_git_common_dir=identity.git_common_dir,
+                    expected_git_dir=identity.git_dir,
+                    expected_branch=identity.branch,
+                    context="cursor recovery evidence",
+                )
         except CursorEvidenceError:
             return CursorRecoveryAnalysisResult(
                 receipt=receipt(
@@ -2892,7 +2916,7 @@ def analyze_cursor_recovery_evidence(
                 run_id=run_id,
                 sequence_id=sequence_id,
             )
-        if sequence_leaf_matches is False:
+        if require_current_sequence_leaf and sequence_leaf_matches is False:
             return CursorRecoveryAnalysisResult(
                 receipt=receipt(
                     run_id,
@@ -2966,22 +2990,27 @@ def analyze_cursor_recovery_evidence(
         ),
     )
     kind_label = "initial" if turn_kind == "initial" else "correction"
+    sequence_leaf_ok = sequence_id is None or sequence_leaf_matches is True
     initial_supported = (
         turn_kind == "initial"
-        and sequence_id is None
+        and sequence_leaf_ok
         and reviewer_bound_event is None
         and reviews_completed == 0
         and review_recovery_source is None
     )
     correction_supported = (
         turn_kind == "correction"
-        and sequence_id is None
+        and sequence_leaf_ok
         and reviewer_proof is not None
         and captured_fix is not None
         and captured_staging is not None
     )
     mutation_supported = initial_supported or correction_supported
-    if initial_supported:
+    if initial_supported and sequence_id is not None:
+        support_text = "forced initial sequence recovery is supported."
+    elif correction_supported and sequence_id is not None:
+        support_text = "forced correction sequence recovery is supported."
+    elif initial_supported:
         support_text = "forced initial standalone recovery is supported."
     elif correction_supported:
         support_text = "forced correction standalone recovery is supported."

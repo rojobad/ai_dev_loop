@@ -20,7 +20,9 @@ from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
     _invalid,
     _project_name,
     _publish_fresh_reviewer_input,
+    authenticate_materialized_recovery_inputs,
     authenticate_required_initial_ancestors,
+    materialized_frozen_input_bindings,
 )
 from ai_dev_loop.scheduler.application.cursor_recovery_evidence import (
     CursorRecoveryAnalysisResult,
@@ -75,8 +77,8 @@ def force_correction(
     analysis: CursorRecoveryAnalysisResult,
 ) -> CursorInitialRecoveryResult:
     evidence = analysis.evidence
-    if evidence is None or evidence.sequence_id is not None:
-        raise _invalid("forced Cursor recovery does not support sequence runs")
+    if evidence is None:
+        raise _invalid("forced Cursor recovery is missing authenticated evidence")
     if evidence.turn_kind != "correction":
         raise _invalid("forced Cursor recovery does not support this turn")
     _require_correction_fields(evidence)
@@ -109,6 +111,12 @@ def resume_correction_publication(
         raise _conflict("correction recovery successor was aborted before publication")
     _publish_files(service, intent)
     service._raise_fault("after_artifacts")
+    if service._adopt_sequence_replacement(
+        source_run_id=intent.source_run_id,
+        successor_run_id=intent.successor_run_id,
+        recovery_key=intent.recovery_key,
+    ):
+        service._raise_fault("after_sequence_adoption")
     ready = _mark_ready(service, row, intent)
     service._raise_fault("after_ready")
     return ready
@@ -266,8 +274,6 @@ def _insert_candidate(
         state, _, _ = service.store.load_validated_snapshot(conn, intent.source_run_id)
         if not isinstance(state, BlockedState) or state.block_reason_kind != "cursor_failure":
             raise _conflict("source run changed before correction recovery publication")
-        if state.context.sequence is not None:
-            raise _invalid("forced Cursor recovery does not support sequence runs")
         successor = _successor_state(
             source=state,
             successor_run_id=intent.successor_run_id,
@@ -305,9 +311,17 @@ def _insert_candidate(
             if current is None:
                 raise _conflict("correction recovery relation was not recorded")
             return current
+        service._bind_sequence_replacement(
+            conn,
+            source_run_id=intent.source_run_id,
+            successor_run_id=intent.successor_run_id,
+            recovery_key=recovery_key,
+            now=now,
+        )
         row = service.store.get_cursor_initial_recovery_by_key(conn, recovery_key=recovery_key)
     if row is None:
         raise _conflict("correction recovery relation disappeared after insert")
+    service._raise_fault("after_sequence_intent")
     return row
 
 
@@ -657,6 +671,12 @@ def _mark_ready(
             raise _conflict("correction recovery publication was cancelled")
         if service.store.has_abort_requested_for_run(conn, intent.successor_run_id):
             raise _conflict("correction recovery successor was aborted")
+        from ai_dev_loop.scheduler.application.sequence_cursor_recovery import (
+            sequence_cursor_adoption_blocks_dispatch,
+        )
+
+        if sequence_cursor_adoption_blocks_dispatch(service.store, conn, intent.successor_run_id):
+            raise _conflict("sequence cursor successor is not an active uncancelled leaf")
         service._guard_publication_ledger(
             conn,
             source_run_id=intent.source_run_id,
@@ -754,6 +774,19 @@ def _mark_cancelled(
     payload = cancelled.canonical_bytes()
     now = service._now_factory()
     with service.store.begin_immediate() as conn:
+        from ai_dev_loop.scheduler.application.sequence_cursor_recovery import (
+            cancel_pending_cursor_sequence_recovery,
+        )
+
+        source, _, _ = service.store.load_validated_snapshot(conn, intent.source_run_id)
+        if source.context.sequence is not None:
+            cancel_pending_cursor_sequence_recovery(
+                service.store,
+                conn,
+                sequence_id=source.context.sequence.sequence_id,
+                source_run_id=intent.source_run_id,
+                now=now,
+            )
         service.store.update_cursor_initial_recovery_status(
             conn,
             recovery_key=str(row["recovery_key"]),
@@ -914,6 +947,132 @@ def _verified_record(service: _SERVICE, row: sqlite3.Row) -> CursorRecoveryRecor
     return record
 
 
+def authenticate_correction_publication_for_adoption(
+    store: SqliteSchedulerStore,
+    artifacts: object,
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+) -> str | None:
+    """Return the canonical correction digest, or None when the record is not published yet."""
+
+    from ai_dev_loop.scheduler.application.cursor_initial_recovery import read_private_record_bytes
+
+    intent = _verified_intent(row)
+    if intent.status == "cancelled":
+        raise _conflict("correction recovery publication was cancelled")
+    payload = read_private_record_bytes(artifacts, intent.successor_run_id, CORRECTION_RECORD_REL)  # type: ignore[arg-type]
+    if payload is None:
+        return None
+    service = _LaunchView(store, artifacts)
+    try:
+        record = CursorRecoveryRecordV2.model_validate_json(payload)
+    except ValidationError as exc:
+        raise _corrupt("correction recovery record failed authentication") from exc
+    if record.canonical_bytes() != payload:
+        raise _corrupt("correction recovery record is not canonical")
+    if (
+        record.source_run_id != intent.source_run_id
+        or record.successor_run_id != intent.successor_run_id
+        or record.failed_attempt_id != intent.failed_attempt_id
+        or record.dispatch_id != intent.dispatch_id
+    ):
+        raise _corrupt("correction recovery record disagrees with the durable relation")
+    digest = hashlib.sha256(record.canonical_bytes()).hexdigest()
+    if intent.record_sha256 is not None and intent.record_sha256 != digest:
+        raise _corrupt("correction recovery record bytes do not match the ledger digest")
+    authenticate_required_initial_ancestors(store, artifacts, record.source_run_id)  # type: ignore[arg-type]
+    carry = _read_carry(service, intent.successor_run_id, record)  # type: ignore[arg-type]
+    if carry.canonical_sha256() != record.budget_carry_sha256:
+        raise _corrupt("budget carry digest disagrees with the recovery record")
+    _assert_record_matches_intent(record, intent, carry)
+    expected = build_budget_carry(
+        store,
+        artifacts,  # type: ignore[arg-type]
+        conn,
+        source_run_id=record.source_run_id,
+        successor_run_id=record.successor_run_id,
+        recovery_key=intent.recovery_key,
+    )
+    edges = _ancestor_models(store, record.source_run_id)
+    if carry.canonical_bytes() != expected.canonical_bytes():
+        raise _corrupt("budget carry does not match authenticated extension authority")
+    if record.ancestors != edges:
+        raise _corrupt("correction recovery ancestry does not match the ledger")
+    _assert_prompt_composition(service, record)  # type: ignore[arg-type]
+    _assert_historical_owners(service, record)  # type: ignore[arg-type]
+    evidence = _reauthenticate_bound_reviewer(service, record)  # type: ignore[arg-type]
+    try:
+        _authenticate_failed_cursor_turn(
+            store,
+            artifacts,  # type: ignore[arg-type]
+            evidence_run_id=record.source_run_id,
+            attempt=_attempt(store, record),
+        )
+    except (
+        CursorEvidenceError,
+        ProtectedArtifactError,
+        OSError,
+        ValidationError,
+        ValueError,
+    ) as exc:
+        raise _corrupt("decisive Cursor failure evidence is no longer authenticated") from exc
+    parent: CursorRecoveryRecordV2 | None = None
+    if record.parent_recovery_key is not None:
+        parent_row = store.get_cursor_initial_recovery_by_key(
+            conn,
+            recovery_key=record.parent_recovery_key,
+        )
+        if parent_row is None or str(parent_row["status"]) != "ready":
+            raise _corrupt("parent correction recovery record is missing")
+        parent_digest = authenticate_correction_publication_for_adoption(
+            store,
+            artifacts,
+            conn,
+            parent_row,
+        )
+        if parent_digest is None or parent_digest != record.parent_record_sha256:
+            raise _corrupt("parent correction recovery record does not match the child record")
+        parent_payload = read_private_record_bytes(
+            artifacts,  # type: ignore[arg-type]
+            str(parent_row["successor_run_id"]),
+            CORRECTION_RECORD_REL,
+        )
+        if parent_payload is None:
+            raise _corrupt("parent correction recovery record is missing")
+        parent = CursorRecoveryRecordV2.model_validate_json(parent_payload)
+    _assert_base_prompt_provenance(service, record, evidence, parent)  # type: ignore[arg-type]
+    source, _, _ = store.load_validated_snapshot(conn, record.source_run_id)
+    correction_bindings = [
+        *materialized_frozen_input_bindings(source.context),
+        (intent.admitted_artifact_path, intent.admitted_artifact_sha256),
+        (intent.chat_artifact_path, intent.chat_artifact_sha256),
+        (intent.binding_artifact_path, intent.binding_artifact_sha256),
+        (intent.fix_prompt_path, intent.fix_prompt_sha256),
+        (intent.staged_patch_path, intent.staged_patch_sha256),
+        (intent.review_result_path, intent.review_result_sha256),
+        (intent.bootstrap_events_path, intent.bootstrap_events_sha256),
+        (record.base_prompt.relative_path, record.base_prompt.sha256),
+        (record.effective_prompt_path, record.effective_prompt_sha256),
+        (record.budget_carry_path, record.budget_carry_sha256),
+    ]
+    if record.raw_fix is not None:
+        correction_bindings.append((record.raw_fix.relative_path, record.raw_fix.sha256))
+    if record.staged_patch is not None:
+        correction_bindings.append(
+            (record.staged_patch.relative_path, record.staged_patch.sha256)
+        )
+    if record.review_result is not None:
+        correction_bindings.append(
+            (record.review_result.relative_path, record.review_result.sha256)
+        )
+    authenticate_materialized_recovery_inputs(
+        artifacts,  # type: ignore[arg-type]
+        record.successor_run_id,
+        correction_bindings,
+    )
+    return digest
+
+
 def _assert_record_matches_intent(
     record: CursorRecoveryRecordV2,
     intent: CursorRecoveryPublicationIntentV2,
@@ -988,6 +1147,7 @@ def _reauthenticate_bound_reviewer(
         service.artifacts,
         record.source_run_id,
         reservation_must_match_run=False,
+        require_current_sequence_leaf=False,
     )
     if analysis.receipt.reason_code == "corrupt_event_page":
         raise _corrupt("event page failed authentication")

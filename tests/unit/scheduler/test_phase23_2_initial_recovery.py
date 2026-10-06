@@ -31,7 +31,7 @@ def test_schema_migration_adds_initial_recovery_relation(tmp_path: Path) -> None
     db = tmp_path / "engine.sqlite3"
     store = SqliteSchedulerStore(db)
     store.bootstrap()
-    assert SCHEMA_VERSION == 12
+    assert SCHEMA_VERSION == 13
     with store.begin_read() as conn:
         version = int(conn.execute("PRAGMA user_version").fetchone()[0])
         tables = {
@@ -40,7 +40,7 @@ def test_schema_migration_adds_initial_recovery_relation(tmp_path: Path) -> None
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             ).fetchall()
         }
-    assert version == 12
+    assert version == 13
     assert "scheduler_cursor_initial_recoveries" in tables
 
 
