@@ -1,0 +1,25 @@
+# Prepared with the existing runtime. These implementation runs retain fixed
+# timeouts; Phase 24 does not retroactively change frozen execution policies.
+schema_version: 1
+name: phase-24-cursor-activity-timeouts
+phases:
+  - name: phase-24-1-timeout-policy-contracts
+    plan_path: archive/implementation-history/plans/phase-24-1-timeout-policy-contracts.md
+    prompt_source_path: archive/implementation-history/plans/prompt_phase-24-1-timeout-policy-contracts.txt
+    commit_message: "feat: freeze compatible Cursor activity timeout policies"
+    cursor: {model: grok-4.7-high}
+    codex: {review_model: gpt-6.1-sol, review_reasoning_effort: high}
+    workflow: {max_review_iterations: 7, cursor_timeout_minutes: 90, codex_timeout_minutes: 90}
+  - name: phase-24-2-activity-aware-execution
+    plan_path: archive/implementation-history/plans/phase-24-2-activity-aware-execution.md
+    prompt_source_path: archive/implementation-history/plans/prompt_phase-24-2-activity-aware-execution.txt
+    commit_message: "feat: enforce activity-aware Cursor timeouts and manual hard-limit retry"
+    cursor: {model: grok-4.7-high}
+    codex: {review_model: gpt-6.1-sol, review_reasoning_effort: high}
+    workflow: {max_review_iterations: 7, cursor_timeout_minutes: 90, codex_timeout_minutes: 90}
+  - name: phase-24-3-timeout-integration-acceptance
+    plan_path: archive/implementation-history/plans/phase-24-3-timeout-integration-acceptance.md
+    prompt_source_path: archive/implementation-history/plans/prompt_phase-24-3-timeout-integration-acceptance.txt
+    cursor: {model: grok-4.7-high}
+    codex: {review_model: gpt-6.1-sol, review_reasoning_effort: high}
+    workflow: {max_review_iterations: 7, cursor_timeout_minutes: 90, codex_timeout_minutes: 90}

@@ -29,6 +29,9 @@ nav:
       - Estado y artefactos: operacion/estado-artefactos.md
       - Seguridad y privacidad: operacion/seguridad-privacidad.md
       - Troubleshooting: operacion/troubleshooting.md
+      - Incidentes:
+          - Registro: operacion/incidentes/index.md
+          - "2026-10-06: canal de control systemd": operacion/incidentes/2026-10-06-systemd-user-control-channel.md
       - Desinstalación y limpieza: operacion/desinstalacion-limpieza.md
   - Referencia:
       - CLI: referencia/cli.md

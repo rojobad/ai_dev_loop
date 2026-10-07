@@ -60,6 +60,9 @@ Para una instalacion nueva, sigue:
 
 Para depurar un problema existente, empieza por [Estado, logs e inspeccion](operacion/observabilidad.md) y [Troubleshooting](operacion/troubleshooting.md).
 
+El [Registro de incidentes](operacion/incidentes/index.md) conserva evidencia,
+impacto y recuperaciones de problemas observados en operación real.
+
 ## Invariantes principales
 
 - Todo corre localmente en WSL/Linux; no hay workers remotos.
