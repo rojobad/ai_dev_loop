@@ -1,0 +1,15 @@
+{
+  "attempts": [
+    {
+      "operation": "registered_run_cancel",
+      "success": true
+    },
+    {
+      "operation": "detached_local_cancel_no_agent_id",
+      "error_class": "BadRequestError",
+      "message": "invalid_argument: Run run-f3294cc3-4d92-4e53-8b29-e50f067c16b9 not found"
+    }
+  ],
+  "status_after_cancel": "cancelled",
+  "usage": null
+}

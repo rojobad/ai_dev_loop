@@ -1,0 +1,55 @@
+{
+  "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+  "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+  "status": "cancelled",
+  "result": "",
+  "usage": null,
+  "live_usage": null,
+  "duration_seconds": 6.008,
+  "model": {
+    "id": "grok-4.7",
+    "params": [
+      {
+        "id": "context",
+        "value": "256k"
+      },
+      {
+        "id": "reasoning_effort",
+        "value": "high"
+      },
+      {
+        "id": "fast",
+        "value": "false"
+      }
+    ]
+  },
+  "event_types": [
+    "status",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "tool_call",
+    "status"
+  ],
+  "usage_events": []
+}

@@ -1,0 +1,5 @@
+{
+  "mode": "tools",
+  "error_class": "BadRequestError",
+  "message": "invalid_argument: Unknown tool name(s) in `tools`: write. Valid tool names: aiAttribution, applyAgentDiff, askQuestion, await, blameByFilePath, communicateUpdate, computerUse, connectScm, createAgent, createGoal, createPlan, delete, edit, editPrLabels, fetch, fetchCloudAgentData, generateImage, generateVideo, getAgentStatus, getMcpTools, glob, grep, listMcpResources, ls, mcp, mcpAuth, piBash, piEdit, piFind, piGrep, piLs, piRead, piWrite, prManagement, read, readAgentTranscript, readCanvas, readLints, readMcpResource, readTodos, recordCiInvestigationFindings, recordScreen, reflect, replaceEnv, reportBug, reportBugfixResults, searchConversations, semSearch, sendFinalSummary, sendMessage, sendToAgent, sendToUser, setActiveBranch, setupVmEnvironment, shell, startGrindExecution, startGrindPlanning, stopAgent, switchMode, task, truncated, updateGoal, updateTodos, webFetch, webSearch, writeCanvas, writeShellStdin, xSearch."
+}

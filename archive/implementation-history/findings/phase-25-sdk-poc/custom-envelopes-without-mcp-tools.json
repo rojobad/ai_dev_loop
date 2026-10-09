@@ -1,0 +1,2217 @@
+[
+  {
+    "kind": "sdk_message",
+    "offset": "1",
+    "sdk_message": {
+      "type": "status",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "status": "RUNNING",
+      "message": ""
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "2",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "text": "I will call the custom",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "3",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "text": " tool poc_custom exactly",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "4",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "text": " once and return its",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "5",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "text": " exact text.",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "6",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "text": "\n\nI will first discover",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "7",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "text": " the tool schema via",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "8",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "text": " GetMcpTools, then call",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "9",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "text": " poc_custom.",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "10",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "text": "\n\nI see a conflict. ",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "11",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "text": "The user forbids using",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "12",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "text": " other tools, but the",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "13",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "text": " system mandates GetMcpTools",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "14",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "text": " for schema discovery.",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "15",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "text": " I must resolve this",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "16",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "text": " before proceeding.",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "17",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "text": "\n\nI will call GetMcpTools",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "18",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "text": " to discover the schema",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "19",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "text": " first. Then I will ",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "20",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "text": "invoke poc_custom exactly",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "21",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "text": " once.",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "22",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "text": "",
+      "thinking_duration_ms": 6093
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "23",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "I'll"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "24",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " look"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "25",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " up"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "26",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " the"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "27",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " `"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "28",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "poc"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "29",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "_"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "30",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "custom"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "31",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "`"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "32",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " schema"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "33",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": ","
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "34",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " call"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "35",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " it"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "36",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " once"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "37",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": ","
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "38",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " and"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "39",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " return"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "40",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " its"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "41",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " exact"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "42",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " text"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "43",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "."
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "44",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "The"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "45",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " first"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "46",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " lookup"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "47",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " didn’t"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "48",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " find"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "49",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " `"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "50",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "poc"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "51",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "_"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "52",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "custom"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "53",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "`."
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "54",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " I’ll"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "55",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " check"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "56",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " which"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "57",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " MCP"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "58",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " servers"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "59",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " expose"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "60",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " it"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "61",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " and"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "62",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " call"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "63",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " that"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "64",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " tool"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "65",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " once"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "66",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "."
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "67",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "`"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "68",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "poc"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "69",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "_"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "70",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "custom"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "71",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "`"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "72",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " is"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "73",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " not"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "74",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " available"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "75",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " in"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "76",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " this"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "77",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " session"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "78",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": ","
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "79",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " so"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "80",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " it"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "81",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " could"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "82",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " not"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "83",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " be"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "84",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " called"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "85",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " and"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "86",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " there"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "87",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " is"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "88",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " no"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "89",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " exact"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "90",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " tool"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "91",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " text"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "92",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " to"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "93",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " return"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "94",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": ".\n"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "95",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "POC"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "96",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "-"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "97",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "RULE"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "98",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "-"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "99",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "905"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "100",
+    "sdk_message": {
+      "type": "usage",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "usage": {
+        "input_tokens": 32805,
+        "output_tokens": 1946,
+        "cache_read_tokens": 28160,
+        "cache_write_tokens": 0,
+        "total_tokens": 62911,
+        "reasoning_tokens": 1785
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "101",
+    "sdk_message": {
+      "type": "status",
+      "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "status": "FINISHED",
+      "message": ""
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "result",
+    "offset": "102",
+    "sdk_message": null,
+    "result": {
+      "runId": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "agentId": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "status": "RUN_LIFECYCLE_STATUS_FINISHED",
+      "result": "I'll look up the `poc_custom` schema, call it once, and return its exact text.The first lookup didn’t find `poc_custom`. I’ll check which MCP servers expose it and call that tool once.`poc_custom` is not available in this session, so it could not be called and there is no exact tool text to return.\nPOC-RULE-905",
+      "model": {
+        "id": "grok-4.7",
+        "params": [
+          {
+            "id": "context",
+            "value": "256k"
+          },
+          {
+            "id": "reasoning_effort",
+            "value": "high"
+          },
+          {
+            "id": "fast",
+            "value": "false"
+          }
+        ]
+      },
+      "durationMs": "31350",
+      "createdAt": "2026-10-09T01:34:59.732Z",
+      "usage": {
+        "inputTokens": "32805",
+        "outputTokens": "1946",
+        "cacheReadTokens": "28160",
+        "totalTokens": "62911",
+        "reasoningTokens": "1785"
+      }
+    },
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": true
+  },
+  {
+    "kind": "done",
+    "offset": "103",
+    "sdk_message": null,
+    "result": null,
+    "done": {
+      "agentId": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+      "runId": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4"
+    },
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  }
+]

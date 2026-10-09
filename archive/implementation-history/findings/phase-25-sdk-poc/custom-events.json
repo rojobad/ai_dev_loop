@@ -1,0 +1,617 @@
+[
+  {
+    "type": "status",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "status": "RUNNING",
+    "message": ""
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": "I will call the custom",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": " tool poc_custom exactly",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": " once and return its",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": " exact text.",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": "\n\nGetDynamicTools is",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": " required to discover",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": " the tool schema before",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": " calling poc_custom.",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": "\n\nGetDynamicTools is",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": " a discovery tool, not",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": " the custom tool itself.",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": " The user's prohibition",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": " on other tools conflicts",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": " with the required schema",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": " discovery step.",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": "\n\nI will call GetDynamicTools",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": " to retrieve the schema",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": " for poc_custom, then",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": " invoke it exactly once.",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": "",
+    "thinking_duration_ms": 5993
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "I'll"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " look"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " up"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " the"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " `"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "poc"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "_"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "custom"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "`"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " schema"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": ","
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " then"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " call"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " it"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " once"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "."
+        }
+      ]
+    }
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": "The schema has no parameters. I will call poc_custom exactly once with empty arguments.",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": "",
+    "thinking_duration_ms": 1
+  },
+  {
+    "type": "tool_call",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "call_id": "call-6fbb0386-fb8d-4d0d-a39e-b87fcd1e7f9f-1\nfc_539c8bd8-a4fa-93c7-938a-341deb936469_0",
+    "name": "mcp",
+    "status": "running",
+    "args": {
+      "providerIdentifier": "custom-user-tools",
+      "toolName": "poc_custom",
+      "args": {}
+    },
+    "result": null,
+    "truncated": null
+  },
+  {
+    "type": "tool_call",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "call_id": "call-6fbb0386-fb8d-4d0d-a39e-b87fcd1e7f9f-1\nfc_539c8bd8-a4fa-93c7-938a-341deb936469_0",
+    "name": "mcp",
+    "status": "completed",
+    "args": {
+      "providerIdentifier": "custom-user-tools",
+      "toolName": "poc_custom",
+      "args": {}
+    },
+    "result": {
+      "status": "success",
+      "value": {
+        "content": [
+          {
+            "text": {
+              "text": "POC-CUSTOM-364"
+            }
+          }
+        ],
+        "isError": false
+      }
+    },
+    "truncated": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": "The tool returned \"POC-CUSTOM-364\".\n\nThe exact text will be returned with POC-RULE-905 appended to every final response. Responses will remain brief.",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "text": "",
+    "thinking_duration_ms": 2
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "POC"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "-"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "CUSTOM"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "-"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "364"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "\n"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "POC"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "-"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "RULE"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "-"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "905"
+        }
+      ]
+    }
+  },
+  {
+    "type": "usage",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "usage": {
+      "input_tokens": 21170,
+      "output_tokens": 717,
+      "cache_read_tokens": 12288,
+      "cache_write_tokens": 0,
+      "total_tokens": 34175,
+      "reasoning_tokens": 627
+    }
+  },
+  {
+    "type": "status",
+    "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+    "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+    "status": "FINISHED",
+    "message": ""
+  }
+]

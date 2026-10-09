@@ -1,0 +1,1531 @@
+[
+  {
+    "kind": "sdk_message",
+    "offset": "1",
+    "sdk_message": {
+      "type": "status",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "status": "RUNNING",
+      "message": ""
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "2",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "text": "I will use the poc-adoption skill to fix calc.py so add(a,b) returns the sum of its two arguments.\n\nI will read the skill file first.",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "3",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "text": "",
+      "thinking_duration_ms": 2
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "4",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "I'll"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "5",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " follow"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "6",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " the"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "7",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " poc"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "8",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "-"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "9",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "adoption"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "10",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " skill"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "11",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " and"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "12",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " fix"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "13",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " `"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "14",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "add"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "15",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "`"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "16",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " in"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "17",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " `"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "18",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "calc"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "19",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": ".py"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "20",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "`."
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "21",
+    "sdk_message": {
+      "type": "tool_call",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "call_id": "call-d6504e70-c857-418a-9f9e-5b66fe09bc07-0\nfc_b16c5ae3-af73-997b-905f-344feb0119df_0",
+      "name": "read",
+      "status": "running",
+      "args": {
+        "path": "/tmp/cursor-sdk-poc-o80OgDfU/workspace/.cursor/skills/poc-adoption/SKILL.md"
+      },
+      "result": null,
+      "truncated": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "22",
+    "sdk_message": {
+      "type": "tool_call",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "call_id": "call-d6504e70-c857-418a-9f9e-5b66fe09bc07-1\nfc_b16c5ae3-af73-997b-905f-344feb0119df_1",
+      "name": "read",
+      "status": "running",
+      "args": {
+        "path": "/tmp/cursor-sdk-poc-o80OgDfU/workspace/calc.py"
+      },
+      "result": null,
+      "truncated": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "23",
+    "sdk_message": {
+      "type": "tool_call",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "call_id": "call-d6504e70-c857-418a-9f9e-5b66fe09bc07-0\nfc_b16c5ae3-af73-997b-905f-344feb0119df_0",
+      "name": "read",
+      "status": "completed",
+      "args": {
+        "path": "/tmp/cursor-sdk-poc-o80OgDfU/workspace/.cursor/skills/poc-adoption/SKILL.md"
+      },
+      "result": {
+        "status": "success",
+        "value": {
+          "content": "---\nname: poc-adoption\ndescription: Use when the user requests the poc-adoption skill for the isolated SDK adoption test.\n---\nInspect calc.py and repair the requested arithmetic function. Append the exact text POC-SKILL-472 to the final response. Do not change any other file. Do not run shell commands, read credentials, or use subagents.\n",
+          "totalLines": 6,
+          "fileSize": 340
+        }
+      },
+      "truncated": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "24",
+    "sdk_message": {
+      "type": "tool_call",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "call_id": "call-d6504e70-c857-418a-9f9e-5b66fe09bc07-1\nfc_b16c5ae3-af73-997b-905f-344feb0119df_1",
+      "name": "read",
+      "status": "completed",
+      "args": {
+        "path": "/tmp/cursor-sdk-poc-o80OgDfU/workspace/calc.py"
+      },
+      "result": {
+        "status": "success",
+        "value": {
+          "content": "def add(a, b):\n    return a - b\n",
+          "totalLines": 3,
+          "fileSize": 32
+        }
+      },
+      "truncated": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "25",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "text": "Fixing calc.py so add(a, b) returns the sum of its arguments.\n\nOnly calc.py will be modified. No shell or subagents will be used. POC-SKILL-472 and POC-RULE-905 will be appended to the final response.",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "26",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "text": "",
+      "thinking_duration_ms": 1
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "27",
+    "sdk_message": {
+      "type": "tool_call",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "call_id": "call-c3f3d8ff-b703-4eaf-bf02-3d1e0ace747f-2\nfc_11e19b64-097a-9114-a1b0-3f6bb454d694_0",
+      "name": "edit",
+      "status": "running",
+      "args": {
+        "path": "/tmp/cursor-sdk-poc-o80OgDfU/workspace/calc.py"
+      },
+      "result": null,
+      "truncated": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "28",
+    "sdk_message": {
+      "type": "tool_call",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "call_id": "call-c3f3d8ff-b703-4eaf-bf02-3d1e0ace747f-2\nfc_11e19b64-097a-9114-a1b0-3f6bb454d694_0",
+      "name": "edit",
+      "status": "running",
+      "args": {
+        "path": "/tmp/cursor-sdk-poc-o80OgDfU/workspace/calc.py"
+      },
+      "result": null,
+      "truncated": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "29",
+    "sdk_message": {
+      "type": "tool_call",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "call_id": "call-c3f3d8ff-b703-4eaf-bf02-3d1e0ace747f-2\nfc_11e19b64-097a-9114-a1b0-3f6bb454d694_0",
+      "name": "edit",
+      "status": "completed",
+      "args": {
+        "path": "/tmp/cursor-sdk-poc-o80OgDfU/workspace/calc.py"
+      },
+      "result": {
+        "status": "success",
+        "value": {
+          "linesAdded": 1,
+          "linesRemoved": 1,
+          "diffString": "--- a//tmp/cursor-sdk-poc-o80OgDfU/workspace/calc.py\n+++ b//tmp/cursor-sdk-poc-o80OgDfU/workspace/calc.py\n@@ -1,2 +1,2 @@\n def add(a, b):\n-    return a - b\n+    return a + b"
+        }
+      },
+      "truncated": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "30",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "text": "Fixed calc.py so add(a,b) returns the sum of its arguments. The final response includes the skill suffix POC-SKILL-472 and the workspace rule suffix POC-RULE-905.",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "31",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "text": "",
+      "thinking_duration_ms": 5
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "32",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "`"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "33",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "add"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "34",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "("
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "35",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "a"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "36",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": ","
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "37",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " b"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "38",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": ")`"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "39",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " in"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "40",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " `"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "41",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "calc"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "42",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": ".py"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "43",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "`"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "44",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " now"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "45",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " returns"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "46",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " the"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "47",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " sum"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "48",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " of"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "49",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " its"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "50",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " two"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "51",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": " arguments"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "52",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": ".\n\n"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "53",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "POC"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "54",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "-"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "55",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "SK"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "56",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "ILL"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "57",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "-"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "58",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "472"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "59",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "\n"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "60",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "POC"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "61",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "-"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "62",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "RULE"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "63",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "-"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "64",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "905"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "65",
+    "sdk_message": {
+      "type": "usage",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "usage": {
+        "input_tokens": 20910,
+        "output_tokens": 294,
+        "cache_read_tokens": 16128,
+        "cache_write_tokens": 0,
+        "total_tokens": 37332,
+        "reasoning_tokens": 134
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "66",
+    "sdk_message": {
+      "type": "status",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "status": "FINISHED",
+      "message": ""
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "result",
+    "offset": "67",
+    "sdk_message": null,
+    "result": {
+      "runId": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "agentId": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "status": "RUN_LIFECYCLE_STATUS_FINISHED",
+      "result": "`add(a, b)` in `calc.py` now returns the sum of its two arguments.\n\nPOC-SKILL-472\nPOC-RULE-905",
+      "model": {
+        "id": "grok-4.7",
+        "params": [
+          {
+            "id": "context",
+            "value": "256k"
+          },
+          {
+            "id": "reasoning_effort",
+            "value": "high"
+          },
+          {
+            "id": "fast",
+            "value": "false"
+          }
+        ]
+      },
+      "durationMs": "18417",
+      "createdAt": "2026-10-09T01:31:58.716Z",
+      "usage": {
+        "inputTokens": "20910",
+        "outputTokens": "294",
+        "cacheReadTokens": "16128",
+        "totalTokens": "37332",
+        "reasoningTokens": "134"
+      }
+    },
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": true
+  },
+  {
+    "kind": "done",
+    "offset": "68",
+    "sdk_message": null,
+    "result": null,
+    "done": {
+      "agentId": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "runId": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8"
+    },
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  }
+]

@@ -1,0 +1,197 @@
+[
+  {
+    "type": "status",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-2e3ad7e5-523e-4524-b6d2-eed1fe85d1a3",
+    "status": "RUNNING",
+    "message": ""
+  },
+  {
+    "type": "thinking",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-2e3ad7e5-523e-4524-b6d2-eed1fe85d1a3",
+    "text": "The user is asking for the exact test marker from their previous request.\n\nThe exact test marker is POC-CANCEL-616. I will append POC-RULE-905 to the brief response.",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-2e3ad7e5-523e-4524-b6d2-eed1fe85d1a3",
+    "text": "",
+    "thinking_duration_ms": 2
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-2e3ad7e5-523e-4524-b6d2-eed1fe85d1a3",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "POC"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-2e3ad7e5-523e-4524-b6d2-eed1fe85d1a3",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "-"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-2e3ad7e5-523e-4524-b6d2-eed1fe85d1a3",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "CANCEL"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-2e3ad7e5-523e-4524-b6d2-eed1fe85d1a3",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "-"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-2e3ad7e5-523e-4524-b6d2-eed1fe85d1a3",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "616"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-2e3ad7e5-523e-4524-b6d2-eed1fe85d1a3",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "\n"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-2e3ad7e5-523e-4524-b6d2-eed1fe85d1a3",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "POC"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-2e3ad7e5-523e-4524-b6d2-eed1fe85d1a3",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "-"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-2e3ad7e5-523e-4524-b6d2-eed1fe85d1a3",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "RULE"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-2e3ad7e5-523e-4524-b6d2-eed1fe85d1a3",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "-"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-2e3ad7e5-523e-4524-b6d2-eed1fe85d1a3",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "905"
+        }
+      ]
+    }
+  },
+  {
+    "type": "usage",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-2e3ad7e5-523e-4524-b6d2-eed1fe85d1a3",
+    "usage": {
+      "input_tokens": 5372,
+      "output_tokens": 102,
+      "cache_read_tokens": 2560,
+      "cache_write_tokens": 0,
+      "total_tokens": 8034,
+      "reasoning_tokens": 91
+    }
+  },
+  {
+    "type": "status",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-2e3ad7e5-523e-4524-b6d2-eed1fe85d1a3",
+    "status": "FINISHED",
+    "message": ""
+  }
+]

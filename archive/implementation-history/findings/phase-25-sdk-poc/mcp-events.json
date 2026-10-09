@@ -1,0 +1,505 @@
+[
+  {
+    "type": "status",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "status": "RUNNING",
+    "message": ""
+  },
+  {
+    "type": "thinking",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "text": "I will call poc_probe",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "text": " from the MCP server",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "text": " \"poc\" exactly once ",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "text": "and return its exact",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "text": " text. No other tools",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "text": " will be used.",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "text": "\n\nI must first discover the tool schema with GetDynamicTools. Then I will call poc_probe. I will append POC-RULE-905 to my response.",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "text": "",
+    "thinking_duration_ms": 1751
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "I'll"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " call"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " `"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "poc"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "_"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "probe"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "`"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " once"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " and"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " return"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " its"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " exact"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " text"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "."
+        }
+      ]
+    }
+  },
+  {
+    "type": "thinking",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "text": "Calling poc_probe exactly once with empty arguments.",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "text": "",
+    "thinking_duration_ms": 2
+  },
+  {
+    "type": "tool_call",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "call_id": "call-1d705e56-da6a-474e-ab73-1dc07656bfbf-1\nfc_9d1f0f4f-1d57-968f-8591-948870cd3f7a_0",
+    "name": "mcp",
+    "status": "running",
+    "args": {
+      "providerIdentifier": "poc",
+      "toolName": "poc_probe",
+      "args": {}
+    },
+    "result": null,
+    "truncated": null
+  },
+  {
+    "type": "tool_call",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "call_id": "call-1d705e56-da6a-474e-ab73-1dc07656bfbf-1\nfc_9d1f0f4f-1d57-968f-8591-948870cd3f7a_0",
+    "name": "mcp",
+    "status": "completed",
+    "args": {
+      "providerIdentifier": "poc",
+      "toolName": "poc_probe",
+      "args": {}
+    },
+    "result": {
+      "status": "success",
+      "value": {
+        "content": [
+          {
+            "text": {
+              "text": "POC-MCP-281"
+            }
+          }
+        ],
+        "isError": false
+      }
+    },
+    "truncated": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "text": "The tool returned \"POC-MCP-281\".\n\nI will append POC-RULE-905 to the returned text and keep the response brief.",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "text": "",
+    "thinking_duration_ms": 1
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "POC"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "-"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "MCP"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "-"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "281"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "\n"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "POC"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "-"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "RULE"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "-"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "905"
+        }
+      ]
+    }
+  },
+  {
+    "type": "usage",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "usage": {
+      "input_tokens": 20094,
+      "output_tokens": 303,
+      "cache_read_tokens": 15616,
+      "cache_write_tokens": 0,
+      "total_tokens": 36013,
+      "reasoning_tokens": 216
+    }
+  },
+  {
+    "type": "status",
+    "agent_id": "agent-1c65b7a0-2ab6-438f-a25d-f2e62f3107c2",
+    "run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+    "status": "FINISHED",
+    "message": ""
+  }
+]

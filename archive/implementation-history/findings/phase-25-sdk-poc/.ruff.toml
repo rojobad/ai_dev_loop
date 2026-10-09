@@ -1,0 +1,2 @@
+# Verbatim external experiment sources are evidence, not maintained product code.
+extend-exclude = ["*.py", "workspace"]

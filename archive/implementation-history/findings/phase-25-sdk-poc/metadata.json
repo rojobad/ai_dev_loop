@@ -1,0 +1,84 @@
+{
+  "run_id": "run-eaff7428-ebbb-4100-a936-2614e068f32f",
+  "agent_id": "agent-20973b36-053e-40e9-8751-ab2a7cbc9865",
+  "status": "finished",
+  "result": "Acknowledged.\nPOC-RULE-905\nPOC-AGENTS-193",
+  "usage": {
+    "input_tokens": 5780,
+    "output_tokens": 296,
+    "cache_read_tokens": 1152,
+    "cache_write_tokens": 0,
+    "total_tokens": 7228,
+    "reasoning_tokens": 280
+  },
+  "live_usage": {
+    "input_tokens": 5780,
+    "output_tokens": 296,
+    "cache_read_tokens": 1152,
+    "cache_write_tokens": 0,
+    "total_tokens": 7228,
+    "reasoning_tokens": 280
+  },
+  "duration_seconds": 6.529,
+  "model": {
+    "id": "grok-4.7",
+    "params": [
+      {
+        "id": "context",
+        "value": "256k"
+      },
+      {
+        "id": "reasoning_effort",
+        "value": "high"
+      },
+      {
+        "id": "fast",
+        "value": "false"
+      }
+    ]
+  },
+  "event_types": [
+    "status",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "usage",
+    "status"
+  ],
+  "usage_events": [
+    {
+      "type": "usage",
+      "agent_id": "agent-20973b36-053e-40e9-8751-ab2a7cbc9865",
+      "run_id": "run-eaff7428-ebbb-4100-a936-2614e068f32f",
+      "usage": {
+        "input_tokens": 5780,
+        "output_tokens": 296,
+        "cache_read_tokens": 1152,
+        "cache_write_tokens": 0,
+        "total_tokens": 7228,
+        "reasoning_tokens": 280
+      }
+    }
+  ]
+}

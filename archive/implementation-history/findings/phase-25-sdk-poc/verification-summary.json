@@ -1,0 +1,154 @@
+{
+  "sdk_version": "1.0.37",
+  "python_version": "3.13.14",
+  "bridge_version": "1.0.0",
+  "verification_tests": 27,
+  "verification_failed": 0,
+  "completed_usage_runs": 11,
+  "known_total_tokens": 245062,
+  "usage_missing_interrupted_runs": [
+    {
+      "test": "cancel",
+      "sdk_run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826"
+    },
+    {
+      "test": "runtime-crash",
+      "sdk_run_id": "run-f3294cc3-4d92-4e53-8b29-e50f067c16b9"
+    }
+  ],
+  "known_tokens_are_lower_bound": true,
+  "deduplicated_runs": [
+    {
+      "test": "first",
+      "sdk_run_id": "run-f49affd3-aecb-4c86-8239-8668f92f128d",
+      "usage": {
+        "input_tokens": 4820,
+        "output_tokens": 139,
+        "cache_read_tokens": 2560,
+        "cache_write_tokens": 0,
+        "total_tokens": 7519,
+        "reasoning_tokens": 118
+      }
+    },
+    {
+      "test": "resume",
+      "sdk_run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+      "usage": {
+        "input_tokens": 5027,
+        "output_tokens": 50,
+        "cache_read_tokens": 4736,
+        "cache_write_tokens": 0,
+        "total_tokens": 9813,
+        "reasoning_tokens": 39
+      }
+    },
+    {
+      "test": "tools",
+      "sdk_run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "usage": {
+        "input_tokens": 20910,
+        "output_tokens": 294,
+        "cache_read_tokens": 16128,
+        "cache_write_tokens": 0,
+        "total_tokens": 37332,
+        "reasoning_tokens": 134
+      }
+    },
+    {
+      "test": "cancel-resume",
+      "sdk_run_id": "run-2e3ad7e5-523e-4524-b6d2-eed1fe85d1a3",
+      "usage": {
+        "input_tokens": 5372,
+        "output_tokens": 102,
+        "cache_read_tokens": 2560,
+        "cache_write_tokens": 0,
+        "total_tokens": 8034,
+        "reasoning_tokens": 91
+      }
+    },
+    {
+      "test": "mcp",
+      "sdk_run_id": "run-fc405b3e-5ddd-411c-8c7e-e7d7ff81d8a1",
+      "usage": {
+        "input_tokens": 20094,
+        "output_tokens": 303,
+        "cache_read_tokens": 15616,
+        "cache_write_tokens": 0,
+        "total_tokens": 36013,
+        "reasoning_tokens": 216
+      }
+    },
+    {
+      "test": "custom-without-mcp-tools",
+      "sdk_run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+      "usage": {
+        "input_tokens": 32805,
+        "output_tokens": 1946,
+        "cache_read_tokens": 28160,
+        "cache_write_tokens": 0,
+        "total_tokens": 62911,
+        "reasoning_tokens": 1785
+      }
+    },
+    {
+      "test": "custom",
+      "sdk_run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+      "usage": {
+        "input_tokens": 21170,
+        "output_tokens": 717,
+        "cache_read_tokens": 12288,
+        "cache_write_tokens": 0,
+        "total_tokens": 34175,
+        "reasoning_tokens": 627
+      }
+    },
+    {
+      "test": "crash-resume",
+      "sdk_run_id": "run-7275e338-2f12-4baf-b4b5-c7590ecbf2a1",
+      "usage": {
+        "input_tokens": 6181,
+        "output_tokens": 128,
+        "cache_read_tokens": 2560,
+        "cache_write_tokens": 0,
+        "total_tokens": 8869,
+        "reasoning_tokens": 116
+      }
+    },
+    {
+      "test": "metadata",
+      "sdk_run_id": "run-eaff7428-ebbb-4100-a936-2614e068f32f",
+      "usage": {
+        "input_tokens": 5780,
+        "output_tokens": 296,
+        "cache_read_tokens": 1152,
+        "cache_write_tokens": 0,
+        "total_tokens": 7228,
+        "reasoning_tokens": 280
+      }
+    },
+    {
+      "test": "runtime-crash-recovered",
+      "sdk_run_id": "run-d3e21a26-1449-46f0-96b0-eb050e7030e6",
+      "usage": {
+        "input_tokens": 6003,
+        "output_tokens": 53,
+        "cache_read_tokens": 2560,
+        "cache_write_tokens": 0,
+        "total_tokens": 8616,
+        "reasoning_tokens": 41
+      }
+    },
+    {
+      "test": "launcher-crash-later-completed",
+      "sdk_run_id": "run-cea7d77c-077e-49dc-a7a0-ad28225b64ad",
+      "usage": {
+        "input_tokens": 13908,
+        "output_tokens": 276,
+        "cache_read_tokens": 10368,
+        "cache_write_tokens": 0,
+        "total_tokens": 24552,
+        "reasoning_tokens": 215
+      }
+    }
+  ]
+}

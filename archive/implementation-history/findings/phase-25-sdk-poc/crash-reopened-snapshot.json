@@ -1,0 +1,13 @@
+{
+  "run_id": "run-cea7d77c-077e-49dc-a7a0-ad28225b64ad",
+  "status": "finished",
+  "result": "`python3 crash.py` ran once and was terminated (exit 143). Marker POC-CRASH-852.\nPOC-RULE-905",
+  "usage": {
+    "input_tokens": 13908,
+    "output_tokens": 276,
+    "cache_read_tokens": 10368,
+    "cache_write_tokens": 0,
+    "total_tokens": 24552,
+    "reasoning_tokens": 215
+  }
+}

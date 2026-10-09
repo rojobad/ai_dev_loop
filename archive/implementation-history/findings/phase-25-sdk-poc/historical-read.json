@@ -1,0 +1,20 @@
+[
+  {
+    "fixture": "/home/rojobad/Projects/ai_dev_loop/tests/fixtures/phase22_historical/manual_wait_state_pre_phase22_v1.json",
+    "state_kind": "waiting_codex_review_retry",
+    "schema_version": 4,
+    "unchanged_bytes": true,
+    "cli_used": false
+  },
+  {
+    "fixture": "/home/rojobad/Projects/ai_dev_loop/tests/fixtures/phase23_1_historical/dual_failure_engine.sqlite3",
+    "state_kinds": [
+      "blocked"
+    ],
+    "validated_event_count": 14,
+    "payload_hashes_valid": true,
+    "unchanged_bytes": true,
+    "readonly_immutable_sqlite": true,
+    "cli_used": false
+  }
+]

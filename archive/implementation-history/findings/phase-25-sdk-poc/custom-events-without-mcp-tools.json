@@ -1,0 +1,1254 @@
+[
+  {
+    "type": "status",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "status": "RUNNING",
+    "message": ""
+  },
+  {
+    "type": "thinking",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "text": "I will call the custom",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "text": " tool poc_custom exactly",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "text": " once and return its",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "text": " exact text.",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "text": "\n\nI will first discover",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "text": " the tool schema via",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "text": " GetMcpTools, then call",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "text": " poc_custom.",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "text": "\n\nI see a conflict. ",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "text": "The user forbids using",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "text": " other tools, but the",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "text": " system mandates GetMcpTools",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "text": " for schema discovery.",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "text": " I must resolve this",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "text": " before proceeding.",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "text": "\n\nI will call GetMcpTools",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "text": " to discover the schema",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "text": " first. Then I will ",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "text": "invoke poc_custom exactly",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "text": " once.",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "text": "",
+    "thinking_duration_ms": 6093
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "I'll"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " look"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " up"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " the"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " `"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "poc"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "_"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "custom"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "`"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " schema"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": ","
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " call"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " it"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " once"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": ","
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " and"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " return"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " its"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " exact"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " text"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "."
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "The"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " first"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " lookup"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " didn’t"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " find"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " `"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "poc"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "_"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "custom"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "`."
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " I’ll"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " check"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " which"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " MCP"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " servers"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " expose"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " it"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " and"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " call"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " that"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " tool"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " once"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "."
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "`"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "poc"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "_"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "custom"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "`"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " is"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " not"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " available"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " in"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " this"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " session"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": ","
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " so"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " it"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " could"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " not"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " be"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " called"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " and"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " there"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " is"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " no"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " exact"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " tool"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " text"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " to"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " return"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": ".\n"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "POC"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "-"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "RULE"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "-"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "905"
+        }
+      ]
+    }
+  },
+  {
+    "type": "usage",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "usage": {
+      "input_tokens": 32805,
+      "output_tokens": 1946,
+      "cache_read_tokens": 28160,
+      "cache_write_tokens": 0,
+      "total_tokens": 62911,
+      "reasoning_tokens": 1785
+    }
+  },
+  {
+    "type": "status",
+    "agent_id": "58f2e3a7-ab0f-4378-b9ae-c7ce760aea1e",
+    "run_id": "run-7e16129d-b2f1-4bf0-a547-516deda01fb4",
+    "status": "FINISHED",
+    "message": ""
+  }
+]

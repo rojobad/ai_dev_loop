@@ -1,0 +1,324 @@
+[
+  {
+    "type": "status",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "status": "RUNNING",
+    "message": ""
+  },
+  {
+    "type": "thinking",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "text": "Running `python3 slow.py`",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "text": " once via the shell ",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "text": "tool.",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "text": "",
+    "thinking_duration_ms": 1995
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "I'll"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " run"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " `"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "python"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "3"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " slow"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": ".py"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "`"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " once"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " and"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " leave"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " it"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " for"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " the"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " test"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " controller"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " to"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": " cancel"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "."
+        }
+      ]
+    }
+  },
+  {
+    "type": "tool_call",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "call_id": "call-a8c5331c-d7fa-4fe6-ac46-13f781128f7c-0\nfc_4a2df82e-826e-9fe3-893f-9eee15832534_0",
+    "name": "shell",
+    "status": "running",
+    "args": {
+      "command": "python3 slow.py",
+      "timeout": 30000
+    },
+    "result": null,
+    "truncated": null
+  },
+  {
+    "type": "status",
+    "agent_id": "agent-0ad94736-18ac-45f2-9445-a57b376b3555",
+    "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+    "status": "CANCELLED",
+    "message": ""
+  }
+]

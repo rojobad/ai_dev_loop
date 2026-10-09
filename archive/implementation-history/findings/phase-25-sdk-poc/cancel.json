@@ -1,0 +1,13 @@
+{
+  "run_id": "run-4564a050-9087-47cb-ad51-2a39216b2826",
+  "tool_started": true,
+  "status": "cancelled",
+  "cancel_error": null,
+  "stream_finished": true,
+  "consumer_errors": [],
+  "child_alive_after_cancel": false,
+  "poc_child_cleanup_required": false,
+  "finished_marker_exists": false,
+  "cancel_elapsed_seconds": 0.089,
+  "usage": null
+}

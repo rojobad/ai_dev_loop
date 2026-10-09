@@ -1,0 +1,410 @@
+[
+  {
+    "kind": "sdk_message",
+    "offset": "1",
+    "sdk_message": {
+      "type": "request",
+      "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+      "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+      "request_id": "80f8f099-ad0f-4a77-91bd-f48892f98394"
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "2",
+    "sdk_message": {
+      "type": "status",
+      "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+      "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+      "status": "RUNNING",
+      "message": ""
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "3",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+      "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+      "text": "I need to recall the exact marker from your previous message.\n\nThe marker is ORCHID-731. I will append POC-RULE-905 per project rules.",
+      "thinking_duration_ms": null
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "4",
+    "sdk_message": {
+      "type": "thinking",
+      "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+      "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+      "text": "",
+      "thinking_duration_ms": 1
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "5",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+      "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "OR"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "6",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+      "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "CH"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "7",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+      "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "ID"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "8",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+      "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "-"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "9",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+      "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "731"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "10",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+      "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "\n"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "11",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+      "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "POC"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "12",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+      "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "-"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "13",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+      "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "RULE"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "14",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+      "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "-"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "15",
+    "sdk_message": {
+      "type": "assistant",
+      "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+      "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "905"
+          }
+        ]
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "16",
+    "sdk_message": {
+      "type": "usage",
+      "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+      "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+      "usage": {
+        "input_tokens": 5027,
+        "output_tokens": 50,
+        "cache_read_tokens": 4736,
+        "cache_write_tokens": 0,
+        "total_tokens": 9813,
+        "reasoning_tokens": 39
+      }
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "sdk_message",
+    "offset": "17",
+    "sdk_message": {
+      "type": "status",
+      "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+      "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+      "status": "FINISHED",
+      "message": ""
+    },
+    "result": null,
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  },
+  {
+    "kind": "result",
+    "offset": "18",
+    "sdk_message": null,
+    "result": {
+      "runId": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+      "agentId": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+      "status": "RUN_LIFECYCLE_STATUS_FINISHED",
+      "result": "ORCHID-731\nPOC-RULE-905",
+      "model": {
+        "id": "grok-4.7",
+        "params": [
+          {
+            "id": "context",
+            "value": "256k"
+          },
+          {
+            "id": "reasoning_effort",
+            "value": "high"
+          },
+          {
+            "id": "fast",
+            "value": "false"
+          }
+        ]
+      },
+      "durationMs": "7302",
+      "createdAt": "2026-10-09T01:27:51.094Z",
+      "usage": {
+        "inputTokens": "5027",
+        "outputTokens": "50",
+        "cacheReadTokens": "4736",
+        "totalTokens": "9813",
+        "reasoningTokens": "39"
+      }
+    },
+    "done": null,
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": true
+  },
+  {
+    "kind": "done",
+    "offset": "19",
+    "sdk_message": null,
+    "result": null,
+    "done": {
+      "agentId": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+      "runId": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce"
+    },
+    "interaction_update": null,
+    "step": null,
+    "result_is_full": false
+  }
+]

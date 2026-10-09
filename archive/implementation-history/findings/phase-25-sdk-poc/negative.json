@@ -1,0 +1,12 @@
+[
+  {
+    "case": "invalid_auth",
+    "error_class": "AuthenticationError",
+    "message": "unauthenticated: Invalid User API Key"
+  },
+  {
+    "case": "missing_agent",
+    "error_class": "AgentNotFoundError",
+    "message": "not_found: Agent agent-00000000-0000-0000-0000-000000000000 not found"
+  }
+]

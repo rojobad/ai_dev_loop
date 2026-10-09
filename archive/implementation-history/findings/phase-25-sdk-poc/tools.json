@@ -1,0 +1,123 @@
+{
+  "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+  "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+  "status": "finished",
+  "result": "`add(a, b)` in `calc.py` now returns the sum of its two arguments.\n\nPOC-SKILL-472\nPOC-RULE-905",
+  "usage": {
+    "input_tokens": 20910,
+    "output_tokens": 294,
+    "cache_read_tokens": 16128,
+    "cache_write_tokens": 0,
+    "total_tokens": 37332,
+    "reasoning_tokens": 134
+  },
+  "live_usage": {
+    "input_tokens": 20910,
+    "output_tokens": 294,
+    "cache_read_tokens": 16128,
+    "cache_write_tokens": 0,
+    "total_tokens": 37332,
+    "reasoning_tokens": 134
+  },
+  "duration_seconds": 16.935,
+  "model": {
+    "id": "grok-4.7",
+    "params": [
+      {
+        "id": "context",
+        "value": "256k"
+      },
+      {
+        "id": "reasoning_effort",
+        "value": "high"
+      },
+      {
+        "id": "fast",
+        "value": "false"
+      }
+    ]
+  },
+  "event_types": [
+    "status",
+    "thinking",
+    "thinking",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "tool_call",
+    "tool_call",
+    "tool_call",
+    "tool_call",
+    "thinking",
+    "thinking",
+    "tool_call",
+    "tool_call",
+    "tool_call",
+    "thinking",
+    "thinking",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "usage",
+    "status"
+  ],
+  "usage_events": [
+    {
+      "type": "usage",
+      "agent_id": "agent-ec0ef066-dcad-44e9-9018-dbfe88bb090b",
+      "run_id": "run-10228e26-a92e-4cdf-bdda-82fa41abadd8",
+      "usage": {
+        "input_tokens": 20910,
+        "output_tokens": 294,
+        "cache_read_tokens": 16128,
+        "cache_write_tokens": 0,
+        "total_tokens": 37332,
+        "reasoning_tokens": 134
+      }
+    }
+  ]
+}

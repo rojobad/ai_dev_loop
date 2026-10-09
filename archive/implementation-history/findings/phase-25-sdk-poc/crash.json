@@ -1,0 +1,16 @@
+{
+  "tool_started": true,
+  "run_id": "run-cea7d77c-077e-49dc-a7a0-ad28225b64ad",
+  "last_observed_status": "running",
+  "second_send_while_busy": {
+    "error_class": "InternalServerError",
+    "message": "internal: Agent agent-b259ab04-8528-4886-a7a3-5a2943ca0d0b already has active run"
+  },
+  "stream_finished": false,
+  "consumer_errors": [],
+  "child_alive_after_bridge_sigkill": true,
+  "poc_child_cleanup_required": true,
+  "finished_marker_exists": false,
+  "elapsed_after_kill_seconds": 15.585,
+  "usage": null
+}

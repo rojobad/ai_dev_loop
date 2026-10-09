@@ -1,0 +1,197 @@
+[
+  {
+    "type": "status",
+    "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+    "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+    "status": "RUNNING",
+    "message": ""
+  },
+  {
+    "type": "thinking",
+    "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+    "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+    "text": "I need to recall the exact marker from your previous message.\n\nThe marker is ORCHID-731. I will append POC-RULE-905 per project rules.",
+    "thinking_duration_ms": null
+  },
+  {
+    "type": "thinking",
+    "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+    "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+    "text": "",
+    "thinking_duration_ms": 1
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+    "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "OR"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+    "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "CH"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+    "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "ID"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+    "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "-"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+    "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "731"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+    "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "\n"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+    "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "POC"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+    "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "-"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+    "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "RULE"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+    "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "-"
+        }
+      ]
+    }
+  },
+  {
+    "type": "assistant",
+    "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+    "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "905"
+        }
+      ]
+    }
+  },
+  {
+    "type": "usage",
+    "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+    "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+    "usage": {
+      "input_tokens": 5027,
+      "output_tokens": 50,
+      "cache_read_tokens": 4736,
+      "cache_write_tokens": 0,
+      "total_tokens": 9813,
+      "reasoning_tokens": 39
+    }
+  },
+  {
+    "type": "status",
+    "agent_id": "agent-f1305347-e1d3-4ef0-96b2-f9efd351a778",
+    "run_id": "run-aa4a1cb7-f04c-447b-8e48-2f6af3d105ce",
+    "status": "FINISHED",
+    "message": ""
+  }
+]

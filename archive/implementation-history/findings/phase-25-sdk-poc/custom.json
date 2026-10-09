@@ -1,0 +1,113 @@
+{
+  "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+  "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+  "status": "finished",
+  "result": "POC-CUSTOM-364\nPOC-RULE-905",
+  "usage": {
+    "input_tokens": 21170,
+    "output_tokens": 717,
+    "cache_read_tokens": 12288,
+    "cache_write_tokens": 0,
+    "total_tokens": 34175,
+    "reasoning_tokens": 627
+  },
+  "live_usage": {
+    "input_tokens": 21170,
+    "output_tokens": 717,
+    "cache_read_tokens": 12288,
+    "cache_write_tokens": 0,
+    "total_tokens": 34175,
+    "reasoning_tokens": 627
+  },
+  "duration_seconds": 14.781,
+  "model": {
+    "id": "grok-4.7",
+    "params": [
+      {
+        "id": "context",
+        "value": "256k"
+      },
+      {
+        "id": "reasoning_effort",
+        "value": "high"
+      },
+      {
+        "id": "fast",
+        "value": "false"
+      }
+    ]
+  },
+  "event_types": [
+    "status",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "thinking",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "thinking",
+    "thinking",
+    "tool_call",
+    "tool_call",
+    "thinking",
+    "thinking",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "assistant",
+    "usage",
+    "status"
+  ],
+  "usage_events": [
+    {
+      "type": "usage",
+      "agent_id": "c8da815d-b003-410f-9484-f6cf34f33c3d",
+      "run_id": "run-efbc4492-ace9-4d4b-9a3d-4125e2418154",
+      "usage": {
+        "input_tokens": 21170,
+        "output_tokens": 717,
+        "cache_read_tokens": 12288,
+        "cache_write_tokens": 0,
+        "total_tokens": 34175,
+        "reasoning_tokens": 627
+      }
+    }
+  ]
+}
