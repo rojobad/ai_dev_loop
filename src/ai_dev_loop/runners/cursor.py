@@ -52,6 +52,12 @@ CURSOR_CHAT_CREATE_FAILURE_MESSAGES = frozenset(
     }
 )
 
+NON_INTERACTIVE_PROMPT = (
+    "This is a non-interactive run. Do not ask for confirmation or tell the user to "
+    "reply continue. Implement and edit files in this turn. If you are truly blocked, "
+    "emit BLOCKED_CONTRACT with the reason."
+)
+
 
 @dataclass(frozen=True)
 class CursorParseResult:
@@ -177,6 +183,7 @@ def build_cursor_args(
     chat_id: str,
     prompt: str,
 ) -> list[str]:
+    effective_prompt = f"{NON_INTERACTIVE_PROMPT}\n\n{prompt}"
     args = [
         cursor.command,
         "-p",
@@ -197,7 +204,7 @@ def build_cursor_args(
             cursor.output_format,
             "--sandbox",
             cursor.sandbox,
-            prompt,
+            effective_prompt,
         ]
     )
     return args

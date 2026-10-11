@@ -8,6 +8,7 @@ import pytest
 
 from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.runners.cursor import (
+    NON_INTERACTIVE_PROMPT,
     build_cursor_args,
     create_chat,
     parse_stream_json,
@@ -35,7 +36,7 @@ def test_build_cursor_args_includes_prompt_as_last_argument() -> None:
     assert "-p" in args
     assert "--force" in args
     assert "--trust" in args
-    assert args[-1] == "Implement the plan exactly."
+    assert args[-1] == (f"{NON_INTERACTIVE_PROMPT}\n\nImplement the plan exactly.")
     assert args[args.index("--resume") + 1] == "019abc00-1111-2222-3333-444444444444"
 
 
