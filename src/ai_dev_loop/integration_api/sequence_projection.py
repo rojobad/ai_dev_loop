@@ -71,10 +71,11 @@ def _integration_safe_next_action(
     internal: SafeNextAction,
     current_run_id: str | None,
     cursor_wait_until: str | None,
+    implementer_retry_wait_until: str | None,
 ) -> IntegrationSafeNextAction:
     wait_until = None
     if internal.kind is SafeNextActionKind.WAIT_UNTIL:
-        wait_until = cursor_wait_until
+        wait_until = implementer_retry_wait_until or cursor_wait_until
     return IntegrationSafeNextAction(
         kind=internal.kind.value,
         run_id=current_run_id,
@@ -322,9 +323,12 @@ def build_sequence_inspect_data(
         )
     )
     cursor_wait_until: str | None = None
+    implementer_retry_wait_until: str | None = None
     if status_result.current_run_id is not None:
         run_state, _, _ = store.load_validated_snapshot(conn, status_result.current_run_id)
-        cursor_wait_until = scheduler_status_projection_from_state(run_state)["cursor_wait_until"]
+        run_projection = scheduler_status_projection_from_state(run_state)
+        cursor_wait_until = run_projection["cursor_wait_until"]
+        implementer_retry_wait_until = run_projection["implementer_retry_wait_until"]
     sequence_state = store.load_validated_sequence_state(conn, status_result.sequence_id)
     report_summary = IntegrationReportAvailability(available=False, reason="not_yet_produced")
     if isinstance(sequence_state, AwaitingFinalizationSequenceState):
@@ -339,6 +343,9 @@ def build_sequence_inspect_data(
         codex_pending_role=status_result.codex_pending_role,
         codex_pending_turn=status_result.codex_pending_turn,
         codex_capacity_reason=status_result.codex_capacity_reason,
+        implementer_retry_wait_until=status_result.implementer_retry_wait_until,
+        implementer_timeout_automatic_retries=(status_result.implementer_timeout_automatic_retries),
+        implementer_timeout_retry_limit=status_result.implementer_timeout_retry_limit,
         sequence_id=status_result.sequence_id,
         name=status_result.name,
         project_name=status_result.project_name,
@@ -360,6 +367,7 @@ def build_sequence_inspect_data(
             internal=status_result.safe_next_action,
             current_run_id=status_result.current_run_id,
             cursor_wait_until=cursor_wait_until,
+            implementer_retry_wait_until=implementer_retry_wait_until,
         ),
         report=report_summary,
         phases=tuple(phases),

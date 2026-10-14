@@ -501,6 +501,37 @@ def scheduler_cursor_retry_command(
     _handle(run)
 
 
+@scheduler_app.command("implementer-retry")
+def scheduler_implementer_retry_command(
+    run_id: Annotated[str, typer.Argument(help="Scheduler run ID with a confirmed timeout.")],
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Reserved for classified failure recovery in a later phase.",
+        ),
+    ] = False,
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Authorize a provider-neutral implementer timeout continuation."""
+
+    def run() -> None:
+        from ai_dev_loop.scheduler.application.implementer_timeout_retry import (
+            scheduler_implementer_retry,
+        )
+
+        result = scheduler_implementer_retry(run_id, force=force)
+        if output.value == "json":
+            typer.echo(result.model_dump_json(indent=2))
+        else:
+            typer.echo(
+                f"{result.provider.title()} implementer retry: {result.run_id}; "
+                f"ready at {result.available_at}"
+            )
+
+    _handle(run)
+
+
 @scheduler_app.command("abort")
 def scheduler_abort_command(
     run_id: Annotated[str, typer.Argument(help="Scheduler run ID.")],

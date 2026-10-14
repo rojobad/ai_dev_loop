@@ -355,6 +355,7 @@ def apply_codex_implementer_turn_completed(
             "codex_capacity_wait_started_at": None,
             "capacity_evidence_source": None,
             "capacity_continuation": None,
+            "implementer_timeout_continuation": None,
             "inferred_operational_failure_kind": None,
         }
     )
@@ -930,6 +931,7 @@ def apply_waiting_for_cursor_fix_entered(
             "latest_correction_envelope_sha256": event.correction_envelope_sha256,
             "review_iteration": event.review_iteration,
             "reviews_completed": state.codex.reviews_completed + 1,
+            "implementer_timeout_continuation": None,
             **reset_routing_auto_retry_for_new_review_iteration(),
         }
     )

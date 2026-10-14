@@ -43,6 +43,9 @@
     "residualRisk": { "type": ["boolean", "null"] },
     "blockReason": { "type": ["string", "null"] },
     "cursorWaitUntil": { "type": ["string", "null"] },
+    "implementerRetryWaitUntil": { "type": ["string", "null"] },
+    "implementerTimeoutAutomaticRetries": { "type": ["integer", "null"], "minimum": 0 },
+    "implementerTimeoutRetryLimit": { "type": ["integer", "null"], "minimum": 0 },
     "safeNextAction": {
       "$ref": "https://ai-dev-loop.local/schemas/integration-api-run-shared-v1.json#/$defs/safeNextAction"
     },

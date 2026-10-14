@@ -97,7 +97,7 @@ def _safe_detail_for_event(event_kind: str, payload_text: str) -> str:
     }:
         kind = payload.get("block_reason_kind")
         return f"{event_kind}: block_reason_kind={kind}"
-    if event_kind == "cursor_timeout_retry":
+    if event_kind in {"cursor_timeout_retry", "codex_implementer_timeout_retry"}:
         return (
             f"{event_kind}: action={payload.get('action')} "
             f"automatic_retries={payload.get('automatic_retries')} "

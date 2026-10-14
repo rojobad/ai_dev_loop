@@ -93,6 +93,18 @@ class CursorTimeoutRetryEvent(DomainModel):
     available_at: NonEmptyStr | None = None
 
 
+class CodexImplementerTimeoutRetryEvent(DomainModel):
+    kind: Literal["codex_implementer_timeout_retry"] = "codex_implementer_timeout_retry"
+    run_id: NonEmptyStr
+    attempt_id: NonEmptyStr
+    iteration: int = Field(ge=1)
+    turn: Literal["initial", "correction"]
+    retry_generation: int = Field(ge=1)
+    automatic_retries: int = Field(ge=0, le=3)
+    action: Literal["automatic", "manual", "exhausted"]
+    available_at: NonEmptyStr | None = None
+
+
 class RunSubmittedEvent(DomainModel):
     kind: str = Field(default=SUBMITTED_EVENT_KIND)
     run_id: str
@@ -1060,6 +1072,10 @@ def _scheduler_event_discriminator(value: object) -> str:
 
 SchedulerEvent = Annotated[
     Annotated[CursorTimeoutRetryEvent, Tag("cursor_timeout_retry")]
+    | Annotated[
+        CodexImplementerTimeoutRetryEvent,
+        Tag("codex_implementer_timeout_retry"),
+    ]
     | Annotated[RunSubmittedEvent, Tag(SUBMITTED_EVENT_KIND)]
     | Annotated[RunAuthorizedEvent, Tag(AUTHORIZED_EVENT_KIND)]
     | Annotated[WorktreeAdmittedEvent, Tag(ADMISSION_EVENT_KIND)]

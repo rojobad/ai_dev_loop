@@ -66,5 +66,6 @@ def safe_next_action_for_scheduler_state(
         state.kind,
         state.run_id,
         cursor_wait_until=projection["cursor_wait_until"],
+        implementer_retry_wait_until=projection["implementer_retry_wait_until"],
         block_reason_kind=projection["block_reason_kind"],
     )

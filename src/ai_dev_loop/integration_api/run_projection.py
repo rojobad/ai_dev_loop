@@ -61,9 +61,14 @@ def _integration_safe_next_action(
     action_kind: SafeNextActionKind,
     *,
     cursor_wait_until: str | None,
+    implementer_retry_wait_until: str | None,
 ) -> IntegrationSafeNextAction:
     sequence_id = state.context.sequence.sequence_id if state.context.sequence is not None else None
-    wait_until = cursor_wait_until if action_kind is SafeNextActionKind.WAIT_UNTIL else None
+    wait_until = (
+        implementer_retry_wait_until or cursor_wait_until
+        if action_kind is SafeNextActionKind.WAIT_UNTIL
+        else None
+    )
     return IntegrationSafeNextAction(
         kind=action_kind.value,
         run_id=state.run_id,
@@ -77,6 +82,7 @@ def _safe_action_from_internal(
     internal: object,
     *,
     cursor_wait_until: str | None,
+    implementer_retry_wait_until: str | None,
 ) -> IntegrationSafeNextAction:
     from ai_dev_loop.scheduler.application.contracts import SafeNextAction
 
@@ -86,6 +92,7 @@ def _safe_action_from_internal(
         state,
         internal.kind,
         cursor_wait_until=cursor_wait_until,
+        implementer_retry_wait_until=implementer_retry_wait_until,
     )
 
 
@@ -140,6 +147,15 @@ def build_run_inspect_data(
         max_review_iterations=max_reviews,
         submitted_max_review_iterations=submitted_max,
         cursor_wait_until=projection["cursor_wait_until"],
+        implementer_retry_wait_until=projection["implementer_retry_wait_until"],
+        implementer_timeout_automatic_retries=int(
+            projection["implementer_timeout_automatic_retries"]
+        )
+        if projection["implementer_timeout_automatic_retries"] is not None
+        else None,
+        implementer_timeout_retry_limit=int(projection["implementer_timeout_retry_limit"])
+        if projection["implementer_timeout_retry_limit"] is not None
+        else None,
         block_reason_kind=projection["block_reason_kind"],
         codex_routing_auto_retry_eligible=(
             projection["codex_routing_auto_retry_eligible"] == "true"
@@ -171,6 +187,7 @@ def build_run_inspect_data(
         state,
         internal_summary.safe_next_action,
         cursor_wait_until=projection["cursor_wait_until"],
+        implementer_retry_wait_until=projection["implementer_retry_wait_until"],
     )
     from ai_dev_loop.scheduler.domain.state import (
         WaitingCodexCapacityState,
@@ -200,6 +217,15 @@ def build_run_inspect_data(
         residual_risk=_residual_risk_for_state(state.kind),
         block_reason=projection["block_reason_kind"],
         cursor_wait_until=projection["cursor_wait_until"],
+        implementer_retry_wait_until=projection["implementer_retry_wait_until"],
+        implementer_timeout_automatic_retries=int(
+            projection["implementer_timeout_automatic_retries"]
+        )
+        if projection["implementer_timeout_automatic_retries"] is not None
+        else None,
+        implementer_timeout_retry_limit=int(projection["implementer_timeout_retry_limit"])
+        if projection["implementer_timeout_retry_limit"] is not None
+        else None,
         safe_next_action=safe_action,
         attempt_count=store.count_attempts_for_run(conn, state.run_id),
         codex_review_retry_failure_kind=routing_failure_kind,

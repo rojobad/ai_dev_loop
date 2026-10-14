@@ -606,7 +606,7 @@ def test_second_proven_no_session_quota_blocks_instead_of_looping(
 @pytest.mark.parametrize(
     ("case", "reason"),
     [
-        ("timeout", "codex_implementer_timeout"),
+        ("timeout", "codex_implementer_timeout_evidence_invalid"),
         ("incomplete", "codex_implementer_output_incomplete"),
         ("signal", "codex_implementer_failure"),
     ],

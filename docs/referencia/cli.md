@@ -340,6 +340,35 @@ Los bloqueos `cursor_timeout` de versiones anteriores no se migran. El timeout d
 `create-chat`, los fallos de integridad y las terminaciones inciertas no son reintentables
 por este comando.
 
+## `scheduler implementer-retry`
+
+```bash
+ai_dev_loop scheduler implementer-retry <run-id> [--force] [--output text|json]
+```
+
+Sin flags, autoriza la continuación de un timeout terminal autenticado del
+implementador seleccionado. Para Cursor delega a la política existente de
+`cursor-retry`; ese comando histórico sigue siendo Cursor-only. Para Codex conserva
+el mismo run, sesión autenticada, provider, modelo, effort, timeout y bytes del prompt.
+El scheduler permite como máximo tres reintentos automáticos por turno, separados por
+30 minutos. Una invocación manual adelanta la espera sin consumir su autorización
+automática, o autoriza otra continuación después de agotarlas. La CLI solo persiste o
+adelanta el efecto; `scheduler tick` es quien despacha el proceso.
+
+Un timeout Codex requiere terminación confirmada, resultado e invocación autenticados,
+identidad ya capturada y reserva vigente. El intent inmutable bajo
+`implementer/timeouts/` fija el intento fuente, sesión, prompt y configuración. La
+continuación no repite admisión, staging ni review. Si encuentra capacidad agotada,
+entra en `waiting_codex_capacity` y luego reanuda el mismo turno y presupuesto. Abort,
+identidad incierta, evidencia corrupta o terminación no resuelta no autorizan el retry;
+los holds de integridad conservan la reserva hasta abort explícito.
+
+`--force` está reservado por el contrato público, pero esta fase lo rechaza sin mutar
+el run; la recuperación de fallos clasificados llega en fases posteriores. `status` e
+inspect de run/secuencia exponen `implementer_retry_wait_until`, el contador automático
+y el límite. `history` registra `codex_implementer_timeout_retry` sin publicar IDs
+completos, prompts ni salida del agente.
+
 ## `scheduler extend`
 
 ```bash

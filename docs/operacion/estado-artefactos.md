@@ -26,6 +26,7 @@ $XDG_STATE_HOME/ai_dev_loop/
 │       effective-config.yaml
 │       source-config.yaml
 │       implementer/session.json
+│       implementer/timeouts/<attempt-id>.intent.json
 │       implementer/iterations/<NN>/final.txt
 │       implementer/turns/<NN>.<attempt-id>.{jsonl,stderr.txt,metadata.json,...}
 │       codex/fresh-reviewer-input.json
@@ -129,6 +130,11 @@ El layout protegido `implementer/` aplica igualmente a hojas Codex. Una espera
 inicial o de corrección conserva hoja, ordinal, reserva, prompt exacto, sesión y
 trabajo parcial entre ticks/reinicio. Solo aceptación de review autoriza el
 checkpoint no final; la fase final queda staged en `awaiting_finalization`.
+
+Cada timeout Codex reintentable publica un intent write-once por intento fuente.
+El ledger enlaza su hash, sesión, turno, prompt exacto, generación, contador y
+espera. Un artefacto publicado antes de un CAS fallido queda huérfano e inerte;
+`publish-or-verify` hace idempotente la convergencia del mismo intento.
 
 Después de validar fuentes, instalar/actualizar el paquete es trabajo explícito
 del operador. El scheduler instalado no carga automáticamente cambios unstaged,

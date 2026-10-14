@@ -243,3 +243,10 @@ la reserva se retiene mientras una terminación exacta siga incierta. El probe
 model-agnostic es conservador y solo `AVAILABLE` autoriza una continuación.
 La inspección explícita de output puede revelar prompts/IDs en bytes capturados;
 los resúmenes y errores públicos mantienen la privacidad existente.
+
+`scheduler implementer-retry` tampoco toma comandos ni prompts de la salida del
+agente. Para Codex autentica el envelope terminal, la evidencia de invocación, la
+sesión capturada y el intent inmutable antes de adelantar o crear un efecto. La
+configuración y los bytes del prompt provienen únicamente del submit/checkpoint
+congelado. La evidencia incierta o corrupta retiene la reserva; abort explícito solo
+la libera después de resolver cualquier terminación pendiente.

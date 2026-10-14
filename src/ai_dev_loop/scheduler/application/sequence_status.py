@@ -58,6 +58,9 @@ class _ProviderProjection(TypedDict, total=False):
     codex_pending_role: str | None
     codex_pending_turn: str | None
     codex_capacity_reason: str | None
+    implementer_retry_wait_until: str | None
+    implementer_timeout_automatic_retries: int | None
+    implementer_timeout_retry_limit: int | None
 
 
 class SequenceStatusService:
@@ -127,6 +130,15 @@ class SequenceStatusService:
             "codex_pending_role": projection["codex_pending_role"],
             "codex_pending_turn": projection["codex_pending_turn"],
             "codex_capacity_reason": projection["codex_capacity_reason"],
+            "implementer_retry_wait_until": projection["implementer_retry_wait_until"],
+            "implementer_timeout_automatic_retries": int(
+                projection["implementer_timeout_automatic_retries"]
+            )
+            if projection["implementer_timeout_automatic_retries"] is not None
+            else None,
+            "implementer_timeout_retry_limit": int(projection["implementer_timeout_retry_limit"])
+            if projection["implementer_timeout_retry_limit"] is not None
+            else None,
         }
 
     def _entry_summaries(

@@ -42,6 +42,7 @@ CODEX_IMPLEMENTER_RESERVATION_HOLD_BLOCK_KINDS = frozenset(
         "codex_implementer_binding_conflict",
         "codex_implementer_capacity_evidence_invalid",
         "codex_implementer_launch_guard_failed",
+        "codex_implementer_timeout_evidence_invalid",
     }
 )
 
@@ -64,6 +65,11 @@ CODEX_CAPACITY_PROBE_STDOUT_MAX_BYTES = 256 * 1024
 CODEX_CAPACITY_PROBE_STDERR_MAX_BYTES = 64 * 1024
 CODEX_CAPACITY_PROBE_JSON_LINE_MAX_BYTES = 256 * 1024
 CODEX_CAPACITY_PROBE_JSON_MAX_NESTING_DEPTH = 32
+
+CODEX_IMPLEMENTER_TIMEOUT_RETRY_POLICY_VERSION = "codex-implementer-timeout-v1"
+CODEX_IMPLEMENTER_TIMEOUT_RETRY_DELAY_SECONDS = 30 * 60
+CODEX_IMPLEMENTER_TIMEOUT_MAX_AUTOMATIC_RETRIES = 3
+MAX_CODEX_IMPLEMENTER_TIMEOUT_INTENT_BYTES = 64 * 1024
 
 
 def codex_attempt_events_rel(review_iteration: int, attempt_id: str) -> str:
@@ -138,6 +144,10 @@ def codex_implementer_session_capture_rel(attempt_id: str) -> str:
 
 def codex_implementer_wait_intent_rel(attempt_id: str) -> str:
     return f"implementer/waits/{attempt_id}.intent.json"
+
+
+def codex_implementer_timeout_intent_rel(attempt_id: str) -> str:
+    return f"implementer/timeouts/{attempt_id}.intent.json"
 
 
 def codex_review_prompt_evidence_rel(review_iteration: int, attempt_id: str) -> str:

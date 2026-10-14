@@ -480,6 +480,45 @@ class CodexCapacityContinuation(DomainModel):
         return self
 
 
+class CodexImplementerTimeoutContinuation(DomainModel):
+    """Exact same-turn continuation for one authenticated Codex timeout."""
+
+    schema_version: Literal[1] = 1
+    policy_version: Literal["codex-implementer-timeout-v1"] = "codex-implementer-timeout-v1"
+    turn: Literal["initial", "correction"]
+    iteration: int = Field(ge=1)
+    prompt_sha256: Sha256Hex
+    prompt_artifact_path: NonEmptyStr
+    session_id: UuidSessionId
+    source_attempt_id: NonEmptyStr
+    intent_path: NonEmptyStr
+    intent_sha256: Sha256Hex
+    retry_generation: int = Field(ge=1)
+    automatic_retries: int = Field(ge=0, le=3)
+    scheduled_generation: int | None = Field(default=None, ge=1)
+    wait_until: NonEmptyStr | None = None
+
+    @field_validator("wait_until")
+    @classmethod
+    def canonical_timeout_wait_until(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        canonical = encode_utc_instant(value)
+        if value != canonical:
+            raise ValueError("timeout wait_until must use canonical UTC Z encoding")
+        return value
+
+    @model_validator(mode="after")
+    def scheduled_timeout_fields_consistent(self) -> CodexImplementerTimeoutContinuation:
+        if bool(self.scheduled_generation) != bool(self.wait_until):
+            raise ValueError("scheduled generation and wait timestamp must appear together")
+        if self.scheduled_generation is not None and (
+            self.scheduled_generation != self.retry_generation
+        ):
+            raise ValueError("scheduled generation must match retry generation")
+        return self
+
+
 class CodexWorkflowCheckpoint(DomainModel):
     """Durable Codex review checkpoint carried across Phase 17.5 states."""
 
@@ -524,6 +563,7 @@ class CodexWorkflowCheckpoint(DomainModel):
     implementer_binding_artifact_path: NonEmptyStr | None = None
     implementer_binding_artifact_sha256: Sha256Hex | None = None
     capacity_continuation: CodexCapacityContinuation | None = None
+    implementer_timeout_continuation: CodexImplementerTimeoutContinuation | None = None
     implementer_no_session_bootstrap_retries: int = Field(default=0)
 
     @model_serializer(mode="wrap")
@@ -534,6 +574,8 @@ class CodexWorkflowCheckpoint(DomainModel):
         data = handler(self)
         if self.capacity_continuation is None:
             data.pop("capacity_continuation", None)
+        if self.implementer_timeout_continuation is None:
+            data.pop("implementer_timeout_continuation", None)
         if self.implementer_no_session_bootstrap_retries == 0:
             data.pop("implementer_no_session_bootstrap_retries", None)
         return data

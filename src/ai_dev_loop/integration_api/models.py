@@ -215,6 +215,13 @@ class IntegrationRunInspectData(PublicWireModel):
     residual_risk: bool | None = Field(None, alias="residualRisk")
     block_reason: str | None = Field(None, alias="blockReason")
     cursor_wait_until: str | None = Field(None, alias="cursorWaitUntil")
+    implementer_retry_wait_until: str | None = Field(None, alias="implementerRetryWaitUntil")
+    implementer_timeout_automatic_retries: StrictInt | None = Field(
+        None, alias="implementerTimeoutAutomaticRetries", ge=0
+    )
+    implementer_timeout_retry_limit: StrictInt | None = Field(
+        None, alias="implementerTimeoutRetryLimit", ge=0
+    )
     safe_next_action: IntegrationSafeNextAction = Field(alias="safeNextAction")
     attempt_count: StrictInt = Field(alias="attemptCount", ge=0)
     codex_review_retry_failure_kind: str | None = Field(
@@ -388,6 +395,13 @@ class IntegrationSequenceInspectData(PublicWireModel):
     codex_pending_role: str | None = Field(None, alias="codexPendingRole")
     codex_pending_turn: str | None = Field(None, alias="codexPendingTurn")
     codex_capacity_reason: str | None = Field(None, alias="codexCapacityReason")
+    implementer_retry_wait_until: str | None = Field(None, alias="implementerRetryWaitUntil")
+    implementer_timeout_automatic_retries: StrictInt | None = Field(
+        None, alias="implementerTimeoutAutomaticRetries", ge=0
+    )
+    implementer_timeout_retry_limit: StrictInt | None = Field(
+        None, alias="implementerTimeoutRetryLimit", ge=0
+    )
     sequence_id: str = Field(alias="sequenceId")
     name: str
     project_name: str = Field(alias="projectName")

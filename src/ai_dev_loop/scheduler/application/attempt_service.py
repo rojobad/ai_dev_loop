@@ -45,7 +45,11 @@ from ai_dev_loop.scheduler.application.codex_evidence import (
     verify_pre_execution_implementer_guards,
 )
 from ai_dev_loop.scheduler.application.codex_workflow_service import CodexWorkflowService
-from ai_dev_loop.scheduler.application.contracts import SchedulerEngineError, TickRunReceipt
+from ai_dev_loop.scheduler.application.contracts import (
+    SchedulerEngineError,
+    SchedulerEngineErrorKind,
+    TickRunReceipt,
+)
 from ai_dev_loop.scheduler.application.cursor_evidence import (
     CursorEvidenceError,
     frozen_repository_identity,
@@ -283,6 +287,7 @@ class AttemptService:
             dispatch_row = implementer_effects[0]
             dispatch_id = str(dispatch_row["dispatch_id"])
             effect_kind = str(dispatch_row["effect_kind"])
+            effect_payload_text = str(dispatch_row["effect_payload"])
             scheduled_version = int(dispatch_row["claimed_run_version"])
             implementer_state = state
 
@@ -293,11 +298,36 @@ class AttemptService:
         stdout_rel = attempt_stdout_rel(attempt_id)
         stderr_rel = attempt_stderr_rel(attempt_id)
         result_rel = attempt_result_rel(attempt_id)
-        evidence = self._codex_implementer_binding(
-            implementer_state,
-            effect_kind=effect_kind,
-            run_id=run_id,
-        )
+        try:
+            parsed_effect_payload = json.loads(effect_payload_text)
+            if not isinstance(parsed_effect_payload, dict):
+                raise ValueError("Codex implementer effect payload must be an object")
+            evidence = self._codex_implementer_binding(
+                implementer_state,
+                effect_kind=effect_kind,
+                run_id=run_id,
+                effect_payload=parsed_effect_payload,
+            )
+        except SchedulerEngineError as exc:
+            if exc.kind is not SchedulerEngineErrorKind.VALIDATION:
+                raise
+            if self._codex_workflow is not None:
+                return self._codex_workflow.block_implementer_launch_guard_failure(
+                    run_id,
+                    attempt_id="",
+                    reason_kind="codex_implementer_launch_guard_failed",
+                    summary=str(exc)[:240],
+                )
+            raise
+        except (ValidationError, ValueError, OSError) as exc:
+            if self._codex_workflow is not None:
+                return self._codex_workflow.block_implementer_launch_guard_failure(
+                    run_id,
+                    attempt_id="",
+                    reason_kind="codex_implementer_launch_guard_failed",
+                    summary=str(exc)[:240],
+                )
+            raise
         evidence.update(
             {
                 "attempt_id": attempt_id,
@@ -919,6 +949,7 @@ class AttemptService:
         *,
         effect_kind: str,
         run_id: str,
+        effect_payload: dict[str, object] | None = None,
     ) -> dict[str, object]:
         context = state.context
         implementer = context.implementer
@@ -938,6 +969,29 @@ class AttemptService:
         continuation = (
             codex_checkpoint.capacity_continuation if codex_checkpoint is not None else None
         )
+        timeout_continuation = (
+            codex_checkpoint.implementer_timeout_continuation
+            if codex_checkpoint is not None
+            else None
+        )
+        if timeout_continuation is not None:
+            from ai_dev_loop.scheduler.application.implementer_timeout_retry import (
+                CodexImplementerTimeoutRetryService,
+            )
+
+            with self.store.begin_read() as conn:
+                current, _, _ = self.store.load_validated_snapshot(conn, run_id)
+                if not isinstance(current, _CODEX_IMPLEMENTER_ATTEMPT_STATES):
+                    raise ValidationError("Codex timeout run state changed before dispatch")
+                CodexImplementerTimeoutRetryService(
+                    self.store,
+                    self.artifacts,
+                    now_factory=self._now_factory,
+                ).authenticate_dispatch(
+                    conn,
+                    current,
+                    effect_payload=effect_payload or {},
+                )
         turn = "correction" if isinstance(state, WaitingForCursorFixState) else "initial"
         prompt_path: str | None
         prompt_sha: str | None
@@ -946,6 +1000,20 @@ class AttemptService:
                 raise ValidationError("Codex implementer continuation turn mismatch")
             prompt_path = continuation.prompt_artifact_path
             prompt_sha = continuation.prompt_sha256
+        elif timeout_continuation is not None:
+            if timeout_continuation.turn != turn:
+                raise ValidationError("Codex implementer timeout continuation turn mismatch")
+            if effect_kind != RESUME_CODEX_IMPLEMENTER_EFFECT_KIND:
+                raise ValidationError("Codex timeout continuation must resume its exact session")
+            if effect_payload is not None and (
+                effect_payload.get("timeout_retry_generation")
+                != timeout_continuation.retry_generation
+                or effect_payload.get("timeout_retry_of") != timeout_continuation.source_attempt_id
+                or effect_payload.get("prompt_path") != timeout_continuation.prompt_artifact_path
+            ):
+                raise ValidationError("Codex timeout effect does not match durable continuation")
+            prompt_path = timeout_continuation.prompt_artifact_path
+            prompt_sha = timeout_continuation.prompt_sha256
         elif turn == "correction":
             assert isinstance(state, WaitingForCursorFixState)
             prompt_path = state.codex.latest_correction_envelope_path
@@ -964,7 +1032,7 @@ class AttemptService:
         reviewer_session = codex_checkpoint.reviewer_session_id if codex_checkpoint else None
         if bound_session and reviewer_session and bound_session == reviewer_session:
             raise ValidationError("implementer and reviewer identities must stay distinct")
-        return {
+        binding: dict[str, object] = {
             "effect_kind": effect_kind,
             "role": "implementer",
             "turn": turn,
@@ -984,6 +1052,16 @@ class AttemptService:
             "prompt_sha256": prompt_sha,
             "session_id": bound_session or "",
         }
+        if timeout_continuation is not None:
+            binding.update(
+                {
+                    "timeout_retry_of": timeout_continuation.source_attempt_id,
+                    "timeout_retry_generation": timeout_continuation.retry_generation,
+                    "timeout_retry_intent_path": timeout_continuation.intent_path,
+                    "timeout_retry_intent_sha256": timeout_continuation.intent_sha256,
+                }
+            )
+        return binding
 
     def _cursor_binding(
         self,

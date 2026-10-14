@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CodexImplementerTimeoutIntent",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "policy_version": { "const": "codex-implementer-timeout-v1" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "source_attempt_id": { "type": "string", "minLength": 1 },
+    "source_dispatch_id": { "type": "string", "minLength": 1 },
+    "source_effect_kind": { "enum": ["codex.implementer_bootstrap", "codex.implementer_resume"] },
+    "turn": { "enum": ["initial", "correction"] },
+    "iteration": { "type": "integer", "minimum": 1 },
+    "session_id": { "type": "string", "format": "uuid" },
+    "prompt_artifact_path": { "type": "string", "minLength": 1 },
+    "prompt_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "codex_command": { "type": "string", "minLength": 1 },
+    "model": { "type": "string", "minLength": 1 },
+    "reasoning_effort": { "type": "string", "minLength": 1 },
+    "timeout_seconds": { "type": "integer", "minimum": 1 },
+    "codex_sandbox": { "const": "workspace-write" },
+    "approval_policy": { "const": "never" },
+    "implementer_binding_artifact_path": { "type": "string", "minLength": 1 },
+    "implementer_binding_artifact_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  },
+  "required": [
+    "schema_version", "policy_version", "run_id", "source_attempt_id",
+    "source_dispatch_id", "source_effect_kind", "turn", "iteration", "session_id",
+    "prompt_artifact_path", "prompt_sha256", "codex_command", "model",
+    "reasoning_effort", "timeout_seconds", "codex_sandbox", "approval_policy",
+    "implementer_binding_artifact_path", "implementer_binding_artifact_sha256"
+  ]
+}

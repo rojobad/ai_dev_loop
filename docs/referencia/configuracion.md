@@ -190,6 +190,11 @@ operativos documentados son:
   corrección, también cuando el run es la hoja bloqueada actual de una secuencia.
   La secuencia conserva el ordinal y la entrada congelada. Una hoja obsoleta,
   un aborto o una reserva ajena se rechazan.
+- `scheduler implementer-retry`: entrada compartida para el timeout confirmado del
+  provider congelado. En Codex conserva sesión, modelo, effort, timeout y prompt;
+  admite tres reintentos automáticos por turno con espera de 30 minutos. No toma
+  valores nuevos de YAML ni de la configuración local de Codex.
+  `--force` está reservado y en esta fase se rechaza sin mutar el run.
 - `scheduler abort`: cancelacion no destructiva; preserva artefactos y cambios staged.
 - Runs interrumpidos o bloqueados: inspecciona `scheduler status` y
   `scheduler history`; la accion segura depende del checkpoint durable en el ledger.

@@ -648,13 +648,6 @@ class CodexWorkflowService:
         if isinstance(returncode, bool) or not isinstance(returncode, int):
             returncode = 1
 
-        if timed_out:
-            return self._block_implementer(
-                run_id,
-                attempt_id=attempt_id,
-                reason_kind="codex_implementer_timeout",
-                summary="Codex implementer timed out; automatic timeout recovery is unsupported",
-            )
         if incomplete:
             return self._block_implementer(
                 run_id,
@@ -720,6 +713,40 @@ class CodexWorkflowService:
                     attempt_id=attempt_id,
                     reason_kind="codex_implementer_binding_conflict",
                     summary="Codex implementer identity artifact failed authentication",
+                )
+
+        if timed_out:
+            if effective_session is None or binding_path is None or binding_sha is None:
+                return self._block_implementer(
+                    run_id,
+                    attempt_id=attempt_id,
+                    reason_kind="codex_implementer_timeout_evidence_invalid",
+                    summary="Codex implementer timeout lacks a safely bound identity",
+                )
+            from ai_dev_loop.scheduler.application.implementer_timeout_retry import (
+                CodexImplementerTimeoutEvidenceError,
+                CodexImplementerTimeoutRetryService,
+            )
+
+            try:
+                return CodexImplementerTimeoutRetryService(
+                    self.store,
+                    self.artifacts,
+                    now_factory=self._now_factory,
+                    event_id_factory=self._event_id_factory,
+                    dispatch_id_factory=self._dispatch_id_factory,
+                ).record_timeout(
+                    run_id,
+                    attempt_id,
+                    binding_artifact_path=binding_path,
+                    binding_artifact_sha256=binding_sha,
+                )
+            except CodexImplementerTimeoutEvidenceError:
+                return self._block_implementer(
+                    run_id,
+                    attempt_id=attempt_id,
+                    reason_kind="codex_implementer_timeout_evidence_invalid",
+                    summary="Codex implementer timeout evidence failed authentication",
                 )
 
         evidence_source = self._capacity_evidence_source_from_outcome(outcome)

@@ -117,6 +117,13 @@ def _render_summary(summary: SchedulerRunSummary, *, output: str) -> dict[str, o
         )
     if summary.cursor_wait_until:
         lines.append(f"Cursor wait until: {summary.cursor_wait_until}")
+    if summary.implementer_retry_wait_until:
+        lines.append(
+            "Implementer retry wait until: "
+            f"{summary.implementer_retry_wait_until} "
+            f"({summary.implementer_timeout_automatic_retries}/"
+            f"{summary.implementer_timeout_retry_limit} automatic retries)"
+        )
     if summary.block_reason_kind:
         lines.append(f"Block reason: {summary.block_reason_kind}")
     lines.append(f"Next action: {summary.safe_next_action.command}")
@@ -433,6 +440,9 @@ def render_sequence_status_output(result: SequenceStatusResult, *, output: str) 
             "codex_pending_role": result.codex_pending_role,
             "codex_pending_turn": result.codex_pending_turn,
             "codex_capacity_reason": result.codex_capacity_reason,
+            "implementer_retry_wait_until": result.implementer_retry_wait_until,
+            "implementer_timeout_automatic_retries": (result.implementer_timeout_automatic_retries),
+            "implementer_timeout_retry_limit": result.implementer_timeout_retry_limit,
             "residual_risk": result.residual_risk,
             "residual_risk_ordinals": list(result.residual_risk_ordinals),
             "block_reason_kind": result.block_reason_kind,
@@ -469,6 +479,13 @@ def render_sequence_status_output(result: SequenceStatusResult, *, output: str) 
     if result.codex_pending_role:
         lines.append(
             f"Codex capacity wait: role={result.codex_pending_role} turn={result.codex_pending_turn} reason={result.codex_capacity_reason}"
+        )
+    if result.implementer_retry_wait_until:
+        lines.append(
+            "Implementer retry wait until: "
+            f"{result.implementer_retry_wait_until} "
+            f"({result.implementer_timeout_automatic_retries}/"
+            f"{result.implementer_timeout_retry_limit} automatic retries)"
         )
     if result.current_run_id is not None:
         lines.append(f"Materialized run: {result.current_run_id}")

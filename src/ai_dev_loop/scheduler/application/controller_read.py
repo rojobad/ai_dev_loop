@@ -75,6 +75,7 @@ def _candidate_from_state(
         max_review_iterations=max_reviews,
         submitted_max_review_iterations=submitted_max,
         cursor_wait_until=projection["cursor_wait_until"],
+        implementer_retry_wait_until=projection["implementer_retry_wait_until"],
         block_reason_kind=projection["block_reason_kind"],
     )
     return ControllerSchedulerCandidate(
