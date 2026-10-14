@@ -1098,6 +1098,7 @@ class SqliteSchedulerStore:
         *,
         context: object,
         resubmission_id: str | None,
+        historical_effective_config_sha256: str | None = None,
     ) -> sqlite3.Row | None:
         from ai_dev_loop.scheduler.application.submission import (
             submission_idempotency_key_candidates,
@@ -1115,6 +1116,7 @@ class SqliteSchedulerStore:
         for key in submission_idempotency_key_candidates(
             context,
             resubmission_id=resubmission_id,
+            historical_effective_config_sha256=historical_effective_config_sha256,
         ):
             existing = self.get_run_by_idempotency_key(conn, key)
             if existing is not None:

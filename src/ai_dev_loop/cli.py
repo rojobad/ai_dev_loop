@@ -259,6 +259,41 @@ def scheduler_submit_command(
         int | None,
         typer.Option("--codex-timeout-minutes", help="Override workflow.codex_timeout_minutes."),
     ] = None,
+    implementer_provider: Annotated[
+        str | None,
+        typer.Option(
+            "--implementer-provider",
+            help="Implementer provider: cursor (default) or codex. Codex dispatch is not available yet.",
+        ),
+    ] = None,
+    implementer_command: Annotated[
+        str | None,
+        typer.Option(
+            "--implementer-command",
+            help="Codex implementer executable. Rejected when the provider is cursor.",
+        ),
+    ] = None,
+    implementer_model: Annotated[
+        str | None,
+        typer.Option(
+            "--implementer-model",
+            help="Required explicit Codex implementer model. Independent from the reviewer model.",
+        ),
+    ] = None,
+    implementer_reasoning_effort: Annotated[
+        str | None,
+        typer.Option(
+            "--implementer-reasoning-effort",
+            help="Required explicit Codex implementer reasoning effort. Independent from the reviewer.",
+        ),
+    ] = None,
+    implementer_timeout_minutes: Annotated[
+        int | None,
+        typer.Option(
+            "--implementer-timeout-minutes",
+            help="Positive Codex implementer timeout in minutes (default 90).",
+        ),
+    ] = None,
     resubmission_id: Annotated[
         str | None,
         typer.Option(
@@ -292,6 +327,11 @@ def scheduler_submit_command(
             max_review_iterations=max_review_iterations,
             cursor_timeout_minutes=cursor_timeout_minutes,
             codex_timeout_minutes=codex_timeout_minutes,
+            implementer_provider=implementer_provider,
+            implementer_command=implementer_command,
+            implementer_model=implementer_model,
+            implementer_reasoning_effort=implementer_reasoning_effort,
+            implementer_timeout_minutes=implementer_timeout_minutes,
             resubmission_id=resubmission_id,
         )
         result = submit_run(options)

@@ -54,7 +54,9 @@ def test_schema_migration_reopens_v12_without_rewriting_lineage(tmp_path: Path) 
         version = int(conn.execute("PRAGMA user_version").fetchone()[0])
         tables = {
             row[0]
-            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
         }
         attempts = conn.execute("SELECT COUNT(*) FROM scheduler_sequence_run_attempts").fetchone()
     assert version == 13
@@ -82,9 +84,9 @@ def test_historical_v1_lineage_and_review_intent_load_without_regeneration() -> 
     assert intent.schema_version == 1
     assert intent.staged_patch_sha256 == DIGEST
     assert intent.reviewer_session_id
-    assert json.dumps(intent.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode() == (
-        intent_bytes
-    )
+    assert json.dumps(
+        intent.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
+    ).encode() == (intent_bytes)
 
 
 def test_cursor_retry_does_not_validate_as_v1_lineage() -> None:

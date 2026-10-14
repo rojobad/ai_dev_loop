@@ -303,7 +303,10 @@ def authenticate_cursor_publication_for_adoption(
     row = store.get_cursor_initial_recovery_by_key(conn, recovery_key=recovery_key)
     if row is None:
         raise _corrupt("cursor recovery relation is missing")
-    if str(row["source_run_id"]) != source_run_id or str(row["successor_run_id"]) != successor_run_id:
+    if (
+        str(row["source_run_id"]) != source_run_id
+        or str(row["successor_run_id"]) != successor_run_id
+    ):
         raise _corrupt("cursor recovery relation disagrees with the sequence replacement")
     if str(row["status"]) == "cancelled":
         raise _conflict("cursor recovery publication was cancelled")
@@ -357,7 +360,10 @@ def adopt_cursor_sequence_successor(
         now=now,
     ):
         raise _conflict("repository reservation is held by another run")
-    if isinstance(sequence, ActiveSequenceState) and sequence.current_run_id == intent.successor_run_id:
+    if (
+        isinstance(sequence, ActiveSequenceState)
+        and sequence.current_run_id == intent.successor_run_id
+    ):
         _mark_adopted(store, conn, intent, record_digest=record_digest, now=now)
         return True
     if not isinstance(sequence, BlockedSequenceState):
@@ -579,11 +585,15 @@ def _cancel_pending_recovery_row(
     try:
         if version == 2:
             intent_v2 = CursorRecoveryPublicationIntentV2.model_validate_json(raw)
-            cancelled_v2 = intent_v2.model_copy(update={"status": "cancelled", "record_sha256": None})
+            cancelled_v2 = intent_v2.model_copy(
+                update={"status": "cancelled", "record_sha256": None}
+            )
             payload = cancelled_v2.canonical_bytes()
         else:
             intent_v1 = CursorInitialRecoveryPublicationIntentV1.model_validate_json(raw)
-            cancelled_v1 = intent_v1.model_copy(update={"status": "cancelled", "record_sha256": None})
+            cancelled_v1 = intent_v1.model_copy(
+                update={"status": "cancelled", "record_sha256": None}
+            )
             payload = cancelled_v1.canonical_bytes()
     except (ValidationError, ValueError) as exc:
         raise _corrupt("cursor recovery publication intent failed authentication") from exc
@@ -620,7 +630,9 @@ def reconcile_unadopted_cursor_sequence_intent(
             run_id=successor_run_id,
             action="sequence_cursor_adoption_complete",
         )
-    if store.has_abort_requested_for_run(conn, successor_run_id) or store.has_sequence_abort_requested_for_run(
+    if store.has_abort_requested_for_run(
+        conn, successor_run_id
+    ) or store.has_sequence_abort_requested_for_run(
         conn,
         run_id=source_run_id,
         sequence_id=str(row["sequence_id"]),
@@ -663,5 +675,7 @@ def reconcile_unadopted_cursor_sequence_intent(
     )
     return TickRunReceipt(
         run_id=successor_run_id,
-        action="sequence_cursor_adoption_reconciled" if changed else "sequence_cursor_adoption_complete",
+        action="sequence_cursor_adoption_reconciled"
+        if changed
+        else "sequence_cursor_adoption_complete",
     )

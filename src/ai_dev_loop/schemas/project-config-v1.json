@@ -92,6 +92,20 @@
         "codex_timeout_minutes": { "type": "integer", "minimum": 1 }
       }
     },
+    "implementer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "provider": { "type": "string", "enum": ["cursor", "codex"] },
+        "command": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "reasoning_effort": {
+          "type": "string",
+          "enum": ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
+        },
+        "timeout_minutes": { "type": "integer", "minimum": 1 }
+      }
+    },
     "prompt": {
       "type": "object",
       "additionalProperties": false,

@@ -386,6 +386,11 @@ class SequencePrepareService:
                 config_path=options.config_path,
                 overrides=_phase_overrides(options, phase),
             )
+            if effective.implementer.provider == "codex":
+                raise ValidationError(
+                    "Codex implementer selection is not available for sequence manifests "
+                    "in this phase; v1 sequences stay Cursor-only"
+                )
             effective = _freeze_execution_commands(effective)
             if project_name is None:
                 project_name = effective.project.name

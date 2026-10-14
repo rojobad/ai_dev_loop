@@ -243,11 +243,51 @@ def _extract_model_ids_from_catalog(payload: Any) -> set[str] | None:
     return None
 
 
+def _catalog_model_entries(payload: Any) -> list[Any] | None:
+    if isinstance(payload, list):
+        return list(payload)
+    if isinstance(payload, dict):
+        for key in ("models", "data", "items", "available_models"):
+            nested = payload.get(key)
+            if isinstance(nested, list):
+                return list(nested)
+    return None
+
+
+def _entry_model_id(entry: Any) -> str | None:
+    if isinstance(entry, str) and entry.strip():
+        return entry.strip()
+    if isinstance(entry, dict):
+        for key in ("id", "slug", "name", "model"):
+            candidate = entry.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+    return None
+
+
+def _entry_reasoning_efforts(entry: Any) -> list[str] | None:
+    """Return proved efforts, or None when the catalog does not prove support."""
+
+    if not isinstance(entry, dict):
+        return None
+    for key in ("supported_reasoning_efforts", "reasoning_efforts", "supported_efforts"):
+        if key not in entry:
+            continue
+        value = entry.get(key)
+        if isinstance(value, list) and all(
+            isinstance(item, str) and item.strip() for item in value
+        ):
+            return [item.strip() for item in value]
+        return None
+    return None
+
+
 def probe_codex_model_compatibility(
     codex_command: str,
     *,
     required_model: str | None,
     installed_version: str | None = None,
+    required_reasoning_effort: str | None = None,
 ) -> ModelCompatibilityResult:
     if required_model is None:
         return ModelCompatibilityResult(
@@ -317,13 +357,56 @@ def probe_codex_model_compatibility(
             catalog_source=catalog_source,
         )
     if required_model in model_ids:
+        if required_reasoning_effort is None:
+            return ModelCompatibilityResult(
+                tool="codex",
+                command=codex_command,
+                required_model=required_model,
+                classification=CompatibilityClassification.COMPATIBLE,
+                installed_version=installed_version,
+                detail=f"model available: {required_model}",
+                catalog_source=catalog_source,
+            )
+        entries = _catalog_model_entries(payload)
+        matched = [entry for entry in (entries or []) if _entry_model_id(entry) == required_model]
+        efforts = _entry_reasoning_efforts(matched[0]) if matched else None
+        if efforts is None:
+            return ModelCompatibilityResult(
+                tool="codex",
+                command=codex_command,
+                required_model=required_model,
+                classification=CompatibilityClassification.UNKNOWN,
+                installed_version=installed_version,
+                detail=(
+                    "Codex model catalog does not prove the frozen reasoning effort "
+                    f"{required_reasoning_effort} for {required_model}; "
+                    "compatibility is unknown"
+                ),
+                catalog_source=catalog_source,
+            )
+        if required_reasoning_effort in efforts:
+            return ModelCompatibilityResult(
+                tool="codex",
+                command=codex_command,
+                required_model=required_model,
+                classification=CompatibilityClassification.COMPATIBLE,
+                installed_version=installed_version,
+                detail=(
+                    f"model available: {required_model}; "
+                    f"reasoning effort available: {required_reasoning_effort}"
+                ),
+                catalog_source=catalog_source,
+            )
         return ModelCompatibilityResult(
             tool="codex",
             command=codex_command,
             required_model=required_model,
-            classification=CompatibilityClassification.COMPATIBLE,
+            classification=CompatibilityClassification.INCOMPATIBLE_MODEL,
             installed_version=installed_version,
-            detail=f"model available: {required_model}",
+            detail=(
+                "required Codex reasoning effort is not listed for the frozen model "
+                f"{required_model}: {required_reasoning_effort}"
+            ),
             catalog_source=catalog_source,
         )
     return ModelCompatibilityResult(

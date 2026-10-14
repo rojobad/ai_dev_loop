@@ -356,6 +356,16 @@ def blocked_safe_next_action(
     from ai_dev_loop.runners.codex_failure import is_operational_review_block_kind
 
     detail = block_reason_kind or "blocked"
+    if block_reason_kind == "codex_implementer_not_implemented":
+        return SafeNextAction(
+            kind=SafeNextActionKind.INSPECT_BLOCKED,
+            command=(
+                f"Codex implementer selection for run {run_id} is frozen, but "
+                "implementation dispatch is not available in this phase. "
+                "No implementer process was launched. Inspect scheduler status "
+                f"{run_id}."
+            ),
+        )
     if block_reason_kind and is_operational_review_block_kind(block_reason_kind):
         return SafeNextAction(
             kind=SafeNextActionKind.SCHEDULER_TICK,
@@ -523,12 +533,8 @@ def _apply_codex_routing_projection(
         codex.routing_auto_retry_authorizations_used
     )
     projection["codex_routing_auto_retry_limit"] = str(ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS)
-    projection["codex_routing_failure_post_probe_status"] = (
-        codex.routing_failure_post_probe_status
-    )
-    projection["codex_routing_failure_post_probe_reason"] = (
-        codex.routing_failure_post_probe_reason
-    )
+    projection["codex_routing_failure_post_probe_status"] = codex.routing_failure_post_probe_status
+    projection["codex_routing_failure_post_probe_reason"] = codex.routing_failure_post_probe_reason
     if block_reason_from_failure_kind and codex.review_retry_failure_kind:
         projection["block_reason_kind"] = codex.review_retry_failure_kind
 

@@ -75,6 +75,7 @@ from ai_dev_loop.scheduler.domain.events import (
     AttemptLaunchRequestedEvent,
     AttemptUncertainEvent,
 )
+from ai_dev_loop.scheduler.domain.implementer import CODEX_IMPLEMENTER_NOT_IMPLEMENTED
 from ai_dev_loop.scheduler.domain.state import (
     AbortedState,
     AdmittedState,
@@ -83,6 +84,7 @@ from ai_dev_loop.scheduler.domain.state import (
     PreflightCompleteState,
     WaitingForCursorFixState,
     WaitingUsageLimitState,
+    resolved_implementer_provider,
 )
 from ai_dev_loop.scheduler.infrastructure.paths import scheduler_state_dir
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import (
@@ -474,6 +476,11 @@ class AttemptService:
                 ),
             ):
                 return None
+            if resolved_implementer_provider(state.context) == "codex":
+                return TickRunReceipt(
+                    run_id=run_id,
+                    action=CODEX_IMPLEMENTER_NOT_IMPLEMENTED,
+                )
             if self.store.get_nonterminal_attempt_for_run(conn, run_id) is not None:
                 return TickRunReceipt(run_id=run_id, action="attempt_busy")
             effects = self.store.list_eligible_effects(conn, run_id=run_id, now=now)
@@ -847,9 +854,7 @@ class AttemptService:
                     continuation = state.cursor.continuation_envelope_path
                     if continuation and continuation != correction.effective_prompt_path:
                         if not state.cursor.continuation_envelope_sha256:
-                            raise ValidationError(
-                                "usage-limit continuation is missing its digest"
-                            )
+                            raise ValidationError("usage-limit continuation is missing its digest")
                         wrapped = self.artifacts.read_verified_bytes(
                             run_id,
                             continuation,

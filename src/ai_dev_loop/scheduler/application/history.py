@@ -89,6 +89,7 @@ def _safe_detail_for_event(event_kind: str, payload_text: str) -> str:
     if event_kind in {
         "worktree_admission_blocked",
         "preflight_blocked",
+        "implementer_dispatch_blocked",
         "cursor_chat_blocked",
         "cursor_turn_blocked",
         "staging_blocked",

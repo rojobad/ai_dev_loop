@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.paths import global_config_path, project_config_filename
@@ -19,6 +26,10 @@ CODEX_SANDBOX_VALUES = frozenset({"read-only", "workspace-write", "danger-full-a
 CODEX_REVIEW_REASONING_EFFORTS = frozenset(
     {"minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 )
+IMPLEMENTER_PROVIDERS = frozenset({"cursor", "codex"})
+CODEX_IMPLEMENTER_SANDBOX = "workspace-write"
+CODEX_IMPLEMENTER_APPROVAL_POLICY: Literal["never"] = "never"
+DEFAULT_CODEX_IMPLEMENTER_TIMEOUT_MINUTES = 90
 STAGE_MODES = frozenset({"all"})
 INHERITED_FROM_SESSION = "inherited from session"
 
@@ -127,6 +138,96 @@ class CodexSection(BaseModel):
         if value not in CODEX_SANDBOX_VALUES:
             raise ValueError(f"codex.sandbox must be one of: {sorted(CODEX_SANDBOX_VALUES)}")
         return value
+
+
+def _reject_non_int_timeout(value: object, *, field_name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field_name} must be a positive integer")
+
+
+class ImplementerSection(BaseModel):
+    """Resolved implementer selection. Omitted configuration stays Cursor."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = "cursor"
+    command: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
+    timeout_minutes: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_null_and_non_integer_timeout(cls, data: object) -> object:
+        if data is None:
+            raise ValueError("implementer must not be null")
+        if not isinstance(data, dict):
+            return data
+        for key, value in data.items():
+            if value is None:
+                raise ValueError(f"implementer.{key} must not be null")
+            if isinstance(value, str) and not value.strip():
+                raise ValueError(f"implementer.{key} must not be empty")
+            if key == "timeout_minutes":
+                _reject_non_int_timeout(value, field_name="implementer.timeout_minutes")
+        return data
+
+    @field_validator("provider")
+    @classmethod
+    def validate_provider(cls, value: str) -> str:
+        if value not in IMPLEMENTER_PROVIDERS:
+            raise ValueError("implementer.provider must be cursor or codex")
+        return value
+
+    @model_validator(mode="after")
+    def validate_provider_fields(self) -> ImplementerSection:
+        codex_fields = {
+            "command": self.command,
+            "model": self.model,
+            "reasoning_effort": self.reasoning_effort,
+            "timeout_minutes": self.timeout_minutes,
+        }
+        if self.provider == "cursor":
+            present = [name for name, value in codex_fields.items() if value is not None]
+            if present:
+                names = ", ".join(present)
+                raise ValueError(
+                    "Codex implementer fields are rejected for provider cursor: " + names
+                )
+            return self
+        command = self.command or "codex"
+        if self.model is None:
+            raise ValueError("implementer.model is required for provider codex")
+        if self.reasoning_effort is None:
+            raise ValueError("implementer.reasoning_effort is required for provider codex")
+        if self.reasoning_effort not in CODEX_REVIEW_REASONING_EFFORTS:
+            raise ValueError(
+                "implementer.reasoning_effort must be one of: "
+                f"{sorted(CODEX_REVIEW_REASONING_EFFORTS)}"
+            )
+        timeout = (
+            DEFAULT_CODEX_IMPLEMENTER_TIMEOUT_MINUTES
+            if self.timeout_minutes is None
+            else self.timeout_minutes
+        )
+        if timeout < 1:
+            raise ValueError("implementer.timeout_minutes must be a positive integer")
+        return self.model_copy(
+            update={
+                "command": command,
+                "model": self.model.strip(),
+                "reasoning_effort": self.reasoning_effort,
+                "timeout_minutes": timeout,
+            }
+        )
+
+    @model_serializer(mode="wrap")
+    def _serialize_implementer(
+        self,
+        handler: Any,
+    ) -> dict[str, object]:
+        data = handler(self)
+        return {key: value for key, value in data.items() if value is not None}
 
 
 def format_codex_override(value: str | None) -> str:
@@ -405,6 +506,14 @@ class ProjectConfig(BaseModel):
     workflow: WorkflowSection
     prompt: PromptSection
     github: GithubSection | None = None
+    implementer: ImplementerSection = Field(default_factory=ImplementerSection)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_null_implementer(cls, data: object) -> object:
+        if isinstance(data, dict) and "implementer" in data and data["implementer"] is None:
+            raise ValueError("implementer must not be null")
+        return data
 
     @field_validator("version")
     @classmethod
@@ -415,6 +524,25 @@ class ProjectConfig(BaseModel):
 
     def github_enabled(self) -> bool:
         return self.github is not None and self.github.enabled
+
+    @model_serializer(mode="wrap")
+    def _serialize_project_config(
+        self,
+        handler: Any,
+    ) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        implementer = data.get("implementer")
+        provider = "cursor"
+        if isinstance(implementer, dict):
+            raw_provider = implementer.get("provider", "cursor")
+            if isinstance(raw_provider, str):
+                provider = raw_provider
+        # Omitted implementer stays out of serialized config so historical source
+        # artifacts and sequence hashes remain stable. An explicit Cursor choice
+        # must survive so a higher layer can replace a lower Codex selection.
+        if provider == "cursor" and "implementer" not in self.model_fields_set:
+            data.pop("implementer", None)
+        return data
 
 
 class ConfigOverrides(BaseModel):
@@ -431,6 +559,26 @@ class ConfigOverrides(BaseModel):
     max_review_iterations: int | None = None
     cursor_timeout_minutes: int | None = None
     codex_timeout_minutes: int | None = None
+    implementer_provider: str | None = None
+    implementer_command: str | None = None
+    implementer_model: str | None = None
+    implementer_reasoning_effort: str | None = None
+    implementer_timeout_minutes: int | None = None
+
+    @field_validator("implementer_timeout_minutes", mode="before")
+    @classmethod
+    def reject_bool_implementer_timeout(cls, value: object) -> object:
+        if value is None:
+            return None
+        _reject_non_int_timeout(value, field_name="implementer.timeout_minutes")
+        return value
+
+    @field_validator("implementer_timeout_minutes")
+    @classmethod
+    def positive_implementer_timeout(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("implementer.timeout_minutes must be a positive integer")
+        return value
 
 
 def _load_yaml_file(path: Path) -> dict[str, Any]:
@@ -523,13 +671,7 @@ def resolve_effective_config(
         layers.append(global_config.model_dump(by_alias=True, exclude_unset=True))
     layers.append(source_repo_config.model_dump(by_alias=True, exclude_unset=True))
 
-    merged: dict[str, Any] = {}
-    for layer in layers:
-        for key, value in layer.items():
-            if isinstance(value, dict) and isinstance(merged.get(key), dict):
-                merged[key] = {**merged[key], **value}
-            else:
-                merged[key] = value
+    merged = _merge_config_layers(layers)
 
     if overrides is not None:
         if overrides.project_name is not None:
@@ -562,6 +704,7 @@ def resolve_effective_config(
             merged.setdefault("workflow", {})["codex_timeout_minutes"] = (
                 overrides.codex_timeout_minutes
             )
+        _apply_implementer_overrides(merged, overrides)
 
     effective = _parse_config(merged, source="effective")
     return effective, source_repo_config, repo_config_path
@@ -569,3 +712,115 @@ def resolve_effective_config(
 
 def config_to_yaml(config: ProjectConfig) -> str:
     return yaml.safe_dump(config.model_dump(by_alias=True), sort_keys=False)
+
+
+def _merge_config_layers(layers: list[dict[str, Any]]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for layer in layers:
+        for key, value in layer.items():
+            if key == "implementer" and isinstance(value, dict):
+                merged[key] = _merge_implementer_section(merged.get(key), value)
+                continue
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                merged[key] = {**merged[key], **value}
+            else:
+                merged[key] = value
+    return merged
+
+
+def _resolved_layer_provider(section: dict[str, Any]) -> str:
+    """A present implementer mapping defaults to Cursor when provider is unset.
+
+    ``exclude_unset=True`` drops that default, so an empty mapping arrives without
+    a provider key. The mapping is still an explicit Cursor selection.
+    """
+
+    provider = section.get("provider", "cursor")
+    if isinstance(provider, str) and provider.strip():
+        return provider
+    return "cursor"
+
+
+def _merge_implementer_section(current: object, incoming: dict[str, Any]) -> dict[str, Any]:
+    """Replace the section when the provider changes so old fields do not leak."""
+
+    if not isinstance(current, dict):
+        return dict(incoming)
+    incoming_provider = _resolved_layer_provider(incoming)
+    current_provider = _resolved_layer_provider(current)
+    if incoming_provider != current_provider:
+        return dict(incoming)
+    return {**current, **incoming}
+
+
+def _apply_implementer_overrides(merged: dict[str, Any], overrides: ConfigOverrides) -> None:
+    provided = (
+        overrides.implementer_provider,
+        overrides.implementer_command,
+        overrides.implementer_model,
+        overrides.implementer_reasoning_effort,
+        overrides.implementer_timeout_minutes,
+    )
+    if all(value is None for value in provided):
+        return
+    current = merged.get("implementer")
+    if current is None:
+        section: dict[str, Any] = {}
+        current_provider = "cursor"
+    elif isinstance(current, dict):
+        section = dict(current)
+        provider = section.get("provider", "cursor")
+        current_provider = provider if isinstance(provider, str) else "cursor"
+    else:
+        raise ValidationError("implementer must be a mapping")
+    if (
+        overrides.implementer_provider is not None
+        and overrides.implementer_provider != current_provider
+    ):
+        section = {"provider": overrides.implementer_provider}
+    elif overrides.implementer_provider is not None:
+        section["provider"] = overrides.implementer_provider
+    if overrides.implementer_command is not None:
+        section["command"] = overrides.implementer_command
+    if overrides.implementer_model is not None:
+        section["model"] = overrides.implementer_model
+    if overrides.implementer_reasoning_effort is not None:
+        section["reasoning_effort"] = overrides.implementer_reasoning_effort
+    if overrides.implementer_timeout_minutes is not None:
+        section["timeout_minutes"] = overrides.implementer_timeout_minutes
+    merged["implementer"] = section
+
+
+def resolved_implementer_yaml(config: ProjectConfig) -> dict[str, Any]:
+    """Canonical implementer section stored in a new effective-config artifact."""
+
+    section = config.implementer
+    if section.provider == "cursor":
+        return {"provider": "cursor"}
+    if (
+        section.command is None
+        or section.model is None
+        or section.reasoning_effort is None
+        or section.timeout_minutes is None
+    ):
+        raise ValidationError("codex implementer settings are incomplete")
+    return {
+        "provider": "codex",
+        "command": section.command,
+        "model": section.model,
+        "reasoning_effort": section.reasoning_effort,
+        "timeout_minutes": section.timeout_minutes,
+    }
+
+
+def project_config_yaml_bytes(
+    config: ProjectConfig,
+    *,
+    include_resolved_implementer: bool,
+) -> bytes:
+    data = config.model_dump(by_alias=True)
+    if include_resolved_implementer:
+        data["implementer"] = resolved_implementer_yaml(config)
+    else:
+        data.pop("implementer", None)
+    return yaml.safe_dump(data, sort_keys=False, allow_unicode=True).encode("utf-8")

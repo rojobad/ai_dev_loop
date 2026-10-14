@@ -1144,7 +1144,10 @@ class CodexWorkflowService:
             state, _, _ = self.store.load_validated_snapshot(conn, run_id)
             if not isinstance(state, WaitingCodexReviewRetryState):
                 return None
-            if state.codex.review_retry_failure_kind != FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT:
+            if (
+                state.codex.review_retry_failure_kind
+                != FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT
+            ):
                 return None
             due_at = state.codex.routing_auto_retry_due_at
             if (
@@ -1406,7 +1409,9 @@ class CodexWorkflowService:
                         "routing_auto_retry_authorizations_used"
                     ],
                     "routing_auto_retry_due_at": routing_preserve["routing_auto_retry_due_at"],
-                    "routing_auto_retry_exhausted": routing_preserve["routing_auto_retry_exhausted"],
+                    "routing_auto_retry_exhausted": routing_preserve[
+                        "routing_auto_retry_exhausted"
+                    ],
                     "routing_failure_post_probe_status": routing_preserve[
                         "routing_failure_post_probe_status"
                     ],
@@ -1498,19 +1503,13 @@ class CodexWorkflowService:
             failure_kind=failure_kind,
             attempt_id=attempt_id,
             retry_generation=next_generation,
-            routing_auto_retry_policy_version=routing_fields[
-                "routing_auto_retry_policy_version"
-            ],  # type: ignore[arg-type]
+            routing_auto_retry_policy_version=routing_fields["routing_auto_retry_policy_version"],  # type: ignore[arg-type]
             routing_auto_retry_eligible=bool(routing_fields["routing_auto_retry_eligible"]),
             routing_auto_retry_authorizations_used=recorded_authorizations,
             routing_auto_retry_due_at=routing_fields["routing_auto_retry_due_at"],  # type: ignore[arg-type]
             routing_auto_retry_exhausted=bool(routing_fields["routing_auto_retry_exhausted"]),
-            routing_failure_post_probe_status=routing_fields[
-                "routing_failure_post_probe_status"
-            ],  # type: ignore[arg-type]
-            routing_failure_post_probe_reason=routing_fields[
-                "routing_failure_post_probe_reason"
-            ],  # type: ignore[arg-type]
+            routing_failure_post_probe_status=routing_fields["routing_failure_post_probe_status"],  # type: ignore[arg-type]
+            routing_failure_post_probe_reason=routing_fields["routing_failure_post_probe_reason"],  # type: ignore[arg-type]
         )
         with self.store.begin_immediate() as conn:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)

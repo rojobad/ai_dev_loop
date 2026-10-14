@@ -39,15 +39,21 @@ def validate_config(
         "effective_project_name": effective.project.name,
         "codex_review_model": effective.codex.review_model,
         "codex_review_reasoning_effort": effective.codex.review_reasoning_effort,
+        "implementer_provider": effective.implementer.provider,
     }
     if output == "json":
         return json.dumps(payload, indent=2) + "\n"
+    dispatch_note = ""
+    if effective.implementer.provider == "codex":
+        dispatch_note = "Codex implementer dispatch is not available in this phase.\n"
     return (
         f"Configuration is valid for project '{effective.project.name}'.\n"
         f"Config path: {repo_config_path}\n"
         f"Codex review model: {format_codex_override(effective.codex.review_model)}\n"
         "Codex review reasoning: "
         f"{format_codex_override(effective.codex.review_reasoning_effort)}\n"
+        f"Implementer provider: {effective.implementer.provider}\n"
+        f"{dispatch_note}"
     )
 
 

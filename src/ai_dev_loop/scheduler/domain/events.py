@@ -34,6 +34,7 @@ ATTEMPT_UNCERTAIN_EVENT_KIND = "attempt_uncertain"
 TICK_STALE_REJECTED_EVENT_KIND = "tick_stale_rejected"
 PREFLIGHT_COMPLETED_EVENT_KIND = "preflight_completed"
 PREFLIGHT_BLOCKED_EVENT_KIND = "preflight_blocked"
+IMPLEMENTER_DISPATCH_BLOCKED_EVENT_KIND = "implementer_dispatch_blocked"
 CURSOR_CHAT_CREATED_EVENT_KIND = "cursor_chat_created"
 CURSOR_INITIAL_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND = "cursor_initial_recovery_successor_created"
 CURSOR_CHAT_BLOCKED_EVENT_KIND = "cursor_chat_blocked"
@@ -258,6 +259,20 @@ class PreflightBlockedEvent(DomainModel):
     def kind_is_preflight_blocked(cls, value: str) -> str:
         if value != PREFLIGHT_BLOCKED_EVENT_KIND:
             raise ValueError("kind must be preflight_blocked")
+        return value
+
+
+class ImplementerDispatchBlockedEvent(DomainModel):
+    kind: str = Field(default=IMPLEMENTER_DISPATCH_BLOCKED_EVENT_KIND)
+    run_id: str
+    block_reason_kind: NonEmptyStr
+    block_reason_summary: NonEmptyStr
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_implementer_dispatch_blocked(cls, value: str) -> str:
+        if value != IMPLEMENTER_DISPATCH_BLOCKED_EVENT_KIND:
+            raise ValueError("kind must be implementer_dispatch_blocked")
         return value
 
 
@@ -990,6 +1005,10 @@ SchedulerEvent = Annotated[
     | Annotated[TickStaleRejectedEvent, Tag(TICK_STALE_REJECTED_EVENT_KIND)]
     | Annotated[PreflightCompletedEvent, Tag(PREFLIGHT_COMPLETED_EVENT_KIND)]
     | Annotated[PreflightBlockedEvent, Tag(PREFLIGHT_BLOCKED_EVENT_KIND)]
+    | Annotated[
+        ImplementerDispatchBlockedEvent,
+        Tag(IMPLEMENTER_DISPATCH_BLOCKED_EVENT_KIND),
+    ]
     | Annotated[CursorChatCreatedEvent, Tag(CURSOR_CHAT_CREATED_EVENT_KIND)]
     | Annotated[
         CursorInitialRecoverySuccessorCreatedEvent,

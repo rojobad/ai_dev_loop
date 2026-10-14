@@ -31,9 +31,14 @@
   capability does not authorize reviewer edits: the current wrapper and
   configured review skill require staged-only review without intentional
   repository modifications and permit relevant automated tests.
-- Cursor remains the implementation agent and Codex the final reviewer.
-  Provider switching and a scheduler-managed Cursor master/executor stage
-  are not implemented configuration options.
+- Cursor remains the default implementation agent and Codex the final reviewer.
+  `scheduler submit` can freeze an implementer provider of `cursor` or `codex`,
+  with Codex command, model, reasoning effort, and timeout independent from the
+  reviewer. Historical contexts that omit implementer metadata stay Cursor.
+  Codex implementation dispatch is not available in this slice: admission may
+  probe the frozen model and effort, then the run blocks before any implementer
+  process starts. Provider switching during a run and a scheduler-managed Cursor
+  master/executor stage are not implemented configuration options.
 
 ## Product intent and Git authority
 

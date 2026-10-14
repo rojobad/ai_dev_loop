@@ -483,9 +483,7 @@ def authenticate_checkpoint_successor_replacement_chain(
             SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY,
             SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY,
         }:
-            raise AppValidationError(
-                "checkpoint successor replacement kind is not authenticated"
-            )
+            raise AppValidationError("checkpoint successor replacement kind is not authenticated")
 
 
 def _max_generation(

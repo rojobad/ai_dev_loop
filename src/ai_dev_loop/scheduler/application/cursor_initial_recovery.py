@@ -1246,9 +1246,7 @@ def materialized_frozen_input_bindings(context: object) -> list[tuple[str, str]]
         ),
     ]
     if context.baseline_status_artifact_path and context.baseline_status_sha256:
-        bindings.append(
-            (context.baseline_status_artifact_path, context.baseline_status_sha256)
-        )
+        bindings.append((context.baseline_status_artifact_path, context.baseline_status_sha256))
     if isinstance(context.codex, FreshCodexReviewerBinding):
         bindings.append((context.codex.binding_artifact_path, context.codex.binding_sha256))
     return bindings
@@ -1655,9 +1653,7 @@ def _assert_v2_initial_budget(
         or stored.submitted_max_review_iterations != carry.submitted_max_review_iterations
         or stored.effective_review_ceiling != carry.inherited_effective_ceiling
     ):
-        raise _corrupt(
-            "initial recovery record budget disagrees with submitted configuration"
-        )
+        raise _corrupt("initial recovery record budget disagrees with submitted configuration")
     with store.begin_read() as conn:
         row = store.get_cursor_initial_recovery_by_successor(
             conn,

@@ -50,10 +50,15 @@ from ai_dev_loop.scheduler.domain.events import (
     CursorTurnBlockedEvent,
     CursorTurnCompletedEvent,
     CursorUsageLimitDetectedEvent,
+    ImplementerDispatchBlockedEvent,
     PreflightBlockedEvent,
     PreflightCompletedEvent,
     StagingBlockedEvent,
     StagingCompletedEvent,
+)
+from ai_dev_loop.scheduler.domain.implementer import (
+    CODEX_IMPLEMENTER_NOT_IMPLEMENTED,
+    CODEX_IMPLEMENTER_NOT_IMPLEMENTED_SUMMARY,
 )
 from ai_dev_loop.scheduler.domain.reducer import (
     apply_awaiting_codex_review_entered,
@@ -62,6 +67,7 @@ from ai_dev_loop.scheduler.domain.reducer import (
     apply_cursor_turn_blocked,
     apply_cursor_turn_completed,
     apply_cursor_usage_limit_detected,
+    apply_implementer_dispatch_blocked,
     apply_preflight_blocked,
     apply_preflight_completed,
     apply_staging_blocked,
@@ -73,6 +79,7 @@ from ai_dev_loop.scheduler.domain.state import (
     PreflightCompleteState,
     WaitingForCursorFixState,
     WaitingUsageLimitState,
+    resolved_implementer_provider,
 )
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import (
     ProtectedArtifactError,
@@ -385,6 +392,55 @@ class CursorWorkflowService:
             completed_event = PreflightCompletedEvent(run_id=run_id)
             now_text = commit_now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             completed_state = apply_preflight_completed(state, completed_event, now_text=now_text)
+            if resolved_implementer_provider(state.context) == "codex":
+                dispatch_blocked = ImplementerDispatchBlockedEvent(
+                    run_id=run_id,
+                    block_reason_kind=CODEX_IMPLEMENTER_NOT_IMPLEMENTED,
+                    block_reason_summary=CODEX_IMPLEMENTER_NOT_IMPLEMENTED_SUMMARY,
+                )
+                blocked_state = apply_implementer_dispatch_blocked(
+                    completed_state,
+                    dispatch_blocked,
+                    now_text=now_text,
+                )
+                completed_event_id = self._event_id_factory()
+                blocked_event_id = self._event_id_factory()
+                sequence = self.store.next_event_sequence(conn, run_id)
+                self.store.append_event(
+                    conn,
+                    event_id=completed_event_id,
+                    run_id=run_id,
+                    sequence=sequence,
+                    event=completed_event,
+                    now=commit_now,
+                )
+                self.store.append_event(
+                    conn,
+                    event_id=blocked_event_id,
+                    run_id=run_id,
+                    sequence=sequence + 1,
+                    event=dispatch_blocked,
+                    now=commit_now,
+                )
+                if not self.store.compare_and_swap_state(
+                    conn,
+                    run_id=run_id,
+                    expected_version=version,
+                    new_state=blocked_state,
+                    now=commit_now,
+                ):
+                    return TickRunReceipt(run_id=run_id, action="preflight_cas_lost")
+                self.store.complete_effect_by_id(conn, dispatch_id=dispatch_id, now=commit_now)
+                self.store.release_reservation(
+                    conn,
+                    worktree_key=blocked_state.context.repository.worktree_key,
+                    now=commit_now,
+                )
+                return TickRunReceipt(
+                    run_id=run_id,
+                    action="blocked",
+                    detail=CODEX_IMPLEMENTER_NOT_IMPLEMENTED,
+                )
             event_id = self._event_id_factory()
             sequence = self.store.next_event_sequence(conn, run_id)
             self.store.append_event(
@@ -1054,8 +1110,7 @@ class CursorWorkflowService:
                     or state.context.plan_prompt.prompt_artifact_path
                 )
                 original_prompt_sha = (
-                    state.cursor.original_prompt_sha256
-                    or state.context.plan_prompt.prompt_sha256
+                    state.cursor.original_prompt_sha256 or state.context.plan_prompt.prompt_sha256
                 )
             try:
                 original_prompt = self.artifacts.read_verified_bytes(

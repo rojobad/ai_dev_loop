@@ -509,8 +509,7 @@ def test_correction_replay_rejects_missing_or_unrelated_reviewer_proof(
     record = _record(artifacts, successor)
     assert isinstance(record.reviewer, BoundReviewerEvidenceV2)
     events = (
-        artifacts.run_root(record.reviewer.bootstrap_run_id)
-        / record.reviewer.bootstrap_events_path
+        artifacts.run_root(record.reviewer.bootstrap_run_id) / record.reviewer.bootstrap_events_path
     )
     original_events = events.read_bytes()
     events.write_bytes(b"")
@@ -520,9 +519,7 @@ def test_correction_replay_rejects_missing_or_unrelated_reviewer_proof(
     events.write_bytes(original_events)
     mismatched_session = "019def00-1111-4111-8111-111111111111"
     mismatched = record.model_copy(
-        update={
-            "reviewer": record.reviewer.model_copy(update={"session_id": mismatched_session})
-        }
+        update={"reviewer": record.reviewer.model_copy(update={"session_id": mismatched_session})}
     )
     _publish_rewritten_record(
         store,
@@ -535,9 +532,7 @@ def test_correction_replay_rejects_missing_or_unrelated_reviewer_proof(
         service.force(run_id)
     unrelated_owner = successor + "-other"
     unrelated = record.model_copy(
-        update={
-            "reviewer": record.reviewer.model_copy(update={"binding_run_id": unrelated_owner})
-        }
+        update={"reviewer": record.reviewer.model_copy(update={"binding_run_id": unrelated_owner})}
     )
     _publish_rewritten_record(
         store,
@@ -755,8 +750,7 @@ def test_review_recovery_after_cursor_successor_preserves_budget(
     assert later.reviews_completed == 2
     assert later.effective_review_ceiling == 3
     assert any(
-        edge.relation == "review_recovery" and ":" in edge.recovery_key
-        for edge in later.ancestors
+        edge.relation == "review_recovery" and ":" in edge.recovery_key for edge in later.ancestors
     )
     assert _effect_count(store, published.successor_run_id, RUN_CURSOR_TURN_EFFECT_KIND) == 1
     with store.begin_read() as conn:
@@ -1551,9 +1545,7 @@ def _accept_usage_limited_correction(
     assert isinstance(record.reviewer, BoundReviewerEvidenceV2)
     assert record.reviewer.session_id == BOOTSTRAP_ID
     assert record.reviews_completed == evidence.reviews_completed
-    assert record.submitted_max_review_iterations == (
-        source.context.workflow.max_review_iterations
-    )
+    assert record.submitted_max_review_iterations == (source.context.workflow.max_review_iterations)
     assert record.effective_review_ceiling == inherited_ceiling
     assert record.chat_id == evidence.chat_id
     assert record.iteration == evidence.iteration
@@ -1816,9 +1808,7 @@ def test_advanced_initial_successor_rejects_corrupt_historical_budget(
                 "submitted_max_review_iterations": record.submitted_max_review_iterations - 1,
             }
         ),
-        record.model_copy(
-            update={"effective_review_ceiling": record.effective_review_ceiling + 2}
-        ),
+        record.model_copy(update={"effective_review_ceiling": record.effective_review_ceiling + 2}),
     ):
         assert updated.budget_carry_sha256 == record.budget_carry_sha256
         publish(updated)

@@ -68,6 +68,11 @@ Opciones principales:
 --max-review-iterations INTEGER
 --cursor-timeout-minutes INTEGER
 --codex-timeout-minutes INTEGER
+--implementer-provider [cursor|codex]
+--implementer-command TEXT
+--implementer-model TEXT
+--implementer-reasoning-effort TEXT
+--implementer-timeout-minutes INTEGER
 --resubmission-id UUID   (opcional; envio fresco idempotente tras un run terminal)
 --output [text|json]
 ```
@@ -84,7 +89,22 @@ Modelo y razonamiento del reviewer deben ser explícitos en los flags de submit.
 Los campos YAML `codex.review_model` y `codex.review_reasoning_effort`, los datos
 de A y los defaults del CLI no sustituyen esos flags. Los valores quedan
 congelados para bootstrap, correcciones y reintentos. `--cursor-model` selecciona
-por separado el modelo del ejecutor; no cambia el proveedor ni el modelo de Codex.
+por separado el modelo del ejecutor Cursor; no cambia el modelo ni el reasoning
+del reviewer.
+
+`--implementer-provider` elige `cursor` (default) o `codex`. Si se omite, el run
+sigue siendo Cursor. Para `codex`, `--implementer-model` y
+`--implementer-reasoning-effort` son obligatorios y quedan congelados aparte del
+reviewer. `--implementer-command` default `codex` y `--implementer-timeout-minutes`
+default 90. Esos campos se rechazan si el proveedor es Cursor. Los flags
+`--cursor-*` se rechazan cuando la selección es Codex. El sandbox del implementer
+Codex es `workspace-write` y la política de aprobación no interactiva es explícita
+(`never`); no hay bypass. Esta fase congela la selección y la admisión puede
+probar el modelo y el effort exactos, pero el dispatch de implementación Codex
+aún no existe: el tick bloquea el run con
+`codex_implementer_not_implemented` sin lanzar un proceso implementer. No hay
+bucle Codex usable todavía. Los manifests de secuencia v1 siguen siendo solo
+Cursor.
 
 El scheduler impone `workspace-write` al proceso Codex. El wrapper y la skill de
 review siguen exigiendo revisar únicamente el staged y no editar, stagear ni

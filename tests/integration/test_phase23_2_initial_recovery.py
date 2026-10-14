@@ -743,9 +743,7 @@ def test_v2_initial_budget_fields_reject_hash_consistent_tamper(
                 "submitted_max_review_iterations": record.submitted_max_review_iterations - 1,
             }
         ),
-        record.model_copy(
-            update={"effective_review_ceiling": record.effective_review_ceiling + 2}
-        ),
+        record.model_copy(update={"effective_review_ceiling": record.effective_review_ceiling + 2}),
     ):
         assert updated.budget_carry_sha256 == record.budget_carry_sha256
         publish(updated)

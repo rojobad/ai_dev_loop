@@ -35,6 +35,12 @@ existing references; it does not imply a public `resume` command.
 - Persist the Cursor chat before its first turn; reuse it for fixes and eligible
   continuation. Missing identity after recorded work is not permission to create
   another chat.
+- A frozen Codex implementer is a separate identity from reviewer B. Historical
+  contexts without implementer metadata remain Cursor. This slice freezes Codex
+  implementer inputs and blocks dispatch; it does not launch an implementer
+  process, share the reviewer session, or change `cursor_fix_prompt` bytes.
+  Role-aware capacity continuation is a later phase; reviewer capacity waits stay
+  reviewer waits.
 - Bootstrap Codex reviewer B once at the first review; subsequent reviews and
   eligible retries resume the exact authenticated B. Controller A is optional
   provenance, not reviewer identity. Never use `--last`.

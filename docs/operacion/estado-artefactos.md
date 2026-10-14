@@ -36,6 +36,11 @@ $XDG_STATE_HOME/ai_dev_loop/
 - `scheduler submit` congela un run `queued` sin lanzar agentes ni mutar el repo.
 - `scheduler start` autoriza el run para ticks; la proveniencia controller A es opcional.
 - `scheduler tick` ejecuta preflight, Cursor, staging, review y correcciones segun el checkpoint.
+- Un submit con implementer Codex congela provider, modelo, effort y timeout aparte
+  del reviewer. La admisión puede probar ese Codex sin exigir el binario Cursor, y
+  después el tick bloquea el dispatch (`codex_implementer_not_implemented`) sin
+  lanzar un proceso implementer. Los contextos históricos sin esa metadata siguen
+  siendo Cursor.
 - `require_clean_worktree` se congela en submit y se aplica en la admision one-shot del primer tick.
 
 ## Estado legacy retirado

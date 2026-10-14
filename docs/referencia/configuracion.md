@@ -44,6 +44,10 @@ codex:
   review_skill: review-staged-cursor-execution
   sandbox: workspace-write
 
+# Opcional. Omitir la sección conserva el implementer Cursor.
+# implementer:
+#   provider: cursor
+
 workflow:
   max_review_iterations: 3
   require_clean_worktree: true
@@ -117,6 +121,29 @@ xhigh
 max
 ultra
 ```
+
+## `implementer`
+
+Sección opcional. Si falta, o si `provider` se omite, el implementer es Cursor y
+se usan `cursor` más `workflow.cursor_timeout_minutes`. Un mapping explícito
+`null`, un provider desconocido, strings vacíos o campos Codex sobre `cursor` se
+rechazan.
+
+| Campo | Default | Descripcion |
+| --- | --- | --- |
+| `provider` | `cursor` | `cursor` o `codex`. |
+| `command` | `codex` | Solo `provider: codex`. Rechazado para Cursor. |
+| `model` | obligatorio si es Codex | Modelo exacto. No sustituye `--codex-review-model`. |
+| `reasoning_effort` | obligatorio si es Codex | Vocabulario Codex existente, incluido `high` y `xhigh`. |
+| `timeout_minutes` | `90` | Entero positivo. `true` no se acepta como `1`. |
+
+El sandbox del implementer Codex queda congelado en `workspace-write`. La política
+de aprobación no interactiva queda congelada en `never`. No se acepta un bypass.
+La selección Codex se puede congelar en `scheduler submit`, pero el dispatch de
+esa implementación todavía no está disponible: el scheduler no lanza el proceso.
+
+Los contextos antiguos sin metadata de implementer se leen como Cursor. Los runs
+nuevos persisten el provider de forma explícita.
 
 ## `workflow`
 

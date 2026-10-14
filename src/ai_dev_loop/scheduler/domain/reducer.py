@@ -29,6 +29,7 @@ from ai_dev_loop.scheduler.domain.events import (
     CursorTurnBlockedEvent,
     CursorTurnCompletedEvent,
     CursorUsageLimitDetectedEvent,
+    ImplementerDispatchBlockedEvent,
     MaxIterationsReachedEvent,
     PreflightBlockedEvent,
     PreflightCompletedEvent,
@@ -219,6 +220,29 @@ def apply_preflight_blocked(
         block_reason_summary=event.block_reason_summary,
         authorized_at=state.authorized_at,
         authorized_controller_session_id=state.authorized_controller_session_id,
+    )
+
+
+def apply_implementer_dispatch_blocked(
+    state: PreflightCompleteState,
+    event: ImplementerDispatchBlockedEvent,
+    *,
+    now_text: str,
+) -> BlockedState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    return BlockedState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        blocked_at=now_text,
+        block_reason_kind=event.block_reason_kind,
+        block_reason_summary=event.block_reason_summary,
+        authorized_at=state.checkpoint.authorized_at,
+        authorized_controller_session_id=state.checkpoint.authorized_controller_session_id,
     )
 
 
@@ -500,19 +524,19 @@ def apply_codex_usage_capacity_detected(
         and event.preserved_retry_generation is not None
     ):
         update.update(
-                {
-                    "review_retry_failure_kind": event.operational_failure_kind,
-                    "last_failed_attempt_id": event.preserved_failed_attempt_id,
-                    "review_retry_generation": event.preserved_retry_generation,
-                    "review_retry_scheduled_generation": None,
-                    "routing_auto_retry_policy_version": event.routing_auto_retry_policy_version,
-                    "routing_auto_retry_eligible": event.routing_auto_retry_eligible,
-                    "routing_auto_retry_authorizations_used": event.routing_auto_retry_authorizations_used,
-                    "routing_auto_retry_due_at": event.routing_auto_retry_due_at,
-                    "routing_auto_retry_exhausted": event.routing_auto_retry_exhausted,
-                    "routing_failure_post_probe_status": event.routing_failure_post_probe_status,
-                    "routing_failure_post_probe_reason": event.routing_failure_post_probe_reason,
-                }
+            {
+                "review_retry_failure_kind": event.operational_failure_kind,
+                "last_failed_attempt_id": event.preserved_failed_attempt_id,
+                "review_retry_generation": event.preserved_retry_generation,
+                "review_retry_scheduled_generation": None,
+                "routing_auto_retry_policy_version": event.routing_auto_retry_policy_version,
+                "routing_auto_retry_eligible": event.routing_auto_retry_eligible,
+                "routing_auto_retry_authorizations_used": event.routing_auto_retry_authorizations_used,
+                "routing_auto_retry_due_at": event.routing_auto_retry_due_at,
+                "routing_auto_retry_exhausted": event.routing_auto_retry_exhausted,
+                "routing_failure_post_probe_status": event.routing_failure_post_probe_status,
+                "routing_failure_post_probe_reason": event.routing_failure_post_probe_reason,
+            }
         )
     codex = state.codex.model_copy(update=update)
     return WaitingCodexCapacityState(

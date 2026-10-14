@@ -71,7 +71,12 @@ These contracts preserve the product's safety model across implementation phases
 
 ## Cursor Contracts
 
-- Cursor is the implementation agent only.
+- Cursor is the implementation agent for runs whose frozen provider is Cursor,
+  including historical contexts that omit implementer metadata.
+- A frozen Codex implementer is a separate identity from reviewer B. This slice
+  records that selection and blocks dispatch before launching an implementer
+  process. It does not share the reviewer session or advertise a usable Codex
+  implementation loop.
 - Create at most one Cursor chat per run.
 - Persist the chat binding durably in the scheduler checkpoint and protected
   `cursor/chat.json` artifact before dispatching a turn.

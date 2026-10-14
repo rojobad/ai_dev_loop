@@ -138,11 +138,7 @@ def effective_review_ceiling_for_state(
     *,
     base_ceiling: int | None = None,
 ) -> int:
-    base = (
-        state.context.workflow.max_review_iterations
-        if base_ceiling is None
-        else base_ceiling
-    )
+    base = state.context.workflow.max_review_iterations if base_ceiling is None else base_ceiling
     return fold_review_budget_extensions(base, extension_events)
 
 

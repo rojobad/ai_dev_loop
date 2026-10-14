@@ -38,6 +38,9 @@
         },
         {
           "$ref": "scheduler-submitted-run-context-v4.json"
+        },
+        {
+          "$ref": "scheduler-submitted-run-context-v5.json"
         }
       ]
     }

@@ -90,7 +90,9 @@ def _codex_attempt_ids(store: SqliteSchedulerStore, conn: object, run_id: str) -
     return {str(row[0]) for row in rows}
 
 
-def _latest_retry_authorization_source(store: SqliteSchedulerStore, conn: object, run_id: str) -> str:
+def _latest_retry_authorization_source(
+    store: SqliteSchedulerStore, conn: object, run_id: str
+) -> str:
     row = conn.execute(  # type: ignore[union-attr]
         """
         SELECT event_payload FROM scheduler_events
@@ -458,7 +460,10 @@ def test_manual_retry_after_exhausted_allowance_does_not_replenish_auto_count(
         _run_until(rerun, run_id, target_kind="waiting_codex_review_retry", max_ticks=40)
     with tick.store.begin_read() as conn:
         state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
-        assert state.codex.routing_auto_retry_authorizations_used == ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS
+        assert (
+            state.codex.routing_auto_retry_authorizations_used
+            == ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS
+        )
         assert state.codex.routing_auto_retry_eligible is False
         generation = state.codex.review_retry_generation
     service = ReviewRetryService(
@@ -478,7 +483,10 @@ def test_manual_retry_after_exhausted_allowance_does_not_replenish_auto_count(
     with tick.store.begin_read() as conn:
         state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
         assert state.kind == "awaiting_codex_review"
-        assert state.codex.routing_auto_retry_authorizations_used == ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS
+        assert (
+            state.codex.routing_auto_retry_authorizations_used
+            == ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS
+        )
 
 
 def test_routing_bootstrap_resume_completes_authenticated_review(

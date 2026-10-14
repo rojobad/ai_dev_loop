@@ -234,7 +234,9 @@ def test_middle_phase_initial_recovery_adopts_and_finishes_original_sequence(
     assert "cursor_retry" in rendered
     assert RECOVERY_NOTE not in rendered
     assert BOOTSTRAP_ID not in rendered
-    inspected = IntegrationSequenceReadService(store, artifact_root=scheduler_paths["artifact_root"])
+    inspected = IntegrationSequenceReadService(
+        store, artifact_root=scheduler_paths["artifact_root"]
+    )
     payload = inspected.inspect_sequence(FIXED_SEQUENCE_ID).model_dump_json(by_alias=True)
     assert "cursor_retry" in payload
     assert RECOVERY_NOTE not in payload
@@ -415,9 +417,7 @@ def test_abort_before_adoption_cancels_replacement_and_releases_reservation(
         active = conn.execute(
             "SELECT run_id FROM scheduler_repository_reservations WHERE status = 'active'"
         ).fetchall()
-        recovery = conn.execute(
-            "SELECT status FROM scheduler_cursor_initial_recoveries"
-        ).fetchone()
+        recovery = conn.execute("SELECT status FROM scheduler_cursor_initial_recoveries").fetchone()
     assert isinstance(sequence, AbortedSequenceState)
     assert replacement["cancelled_at"] is not None
     assert replacement["adopted_at"] is None
@@ -551,7 +551,9 @@ def test_stale_leaf_force_rejects_without_a_new_successor(
     with pytest.raises(SchedulerEngineError, match="ineligible_sequence_stale_leaf"):
         service.force(blocked.current_run_id)
     with store.begin_read() as conn:
-        rows = conn.execute("SELECT successor_run_id FROM scheduler_sequence_cursor_replacements").fetchall()
+        rows = conn.execute(
+            "SELECT successor_run_id FROM scheduler_sequence_cursor_replacements"
+        ).fetchall()
     assert rows == []
 
 
@@ -617,9 +619,7 @@ def test_correction_recovery_keeps_reviewer_extended_ceiling_and_one_note(
     assert successor.codex.reviews_completed >= 1
     assert successor.context.workflow.max_review_iterations == 3
     with store.begin_read() as conn:
-        assert (
-            effective_review_ceiling_for_run(store, conn, successor, artifacts=artifacts) == 4
-        )
+        assert effective_review_ceiling_for_run(store, conn, successor, artifacts=artifacts) == 4
     record = json.loads(
         artifacts.run_root(recovery.successor_run_id).joinpath(CORRECTION_RECORD_REL).read_text()
     )
@@ -627,7 +627,9 @@ def test_correction_recovery_keeps_reviewer_extended_ceiling_and_one_note(
     assert record["submitted_max_review_iterations"] == 3
     assert record["reviewer"]["form"] == "bound"
     assert record["reviewer"]["session_id"] == BOOTSTRAP_ID
-    effective = artifacts.run_root(recovery.successor_run_id).joinpath(EFFECTIVE_PROMPT_REL).read_bytes()
+    effective = (
+        artifacts.run_root(recovery.successor_run_id).joinpath(EFFECTIVE_PROMPT_REL).read_bytes()
+    )
     assert effective.count(RECOVERY_NOTE.encode()) == 1
     observed = None
     replayed = False
@@ -816,7 +818,9 @@ def test_review_retry_cannot_replace_a_cursor_leaf(
     store = SqliteSchedulerStore(scheduler_paths["db_path"])
     artifacts = ProtectedArtifactStore(scheduler_paths["artifact_root"])
     with pytest.raises(CursorInitialRecoveryFault):
-        _recovery(store, artifacts, fault_point="after_sequence_intent").force(blocked.current_run_id)
+        _recovery(store, artifacts, fault_point="after_sequence_intent").force(
+            blocked.current_run_id
+        )
     successor = _successor_of(store, blocked.current_run_id)
     with pytest.raises(SchedulerEngineError):
         ReviewRetryService(store, artifacts, now_factory=lambda: NOW).retry(blocked.current_run_id)
@@ -846,7 +850,9 @@ def test_successor_abort_before_adoption_does_not_dispatch(
     store = SqliteSchedulerStore(scheduler_paths["db_path"])
     artifacts = ProtectedArtifactStore(scheduler_paths["artifact_root"])
     with pytest.raises(CursorInitialRecoveryFault):
-        _recovery(store, artifacts, fault_point="after_sequence_intent").force(blocked.current_run_id)
+        _recovery(store, artifacts, fault_point="after_sequence_intent").force(
+            blocked.current_run_id
+        )
     successor = _successor_of(store, blocked.current_run_id)
     assert tick._run_abort is not None
     tick._run_abort.abort_run(successor)
@@ -994,9 +1000,7 @@ def test_second_correction_generation_keeps_reviewer_ceiling_and_one_note(
     second = _recovery(store, artifacts).force(second_source)
     notes = []
     for run_id in (first.successor_run_id, second.successor_run_id):
-        record = json.loads(
-            artifacts.run_root(run_id).joinpath(CORRECTION_RECORD_REL).read_text()
-        )
+        record = json.loads(artifacts.run_root(run_id).joinpath(CORRECTION_RECORD_REL).read_text())
         assert record["reviewer"]["session_id"] == BOOTSTRAP_ID
         assert record["effective_review_ceiling"] == 4
         assert record["submitted_max_review_iterations"] == 3
@@ -1015,8 +1019,7 @@ def test_second_correction_generation_keeps_reviewer_ceiling_and_one_note(
         ).fetchall()
         successor_state, _, _ = store.load_validated_snapshot(conn, second.successor_run_id)
         assert (
-            effective_review_ceiling_for_run(store, conn, successor_state, artifacts=artifacts)
-            == 4
+            effective_review_ceiling_for_run(store, conn, successor_state, artifacts=artifacts) == 4
         )
     assert isinstance(sequence, ActiveSequenceState)
     assert sequence.current_ordinal == 2
@@ -1246,6 +1249,7 @@ def test_synchronized_abort_during_adoption_or_readiness(
 
     def before_commit() -> None:
         if target == "sequence":
+
             def abort() -> None:
                 try:
                     SequenceAbortService(

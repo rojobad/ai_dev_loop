@@ -236,7 +236,9 @@ def build_budget_carry(
         if run_id != source_run_id:
             ancestor_row = _ready_cursor_row(store, conn, run_id)
             if ancestor_row is not None and _intent_is_v2(ancestor_row):
-                raise _corrupt("original extension history is already represented by a budget carry")
+                raise _corrupt(
+                    "original extension history is already represented by a budget carry"
+                )
         events, found = _events_for_run(store, conn, run_id)
         event_groups.extend(events)
         extension_evidence.extend(found)
