@@ -1,0 +1,67 @@
+# Approved recovery sequence; preparation does not authorize start.
+schema_version: 2
+name: phase-27-4-to-27-7-codex-recovery
+phases:
+- name: phase-27-4-implementer-timeout-retry
+  plan_path: archive/implementation-history/plans/phase-27-4-implementer-timeout-retry.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-27-4-implementer-timeout-retry.txt
+  implementer:
+    provider: codex
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
+    timeout_minutes: 90
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: high
+  workflow:
+    max_review_iterations: 7
+    cursor_timeout_minutes: 90
+    codex_timeout_minutes: 90
+  commit_message: 'feat: complete Phase 27.4 implementer recovery'
+- name: phase-27-5-standalone-implementer-recovery
+  plan_path: archive/implementation-history/plans/phase-27-5-standalone-implementer-recovery.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-27-5-standalone-implementer-recovery.txt
+  implementer:
+    provider: codex
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
+    timeout_minutes: 90
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: high
+  workflow:
+    max_review_iterations: 7
+    cursor_timeout_minutes: 90
+    codex_timeout_minutes: 90
+  commit_message: 'feat: complete Phase 27.5 implementer recovery'
+- name: phase-27-6-sequence-implementer-recovery
+  plan_path: archive/implementation-history/plans/phase-27-6-sequence-implementer-recovery.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-27-6-sequence-implementer-recovery.txt
+  implementer:
+    provider: codex
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
+    timeout_minutes: 90
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: high
+  workflow:
+    max_review_iterations: 7
+    cursor_timeout_minutes: 90
+    codex_timeout_minutes: 90
+  commit_message: 'feat: complete Phase 27.6 implementer recovery'
+- name: phase-27-7-recovery-integration-acceptance
+  plan_path: archive/implementation-history/plans/phase-27-7-recovery-integration-acceptance.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-27-7-recovery-integration-acceptance.txt
+  implementer:
+    provider: codex
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
+    timeout_minutes: 90
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: high
+  workflow:
+    max_review_iterations: 7
+    cursor_timeout_minutes: 90
+    codex_timeout_minutes: 90
