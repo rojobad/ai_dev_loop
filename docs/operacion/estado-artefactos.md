@@ -119,3 +119,20 @@ leen `engine.sqlite3` y artefactos bajo `artifacts/` en transacciones de solo
 lectura; no migran esquema ni reservas de escritura. `integration codex-capacity`
 no persiste resultados de cuota: solo devuelve una proyeccion JSON efimera tras la
 sonda acotada al CLI Codex en `PATH`.
+
+## Secuencias con implementer por fase
+
+Manifest/definición/entrada v2 congela provider y settings por ordinal; las hojas
+usan contexto submitido v6. Los envelopes de ciclo de vida de secuencia siguen v1.
+Entradas históricas v1 y contextos v4 conservan Cursor, identidad y hashes.
+El layout protegido `implementer/` aplica igualmente a hojas Codex. Una espera
+inicial o de corrección conserva hoja, ordinal, reserva, prompt exacto, sesión y
+trabajo parcial entre ticks/reinicio. Solo aceptación de review autoriza el
+checkpoint no final; la fase final queda staged en `awaiting_finalization`.
+
+Después de validar fuentes, instalar/actualizar el paquete es trabajo explícito
+del operador. El scheduler instalado no carga automáticamente cambios unstaged,
+staged o commits del worktree: ejecuta su versión instalada. No instalar ni
+cambiar timers/linger como efecto de tests o revisión de esta fase. La validación
+repository-wide, build y aceptación de instalación pertenecen al gate separado
+de pipeline/operador. Los tests con fakes no equivalen a aceptación con modelos.

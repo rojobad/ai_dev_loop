@@ -231,3 +231,15 @@ CODEX_HOME=/mnt/c/Users/<usuario>/.codex
 ```
 
 El puente soportado expone rollouts de sesiones por ID. No expone SQLite, auth, indices ni toda la home.
+
+## Secuencias v2 y espera Codex
+
+La autoridad Git y los límites del implementer se aplican a Cursor y Codex. Cada
+fase tiene sus propias identidades; el reviewer permanece independiente y staged-only.
+Una espera implementer no requiere identidad reviewer ni patch ya revisado.
+El restart continúa la hoja reservada y no exige descartar cambios parciales ni
+repite admisión limpia. Un abort durable cancela continuación y fases futuras;
+la reserva se retiene mientras una terminación exacta siga incierta. El probe
+model-agnostic es conservador y solo `AVAILABLE` autoriza una continuación.
+La inspección explícita de output puede revelar prompts/IDs en bytes capturados;
+los resúmenes y errores públicos mantienen la privacidad existente.

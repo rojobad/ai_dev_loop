@@ -19,6 +19,10 @@
     "attemptCount"
   ],
   "properties": {
+    "implementerProvider": { "enum": ["cursor", "codex"] },
+    "codexPendingRole": { "enum": ["implementer", "reviewer", null] },
+    "codexPendingTurn": { "type": ["string", "null"] },
+    "codexCapacityReason": { "type": ["string", "null"] },
     "runId": { "type": "string", "minLength": 1 },
     "projectName": { "type": "string", "minLength": 1 },
     "repositoryRoot": { "type": "string", "minLength": 1 },

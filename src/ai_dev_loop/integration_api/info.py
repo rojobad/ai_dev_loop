@@ -16,6 +16,9 @@ def build_integration_info_data() -> IntegrationInfoData:
                 "reviewInspection": True,
                 "processOutput": True,
                 "codexCapacity": True,
+                "dualImplementers": True,
+                "mixedImplementerSequences": True,
+                "codexImplementerManualRecovery": False,
             },
         }
     )

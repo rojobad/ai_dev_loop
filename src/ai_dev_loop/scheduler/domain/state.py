@@ -48,6 +48,7 @@ SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH = 2
 SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED = 3
 SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE = 4
 SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER = 5
+SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE = 6
 
 
 class RepositoryTargetBinding(DomainModel):
@@ -238,14 +239,19 @@ class SubmittedRunContext(DomainModel):
             SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
         }:
-            raise ValueError("schema_version must be 1, 2, 3, 4, or 5")
+            raise ValueError("schema_version must be 1, 2, 3, 4, 5, or 6")
         return value
 
     @model_validator(mode="after")
     def codex_binding_matches_schema(self) -> SubmittedRunContext:
         if (
-            self.schema_version != SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER
+            self.schema_version
+            not in {
+                SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER,
+                SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
+            }
             and self.implementer is not None
         ):
             raise ValueError("historical submitted contexts must not include implementer metadata")
@@ -293,7 +299,10 @@ class SubmittedRunContext(DomainModel):
                 raise ValueError("schema_version 4 must not include baseline fields")
             if self.sequence is None:
                 raise ValueError("schema_version 4 requires sequence binding")
-        elif self.schema_version == SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER:
+        elif self.schema_version in {
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
+        }:
             if not isinstance(self.codex, FreshCodexReviewerBinding):
                 raise ValueError("schema_version 5 requires FreshCodexReviewerBinding")
             if not isinstance(self.repository, RepositoryTargetBinding):
@@ -303,8 +312,10 @@ class SubmittedRunContext(DomainModel):
                 or self.baseline_status_sha256 is not None
             ):
                 raise ValueError("schema_version 5 must not include baseline fields")
-            if self.sequence is not None:
-                raise ValueError("schema_version 5 must not include sequence binding")
+            if (self.schema_version == SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE) != (
+                self.sequence is not None
+            ):
+                raise ValueError("schema_version 6 requires sequence; version 5 must omit it")
             if self.implementer is None:
                 raise ValueError("schema_version 5 requires implementer binding")
         return self
@@ -319,12 +330,19 @@ class SubmittedRunContext(DomainModel):
             SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
         }:
             data.pop("baseline_status_artifact_path", None)
             data.pop("baseline_status_sha256", None)
-        if self.schema_version != SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE:
+        if self.schema_version not in {
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
+        }:
             data.pop("sequence", None)
-        if self.schema_version != SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER:
+        if self.schema_version not in {
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
+        }:
             data.pop("implementer", None)
         return data
 

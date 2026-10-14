@@ -1,0 +1,16 @@
+schema_version: 1
+name: accepted-v1
+phases:
+- name: phase-1
+  plan_path: docs/plans/sample-plan.md
+  prompt_source_path: docs/plans/prompt_sample-plan.txt
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: high
+  commit_message: historical accepted checkpoint
+- name: phase-2
+  plan_path: docs/plans/sample-plan.md
+  prompt_source_path: docs/plans/prompt_sample-plan.txt
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: high

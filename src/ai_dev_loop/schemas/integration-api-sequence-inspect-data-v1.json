@@ -21,6 +21,10 @@
     "phases"
   ],
   "properties": {
+    "currentImplementerProvider": { "enum": ["cursor", "codex", null] },
+    "codexPendingRole": { "enum": ["implementer", "reviewer", null] },
+    "codexPendingTurn": { "type": ["string", "null"] },
+    "codexCapacityReason": { "type": ["string", "null"] },
     "sequenceId": { "type": "string", "minLength": 1 },
     "name": { "type": "string", "minLength": 1 },
     "projectName": { "type": "string", "minLength": 1 },
@@ -77,6 +81,7 @@
           "ordinal": { "type": "integer", "minimum": 1 },
           "name": { "type": "string", "minLength": 1 },
           "initialPlannedRunId": { "type": "string", "minLength": 1 },
+          "implementerProvider": { "enum": ["cursor", "codex"] },
           "materialized": { "type": "boolean" },
           "currentRunId": { "type": ["string", "null"] },
           "acceptedRunId": { "type": ["string", "null"] },

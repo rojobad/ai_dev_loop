@@ -73,10 +73,12 @@ These contracts preserve the product's safety model across implementation phases
 
 - Cursor is the implementation agent for runs whose frozen provider is Cursor,
   including historical contexts that omit implementer metadata.
-- A standalone frozen Codex implementer launches with its own model, reasoning,
+- A frozen Codex implementer in a standalone run or manifest v2 sequence leaf launches with its own model, reasoning,
   timeout, prompt, attempt component, and authenticated session. Initial work and
   corrections resume that exact session; reviewer B is bootstrapped independently
-  only after successful staging. Sequence v1 remains Cursor-only.
+  only after successful staging. Sequence v1 remains Cursor-only; v2 entries
+  freeze provider/settings independently. Capacity waits preserve the current
+  leaf/ordinal/reservation and never authorize a checkpoint before acceptance.
 - Create at most one Cursor chat per run.
 - Persist the chat binding durably in the scheduler checkpoint and protected
   `cursor/chat.json` artifact before dispatching a turn.

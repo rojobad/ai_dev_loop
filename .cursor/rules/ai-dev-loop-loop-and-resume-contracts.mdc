@@ -36,7 +36,7 @@ existing references; it does not imply a public `resume` command.
   reuse it for fixes and eligible continuation. Missing identity after recorded
   work is not permission to create another chat or session.
 - A frozen Codex implementer is a separate identity from reviewer B. Historical
-  contexts without implementer metadata remain Cursor. Standalone runs launch the
+  contexts without implementer metadata remain Cursor. Standalone runs and manifest v2 sequence leaves launch the
   initial Codex turn and resume the exact authenticated session for corrections.
   Role-aware capacity continuation records the pending initial/correction prompt
   and never lets an implementer wait be retried as a reviewer wait.

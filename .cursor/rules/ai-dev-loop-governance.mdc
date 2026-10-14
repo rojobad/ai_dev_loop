@@ -84,10 +84,11 @@ an unresolved decision would change safety behavior.
 - Do not remove unrelated user files or metadata artifacts.
 - Do not modify, replace, or depend on system Python. Use a standard Python 3.11+ package and document `uv` as the preferred local workflow.
 - Do not use cloud workers or remote implementation agents.
-- Cursor remains the default implementer. A standalone run may instead freeze
+- Cursor remains the default implementer. A standalone run or manifest v2 sequence phase may freeze
   and dispatch Codex for implementation and corrections; keep that implementer
-  session independent from reviewer B and do not extend this support to sequence
-  manifests, provider switching, or automatic implementer timeout recovery.
+  session independent from reviewer B. Mixed-provider sequences freeze settings
+  per ordinal; v1 remains Cursor-only. Do not add provider switching during a
+  run or automatic implementer timeout recovery.
 - Do not invoke real Cursor or Codex model activity in automated tests.
 - Do not store API keys, tokens, authentication files, or full process environments.
 - Do not write orchestrator state inside target repositories.

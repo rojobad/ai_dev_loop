@@ -2051,11 +2051,11 @@ class SqliteSchedulerStore:
             )
         sequence_filter = ""
         if kind == "standalone":
-            sequence_filter = (
-                " AND COALESCE(json_extract(state_payload, '$.context.schema_version'), 0) != 4"
-            )
+            sequence_filter = " AND COALESCE(json_extract(state_payload, '$.context.schema_version'), 0) NOT IN (4, 6)"
         elif kind == "sequence":
-            sequence_filter = " AND json_extract(state_payload, '$.context.schema_version') = 4"
+            sequence_filter = (
+                " AND json_extract(state_payload, '$.context.schema_version') IN (4, 6)"
+            )
         elif kind != "all":
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.VALIDATION,

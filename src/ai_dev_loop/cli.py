@@ -263,7 +263,7 @@ def scheduler_submit_command(
         str | None,
         typer.Option(
             "--implementer-provider",
-            help="Implementer provider: cursor (default) or codex. Codex dispatch is not available yet.",
+            help="Frozen implementer provider: cursor (default) or codex. Codex capacity continuation is automatic; manual implementer recovery is deferred.",
         ),
     ] = None,
     implementer_command: Annotated[

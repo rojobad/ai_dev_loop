@@ -281,6 +281,9 @@ def build_sequence_inspect_data(
         phases.append(
             IntegrationSequencePhaseSummary(
                 ordinal=definition_entry.ordinal,
+                implementer_provider="cursor"
+                if definition_entry.implementer is None
+                else definition_entry.implementer.provider,
                 name=definition_entry.phase_name,
                 initial_planned_run_id=definition_entry.planned_run_id,
                 materialized=entry_summary.materialized,
@@ -332,6 +335,10 @@ def build_sequence_inspect_data(
         )
     block_reason = status_result.block_reason_kind or status_result.abort_reason
     return IntegrationSequenceInspectData(
+        current_implementer_provider=status_result.current_implementer_provider,
+        codex_pending_role=status_result.codex_pending_role,
+        codex_pending_turn=status_result.codex_pending_turn,
+        codex_capacity_reason=status_result.codex_capacity_reason,
         sequence_id=status_result.sequence_id,
         name=status_result.name,
         project_name=status_result.project_name,

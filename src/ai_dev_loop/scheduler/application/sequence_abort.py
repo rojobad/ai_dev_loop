@@ -32,7 +32,11 @@ from ai_dev_loop.scheduler.domain.sequence import (
     PreparedSequenceState,
     future_entry_ordinals,
 )
-from ai_dev_loop.scheduler.domain.state import SCHEDULER_TERMINAL_STATE_KINDS, AbortedState
+from ai_dev_loop.scheduler.domain.state import (
+    SCHEDULER_TERMINAL_STATE_KINDS,
+    AbortedState,
+    is_codex_implementer_reservation_hold,
+)
 from ai_dev_loop.scheduler.infrastructure.paths import default_artifact_root, default_engine_db_path
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
@@ -170,9 +174,13 @@ class SequenceAbortService:
     def _advance_pending_run_abort(self, state: AbortPendingSequenceState) -> AbortProcessAction:
         with self.store.begin_read() as conn:
             run_state, _, _ = self.store.load_validated_snapshot(conn, state.current_run_id)
+            held_implementer = (
+                is_codex_implementer_reservation_hold(run_state)
+                and self.store.get_reservation_for_run(conn, state.current_run_id) is not None
+            )
         if isinstance(run_state, AbortedState):
             return AbortProcessAction.NONE
-        if run_state.kind in SCHEDULER_TERMINAL_STATE_KINDS:
+        if run_state.kind in SCHEDULER_TERMINAL_STATE_KINDS and not held_implementer:
             return AbortProcessAction.NONE
         if self._run_abort is not None:
             result = self._run_abort.abort_run(

@@ -115,7 +115,11 @@ def _safe_detail_for_event(event_kind: str, payload_text: str) -> str:
         routing_used = payload.get("routing_auto_retry_authorizations_used")
         probe_status = payload.get("routing_failure_post_probe_status")
         probe_reason = payload.get("routing_failure_post_probe_reason")
-        parts = [f"review_iteration={iteration}"]
+        role = payload.get("capacity_role")
+        turn = payload.get("capacity_turn")
+        parts = [f"review_iteration={iteration}", f"role={role or 'reviewer'}"]
+        if turn in {"initial", "correction"}:
+            parts.append(f"turn={turn}")
         if source:
             parts.append(f"evidence_source={source}")
         if operational:

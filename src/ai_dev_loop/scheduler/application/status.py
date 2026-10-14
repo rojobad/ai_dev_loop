@@ -67,6 +67,9 @@ class SchedulerStatusService:
             review_iterations_completed=reviews_completed,
             max_review_iterations=max_reviews,
             submitted_max_review_iterations=submitted_max,
+            codex_pending_role=projection["codex_pending_role"],
+            codex_pending_turn=projection["codex_pending_turn"],
+            codex_capacity_reason=projection["codex_capacity_reason"],
             cursor_wait_until=projection["cursor_wait_until"],
             block_reason_kind=projection["block_reason_kind"],
             codex_routing_auto_retry_eligible=(

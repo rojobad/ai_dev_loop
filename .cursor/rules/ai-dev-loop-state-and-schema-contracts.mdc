@@ -91,6 +91,21 @@ and `docs/operacion/estado-artefactos.md`.
 - Record only the evidence required by the documented retry/recovery path.
   Never classify eligibility from fuzzy summaries or synthesize approvals.
 
+## Sequence Versions
+
+- Manifest v1 and frozen definition/entry v1 remain Cursor-only, with unchanged
+  canonical hashes. Manifest v2 uses independently frozen definition/entry v2
+  implementer bindings; leaves materialize submitted context v6 with both
+  sequence and implementer. Existing lifecycle envelopes stay v1.
+- Omitted v2 implementer means Cursor. A selected Codex phase can inherit YAML
+  defaults of the same provider, with explicit phase fields taking precedence.
+  Reviewer model/reasoning remain mandatory per phase. Null or conflicting
+  provider fields are rejected. Prepared entries never re-read source settings
+  at dispatch or handoff.
+- Integration API 1.6 adds optional provider and pending-capacity role/turn
+  summaries. Explicit process output reads authenticate provider-specific
+  attempt evidence and confined paths; historical missing metadata stays honest.
+
 ## Legacy Compatibility
 
 - `RunState`, `state.json`, `manifest.json`, `iterations`, Phase 9/10

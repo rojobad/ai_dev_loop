@@ -76,6 +76,10 @@ class SchedulerRunSummary(AppModel):
     submitted_at: str
     updated_at: str
     safe_next_action: SafeNextAction
+    implementer_provider: str = "cursor"
+    codex_pending_role: str | None = None
+    codex_pending_turn: str | None = None
+    codex_capacity_reason: str | None = None
     cursor_wait_until: str | None = None
     block_reason_kind: str | None = None
     codex_routing_auto_retry_eligible: bool | None = None
@@ -563,6 +567,9 @@ def scheduler_status_projection_from_state(state: object) -> dict[str, str | Non
     )
 
     projection: dict[str, str | None] = {
+        "codex_pending_role": None,
+        "codex_pending_turn": None,
+        "codex_capacity_reason": None,
         "cursor_wait_until": None,
         "block_reason_kind": None,
         "codex_routing_auto_retry_eligible": None,
@@ -588,6 +595,11 @@ def scheduler_status_projection_from_state(state: object) -> dict[str, str | Non
             projection,
             block_reason_from_failure_kind=isinstance(state, WaitingCodexReviewRetryState),
         )
+    if isinstance(state, WaitingCodexCapacityState):
+        continuation = state.codex.capacity_continuation
+        projection["codex_pending_role"] = "reviewer" if continuation is None else continuation.role
+        projection["codex_pending_turn"] = "review" if continuation is None else continuation.turn
+        projection["codex_capacity_reason"] = "capacity_unavailable_or_exhausted"
     return projection
 
 
@@ -603,6 +615,9 @@ def summary_from_context(
     review_iterations_completed: int | None = None,
     max_review_iterations: int | None = None,
     submitted_max_review_iterations: int | None = None,
+    codex_pending_role: str | None = None,
+    codex_pending_turn: str | None = None,
+    codex_capacity_reason: str | None = None,
     cursor_wait_until: str | None = None,
     block_reason_kind: str | None = None,
     codex_routing_auto_retry_eligible: bool | None = None,
@@ -627,6 +642,12 @@ def summary_from_context(
         run_id=run_id,
         state_kind=state_kind,
         project_name=context.project_name,
+        implementer_provider="cursor"
+        if context.implementer is None
+        else context.implementer.provider,
+        codex_pending_role=codex_pending_role,
+        codex_pending_turn=codex_pending_turn,
+        codex_capacity_reason=codex_capacity_reason,
         repository_root=context.repository.root,
         controller_session_id_prefix=redacted_controller_prefix(
             context.controller.controller_session_id
@@ -663,6 +684,7 @@ def summary_from_context(
 
 
 class SequenceEntrySummary(AppModel):
+    implementer_provider: str = "cursor"
     ordinal: int
     phase_name: str
     planned_run_id_prefix: str
@@ -700,6 +722,10 @@ class SequencePrepareResult(AppModel):
 
 
 class SequenceStatusResult(AppModel):
+    current_implementer_provider: str | None = None
+    codex_pending_role: str | None = None
+    codex_pending_turn: str | None = None
+    codex_capacity_reason: str | None = None
     sequence_id: str
     name: str
     state_kind: str

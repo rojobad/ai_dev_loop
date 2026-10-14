@@ -139,10 +139,10 @@ rechazan.
 
 El sandbox del implementer Codex queda congelado en `workspace-write`. La política
 de aprobación no interactiva queda congelada en `never`. No se acepta un bypass.
-En runs standalone el scheduler lanza la implementación inicial y reanuda la
+En runs standalone y hojas de secuencia v2 el scheduler lanza la implementación inicial y reanuda la
 misma sesión autenticada para correcciones. Modelo, effort, timeout e identidad
 son independientes del reviewer. Los manifests de secuencia v1 siguen siendo
-Cursor-only; no existe cambio de provider durante el run.
+Cursor-only; v2 permite elegir por fase. No existe cambio de provider durante el run.
 
 Los contextos antiguos sin metadata de implementer se leen como Cursor. Los runs
 nuevos persisten el provider de forma explícita.
@@ -202,3 +202,22 @@ operativos documentados son:
 ai_dev_loop config validate --repo /path/al/repo
 ai_dev_loop config validate --repo /path/al/repo --output json
 ```
+
+## Manifest de secuencia v2
+
+`schema_version: 2` permite `implementer` por fase, con los campos anteriores.
+Omitir la sección o su provider selecciona Cursor, incluso si YAML seleccionaba
+Codex. Para `provider: codex`, los campos de fase prevalecen sobre defaults YAML
+del mismo provider; el modelo y effort deben quedar explícitamente resueltos.
+Cambiar de provider elimina los defaults incompatibles. Los campos Cursor
+explícitos (`cursor` o `workflow.cursor_timeout_minutes`, incluidos overrides
+CLI globales) entran en conflicto con una fase Codex y se rechazan.
+Los campos reviewer `codex.review_model` y `codex.review_reasoning_effort` siguen
+siendo obligatorios por fase y no se heredan del implementer.
+
+Prepare congela ejecutables, configuración, prompts y hashes independientes por
+ordinal sin ejecutar Git/agentes. Los cambios posteriores en YAML o manifest no
+alteran esa definición preparada. Un prepare con inputs distintos crea una nueva
+definición; no reemplaza la anterior. Manifest v1 y sus entradas congeladas
+históricas conservan Cursor y hashes, sin migración a Codex. Un prepare v1 nuevo
+rechaza defaults YAML que seleccionen Codex; usa manifest v2 para esa selección.

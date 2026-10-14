@@ -48,6 +48,7 @@
       ],
       "properties": {
         "runId": { "type": "string", "minLength": 1 },
+        "implementerProvider": { "enum": ["cursor", "codex"] },
         "projectName": { "type": "string", "minLength": 1 },
         "repositoryRoot": { "type": "string", "minLength": 1 },
         "state": { "type": "string", "minLength": 1 },

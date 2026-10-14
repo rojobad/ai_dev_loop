@@ -35,13 +35,14 @@
   `scheduler submit` can freeze an implementer provider of `cursor` or `codex`,
   with Codex command, model, reasoning effort, and timeout independent from the
   reviewer. Historical contexts that omit implementer metadata stay Cursor.
-  Standalone Codex runs dispatch the initial implementation and corrections in
+  Codex runs, standalone or manifest v2 sequence leaves, dispatch implementation and corrections in
   one authenticated implementer session, normalize staging, and then bootstrap
   an independent reviewer B. Structured/provider quota evidence or an exhausted
   post-failure observation from the shared capacity probe waits and resumes that
   exact pending role and session; it never
-  starts review early. Provider switching during a run, Codex sequence manifests,
-  automatic Codex implementer timeout recovery, and a scheduler-managed Cursor
+  starts review early. Manifest v2 freezes independent implementer settings per
+  phase and supports mixed providers; historical v1 stays Cursor-only. Provider
+  switching during a run, automatic Codex implementer timeout recovery, and a scheduler-managed Cursor
   master/executor stage are not implemented configuration options.
   Unsafe implementer identity or incomplete evidence blocks with the repository
   reservation retained. Explicit `scheduler abort` cancels these held Codex
@@ -69,7 +70,7 @@ become a general-purpose controller of every worktree change.
   reservation, immutable input and artifact integrity, exact agent identity,
   explicit review decisions, and no destructive or external Git actions unless
   the approved plan expressly authorizes them.
-- The supported runtime normalizes staging after Cursor. An explicitly started
+- The supported runtime normalizes staging after the selected implementer. An explicitly started
   sequence also authorizes the existing local checkpoint commit for each
   accepted non-final phase. Standalone runs and final sequence phases leave
   changes staged; acceptance does not authorize push, PR creation, or merge.

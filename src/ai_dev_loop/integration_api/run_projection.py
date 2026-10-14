@@ -100,6 +100,9 @@ def build_run_list_item(
     return IntegrationRunListItem(
         run_id=state.run_id,
         project_name=state.context.project_name,
+        implementer_provider="cursor"
+        if state.context.implementer is None
+        else state.context.implementer.provider,
         repository_root=str(state.context.repository.root),
         state=state.kind,
         submitted_at=submitted_at,
@@ -180,8 +183,14 @@ def build_run_inspect_data(
         routing_failure_kind = state.codex.review_retry_failure_kind
         routing_exhausted = state.codex.routing_auto_retry_exhausted
     return IntegrationRunInspectData(
+        codex_pending_role=projection["codex_pending_role"],
+        codex_pending_turn=projection["codex_pending_turn"],
+        codex_capacity_reason=projection["codex_capacity_reason"],
         run_id=state.run_id,
         project_name=state.context.project_name,
+        implementer_provider="cursor"
+        if state.context.implementer is None
+        else state.context.implementer.provider,
         repository_root=str(state.context.repository.root),
         state=state.kind,
         submitted_at=submitted_at,

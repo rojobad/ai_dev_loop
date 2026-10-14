@@ -99,7 +99,7 @@ reviewer. `--implementer-command` default `codex` y `--implementer-timeout-minut
 default 90. Esos campos se rechazan si el proveedor es Cursor. Los flags
 `--cursor-*` se rechazan cuando la selección es Codex. El sandbox del implementer
 Codex es `workspace-write` y la política de aprobación no interactiva es explícita
-(`never`); no hay bypass. En un run standalone, los ticks ejecutan la
+(`never`); no hay bypass. En un run standalone o una hoja de secuencia v2, los ticks ejecutan la
 implementación inicial, normalizan staging, crean un reviewer B independiente y
 reanudan la sesión implementer exacta para correcciones. Una cuota detectada por
 evidencia estructurada/provider, o por un probe post-fallo `EXHAUSTED` con identidad
@@ -134,6 +134,50 @@ ai_dev_loop scheduler sequence start <sequence-id> [--output text|json]
 ai_dev_loop scheduler sequence status <sequence-id> [--output text|json]
 ai_dev_loop scheduler sequence abort <sequence-id> [--output text|json]
 ```
+
+Manifest v2 selecciona el implementer por fase. Ejemplo completo de dos fases:
+
+```yaml
+schema_version: 2
+name: codex-then-cursor
+phases:
+  - name: implementation
+    plan_path: docs/plans/implementation.md
+    prompt_source_path: docs/plans/prompt_implementation.txt
+    commit_message: "checkpoint: implementation accepted"
+    implementer:
+      provider: codex
+      model: gpt-5.6-sol
+      reasoning_effort: xhigh
+      timeout_minutes: 90
+    codex:
+      review_model: gpt-6.1-sol
+      review_reasoning_effort: high
+  - name: final-validation
+    plan_path: docs/plans/final-validation.md
+    prompt_source_path: docs/plans/prompt_final-validation.txt
+    cursor:
+      model: grok-4.7-high
+    codex:
+      review_model: gpt-6.1-sol
+      review_reasoning_effort: high
+```
+
+```bash
+ai_dev_loop scheduler sequence prepare --repo-path /path/al/repo --manifest /path/to/sequence.yaml
+ai_dev_loop scheduler sequence start <sequence-id>
+ai_dev_loop scheduler tick
+ai_dev_loop scheduler sequence status <sequence-id>
+```
+
+Cada fase crea identidades implementer/reviewer independientes. Una espera Codex
+inicial o de corrección conserva la hoja actual, ordinal, reserva, prompt y
+trabajo parcial; ni crea checkpoint ni materializa sucesor hasta el review
+aceptado. `AVAILABLE` desde el probe reanuda la misma sesión exacta, incluso tras
+reiniciar el servicio. `EXHAUSTED` o `UNAVAILABLE` conserva la espera. No existe
+`resume` manual de implementer Codex; el siguiente paso es `scheduler tick`.
+Abort impide la siguiente fase y conserva trabajo/evidencia. Una terminación
+incierta mantiene la reserva hasta reconciliar el proceso exacto.
 
 Phase 20.1 congela una definicion lineal inmutable de 2 a 32 fases sin reservar el
 repositorio, sin invocar Git y sin crear filas en `scheduler_runs`. Cada fase congela
@@ -533,3 +577,28 @@ Los siguientes comandos ya no existen en la CLI publica:
 La accion segura para trabajo nuevo es `scheduler submit` + `scheduler start` + `scheduler tick`
 (o timer habilitado explicitamente). Para retirar estado legacy, usa
 `scheduler cutover cleanup` solo tras aceptacion humana independiente.
+
+## Ejemplo standalone Codex
+
+```bash
+ai_dev_loop scheduler submit \
+  --repo-path /path/al/repo \
+  --plan-path docs/plans/implementation.md \
+  --prompt-source-path docs/plans/prompt_implementation.txt \
+  --implementer-provider codex \
+  --implementer-model gpt-5.6-sol \
+  --implementer-reasoning-effort xhigh \
+  --codex-review-model gpt-6.1-sol \
+  --codex-review-reasoning-effort high \
+  < /path/al/repo/docs/plans/prompt_implementation.txt
+ai_dev_loop scheduler start <run-id>
+ai_dev_loop scheduler tick
+```
+
+La recuperación manual y automática de timeout/fallo genérico del implementer
+Codex, los sucesores de recuperación y el cambio de provider/modelo quedan
+diferidos. `cursor-retry` y recovery de review no pueden recuperar implementación
+Codex ni convertir su espera de capacidad en review. La continuidad automática
+por capacidad sí está implementada. El probe compartido no separa cuota por
+modelo: conserva ventanas relevantes con política conservadora; una fecha
+transcurrida por sí sola no autoriza reintento.
