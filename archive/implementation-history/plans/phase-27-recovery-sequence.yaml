@@ -15,7 +15,6 @@ phases:
     review_reasoning_effort: high
   workflow:
     max_review_iterations: 7
-    cursor_timeout_minutes: 90
     codex_timeout_minutes: 90
   commit_message: 'feat: complete Phase 27.4 implementer recovery'
 - name: phase-27-5-standalone-implementer-recovery
@@ -31,7 +30,6 @@ phases:
     review_reasoning_effort: high
   workflow:
     max_review_iterations: 7
-    cursor_timeout_minutes: 90
     codex_timeout_minutes: 90
   commit_message: 'feat: complete Phase 27.5 implementer recovery'
 - name: phase-27-6-sequence-implementer-recovery
@@ -47,7 +45,6 @@ phases:
     review_reasoning_effort: high
   workflow:
     max_review_iterations: 7
-    cursor_timeout_minutes: 90
     codex_timeout_minutes: 90
   commit_message: 'feat: complete Phase 27.6 implementer recovery'
 - name: phase-27-7-recovery-integration-acceptance
@@ -63,5 +60,4 @@ phases:
     review_reasoning_effort: high
   workflow:
     max_review_iterations: 7
-    cursor_timeout_minutes: 90
     codex_timeout_minutes: 90
