@@ -270,7 +270,12 @@ def _entry_reasoning_efforts(entry: Any) -> list[str] | None:
 
     if not isinstance(entry, dict):
         return None
-    for key in ("supported_reasoning_efforts", "reasoning_efforts", "supported_efforts"):
+    for key in (
+        "supported_reasoning_efforts",
+        "reasoning_efforts",
+        "supported_efforts",
+        "supported_reasoning_levels",
+    ):
         if key not in entry:
             continue
         value = entry.get(key)
@@ -278,6 +283,16 @@ def _entry_reasoning_efforts(entry: Any) -> list[str] | None:
             isinstance(item, str) and item.strip() for item in value
         ):
             return [item.strip() for item in value]
+        if key == "supported_reasoning_levels" and isinstance(value, list):
+            efforts = []
+            for level in value:
+                if not isinstance(level, dict):
+                    return None
+                effort = level.get("effort")
+                if not isinstance(effort, str) or not effort.strip():
+                    return None
+                efforts.append(effort.strip())
+            return efforts
         return None
     return None
 

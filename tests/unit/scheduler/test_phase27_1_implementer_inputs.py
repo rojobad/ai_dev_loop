@@ -485,6 +485,49 @@ def test_effort_probe_uses_exact_catalog_evidence(fake_clis: dict[str, Path]) ->
     assert unchanged.classification == CompatibilityClassification.COMPATIBLE
 
 
+@pytest.mark.parametrize(
+    ("levels", "expected"),
+    [
+        (
+            [{"effort": "high"}, {"effort": "xhigh", "description": "Extra reasoning"}],
+            CompatibilityClassification.COMPATIBLE,
+        ),
+        ([{"effort": "high"}], CompatibilityClassification.INCOMPATIBLE_MODEL),
+        (
+            [{"effort": "xhigh"}, {"description": "missing effort"}],
+            CompatibilityClassification.UNKNOWN,
+        ),
+        ([{"effort": None}], CompatibilityClassification.UNKNOWN),
+        ([{"effort": " "}], CompatibilityClassification.UNKNOWN),
+        ("xhigh", CompatibilityClassification.UNKNOWN),
+        ([], CompatibilityClassification.INCOMPATIBLE_MODEL),
+    ],
+)
+def test_native_codex_reasoning_levels_catalog(
+    fake_clis: dict[str, Path], levels: object, expected: CompatibilityClassification
+) -> None:
+    fake_clis["codex_models_file"].write_text(
+        json.dumps(
+            {
+                "models": [
+                    {"slug": "gpt-5.6-sol", "supported_reasoning_levels": levels},
+                    {"slug": "gpt-6.1-sol", "supported_reasoning_levels": [{"effort": "high"}]},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    command = str(fake_clis["bin_dir"] / "codex")
+    result = probe_codex_model_compatibility(
+        command, required_model="gpt-5.6-sol", required_reasoning_effort="xhigh"
+    )
+    assert result.classification == expected
+    reviewer = probe_codex_model_compatibility(
+        command, required_model="gpt-6.1-sol", required_reasoning_effort="high"
+    )
+    assert reviewer.classification == CompatibilityClassification.COMPATIBLE
+
+
 def _tick_until(
     paths: dict[str, Path],
     repo: Path,
@@ -514,8 +557,14 @@ def test_codex_preflight_schedules_implementer_without_cursor_chat(
         json.dumps(
             {
                 "models": [
-                    {"id": "gpt-5.6-sol", "supported_reasoning_efforts": ["high", "xhigh"]},
-                    {"id": "gpt-5.5", "supported_reasoning_efforts": ["high", "xhigh"]},
+                    {
+                        "slug": "gpt-5.6-sol",
+                        "supported_reasoning_levels": [{"effort": "high"}, {"effort": "xhigh"}],
+                    },
+                    {
+                        "slug": "gpt-5.5",
+                        "supported_reasoning_levels": [{"effort": "high"}, {"effort": "xhigh"}],
+                    },
                 ]
             }
         ),
