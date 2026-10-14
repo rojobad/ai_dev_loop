@@ -145,11 +145,14 @@ solo revalida los inputs congelados y los checkpoints durablemente registrados.
 
 - Un run cuyo implementer es Cursor crea o reutiliza exactamente un Cursor chat ID.
 - Un implementer Codex, cuando se selecciona, es una identidad distinta del reviewer B.
-  Su session ID queda vacío hasta una captura autenticada y no se adivina. En esta
-  fase el scheduler congela esa selección y bloquea el dispatch; no lanza el proceso
-  implementer ni comparte la sesión del reviewer. `cursor_fix_prompt` sigue siendo
-  el payload exacto de corrección.
-- Todo review resume la identidad Codex exacta congelada para ese run.
+  Su session ID queda vacío hasta una captura autenticada y no se adivina. El
+  scheduler la persiste en un artefacto protegido, reanuda exactamente esa sesión
+  para correcciones y conserva `cursor_fix_prompt` byte por byte en el sobre de
+  ejecución. Nunca comparte la sesión del reviewer.
+- Todo review resume la identidad reviewer Codex exacta congelada para ese run.
+- Un wait de capacidad persiste rol y evidencia. El probe no puede convertir un
+  wait implementer en reviewer, y cuota, timeout o identidad incierta no autorizan
+  staging ni review.
 - En runs controller A frescos, A elige `--codex-review-model` y
   `--codex-review-reasoning-effort` en `scheduler submit`; no hay fallback desde
   YAML, sesion preexistente ni default de CLI en review time.

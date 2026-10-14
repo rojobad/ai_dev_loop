@@ -25,6 +25,9 @@ $XDG_STATE_HOME/ai_dev_loop/
 │       prompts/cursor-initial.txt
 │       effective-config.yaml
 │       source-config.yaml
+│       implementer/session.json
+│       implementer/iterations/<NN>/final.txt
+│       implementer/turns/<NN>.<attempt-id>.{jsonl,stderr.txt,metadata.json,...}
 │       codex/fresh-reviewer-input.json
 │       codex/fresh-reviewer-binding.json
 │       git/admission-status.txt
@@ -35,12 +38,22 @@ $XDG_STATE_HOME/ai_dev_loop/
 
 - `scheduler submit` congela un run `queued` sin lanzar agentes ni mutar el repo.
 - `scheduler start` autoriza el run para ticks; la proveniencia controller A es opcional.
-- `scheduler tick` ejecuta preflight, Cursor, staging, review y correcciones segun el checkpoint.
+- `scheduler tick` ejecuta preflight, el implementer congelado, staging, review y
+  correcciones segun el checkpoint.
 - Un submit con implementer Codex congela provider, modelo, effort y timeout aparte
-  del reviewer. La admisión puede probar ese Codex sin exigir el binario Cursor, y
-  después el tick bloquea el dispatch (`codex_implementer_not_implemented`) sin
-  lanzar un proceso implementer. Los contextos históricos sin esa metadata siguen
-  siendo Cursor.
+  del reviewer. La admisión prueba ese Codex sin exigir el binario Cursor. El tick
+  captura una sesión implementer autenticada, conserva cada intento bajo
+  `implementer/`, normaliza staging al completar el turno y solo entonces crea el
+  reviewer B independiente. Los contextos históricos sin esa metadata siguen Cursor.
+- Una cuota por evidencia estructurada/provider o por un probe post-fallo
+  `EXHAUSTED` autenticado durante implementación inicial o corrección entra en
+  `waiting_codex_capacity` con rol, turno, prompt, identidad y evidencia del intento.
+  `AVAILABLE` reanuda esa misma sesión; `EXHAUSTED` o `UNAVAILABLE` conserva la espera,
+  los cambios parciales y los artefactos sin iniciar staging ni review. El único
+  bootstrap sin sesión permitido es un reintento autenticado sin trabajo observado.
+  Los fallos con identidad incierta o evidencia incompleta bloquean conservando la
+  reserva; `scheduler abort` explícito permite cancelarlos sin borrar cambios ni
+  artefactos. Si la terminación sigue incierta, la reserva permanece retenida.
 - `require_clean_worktree` se congela en submit y se aplica en la admision one-shot del primer tick.
 
 ## Estado legacy retirado

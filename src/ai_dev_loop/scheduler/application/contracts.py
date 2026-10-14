@@ -279,7 +279,20 @@ def waiting_codex_review_retry_safe_next_action(
     )
 
 
-def waiting_codex_capacity_safe_next_action(run_id: str | None = None) -> SafeNextAction:
+def waiting_codex_capacity_safe_next_action(
+    run_id: str | None = None,
+    *,
+    capacity_role: str = "reviewer",
+) -> SafeNextAction:
+    if capacity_role == "implementer":
+        return SafeNextAction(
+            kind=SafeNextActionKind.SCHEDULER_TICK,
+            command=(
+                "ai_dev_loop scheduler tick "
+                "(waiting for Codex implementer capacity; an available probe resumes the "
+                "exact pending implementation turn automatically)."
+            ),
+        )
     retry_hint = ""
     if run_id:
         retry_hint = (

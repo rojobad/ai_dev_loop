@@ -99,12 +99,14 @@ reviewer. `--implementer-command` default `codex` y `--implementer-timeout-minut
 default 90. Esos campos se rechazan si el proveedor es Cursor. Los flags
 `--cursor-*` se rechazan cuando la selección es Codex. El sandbox del implementer
 Codex es `workspace-write` y la política de aprobación no interactiva es explícita
-(`never`); no hay bypass. Esta fase congela la selección y la admisión puede
-probar el modelo y el effort exactos, pero el dispatch de implementación Codex
-aún no existe: el tick bloquea el run con
-`codex_implementer_not_implemented` sin lanzar un proceso implementer. No hay
-bucle Codex usable todavía. Los manifests de secuencia v1 siguen siendo solo
-Cursor.
+(`never`); no hay bypass. En un run standalone, los ticks ejecutan la
+implementación inicial, normalizan staging, crean un reviewer B independiente y
+reanudan la sesión implementer exacta para correcciones. Una cuota detectada por
+evidencia estructurada/provider, o por un probe post-fallo `EXHAUSTED` con identidad
+autenticada y terminación resuelta,
+entra en `waiting_codex_capacity` y se reanuda automáticamente solo cuando el
+probe actual informa capacidad. Los manifests de secuencia v1 siguen siendo solo
+Cursor; no hay provider switching ni recuperación automática de timeout Codex.
 
 El scheduler impone `workspace-write` al proceso Codex. El wrapper y la skill de
 review siguen exigiendo revisar únicamente el staged y no editar, stagear ni
@@ -210,6 +212,10 @@ ai_dev_loop scheduler timeline <run-id> [--limit N] [--order oldest|newest] [--o
 
 `scheduler abort` persiste primero la cancelacion durable, invalida effects/timers/claims
 pendientes y no borra artefactos ni cambios staged o unstaged del repositorio objetivo.
+Un bloqueo Codex implementer por identidad incierta o evidencia incompleta conserva
+la reserva del repositorio. Ese bloqueo permite `scheduler abort` explícito para
+cancelar el run; la reserva se libera solo cuando la terminación del intento está
+resuelta. Los demás estados terminales mantienen su política de rechazo de abort.
 
 `scheduler history` devuelve eventos acotados y redactados.
 
@@ -316,12 +322,12 @@ el intento. La acción depende del checkpoint durable:
 | Estado de origen | Comportamiento |
 | --- | --- |
 | `waiting_codex_review_retry` | Encola un reintento del mismo run, reviewer, modelo, razonamiento e iteración. |
-| `waiting_codex_capacity` | Permite autorizar explícitamente el reintento conservando el reviewer; no cambia de modelo ni garantiza cuota disponible. |
+| `waiting_codex_capacity` con rol reviewer histórico/actual | Permite autorizar explícitamente el reintento conservando el reviewer; no cambia de modelo ni garantiza cuota disponible. Un wait con rol implementer se rechaza sin mutación porque lo gobierna el probe automático del tick. |
 | `blocked` elegible | Crea o reutiliza un sucesor con el mismo reviewer y evidencia autenticada; conserva inmutable el origen. |
 
 En una secuencia, la recuperación coordina el reemplazo con su lineage y reserva.
-No vuelve a ejecutar una implementación Cursor ya completada para reintentar la
-review. Un reintento operativo no consume por sí solo una revisión completada.
+No vuelve a ejecutar una implementación ya completada para reintentar la review.
+Un reintento operativo no consume por sí solo una revisión completada.
 La repetición de una autorización ya registrada no debe duplicar el intento.
 
 Cuando el fallo clasificado es `codex_workspace_routing_timeout` (mensaje terminal

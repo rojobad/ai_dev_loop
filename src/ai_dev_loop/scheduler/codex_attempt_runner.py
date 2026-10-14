@@ -190,6 +190,14 @@ def _read_cursor_final(run_root: Path, iteration_label: str) -> str | None:
     return text or None
 
 
+def _read_codex_implementer_final(run_root: Path, iteration_label: str) -> str | None:
+    final_path = run_root / f"implementer/iterations/{iteration_label}/final.txt"
+    if not final_path.is_file():
+        return None
+    text = final_path.read_text(encoding="utf-8").strip()
+    return text or None
+
+
 def _write_attempt_artifacts(
     *,
     stdout_path: Path,
@@ -304,12 +312,18 @@ def _run_codex_review(
     )
 
     run_state = _run_state_from_binding(evidence, run_id)
-    cursor_final = _read_cursor_final(run_root, iteration_label)
+    implementer_provider = str(evidence.get("implementer_provider", "cursor"))
+    implementer_final = (
+        _read_codex_implementer_final(run_root, iteration_label)
+        if implementer_provider == "codex"
+        else _read_cursor_final(run_root, iteration_label)
+    )
     prompt = build_review_wrapper_prompt(
         run_state,
         run_root,
         iteration=iteration_label,
-        cursor_final_response=cursor_final,
+        cursor_final_response=implementer_final,
+        implementer_provider=implementer_provider,
     )
     if evidence.get("operational_review_retry"):
         prompt = REVIEW_RETRY_OPERATIONAL_ENVELOPE + prompt

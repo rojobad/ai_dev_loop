@@ -43,11 +43,11 @@ def test_schema_migration_reopens_v12_without_rewriting_lineage(tmp_path: Path) 
     db = tmp_path / "engine.sqlite3"
     store = SqliteSchedulerStore(db)
     store.bootstrap()
-    assert SCHEMA_VERSION == 13
+    assert SCHEMA_VERSION == 14
     with store.begin_immediate() as conn:
         conn.execute("DROP TABLE scheduler_sequence_cursor_replacements")
         conn.execute("DROP INDEX IF EXISTS idx_scheduler_sequence_cursor_replacements_sequence")
-        conn.execute("DELETE FROM scheduler_schema_migrations WHERE version = 13")
+        conn.execute("DELETE FROM scheduler_schema_migrations WHERE version >= 13")
         conn.execute("PRAGMA user_version = 12")
     store.bootstrap()
     with store.begin_read() as conn:
@@ -59,7 +59,7 @@ def test_schema_migration_reopens_v12_without_rewriting_lineage(tmp_path: Path) 
             ).fetchall()
         }
         attempts = conn.execute("SELECT COUNT(*) FROM scheduler_sequence_run_attempts").fetchone()
-    assert version == 13
+    assert version == 14
     assert "scheduler_sequence_cursor_replacements" in tables
     assert int(attempts[0]) == 0
 

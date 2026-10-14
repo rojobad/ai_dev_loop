@@ -709,6 +709,22 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
             log("ARGS:" + repr(args))
             import hashlib
 
+            is_implementer = "--output-schema" not in args
+            role_session_env = (
+                "FAKE_CODEX_IMPLEMENTER_SESSION_ID"
+                if is_implementer
+                else "FAKE_CODEX_REVIEWER_SESSION_ID"
+            )
+            role_session_id = os.environ.get(role_session_env)
+            if role_session_id is not None:
+                os.environ["FAKE_CODEX_BOOTSTRAP_SESSION_ID"] = role_session_id
+            elif "FAKE_CODEX_BOOTSTRAP_SESSION_ID" not in os.environ:
+                os.environ["FAKE_CODEX_BOOTSTRAP_SESSION_ID"] = (
+                    "019def00-0000-0000-0000-0000000000aa"
+                    if is_implementer
+                    else "019def00-0000-0000-0000-0000000000bb"
+                )
+
             witness_root = os.environ.get("AI_DEV_LOOP_REVIEW_PROMPT_WITNESS_ROOT", "").strip()
             prompt_rel = os.environ.get("AI_DEV_LOOP_REVIEW_PROMPT_REL", "").strip()
             evidence_rel = os.environ.get("AI_DEV_LOOP_REVIEW_EVIDENCE_REL", "").strip()
@@ -718,7 +734,26 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                 if not os.path.isfile(prompt_path) or not os.path.isfile(evidence_path):
                     print("prompt witness missing on disk", file=sys.stderr)
                     sys.exit(92)
-            stdin_prompt = sys.stdin.read()
+            stdin_bytes = sys.stdin.buffer.read()
+            stdin_prompt = stdin_bytes.decode("utf-8")
+            implementer_witness_dir = os.environ.get(
+                "FAKE_CODEX_IMPLEMENTER_STDIN_WITNESS_DIR", ""
+            ).strip()
+            if is_implementer and implementer_witness_dir:
+                os.makedirs(implementer_witness_dir, exist_ok=True)
+                index = len([
+                    name for name in os.listdir(implementer_witness_dir)
+                    if name.endswith(".bin")
+                ])
+                with open(
+                    os.path.join(implementer_witness_dir, f"stdin-{{index:04d}}.bin"), "wb"
+                ) as handle:
+                    handle.write(stdin_bytes)
+                with open(
+                    os.path.join(implementer_witness_dir, f"stdin-{{index:04d}}.argv.json"),
+                    "w", encoding="utf-8"
+                ) as handle:
+                    json.dump(args, handle)
             if witness_root and prompt_rel:
                 prompt_path = os.path.join(witness_root, prompt_rel)
                 on_disk = open(prompt_path, "rb").read()
@@ -754,9 +789,19 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                     ) as handle:
                         handle.write("1" if "resume" in args else "0")
             log("STDIN:" + stdin_prompt)
+            counter_env = (
+                "FAKE_CODEX_IMPLEMENTER_COUNTER"
+                if is_implementer
+                else "FAKE_CODEX_REVIEW_COUNTER"
+            )
             counter_file = os.environ.get(
-                "FAKE_CODEX_REVIEW_COUNTER",
-                os.path.join(os.path.dirname(log_path), "codex_review_counter.txt"),
+                counter_env,
+                os.path.join(
+                    os.path.dirname(log_path),
+                    "codex_implementer_counter.txt"
+                    if is_implementer
+                    else "codex_review_counter.txt",
+                ),
             )
             counter = 0
             try:
@@ -764,14 +809,22 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                     counter = int(handle.read().strip() or "0")
             except (OSError, ValueError):
                 counter = 0
-            sequence = os.environ.get("FAKE_CODEX_REVIEW_SEQUENCE", "").strip()
+            sequence_env = (
+                "FAKE_CODEX_IMPLEMENTER_SEQUENCE"
+                if is_implementer
+                else "FAKE_CODEX_REVIEW_SEQUENCE"
+            )
+            sequence = os.environ.get(sequence_env, "").strip()
             if sequence:
                 modes = [item.strip() for item in sequence.split(",") if item.strip()]
                 mode = modes[min(counter, len(modes) - 1)]
                 with open(counter_file, "w", encoding="utf-8") as handle:
                     handle.write(str(counter + 1))
             else:
-                mode = os.environ.get("FAKE_CODEX_REVIEW_MODE", "no_findings")
+                mode = os.environ.get(
+                    "FAKE_CODEX_IMPLEMENTER_MODE" if is_implementer else "FAKE_CODEX_REVIEW_MODE",
+                    "success" if is_implementer else "no_findings",
+                )
             child_sentinel = os.environ.get("FAKE_CODEX_CHILD_STDOUT_SENTINEL", "")
             if child_sentinel:
                 print(child_sentinel, flush=True)
@@ -792,6 +845,16 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                         file=sys.stderr,
                     )
                     sys.exit(91)
+            if is_implementer:
+                edit_path = os.environ.get("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "").strip()
+                if edit_path:
+                    workspace = args[args.index("--cd") + 1]
+                    target = os.path.join(workspace, edit_path)
+                    parent = os.path.dirname(target)
+                    if parent:
+                        os.makedirs(parent, exist_ok=True)
+                    with open(target, "a", encoding="utf-8") as handle:
+                        handle.write(f"implementer attempt {{counter + 1}}\\n")
             if mode == "sleep":
                 if "resume" not in args:
                     bootstrap_id = os.environ.get(
@@ -893,6 +956,46 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                     file=sys.stderr,
                 )
                 sys.exit(2)
+            if is_implementer and mode == "conflicting_identity":
+                print(
+                    json.dumps(
+                        {{
+                            "type": "thread.started",
+                            "thread_id": "019def00-0000-0000-0000-0000000000a1",
+                        }}
+                    ),
+                    flush=True,
+                )
+                print(
+                    json.dumps(
+                        {{
+                            "type": "thread.started",
+                            "thread_id": "019def00-0000-0000-0000-0000000000a2",
+                        }}
+                    ),
+                    flush=True,
+                )
+                sys.exit(2)
+            if is_implementer:
+                if "resume" not in args:
+                    bootstrap_id = os.environ.get("FAKE_CODEX_BOOTSTRAP_SESSION_ID", "").strip()
+                    if bootstrap_id:
+                        print(
+                            json.dumps({{"type": "thread.started", "thread_id": bootstrap_id}}),
+                            flush=True,
+                        )
+                print(
+                    json.dumps(
+                        {{
+                            "type": "item.completed",
+                            "item": {{
+                                "type": "agent_message",
+                                "text": f"implementation turn {{counter + 1}} complete",
+                            }},
+                        }}
+                    )
+                )
+                sys.exit(0)
             if mode == "invalid_json":
                 if "resume" not in args:
                     bootstrap_id = os.environ.get(
@@ -966,7 +1069,7 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
                     "findings_count": 1,
                     "highest_severity": "P1",
                     "review_markdown": markdown_titles[pick] + "\\n\\nFound issue." + large_pad,
-                    "cursor_fix_prompt": fix_prompts[pick],
+                    "cursor_fix_prompt": os.environ.get("FAKE_CODEX_FIX_PROMPT", fix_prompts[pick]),
                     "tests_status": "skipped_findings_present",
                     "summary": "One actionable finding.",
                 }}
@@ -1191,6 +1294,10 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
     _write_executable(bin_dir / "codex", codex_script)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("FAKE_CODEX_REVIEW_COUNTER", str(tmp_path / "codex_review_counter.txt"))
+    monkeypatch.setenv(
+        "FAKE_CODEX_IMPLEMENTER_COUNTER",
+        str(tmp_path / "codex_implementer_counter.txt"),
+    )
     monkeypatch.setenv("FAKE_AGENT_RUN_COUNTER", str(tmp_path / "agent_run_counter.txt"))
     monkeypatch.setenv("FAKE_AGENT_VERSION_FILE", str(agent_version_file))
     monkeypatch.setenv("FAKE_CODEX_VERSION_FILE", str(codex_version_file))
@@ -1202,6 +1309,7 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
         "agent_log": agent_log,
         "codex_log": codex_log,
         "codex_review_counter": tmp_path / "codex_review_counter.txt",
+        "codex_implementer_counter": tmp_path / "codex_implementer_counter.txt",
         "agent_models_file": agent_models_file,
         "codex_models_file": codex_models_file,
     }

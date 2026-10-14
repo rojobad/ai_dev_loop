@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Annotated, Literal
 
-from pydantic import Discriminator, Field, Tag, TypeAdapter, field_validator, model_validator
+from pydantic import (
+    Discriminator,
+    Field,
+    Tag,
+    TypeAdapter,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from ai_dev_loop.scheduler.domain.admission_contract import (
     ADMISSION_BLOCKED_EVENT_KIND,
@@ -45,6 +54,8 @@ STAGING_COMPLETED_EVENT_KIND = "staging_completed"
 STAGING_BLOCKED_EVENT_KIND = "staging_blocked"
 AWAITING_CODEX_REVIEW_EVENT_KIND = "awaiting_codex_review_entered"
 CODEX_REVIEWER_BOUND_EVENT_KIND = "codex_reviewer_bound"
+CODEX_IMPLEMENTER_TURN_COMPLETED_EVENT_KIND = "codex_implementer_turn_completed"
+CODEX_IMPLEMENTER_BLOCKED_EVENT_KIND = "codex_implementer_blocked"
 CODEX_BOOTSTRAP_UNCERTAIN_EVENT_KIND = "codex_bootstrap_uncertain"
 CODEX_REVIEW_SCHEDULED_EVENT_KIND = "codex_review_scheduled"
 CODEX_REVIEW_COMPLETED_EVENT_KIND = "codex_review_completed"
@@ -435,6 +446,37 @@ class CodexReviewerBoundEvent(DomainModel):
         return value
 
 
+class CodexImplementerTurnCompletedEvent(DomainModel):
+    kind: str = Field(default=CODEX_IMPLEMENTER_TURN_COMPLETED_EVENT_KIND)
+    run_id: str
+    iteration: int = Field(ge=1)
+    turn: Literal["initial", "correction"]
+    implementer_session_id_prefix: NonEmptyStr
+    binding_artifact_path: NonEmptyStr
+    binding_artifact_sha256: Sha256Hex
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_codex_implementer_turn_completed(cls, value: str) -> str:
+        if value != CODEX_IMPLEMENTER_TURN_COMPLETED_EVENT_KIND:
+            raise ValueError("kind must be codex_implementer_turn_completed")
+        return value
+
+
+class CodexImplementerBlockedEvent(DomainModel):
+    kind: str = Field(default=CODEX_IMPLEMENTER_BLOCKED_EVENT_KIND)
+    run_id: str
+    block_reason_kind: NonEmptyStr
+    block_reason_summary: NonEmptyStr
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_codex_implementer_blocked(cls, value: str) -> str:
+        if value != CODEX_IMPLEMENTER_BLOCKED_EVENT_KIND:
+            raise ValueError("kind must be codex_implementer_blocked")
+        return value
+
+
 class CodexBootstrapUncertainEvent(DomainModel):
     kind: str = Field(default=CODEX_BOOTSTRAP_UNCERTAIN_EVENT_KIND)
     run_id: str
@@ -513,6 +555,20 @@ class CodexUsageCapacityDetectedEvent(DomainModel):
         None
     )
     routing_failure_post_probe_reason: NonEmptyStr | None = None
+    capacity_role: Literal["implementer", "reviewer"] | None = None
+    capacity_turn: Literal["initial", "correction"] | None = None
+
+    @model_serializer(mode="wrap")
+    def _serialize_capacity_event(
+        self,
+        handler: Callable[[CodexUsageCapacityDetectedEvent], dict[str, object]],
+    ) -> dict[str, object]:
+        data = handler(self)
+        if self.capacity_role is None:
+            data.pop("capacity_role", None)
+        if self.capacity_turn is None:
+            data.pop("capacity_turn", None)
+        return data
 
     @field_validator("routing_auto_retry_authorizations_used", mode="before")
     @classmethod
@@ -718,6 +774,17 @@ class CodexCapacityAvailableEvent(DomainModel):
     kind: str = Field(default=CODEX_CAPACITY_AVAILABLE_EVENT_KIND)
     run_id: str
     review_iteration: int
+    capacity_role: Literal["implementer", "reviewer"] | None = None
+
+    @model_serializer(mode="wrap")
+    def _serialize_capacity_available(
+        self,
+        handler: Callable[[CodexCapacityAvailableEvent], dict[str, object]],
+    ) -> dict[str, object]:
+        data = handler(self)
+        if self.capacity_role is None:
+            data.pop("capacity_role", None)
+        return data
 
     @field_validator("kind")
     @classmethod
@@ -1022,6 +1089,11 @@ SchedulerEvent = Annotated[
     | Annotated[StagingBlockedEvent, Tag(STAGING_BLOCKED_EVENT_KIND)]
     | Annotated[AwaitingCodexReviewEnteredEvent, Tag(AWAITING_CODEX_REVIEW_EVENT_KIND)]
     | Annotated[CodexReviewerBoundEvent, Tag(CODEX_REVIEWER_BOUND_EVENT_KIND)]
+    | Annotated[
+        CodexImplementerTurnCompletedEvent,
+        Tag(CODEX_IMPLEMENTER_TURN_COMPLETED_EVENT_KIND),
+    ]
+    | Annotated[CodexImplementerBlockedEvent, Tag(CODEX_IMPLEMENTER_BLOCKED_EVENT_KIND)]
     | Annotated[CodexBootstrapUncertainEvent, Tag(CODEX_BOOTSTRAP_UNCERTAIN_EVENT_KIND)]
     | Annotated[CodexReviewScheduledEvent, Tag(CODEX_REVIEW_SCHEDULED_EVENT_KIND)]
     | Annotated[CodexReviewCompletedEvent, Tag(CODEX_REVIEW_COMPLETED_EVENT_KIND)]

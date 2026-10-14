@@ -41,6 +41,11 @@ and `docs/operacion/estado-artefactos.md`.
   `failed` status; do not impose `RunStatus`/`ALLOWED_STATUS_TRANSITIONS` on them.
 - Operational retries retain the review iteration. Completed-review counters
   advance only for authenticated completed reviews, not attempted processes.
+- `waiting_codex_capacity` is role-bound when created by a current run. Persist
+  the exact pending role, initial/correction turn, prompt hash, authenticated
+  identity/wait evidence, and terminated attempt. Historical role-absent states
+  retain reviewer semantics. Capacity availability may schedule one matching
+  retry; it does not itself complete a turn or review.
 - Preserve idempotent explicit transitions such as `scheduler extend` from
   `max_iterations_reached`; a blanket ban on terminal-state transitions would
   contradict that implemented authorization.
@@ -76,9 +81,10 @@ and `docs/operacion/estado-artefactos.md`.
 - At changed boundaries, connect durable intent, authorized effect, and verified
   postcondition to actual restart/abort callers. Test convergence after outcomes
   become known as well as safety while outcomes are uncertain.
-- Persist the Cursor chat before dispatch and bind reviewer B from authenticated
-  bootstrap evidence. Missing/conflicting identity must not cause silent
-  creation of replacement agents.
+- Persist the Cursor chat before dispatch, or bind the Codex implementer from
+  authenticated bootstrap evidence, and bind reviewer B independently at first
+  review. Missing/conflicting identity must not cause silent creation of
+  replacement agents.
 - Preserve frozen repository identity, reviewed artifacts, and exact prompts
   required by the supported checkpoint. Do not add continuous clean-baseline
   requirements to normal implementation or partial-work continuation.

@@ -139,8 +139,10 @@ rechazan.
 
 El sandbox del implementer Codex queda congelado en `workspace-write`. La política
 de aprobación no interactiva queda congelada en `never`. No se acepta un bypass.
-La selección Codex se puede congelar en `scheduler submit`, pero el dispatch de
-esa implementación todavía no está disponible: el scheduler no lanza el proceso.
+En runs standalone el scheduler lanza la implementación inicial y reanuda la
+misma sesión autenticada para correcciones. Modelo, effort, timeout e identidad
+son independientes del reviewer. Los manifests de secuencia v1 siguen siendo
+Cursor-only; no existe cambio de provider durante el run.
 
 Los contextos antiguos sin metadata de implementer se leen como Cursor. Los runs
 nuevos persisten el provider de forma explícita.
@@ -151,7 +153,7 @@ nuevos persisten el provider de forma explícita.
 | --- | --- | --- |
 | `max_review_iterations` | `3` | Numero maximo de reviews Codex, incluyendo el primero. |
 | `require_clean_worktree` | `true` | Se congela en submit; la admision one-shot ocurre en el primer tick. |
-| `stage_mode` | `all` | Solo `all` esta soportado (`git add -A` tras Cursor). |
+| `stage_mode` | `all` | Solo `all` esta soportado (`git add -A` tras un turno de implementación exitoso). |
 | `cursor_timeout_minutes` | `90` | Timeout por turno Cursor. |
 | `codex_timeout_minutes` | `90` | Timeout por review Codex. |
 

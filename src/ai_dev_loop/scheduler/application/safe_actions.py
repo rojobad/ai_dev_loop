@@ -6,16 +6,20 @@ import sqlite3
 
 from ai_dev_loop.scheduler.application.contracts import (
     SafeNextAction,
+    SafeNextActionKind,
     aborted_pending_resource_cleanup_safe_next_action,
     aborted_pending_termination_safe_next_action,
     safe_next_action_for_state_kind,
     scheduler_status_projection_from_state,
+    waiting_codex_capacity_safe_next_action,
     waiting_codex_review_retry_safe_next_action,
 )
 from ai_dev_loop.scheduler.domain.state import (
     AbortedState,
     SchedulerState,
+    WaitingCodexCapacityState,
     WaitingCodexReviewRetryState,
+    is_codex_implementer_reservation_hold,
 )
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
@@ -25,6 +29,18 @@ def safe_next_action_for_scheduler_state(
     conn: sqlite3.Connection,
     state: SchedulerState,
 ) -> SafeNextAction:
+    if (
+        is_codex_implementer_reservation_hold(state)
+        and store.get_reservation_for_run(conn, state.run_id) is not None
+    ):
+        return SafeNextAction(
+            kind=SafeNextActionKind.SCHEDULER_ABORT,
+            command=(
+                f"Inspect protected implementer evidence for run {state.run_id}; "
+                f"ai_dev_loop scheduler abort {state.run_id} explicitly releases "
+                "the repository hold once attempt termination is resolved."
+            ),
+        )
     if isinstance(state, AbortedState):
         if store.has_unresolved_abort_hold(conn, state.run_id):
             return aborted_pending_termination_safe_next_action(state.run_id)
@@ -39,6 +55,13 @@ def safe_next_action_for_scheduler_state(
             routing_auto_retry_exhausted=state.codex.routing_auto_retry_exhausted,
             routing_auto_retry_authorizations_used=state.codex.routing_auto_retry_authorizations_used,
         )
+    if isinstance(state, WaitingCodexCapacityState):
+        continuation = state.codex.capacity_continuation
+        if continuation is not None and continuation.role == "implementer":
+            return waiting_codex_capacity_safe_next_action(
+                state.run_id,
+                capacity_role="implementer",
+            )
     return safe_next_action_for_state_kind(
         state.kind,
         state.run_id,

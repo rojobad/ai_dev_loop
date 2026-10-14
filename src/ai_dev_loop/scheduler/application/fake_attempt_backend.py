@@ -69,7 +69,11 @@ class FakeAgentProcessBackend(AgentProcessBackend):
         return any(
             marker in part
             for part in request.agent_argv
-            for marker in ("cursor_attempt_runner", "codex_attempt_runner")
+            for marker in (
+                "cursor_attempt_runner",
+                "codex_attempt_runner",
+                "codex_implementer_attempt_runner",
+            )
         )
 
     def _execute_cursor_attempt(self, request: LaunchRequest) -> int:

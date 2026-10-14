@@ -33,10 +33,8 @@ from ai_dev_loop.runners.probes import (
     probe_codex_model_compatibility,
 )
 from ai_dev_loop.scheduler.application.contracts import (
-    SafeNextActionKind,
     SchedulerEngineError,
     SchedulerEngineErrorKind,
-    blocked_safe_next_action,
 )
 from ai_dev_loop.scheduler.application.sequence_prepare import (
     SequencePrepareOptions,
@@ -52,6 +50,7 @@ from ai_dev_loop.scheduler.application.submission import (
     submit_run,
 )
 from ai_dev_loop.scheduler.application.tick import TickService
+from ai_dev_loop.scheduler.domain.codex_contract import BOOTSTRAP_CODEX_IMPLEMENTER_EFFECT_KIND
 from ai_dev_loop.scheduler.domain.cursor_contract import CREATE_CHAT_EFFECT_KIND
 from ai_dev_loop.scheduler.domain.implementer import (
     CODEX_IMPLEMENTER_NOT_IMPLEMENTED,
@@ -490,6 +489,8 @@ def _tick_until(
     paths: dict[str, Path],
     repo: Path,
     backend: FakeAgentProcessBackend,
+    *,
+    count: int = 8,
 ) -> None:
     store = SqliteSchedulerStore(paths["db_path"])
     tick = TickService(
@@ -500,11 +501,11 @@ def _tick_until(
         tick_owner_factory=lambda: "tick-phase-27-1",
         attempt_backend=backend,
     )
-    for _ in range(8):
+    for _ in range(count):
         tick.run_once()
 
 
-def test_codex_preflight_blocks_dispatch_without_launching(
+def test_codex_preflight_schedules_implementer_without_cursor_chat(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
     fake_clis: dict[str, Path],
@@ -533,16 +534,9 @@ def test_codex_preflight_blocks_dispatch_without_launching(
         )
     start_run(submitted.run_id, db_path=scheduler_paths["db_path"])
     backend = FakeAgentProcessBackend()
-    _tick_until(scheduler_paths, git_repo, backend)
+    _tick_until(scheduler_paths, git_repo, backend, count=1)
     state = _load_state(scheduler_paths, submitted.run_id)
-    assert state.kind == "blocked"
-    assert state.block_reason_kind == CODEX_IMPLEMENTER_NOT_IMPLEMENTED
-    action = blocked_safe_next_action(
-        submitted.run_id,
-        block_reason_kind=state.block_reason_kind,
-    )
-    assert action.kind == SafeNextActionKind.INSPECT_BLOCKED
-    assert "not available" in action.command
+    assert state.kind == "preflight_complete"
     store = SqliteSchedulerStore(scheduler_paths["db_path"])
     with store.begin_read() as conn:
         kinds = [
@@ -553,6 +547,7 @@ def test_codex_preflight_blocks_dispatch_without_launching(
             )
         ]
     assert CREATE_CHAT_EFFECT_KIND not in kinds
+    assert BOOTSTRAP_CODEX_IMPLEMENTER_EFFECT_KIND in kinds
     assert backend.launch_calls == []
     agent_log = (
         fake_clis["agent_log"].read_text(encoding="utf-8")

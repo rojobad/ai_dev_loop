@@ -20,6 +20,9 @@ from ai_dev_loop.config import (
     CODEX_IMPLEMENTER_SANDBOX,
     CODEX_REVIEW_REASONING_EFFORTS,
 )
+from ai_dev_loop.scheduler.domain.codex_contract import (
+    CODEX_IMPLEMENTER_RESERVATION_HOLD_BLOCK_KINDS,
+)
 from ai_dev_loop.scheduler.domain.codex_routing_policy import (
     FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT,
     ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS,
@@ -412,6 +415,17 @@ class BlockedState(SchedulerRunBase):
         return value
 
 
+def is_codex_implementer_reservation_hold(state: object) -> bool:
+    """Identify the narrow unsafe implementer block that permits explicit abort."""
+
+    return (
+        isinstance(state, BlockedState)
+        and state.context.implementer is not None
+        and state.context.implementer.provider == "codex"
+        and state.block_reason_kind in CODEX_IMPLEMENTER_RESERVATION_HOLD_BLOCK_KINDS
+    )
+
+
 class AdmittedRunCheckpoint(DomainModel):
     """Shared admission checkpoint fields for active scheduler runs."""
 
@@ -420,6 +434,32 @@ class AdmittedRunCheckpoint(DomainModel):
     admitted_at: NonEmptyStr
     admission_status_artifact_path: NonEmptyStr
     admission_status_sha256: Sha256Hex
+
+
+class CodexCapacityContinuation(DomainModel):
+    """Versioned role-bound continuation for one Codex capacity wait.
+
+    Historical waits omit this object and remain reviewer waits.
+    """
+
+    schema_version: Literal[1] = 1
+    role: Literal["implementer", "reviewer"]
+    turn: Literal["initial", "correction"]
+    prompt_sha256: Sha256Hex
+    prompt_artifact_path: NonEmptyStr
+    session_id: UuidSessionId | None = None
+    wait_intent_path: NonEmptyStr
+    wait_intent_sha256: Sha256Hex
+    partial_output_path: NonEmptyStr | None = None
+    partial_output_sha256: Sha256Hex | None = None
+    terminated_attempt_id: NonEmptyStr
+    no_session_bootstrap: bool = False
+
+    @model_validator(mode="after")
+    def partial_output_binding_complete(self) -> CodexCapacityContinuation:
+        if bool(self.partial_output_path) != bool(self.partial_output_sha256):
+            raise ValueError("partial output path and digest must appear together")
+        return self
 
 
 class CodexWorkflowCheckpoint(DomainModel):
@@ -462,6 +502,23 @@ class CodexWorkflowCheckpoint(DomainModel):
         None
     )
     routing_failure_post_probe_reason: NonEmptyStr | None = None
+    implementer_session_id: UuidSessionId | None = None
+    implementer_binding_artifact_path: NonEmptyStr | None = None
+    implementer_binding_artifact_sha256: Sha256Hex | None = None
+    capacity_continuation: CodexCapacityContinuation | None = None
+    implementer_no_session_bootstrap_retries: int = Field(default=0)
+
+    @model_serializer(mode="wrap")
+    def _serialize_codex_checkpoint(
+        self,
+        handler: Callable[[CodexWorkflowCheckpoint], dict[str, object]],
+    ) -> dict[str, object]:
+        data = handler(self)
+        if self.capacity_continuation is None:
+            data.pop("capacity_continuation", None)
+        if self.implementer_no_session_bootstrap_retries == 0:
+            data.pop("implementer_no_session_bootstrap_retries", None)
+        return data
 
     @field_validator(
         "review_iteration",
@@ -469,6 +526,7 @@ class CodexWorkflowCheckpoint(DomainModel):
         "review_retry_generation",
         "capacity_wait_generation",
         "routing_auto_retry_authorizations_used",
+        "implementer_no_session_bootstrap_retries",
         mode="before",
     )
     @classmethod
@@ -487,6 +545,7 @@ class CodexWorkflowCheckpoint(DomainModel):
         "review_retry_generation",
         "capacity_wait_generation",
         "routing_auto_retry_authorizations_used",
+        "implementer_no_session_bootstrap_retries",
     )
     @classmethod
     def non_negative_review_counters_int(cls, value: int) -> int:
@@ -531,6 +590,14 @@ class CodexWorkflowCheckpoint(DomainModel):
 
     @model_validator(mode="after")
     def routing_auto_retry_fields_consistent(self) -> CodexWorkflowCheckpoint:
+        assert_distinct_implementer_and_reviewer_sessions(
+            self.implementer_session_id,
+            self.reviewer_session_id,
+        )
+        if bool(self.implementer_binding_artifact_path) != bool(
+            self.implementer_binding_artifact_sha256
+        ):
+            raise ValueError("implementer binding artifact path and digest must appear together")
         if isinstance(self.routing_auto_retry_authorizations_used, bool):
             raise ValueError("routing_auto_retry_authorizations_used must be an integer")
         if self.routing_auto_retry_authorizations_used < 0:
@@ -634,11 +701,22 @@ class PreflightCompleteState(SchedulerRunBase):
     schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
     checkpoint: AdmittedRunCheckpoint
     cursor: CursorWorkflowCheckpoint = Field(default_factory=CursorWorkflowCheckpoint)
+    codex: CodexWorkflowCheckpoint | None = None
 
     @field_validator("schema_version")
     @classmethod
     def schema_version_is_four(cls, value: int) -> int:
         return _schema_version_is_four(value)
+
+    @model_serializer(mode="wrap")
+    def _serialize_preflight_complete(
+        self,
+        handler: Callable[[PreflightCompleteState], dict[str, object]],
+    ) -> dict[str, object]:
+        data = handler(self)
+        if self.codex is None:
+            data.pop("codex", None)
+        return data
 
 
 class CursorReadyState(SchedulerRunBase):
@@ -657,6 +735,10 @@ class CursorReadyState(SchedulerRunBase):
 
     @model_validator(mode="after")
     def chat_id_required(self) -> CursorReadyState:
+        if resolved_implementer_provider(self.context) == "codex":
+            if self.cursor.chat_id:
+                raise ValueError("codex implementer cursor_ready must not bind a Cursor chat")
+            return self
         if not self.cursor.chat_id:
             raise ValueError("cursor_ready requires chat_id")
         return self
@@ -690,7 +772,7 @@ class WaitingUsageLimitState(SchedulerRunBase):
 
 
 class WaitingCodexCapacityState(SchedulerRunBase):
-    """Run waiting for Codex account capacity before resuming the bound reviewer."""
+    """Run waiting for Codex account capacity for its bound pending role."""
 
     kind: Literal["waiting_codex_capacity"] = "waiting_codex_capacity"
     schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
@@ -705,12 +787,15 @@ class WaitingCodexCapacityState(SchedulerRunBase):
 
     @model_validator(mode="after")
     def capacity_wait_fields_required(self) -> WaitingCodexCapacityState:
+        if not self.codex.codex_capacity_wait_started_at:
+            raise ValueError("waiting_codex_capacity requires capacity wait timestamp")
+        continuation = self.codex.capacity_continuation
+        if continuation is not None and continuation.role == "implementer":
+            return self
         if not self.codex.reviewer_session_id:
             raise ValueError("waiting_codex_capacity requires bound reviewer identity")
         if not self.cursor.staged_patch_path or not self.cursor.staged_patch_sha256:
             raise ValueError("waiting_codex_capacity requires staged patch artifacts")
-        if not self.codex.codex_capacity_wait_started_at:
-            raise ValueError("waiting_codex_capacity requires capacity wait timestamp")
         return self
 
 

@@ -32,6 +32,10 @@ from ai_dev_loop.scheduler.application.scheduler_preflight import (
     SchedulerPreflightResult,
 )
 from ai_dev_loop.scheduler.application.tick_fencing import tick_lease_is_active
+from ai_dev_loop.scheduler.domain.codex_contract import (
+    BOOTSTRAP_CODEX_IMPLEMENTER_EFFECT_ID,
+    BOOTSTRAP_CODEX_IMPLEMENTER_EFFECT_KIND,
+)
 from ai_dev_loop.scheduler.domain.cursor_contract import (
     CREATE_CHAT_EFFECT_ID,
     CREATE_CHAT_EFFECT_KIND,
@@ -50,15 +54,10 @@ from ai_dev_loop.scheduler.domain.events import (
     CursorTurnBlockedEvent,
     CursorTurnCompletedEvent,
     CursorUsageLimitDetectedEvent,
-    ImplementerDispatchBlockedEvent,
     PreflightBlockedEvent,
     PreflightCompletedEvent,
     StagingBlockedEvent,
     StagingCompletedEvent,
-)
-from ai_dev_loop.scheduler.domain.implementer import (
-    CODEX_IMPLEMENTER_NOT_IMPLEMENTED,
-    CODEX_IMPLEMENTER_NOT_IMPLEMENTED_SUMMARY,
 )
 from ai_dev_loop.scheduler.domain.reducer import (
     apply_awaiting_codex_review_entered,
@@ -67,7 +66,6 @@ from ai_dev_loop.scheduler.domain.reducer import (
     apply_cursor_turn_blocked,
     apply_cursor_turn_completed,
     apply_cursor_usage_limit_detected,
-    apply_implementer_dispatch_blocked,
     apply_preflight_blocked,
     apply_preflight_completed,
     apply_staging_blocked,
@@ -392,55 +390,6 @@ class CursorWorkflowService:
             completed_event = PreflightCompletedEvent(run_id=run_id)
             now_text = commit_now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             completed_state = apply_preflight_completed(state, completed_event, now_text=now_text)
-            if resolved_implementer_provider(state.context) == "codex":
-                dispatch_blocked = ImplementerDispatchBlockedEvent(
-                    run_id=run_id,
-                    block_reason_kind=CODEX_IMPLEMENTER_NOT_IMPLEMENTED,
-                    block_reason_summary=CODEX_IMPLEMENTER_NOT_IMPLEMENTED_SUMMARY,
-                )
-                blocked_state = apply_implementer_dispatch_blocked(
-                    completed_state,
-                    dispatch_blocked,
-                    now_text=now_text,
-                )
-                completed_event_id = self._event_id_factory()
-                blocked_event_id = self._event_id_factory()
-                sequence = self.store.next_event_sequence(conn, run_id)
-                self.store.append_event(
-                    conn,
-                    event_id=completed_event_id,
-                    run_id=run_id,
-                    sequence=sequence,
-                    event=completed_event,
-                    now=commit_now,
-                )
-                self.store.append_event(
-                    conn,
-                    event_id=blocked_event_id,
-                    run_id=run_id,
-                    sequence=sequence + 1,
-                    event=dispatch_blocked,
-                    now=commit_now,
-                )
-                if not self.store.compare_and_swap_state(
-                    conn,
-                    run_id=run_id,
-                    expected_version=version,
-                    new_state=blocked_state,
-                    now=commit_now,
-                ):
-                    return TickRunReceipt(run_id=run_id, action="preflight_cas_lost")
-                self.store.complete_effect_by_id(conn, dispatch_id=dispatch_id, now=commit_now)
-                self.store.release_reservation(
-                    conn,
-                    worktree_key=blocked_state.context.repository.worktree_key,
-                    now=commit_now,
-                )
-                return TickRunReceipt(
-                    run_id=run_id,
-                    action="blocked",
-                    detail=CODEX_IMPLEMENTER_NOT_IMPLEMENTED,
-                )
             event_id = self._event_id_factory()
             sequence = self.store.next_event_sequence(conn, run_id)
             self.store.append_event(
@@ -469,14 +418,26 @@ class CursorWorkflowService:
             ):
                 return TickRunReceipt(run_id=run_id, action="preflight_stale")
             next_dispatch = self._dispatch_id_factory()
+            if resolved_implementer_provider(state.context) == "codex":
+                effect_id = BOOTSTRAP_CODEX_IMPLEMENTER_EFFECT_ID
+                effect_kind = BOOTSTRAP_CODEX_IMPLEMENTER_EFFECT_KIND
+                effect_payload = {
+                    "iteration": 1,
+                    "turn": "initial",
+                    "prompt_path": state.context.plan_prompt.prompt_artifact_path,
+                }
+            else:
+                effect_id = CREATE_CHAT_EFFECT_ID
+                effect_kind = CREATE_CHAT_EFFECT_KIND
+                effect_payload = {}
             self.store.insert_effect(
                 conn,
                 dispatch_id=next_dispatch,
                 source_event_id=event_id,
                 run_id=run_id,
-                effect_id=CREATE_CHAT_EFFECT_ID,
-                effect_kind=CREATE_CHAT_EFFECT_KIND,
-                effect_payload={},
+                effect_id=effect_id,
+                effect_kind=effect_kind,
+                effect_payload=effect_payload,
                 available_at=commit_now,
                 claimed_run_version=completed_state.version,
                 now=commit_now,
@@ -566,6 +527,16 @@ class CursorWorkflowService:
                     detail="pre_staging_validation_failed",
                 )
             try:
+                prompt_path = (
+                    state.codex.latest_correction_envelope_path
+                    if resolved_implementer_provider(state.context) == "codex"
+                    and state.cursor.iteration > 1
+                    and state.codex.latest_correction_envelope_path
+                    else (
+                        state.cursor.continuation_envelope_path
+                        or state.context.plan_prompt.prompt_artifact_path
+                    )
+                )
                 staging = run_git_staging(
                     run_state,
                     run_directory,
@@ -573,10 +544,7 @@ class CursorWorkflowService:
                     iteration_number=iteration,
                     cursor_started_at=now,
                     cursor_exit_code=0,
-                    prompt_path=(
-                        state.cursor.continuation_envelope_path
-                        or state.context.plan_prompt.prompt_artifact_path
-                    ),
+                    prompt_path=prompt_path,
                 )
             except Exception as exc:
                 event = StagingBlockedEvent(
