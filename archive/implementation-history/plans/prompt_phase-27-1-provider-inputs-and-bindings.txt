@@ -1,0 +1,5 @@
+Please implement archive/implementation-history/plans/phase-27-1-provider-inputs-and-bindings.md and its approved shared contract phase-27-dual-implementer-contract.md. Follow AGENTS.md and the Cursor rules/skills listed in the plan. Preserve the architecture guardrails, verify accepted prerequisites, add the required automated contract tests, and stop dependent work if an OpenQuestions or prerequisite conflict needs a decision.
+
+Pay special attention to distinct implementer/reviewer identities, immutable inputs and historical Cursor compatibility, exact correction bytes, and role-aware waiting_codex_capacity continuation with partial work preserved. Do not modify ai_dev_loop.yaml or planning/review skills. Do not install packages/timers, invoke real models in tests, or make Git commits yourself; the scheduler owns authorized staging and non-final checkpoints.
+
+Report contract IDs, real production paths, independent test evidence and exact focused validation results. Identify unfinished mandatory items and the separate pending repository-wide pipeline gate. Implement this phase only; no Phase 24/25/26 work or deferred recovery parity.

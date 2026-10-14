@@ -21,3 +21,6 @@ archive/implementation-history/plans/prompt_*.txt
 
 # Portable Phase 26 sequence handoff inputs.
 !archive/implementation-history/plans/prompt_phase-26-*.txt
+
+# Portable Phase 27 dual-implementer handoff inputs.
+!archive/implementation-history/plans/prompt_phase-27-*.txt

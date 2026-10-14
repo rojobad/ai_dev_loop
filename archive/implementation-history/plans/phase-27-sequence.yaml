@@ -1,0 +1,42 @@
+# Bootstrap uses installed v1 scheduler and Cursor for all three phases.
+schema_version: 1
+name: phase-27-dual-implementer-bootstrap
+phases:
+- name: phase-27-1-provider-inputs-and-bindings
+  plan_path: archive/implementation-history/plans/phase-27-1-provider-inputs-and-bindings.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-27-1-provider-inputs-and-bindings.txt
+  cursor:
+    model: grok-4.7-high
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: high
+  workflow:
+    max_review_iterations: 7
+    cursor_timeout_minutes: 90
+    codex_timeout_minutes: 90
+  commit_message: 'feat: add Phase 27.1 dual implementer support'
+- name: phase-27-2-codex-turns-and-capacity
+  plan_path: archive/implementation-history/plans/phase-27-2-codex-turns-and-capacity.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-27-2-codex-turns-and-capacity.txt
+  cursor:
+    model: grok-4.7-high
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: high
+  workflow:
+    max_review_iterations: 7
+    cursor_timeout_minutes: 90
+    codex_timeout_minutes: 90
+  commit_message: 'feat: add Phase 27.2 dual implementer support'
+- name: phase-27-3-sequences-and-release-acceptance
+  plan_path: archive/implementation-history/plans/phase-27-3-sequences-and-release-acceptance.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-27-3-sequences-and-release-acceptance.txt
+  cursor:
+    model: grok-4.7-high
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: high
+  workflow:
+    max_review_iterations: 7
+    cursor_timeout_minutes: 90
+    codex_timeout_minutes: 90
