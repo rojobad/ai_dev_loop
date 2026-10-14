@@ -1,0 +1,414 @@
+<div id="hub-dashboard-preview">
+  <header class="hub-chrome">
+    <div class="hub-brand">AI Dev Loop Hub <span>Dashboard</span></div>
+    <span class="hub-sample">Illustrative data · not live</span>
+  </header>
+  <main class="hub-main">
+    <div class="hub-heading">
+      <div><h1>Project overview</h1><p>Observed runs, sequence progress and machine capacity</p></div>
+      <label class="hub-project-label">Project
+        <select class="cursor-interaction" id="hub-project"><option value="all">All projects</option><option value="ai-dev-loop-hub">ai-dev-loop-hub</option><option value="CryptoSentinel">CryptoSentinel</option><option value="data-pipeline">data-pipeline</option></select>
+      </label>
+    </div>
+    <div id="hub-time-range" class="hub-time-range" role="group" aria-label="Inspection time range">
+      <label>From<input id="hub-range-from" type="datetime-local" required value="2026-09-21T00:00"></label>
+      <label>Until<input id="hub-range-until" type="datetime-local" required value="2026-10-14T00:00"></label>
+      <button id="hub-apply-range" type="button" class="hub-button cursor-interaction">Apply range</button>
+      <span>America/La_Paz · From inclusive, Until exclusive</span>
+    </div>
+    <p id="hub-range-error" role="alert" hidden></p>
+    <p id="hub-range-summary" aria-live="polite"></p>
+    <div class="hub-metrics" aria-live="polite">
+      <div><span>Runs started in range</span><strong id="hub-run-count">76</strong></div>
+      <div><span>Completed</span><strong id="hub-completed-count">55</strong></div>
+      <div><span>Completed with residual risk</span><strong id="hub-risk-count">14</strong></div>
+      <div><span>Waiting / blocked</span><strong id="hub-attention-count">5</strong></div>
+    </div>
+    <div class="hub-panels">
+      <section class="hub-panel hub-projects-panel">
+        <div class="hub-panel-heading"><div><h2>Runs by project</h2><p>First execution launch within the selected range</p></div><a href="https://echarts.apache.org/examples/en/editor.html?c=bar-y-category-stack" target="_blank" rel="noopener noreferrer">ECharts example ↗</a></div>
+        <div class="hub-chart" id="hub-project-chart" role="img" aria-label="Stacked bars of run states for three illustrative projects"></div>
+      </section>
+      <section class="hub-panel">
+        <div class="hub-panel-heading"><div><h2>Codex capacity</h2><p>Latest workstation-wsl observation · not time filtered</p></div><a href="https://echarts.apache.org/examples/en/editor.html?c=gauge-progress" target="_blank" rel="noopener noreferrer">Example ↗</a></div>
+        <div class="hub-chart" id="hub-capacity-chart" role="img" aria-label="Illustrative capacity: 64 percent remaining in the five-hour window and 27 percent in the weekly window"></div>
+        <div class="hub-capacity-caption"><span>5-hour window · resets in 2h 10m</span><span>Weekly window · resets in 3d</span></div>
+      </section>
+      <section class="hub-panel hub-full" id="hub-phase-panel">
+        <div class="hub-panel-heading"><div><h2>Sequence &amp; run map</h2><p id="hub-map-summary">Started runs matching the project and time range</p></div><a href="https://echarts.apache.org/examples/en/editor.html?c=heatmap-cartesian" target="_blank" rel="noopener noreferrer">ECharts example ↗</a></div>
+        <div class="hub-phase-chart" id="hub-phase-chart" role="img" aria-label="Illustrative started runs grouped by project and sequence; each cell selects one exact run"></div>
+        <div class="hub-phase-legend"><span><i class="hub-completed"></i>Completed</span><span><i class="hub-risk"></i>Residual risk</span><span><i class="hub-cursor"></i>Running</span><span><i class="hub-waiting"></i>Waiting</span><span><i class="hub-blocked"></i>Blocked</span><label class="hub-local-hint">Inspect run <select class="cursor-interaction" id="hub-phase-select" aria-label="Run to inspect"></select></label></div>
+        <p id="hub-selected-run-summary"></p>
+      </section>
+      <section class="hub-panel hub-full">
+        <div class="hub-panel-heading"><div><h2 id="hub-timeline-heading">Attempt timeline</h2><p id="hub-timeline-summary" aria-live="polite">Select a run from the map</p></div><a href="https://echarts.apache.org/examples/en/editor.html?c=custom-profile" target="_blank" rel="noopener noreferrer">ECharts example ↗</a></div>
+        <div class="hub-chart hub-timeline-chart" id="hub-timeline-chart" role="img" aria-label="Illustrative Cursor and reviewer attempts on one elapsed-time axis"></div>
+        <div id="hub-attempt-links" class="hub-attempt-links" aria-label="Inspect an attempt"></div>
+      </section>
+      <section class="hub-panel" id="hub-activity-panel">
+        <div class="hub-panel-heading"><div><h2>Activity</h2><p id="hub-activity-description">Runs submitted per day · 21 Sep–13 Oct 2026</p></div><a href="https://echarts.apache.org/examples/en/editor.html?c=calendar-heatmap" target="_blank" rel="noopener noreferrer">Example ↗</a></div>
+        <label class="hub-activity-controls" for="hub-activity-metric">Measure
+          <select class="cursor-interaction" id="hub-activity-metric"><option value="runs">Runs submitted</option><option value="rounds">Review rounds</option><option value="hours">Process hours</option></select>
+        </label>
+        <div class="hub-chart" id="hub-activity-chart" role="img" aria-label="Illustrative calendar heatmap of runs submitted per day"></div>
+        <div class="hub-activity-total" id="hub-activity-total" aria-live="polite">76 runs submitted</div>
+        <p id="hub-activity-definition">Date of submission · counts once per run</p>
+      </section>
+      <section class="hub-panel">
+        <div class="hub-panel-heading"><div><h2>Project workload</h2><p>Area = started runs in range · sequence bindings preserved</p></div><a href="https://echarts.apache.org/examples/en/editor.html?c=treemap-simple" target="_blank" rel="noopener noreferrer">Example ↗</a></div>
+        <div class="hub-chart" id="hub-workload-chart" role="img" aria-label="Illustrative treemap grouping runs by project and sequence, with standalone runs separate"></div>
+      </section>
+    </div>
+    <div class="hub-footer">Sample observations · content on request · capacity belongs to the machine</div>
+  </main>
+  <dialog id="hub-attempt-modal" aria-labelledby="hub-attempt-title" aria-describedby="hub-attempt-origin">
+    <div class="hub-modal-heading">
+      <div><h2 id="hub-attempt-title">Attempt details</h2><p id="hub-attempt-origin">Illustrative attempt · content loads only on request</p></div>
+      <button type="button" class="hub-button cursor-interaction" id="hub-attempt-close">Close</button>
+    </div>
+    <dl id="hub-attempt-facts" class="hub-attempt-facts"></dl>
+    <div class="hub-content-buttons" aria-label="Load attempt content">
+      <button type="button" class="hub-button cursor-interaction" id="hub-load-prompt">Load prompt</button>
+      <button type="button" class="hub-button cursor-interaction" id="hub-load-stdout">Load stdout</button>
+      <button type="button" class="hub-button cursor-interaction" id="hub-load-stderr">Load stderr</button>
+    </div>
+    <p id="hub-prompt-origin"></p>
+    <p id="hub-no-content">Choose a content source above.</p>
+    <section id="hub-attempt-content" hidden aria-label="Selected attempt content">
+      <div class="hub-content-heading"><h3 id="hub-content-title">Content</h3><span id="hub-content-status" aria-live="polite"></span></div>
+      <pre id="hub-content-text"></pre>
+      <div class="hub-content-footer"><span id="hub-content-meta"></span><button type="button" class="hub-button cursor-interaction" id="hub-load-more" hidden>Load next chunk</button></div>
+    </section>
+  </dialog>
+</div>
+<style>
+  #hub-dashboard-preview { color-scheme: light dark; --hub-bg: light-dark(#f5f7fb,#101721); --hub-panel: light-dark(#fff,#192330); --hub-text: light-dark(#1d2c41,#e5edf8); --hub-muted: light-dark(#56647a,#a6b6cb); --hub-border: light-dark(#e0e6ef,#304155); --hub-track: light-dark(#e5ebf3,#344457); --hub-blue: light-dark(#3679d8,#80b2f6); --hub-completed: light-dark(#187d67,#5bc9aa); --hub-risk: light-dark(#b47613,#eabe69); --hub-waiting: light-dark(#8159b4,#b89be8); --hub-blocked: light-dark(#c14b5b,#f08d99); --hub-review: light-dark(#8551b4,#b599da); background: var(--hub-bg); color: var(--hub-text); font: 14px/1.5 system-ui,sans-serif; border-radius: 14px; overflow: hidden; }
+  #hub-dashboard-preview * { box-sizing: border-box; }
+  #hub-dashboard-preview .hub-chrome { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 17px 24px; background: var(--hub-panel); border-bottom: 1px solid var(--hub-border); }
+  #hub-dashboard-preview .hub-brand { font-weight: 500; letter-spacing: -.2px; }
+  #hub-dashboard-preview .hub-brand span { color: var(--hub-muted); padding-left: 18px; font-weight: 400; }
+  #hub-dashboard-preview .hub-sample { color: var(--hub-muted); font-size: 12px; }
+  #hub-dashboard-preview .hub-main { padding: 24px; }
+  #hub-dashboard-preview h1, #hub-dashboard-preview h2, #hub-dashboard-preview p { margin: 0; }
+  #hub-dashboard-preview h1 { font-size: 23px; font-weight: 500; letter-spacing: -.6px; }
+  #hub-dashboard-preview h2 { font-size: 15px; font-weight: 500; }
+  #hub-dashboard-preview p { font-size: 12px; color: var(--hub-muted); margin-top: 4px; }
+  #hub-dashboard-preview .hub-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+  #hub-dashboard-preview .hub-project-label { display: flex; flex-direction: column; color: var(--hub-muted); gap: 4px; font-size: 12px; }
+  #hub-dashboard-preview .hub-time-range { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-top: 20px; }
+  #hub-dashboard-preview .hub-time-range label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--hub-muted); min-width: 0; }
+  #hub-dashboard-preview .hub-time-range input { font: inherit; font-size: 14px; padding: 7px 10px; min-height: 38px; max-width: 100%; border: 1px solid var(--hub-border); border-radius: 7px; background: var(--hub-panel); color: var(--hub-text); }
+  #hub-dashboard-preview .hub-time-range span { font-size: 12px; color: var(--hub-muted); padding-bottom: 9px; }
+  #hub-dashboard-preview #hub-range-summary, #hub-dashboard-preview #hub-range-error { margin-top: 10px; }
+  #hub-dashboard-preview #hub-range-error { color: var(--hub-blocked); }
+  #hub-dashboard-preview .hub-local-hint { min-width: 0; max-width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  #hub-dashboard-preview #hub-phase-select { max-width: min(430px,100%); min-width: 0; width: 350px; }
+  #hub-dashboard-preview select { color: var(--hub-text); background: var(--hub-panel); border: 1px solid var(--hub-border); border-radius: 7px; padding: 7px 28px 7px 10px; font: inherit; font-size: 14px; min-height: 38px; }
+  #hub-dashboard-preview .hub-metrics { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 18px; margin: 24px 0; }
+  #hub-dashboard-preview .hub-metrics span { display: block; color: var(--hub-muted); font-size: 12px; }
+  #hub-dashboard-preview .hub-metrics strong { display: block; font-size: 27px; font-weight: 500; font-variant-numeric: tabular-nums; }
+  #hub-dashboard-preview .hub-panels { display: grid; grid-template-columns: minmax(0,1.15fr) minmax(0,1fr); gap: 16px; }
+  #hub-dashboard-preview .hub-panel { background: var(--hub-panel); border: 1px solid var(--hub-border); border-radius: 10px; padding: 17px 18px 12px; min-width: 0; }
+  #hub-dashboard-preview .hub-full { grid-column: 1/-1; }
+  #hub-dashboard-preview .hub-panel-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+  #hub-dashboard-preview a { color: var(--hub-muted); font-size: 11px; text-decoration: underline; text-underline-offset: 3px; flex-shrink: 0; }
+  #hub-dashboard-preview .hub-chart { width: 100%; height: 234px; margin-top: 10px; }
+  #hub-dashboard-preview .hub-phase-chart { width: 100%; height: 106px; margin-top: 6px; }
+  #hub-dashboard-preview .hub-phase-legend { display: flex; gap: 15px; flex-wrap: wrap; color: var(--hub-muted); font-size: 12px; }
+  #hub-dashboard-preview .hub-phase-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  #hub-dashboard-preview .hub-phase-legend i { width: 9px; height: 9px; border-radius: 2px; }
+  #hub-dashboard-preview .hub-completed { background: var(--hub-completed); }
+  #hub-dashboard-preview .hub-risk { background: var(--hub-risk); }
+  #hub-dashboard-preview .hub-cursor { background: var(--hub-blue); }
+  #hub-dashboard-preview .hub-planned { background: var(--hub-track); }
+  #hub-dashboard-preview .hub-waiting { background: var(--hub-waiting); }
+  #hub-dashboard-preview .hub-blocked { background: var(--hub-blocked); }
+  #hub-dashboard-preview .hub-local-hint { margin-left: auto; }
+  #hub-dashboard-preview .hub-capacity-caption { display: flex; justify-content: space-around; gap: 12px; text-align: center; font-size: 11px; color: var(--hub-muted); }
+  #hub-dashboard-preview .hub-timeline-chart { height: 250px; }
+  #hub-dashboard-preview .hub-attempt-links, #hub-dashboard-preview .hub-content-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+  #hub-dashboard-preview .hub-attempt-links { margin-top: 2px; }
+  #hub-dashboard-preview .hub-button { padding: 8px 12px; border: 1px solid var(--hub-border); border-radius: 7px; background: var(--hub-panel); color: var(--hub-text); font: inherit; min-height: 38px; }
+  #hub-dashboard-preview .hub-button:hover:not(:disabled) { background: var(--hub-bg); }
+  #hub-dashboard-preview .hub-button:disabled { opacity: .5; }
+  #hub-dashboard-preview .hub-button[aria-pressed="true"] { background: var(--hub-track); }
+  #hub-dashboard-preview #hub-attempt-modal { width: min(680px, calc(100% - 28px)); max-height: 88vh; padding: 22px; border: 1px solid var(--hub-border); border-radius: 12px; background: var(--hub-panel); color: var(--hub-text); box-shadow: 0 20px 70px light-dark(#172a4233,#00000088); }
+  #hub-dashboard-preview #hub-attempt-modal::backdrop { background: light-dark(#15283d66,#03081099); }
+  #hub-dashboard-preview .hub-modal-heading, #hub-dashboard-preview .hub-content-heading, #hub-dashboard-preview .hub-content-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  #hub-dashboard-preview .hub-modal-heading h2 { font-size: 18px; }
+  #hub-dashboard-preview .hub-attempt-facts { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px 22px; margin: 20px 0; }
+  #hub-dashboard-preview .hub-attempt-facts dt { color: var(--hub-muted); font-size: 12px; }
+  #hub-dashboard-preview .hub-attempt-facts dd { margin: 2px 0 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+  #hub-dashboard-preview #hub-prompt-origin { margin-top: 8px; }
+  #hub-dashboard-preview #hub-no-content { margin-top: 20px; padding: 18px 0; }
+  #hub-dashboard-preview #hub-attempt-content { margin-top: 18px; }
+  #hub-dashboard-preview .hub-content-heading h3 { margin: 0; font-size: 14px; font-weight: 500; }
+  #hub-dashboard-preview .hub-content-heading span, #hub-dashboard-preview .hub-content-footer span { color: var(--hub-muted); font-size: 12px; }
+  #hub-dashboard-preview #hub-content-text { margin: 10px 0; padding: 14px; background: var(--hub-bg); border-radius: 7px; max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.65 ui-monospace,monospace; }
+  @media(max-width:400px) { #hub-dashboard-preview #hub-attempt-modal { padding: 16px; } #hub-dashboard-preview .hub-attempt-facts { grid-template-columns: minmax(0,1fr); gap: 8px; } }
+  #hub-dashboard-preview .hub-footer { font-size: 11px; color: var(--hub-muted); margin-top: 16px; }
+  #hub-dashboard-preview .hub-activity-controls { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 14px; font-size: 12px; color: var(--hub-muted); }
+  #hub-dashboard-preview .hub-activity-total { font-weight: 500; font-variant-numeric: tabular-nums; margin-top: 4px; }
+  #hub-dashboard-preview #hub-activity-definition { margin-top: 4px; }
+  #hub-dashboard-preview #hub-workload-chart svg text { fill: var(--hub-text) !important; opacity: 1 !important; }
+  @media(max-width:720px) { #hub-dashboard-preview .hub-panels { grid-template-columns: minmax(0,1fr); } #hub-dashboard-preview .hub-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); } #hub-dashboard-preview .hub-main { padding: 16px; } #hub-dashboard-preview .hub-chrome { padding: 13px 16px; flex-wrap: wrap; } #hub-dashboard-preview .hub-local-hint { margin-left: 0; } }
+  @media(max-width:400px) { #hub-dashboard-preview .hub-panel { padding: 14px 10px 12px; } #hub-dashboard-preview .hub-brand span { padding-left: 8px; } #hub-dashboard-preview .hub-panel-heading { flex-wrap: wrap; gap: 4px; } #hub-dashboard-preview .hub-capacity-caption { flex-direction: column; gap: 2px; } }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"></script>
+<script>
+(() => {
+  const root = document.getElementById('hub-dashboard-preview');
+  const projectSelect = root.querySelector('#hub-project');
+  const activitySelect=root.querySelector('#hub-activity-metric');
+  const activityKinds=['runs','rounds','hours'];
+  let activityMetric='runs';
+  const names = ['ai-dev-loop-hub','CryptoSentinel','data-pipeline'];
+  const states = ['Completed','Residual risk','Running','Waiting capacity','Blocked'];
+  const projects=names.map(name=>({name}));
+  const phases = Array.from({length:17},(_,i) => ({name:i<9?'14.'+(i+1):'15.'+(i-8),kind:i<11?(i===3||i===8?'risk':'completed'):i===11?'current':'planned'}));
+  const DAY=86400000;
+  const instant=value=>Date.parse(value+'-04:00');
+  const dayKey=value=>new Date(value-4*3600000).toISOString().slice(0,10);
+  const localTime=value=>new Intl.DateTimeFormat('en-GB',{timeZone:'America/La_Paz',dateStyle:'short',timeStyle:'short'}).format(new Date(value));
+  const stateIndex=state=>({completed:0,completed_with_residual_risk:1,running_cursor:2,reviewing:2,waiting_codex_capacity:3,blocked:4})[state];
+  const sampleRuns=[];
+  function addRun(projectName,group,ordinal,phaseLabel,startLocal,tag,generation=1,sourceRunId=null) {
+    sampleRuns.push({runId:'sample-'+tag,projectName,sequenceId:ordinal===null?null:'sample-sequence-'+projectName+'-'+group,sequenceName:ordinal===null?null:group,ordinal,phaseLabel,generation,sourceRunId,startedAt:startLocal===null?null:instant(startLocal),submittedAt:startLocal===null?instant('2026-10-13T08:00'):instant(startLocal)-3600000,state:'completed'});
+  }
+  const liveStarts=['2026-10-09T08:00','2026-10-09T11:00','2026-10-09T14:00','2026-10-10T09:00','2026-10-10T13:00','2026-10-11T08:00','2026-10-11T11:00','2026-10-11T15:00','2026-10-12T08:00','2026-10-12T11:00','2026-10-12T14:00','2026-10-13T09:00'];
+  liveStarts.forEach((start,i)=>addRun(names[0],'Cache & Live',i+1,phases[i].name,start,'hub-live-'+(i+1)));
+  for(let i=0;i<14;i++) {
+    const date=dayKey(instant('2026-09-27T00:00')+Math.floor(i/2)*DAY);
+    const label=i<9?'12.'+(i+1):'13.'+(i-8);
+    addRun(names[0],'Inspection',i+1,label,date+(i%2?'T14:00':'T08:00'),'hub-inspect-'+(i+1));
+    if(i===5)addRun(names[0],'Inspection',6,label,date+'T17:00','hub-inspect-6-replacement',2,'sample-hub-inspect-6');
+  }
+  for(let i=0;i<10;i++) {const date=dayKey(instant('2026-09-21T00:00')+Math.floor(i*22/9)*DAY);addRun(names[0],'Standalone',null,null,i===0?'2026-09-21T00:00':i===9?'2026-10-12T23:40':date+'T10:00','hub-standalone-'+(i+1));}
+  for(let i=0;i<16;i++)addRun(names[1],'Supervision',i+1,'S.'+(i+1),dayKey(instant('2026-10-01T00:00')+Math.floor(i/2)*DAY)+(i%2?'T15:00':'T09:00'),'crypto-supervision-'+(i+1));
+  for(let i=0;i<8;i++)addRun(names[1],'Standalone',null,null,dayKey(instant('2026-09-22T00:00')+Math.floor(i*20/7)*DAY)+'T11:00','crypto-standalone-'+(i+1));
+  for(let i=0;i<8;i++)addRun(names[2],'ETL rollout',i+1,'E.'+(i+1),dayKey(instant('2026-10-05T00:00')+Math.floor(i/2)*DAY)+(i%2?'T14:00':'T08:00'),'pipeline-etl-'+(i+1));
+  for(let i=0;i<7;i++)addRun(names[2],'Standalone',null,null,dayKey(instant('2026-09-25T00:00')+i*3*DAY)+'T10:00','pipeline-standalone-'+(i+1));
+  const setState=(id,state)=>{sampleRuns.find(run=>run.runId===id).state=state;};
+  setState('sample-hub-live-12','reviewing');setState('sample-hub-inspect-6','blocked');
+  setState('sample-crypto-supervision-16','waiting_codex_capacity');setState('sample-crypto-standalone-1','blocked');setState('sample-crypto-standalone-2','blocked');
+  setState('sample-pipeline-etl-8','running_cursor');setState('sample-pipeline-standalone-1','blocked');
+  names.forEach((name,i)=>sampleRuns.filter(run=>run.projectName===name&&run.state==='completed').slice(0,[9,3,2][i]).forEach(run=>run.state='completed_with_residual_risk'));
+  addRun(names[0],'Standalone',null,null,null,'hub-not-launched');addRun(names[1],'Standalone',null,null,null,'crypto-not-launched');
+  sampleRuns.filter(run=>run.startedAt===null).forEach(run=>run.state='queued');
+  function attemptsFor(run) {
+    if(!run||run.startedAt===null)return [];
+    const patterns=run.state==='running_cursor'?[{name:'Cursor · attempt 1',start:0,end:28,component:'Cursor',running:true}]:run.state==='reviewing'?[{name:'Cursor · attempt 1',start:0,end:28,component:'Cursor',running:false},{name:'Review · attempt 1',start:29,end:45,component:'Reviewer',running:true}]:[{name:'Cursor · attempt 1',start:0,end:22,component:'Cursor',running:false},{name:'Review · attempt 1',start:24,end:38,component:'Reviewer',running:false},{name:'Cursor · correction',start:40,end:51,component:'Cursor',running:false},{name:'Review · attempt 2',start:53,end:65,component:'Reviewer',running:false}];
+    return patterns.map((attempt,i)=>({...attempt,phase:run.phaseLabel??'Standalone',projectName:run.projectName,runId:run.runId,attemptId:run.runId+'-attempt-'+(i+1),iteration:i<2?1:2,promptKind:attempt.component==='Reviewer'?'review':i===0?'initial':null,launchRequestedAt:run.startedAt+attempt.start*60000,completedAt:attempt.running?null:run.startedAt+attempt.end*60000,observedAt:run.startedAt+(run.state==='reviewing'?45:run.state==='running_cursor'?28:65)*60000}));
+  }
+  const allAttempts=sampleRuns.flatMap(attemptsFor);
+  let rangeStart='2026-09-21T00:00',rangeEnd='2026-10-14T00:00';
+  let selectedRunId='sample-hub-live-12';
+  const rangeFrom=root.querySelector('#hub-range-from'),rangeUntil=root.querySelector('#hub-range-until');
+  const validRange=(from,until)=>/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(from)&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(until)&&Number.isFinite(instant(from))&&Number.isFinite(instant(until))&&instant(until)>instant(from);
+  const projectMatches=run=>selection==='all'||run.projectName===selection;
+  const inRange=value=>value!==null&&value>=instant(rangeStart)&&value<instant(rangeEnd);
+  const matchingRuns=()=>sampleRuns.filter(run=>projectMatches(run)&&inRange(run.startedAt));
+  const selectedRun=()=>sampleRuns.find(run=>run.runId===selectedRunId)??null;
+  const runLabel=run=>run.projectName+' · '+(run.sequenceName??'Standalone')+' · '+(run.phaseLabel??run.runId.replace('sample-',''))+(run.generation>1?' · replacement '+run.generation:'');
+  let selection = 'all';
+  let phaseIndex = 11;
+  const saved = window.openai?.widgetState?.modelContent;
+  if (saved && (saved.project==='all'||names.includes(saved.project))) selection=saved.project;
+  if (saved && Number.isInteger(saved.phaseIndex) && saved.phaseIndex>=0 && saved.phaseIndex<17) phaseIndex=saved.phaseIndex;
+  if (saved && activityKinds.includes(saved.activityMetric)) activityMetric=saved.activityMetric;
+  if(saved&&validRange(saved.rangeStart,saved.rangeEnd)&&instant(saved.rangeEnd)-instant(saved.rangeStart)<=366*DAY){rangeStart=saved.rangeStart;rangeEnd=saved.rangeEnd;}
+  if(saved&&sampleRuns.some(run=>run.runId===saved.selectedRunId))selectedRunId=saved.selectedRunId;
+  rangeFrom.value=rangeStart;rangeUntil.value=rangeEnd;
+  activitySelect.value=activityMetric;
+  projectSelect.value=selection;
+  const phaseSelect=root.querySelector('#hub-phase-select');
+  const charts = new Map();
+  const dialog=root.querySelector('#hub-attempt-modal');
+  const contentButtons=['prompt','stdout','stderr'].map(kind=>root.querySelector('#hub-load-'+kind));
+  let activeAttempt=null;
+  let contentKind=null;
+  let contentParts=[];
+  let loadedChunks=0;
+  let contentGeneration=0;
+  let contentTimer=null;
+  function clearAttempt() {
+    contentGeneration++;
+    clearTimeout(contentTimer);
+    activeAttempt=null;contentKind=null;contentParts=[];loadedChunks=0;
+    root.querySelector('#hub-content-text').textContent='';
+    root.querySelector('#hub-attempt-content').hidden=true;
+    root.querySelector('#hub-no-content').hidden=false;
+    root.querySelector('#hub-load-more').hidden=true;
+    contentButtons.forEach(button=>button.removeAttribute('aria-pressed'));
+  }
+  function closeAttempt() {if(dialog.open)dialog.close();clearAttempt();}
+  function openAttempt(attempt) {
+    closeAttempt();activeAttempt=attempt;
+    root.querySelector('#hub-attempt-title').textContent=attempt.name+' · '+(attempt.phase==='Standalone'?'Standalone':'phase '+attempt.phase);
+    root.querySelector('#hub-attempt-origin').textContent='Illustrative data · workstation-wsl · '+attempt.projectName;
+    const facts=root.querySelector('#hub-attempt-facts');facts.replaceChildren();
+    for(const [label,value] of [['Attempt ID',attempt.attemptId],['Run ID',attempt.runId],['Component',attempt.component],['Status',attempt.running?'running':'completed'],['Iteration',String(attempt.iteration)],['Phase attempt','1'],['Launch requested',localTime(attempt.launchRequestedAt)],['Completed',attempt.running?'Not supplied · running at observation':localTime(attempt.completedAt)],['Observed duration',(attempt.end-attempt.start)+' min'+(attempt.running?' · elapsed estimate':'')]]) {
+      const group=document.createElement('div');const term=document.createElement('dt');const description=document.createElement('dd');
+      term.textContent=label;description.textContent=value;group.append(term,description);facts.appendChild(group);
+    }
+    const prompt=root.querySelector('#hub-load-prompt');
+    prompt.textContent=attempt.promptKind==='review'?'Load prompt':attempt.promptKind==='initial'?'Load run initial prompt':'Prompt unavailable';
+    contentButtons.forEach(button=>button.disabled=false);prompt.disabled=attempt.promptKind===null;
+    root.querySelector('#hub-prompt-origin').textContent=attempt.promptKind==='review'?'Prompt source: this exact reviewer attempt.':attempt.promptKind==='initial'?'Run initial prompt is context; the exact Cursor turn prompt is not exposed.':'No authoritative prompt reference for this Cursor correction attempt.';
+    dialog.showModal();
+  }
+  function sampleContent(attempt,kind) {
+    if(kind==='prompt')return [attempt.promptKind==='review'?'[ILLUSTRATIVE REVIEWER PROMPT]\n\nReview the staged implementation for phase '+attempt.phase+' against the approved plan.\nReport confirmed actionable findings and verification limits.\nPreserve the machine, request and source-of-truth boundaries.':'[ILLUSTRATIVE FROZEN RUN INITIAL PROMPT]\n\nImplement the approved plan for phase '+attempt.phase+'.\nUse the documented container workflow and report verification evidence.\n\nThis is run context, not the exact Cursor execution envelope.'];
+    if(kind==='stderr')return attempt.running?['']:['[ILLUSTRATIVE STDERR]\nEnvironment note: external integration checks are outside this sample.\n'];
+    return ['[ILLUSTRATIVE STDOUT]\nAttempt: '+attempt.attemptId+'\nComponent: '+attempt.component+'\nApproved phase: '+attempt.phase+'\nOpening implementation context…\n',attempt.running?'Review in progress at the observation time.\nFurther output requires a new explicit read.\n':'Scoped checks completed.\nResult handed to the ordinary review workflow.\nEnd of recorded sample.\n'];
+  }
+  function loadContent(kind,append=false) {
+    if(!activeAttempt||(kind==='prompt'&&activeAttempt.promptKind===null))return;
+    const attempt=activeAttempt;const generation=++contentGeneration;clearTimeout(contentTimer);
+    if(!append){contentKind=kind;contentParts=sampleContent(attempt,kind);loadedChunks=0;root.querySelector('#hub-content-text').textContent='';}
+    root.querySelector('#hub-no-content').hidden=true;root.querySelector('#hub-attempt-content').hidden=false;
+    root.querySelector('#hub-content-title').textContent=kind==='prompt'?(attempt.promptKind==='review'?'Reviewer prompt':'Run initial prompt · context'):kind;
+    root.querySelector('#hub-content-status').textContent='Loading…';root.querySelector('#hub-content-meta').textContent='';root.querySelector('#hub-load-more').hidden=true;
+    contentButtons.forEach(button=>{button.disabled=true;button.setAttribute('aria-pressed',String(button.id==='hub-load-'+kind));});
+    contentTimer=setTimeout(()=>{
+      if(generation!==contentGeneration||activeAttempt!==attempt||!dialog.open)return;
+      loadedChunks++;
+      const text=contentParts.slice(0,loadedChunks).join('');const hasMore=loadedChunks<contentParts.length;
+      root.querySelector('#hub-content-text').textContent=text||'Empty stream at this observation.';
+      root.querySelector('#hub-content-status').textContent=hasMore?'More recorded bytes available':attempt.running&&kind!=='prompt'?'Read complete · process still running':'Read complete';
+      const bytes=new TextEncoder().encode(text).length;
+      root.querySelector('#hub-content-meta').textContent='Sample · bytes 0–'+bytes+(kind==='prompt'?'':' · truncatedAtSource: false');
+      root.querySelector('#hub-load-more').hidden=!hasMore;
+      contentButtons.forEach(button=>button.disabled=button.id==='hub-load-prompt'&&attempt.promptKind===null);
+    },250);
+  }
+  const total = p=>p.counts.reduce((a,b)=>a+b,0);
+  const colors = () => {
+    const probe=document.createElement('span');root.appendChild(probe);
+    const result={};
+    for(const key of ['text','muted','border','track','blue','completed','risk','waiting','blocked','review','panel']) {probe.style.color='var(--hub-'+key+')';result[key]=getComputedStyle(probe).color;}
+    const blue=result.blue.match(/[\d.]+/g).slice(0,3).map(Number);const panel=result.panel.match(/[\d.]+/g).slice(0,3).map(Number);result.softBlue='rgb('+blue.map((v,i)=>Math.round(v*0.35+panel[i]*0.65)).join(',')+')';
+    probe.remove();return result;
+  };
+  const save = () => { if(window.openai?.setWidgetState) window.openai.setWidgetState({modelContent:{project:selection,rangeStart,rangeEnd,selectedRunId,activityMetric,illustrative:true},privateContent:null}).catch(()=>{}); };
+  const common = c=>({animation:false,textStyle:{fontFamily:'system-ui,sans-serif',color:c.text,fontSize:12},backgroundColor:'transparent',tooltip:{confine:true,backgroundColor:c.panel,borderColor:c.border,textStyle:{color:c.text,fontSize:12}},aria:{enabled:true}});
+  function setChart(id,option) {
+    const element=root.querySelector('#'+id);
+    let chart=charts.get(id);
+    if(!chart) {chart=echarts.init(element,null,{renderer:'svg'});charts.set(id,chart);}
+    chart.clear();
+    chart.setOption(option,{notMerge:true});
+    return chart;
+  }
+  function renderTimeline(c) {
+    const run=selectedRun();const attempts=attemptsFor(run);const planned=run===null;
+    const attemptLinks=root.querySelector('#hub-attempt-links');attemptLinks.replaceChildren();
+    attempts.forEach(attempt=>{const button=document.createElement('button');button.type='button';button.className='hub-button cursor-interaction';button.textContent='Inspect '+attempt.name;button.addEventListener('click',()=>openAttempt(attempt));attemptLinks.appendChild(button);});
+    root.querySelector('#hub-timeline-heading').textContent=run?'Attempt timeline · '+(run.phaseLabel?'phase '+run.phaseLabel:'standalone run'):'Attempt timeline';
+    root.querySelector('#hub-timeline-summary').textContent=run?run.runId+' · '+run.projectName+' · started '+localTime(run.startedAt):'No run matches the project and start-time range';
+    const timelineChart=setChart('hub-timeline-chart',{...common(c),grid:{left:root.clientWidth<450?117:157,right:root.clientWidth<450?12:32,top:20,bottom:47},tooltip:{...common(c).tooltip,formatter:params=>{const a=attempts[params.dataIndex];return a.name+'<br>'+a.component+' · '+(a.end-a.start)+' min'+(a.running?' observed so far':'')+'<br>'+a.start+'–'+a.end+' min since first launch';}},xAxis:{type:'value',min:0,max:planned?60:undefined,name:'Minutes since first launch',nameLocation:'middle',nameGap:30,splitNumber:root.clientWidth<450?3:7,axisLabel:{color:c.muted},splitLine:{lineStyle:{color:c.border}}},yAxis:{type:'category',inverse:true,data:attempts.map(a=>a.name),axisLabel:{color:c.muted,fontSize:12,width:root.clientWidth<450?103:145,overflow:"truncate"},axisLine:{show:false},axisTick:{show:false}},series:[{type:'custom',renderItem:(params,api)=>{const y=api.value(0);const start=api.coord([api.value(1),y]);const end=api.coord([api.value(2),y]);const shape=echarts.graphic.clipRectByRect({x:start[0],y:start[1]-12,width:Math.max(end[0]-start[0],1),height:24},{x:params.coordSys.x,y:params.coordSys.y,width:params.coordSys.width,height:params.coordSys.height});if(!shape)return null;return {type:'rect',shape,style:{fill:api.value(3)===0?c.blue:c.review,opacity:api.value(4)?0.6:0.95}};},encode:{x:[1,2],y:0},data:attempts.map((a,i)=>[i,a.start,a.end,a.component==='Cursor'?0:1,a.running?1:0])}],graphic:planned?[{type:'text',left:'center',top:'38%',style:{text:'No attempts yet',fill:c.muted,fontSize:14,fontFamily:'system-ui'}}]:[]});
+    timelineChart.off('click');
+    timelineChart.on('click',event=>{const attempt=attempts[event.dataIndex];if(attempt)openAttempt(attempt);});
+  }
+  function renderActivity(c) {
+    const metrics={
+      runs:{label:'Runs submitted',unit:'runs submitted',definition:'Date of submission · one count per run'},
+      rounds:{label:'Review rounds',unit:'review rounds',definition:'First review launch per iteration · retries in that iteration count once'},
+      hours:{label:'Process hours',unit:'process hours',definition:'Finished attempts clipped to range and split at midnight · parallel time summed'}
+    };
+    const metric=metrics[activityMetric];activitySelect.value=activityMetric;
+    const from=instant(rangeStart),until=instant(rangeEnd);
+    const first=instant(rangeStart.slice(0,10)+'T00:00');
+    const last=instant(dayKey(until-1)+'T00:00');
+    const days=[];for(let at=first;at<=last;at+=DAY)days.push([dayKey(at),0]);
+    const positions=new Map(days.map((item,i)=>[item[0],i]));
+    const add=(at,value)=>{const index=positions.get(dayKey(at));if(index!==undefined)days[index][1]+=value;};
+    const matchingProjects=sampleRuns.filter(projectMatches);
+    if(activityMetric==='runs')matchingProjects.filter(run=>inRange(run.submittedAt)).forEach(run=>add(run.submittedAt,1));
+    if(activityMetric==='rounds'){
+      const rounds=new Map();
+      allAttempts.filter(attempt=>attempt.component==='Reviewer'&&(selection==='all'||attempt.projectName===selection)).forEach(attempt=>{
+        const key=attempt.runId+':'+attempt.iteration;const previous=rounds.get(key);
+        if(previous===undefined||attempt.launchRequestedAt<previous)rounds.set(key,attempt.launchRequestedAt);
+      });
+      for(const at of rounds.values())if(inRange(at))add(at,1);
+    }
+    if(activityMetric==='hours'){
+      allAttempts.filter(attempt=>attempt.completedAt!==null&&(selection==='all'||attempt.projectName===selection)).forEach(attempt=>{
+        let start=Math.max(from,attempt.launchRequestedAt);const end=Math.min(until,attempt.completedAt);
+        while(start<end){const boundary=instant(dayKey(start)+'T00:00')+DAY;const stop=Math.min(end,boundary);add(start,(stop-start)/3600000);start=stop;}
+      });
+    }
+    const amount=value=>value.toLocaleString('en-US',{maximumFractionDigits:activityMetric==='hours'?2:0});
+    const aggregate=days.reduce((sum,day)=>sum+day[1],0);
+    root.querySelector('#hub-activity-description').textContent=metric.label+' · '+rangeStart.slice(0,10)+' – '+dayKey(until-1);
+    root.querySelector('#hub-activity-total').textContent=amount(aggregate)+' '+metric.unit;
+    root.querySelector('#hub-activity-definition').textContent=metric.definition;
+    root.querySelector('#hub-activity-chart').setAttribute('aria-label','Illustrative calendar heatmap: '+amount(aggregate)+' '+metric.unit+' within the selected range');
+    const maximum=Math.max(1,...days.map(day=>day[1]));
+    setChart('hub-activity-chart',{...common(c),tooltip:{...common(c).tooltip,formatter:p=>p.value[0]+'<br>'+amount(p.value[1])+' '+metric.unit},visualMap:{min:0,max:maximum,calculable:false,orient:'horizontal',left:'center',bottom:0,itemWidth:12,itemHeight:105,text:[amount(maximum)+(activityMetric==='hours'?' h':''),'0'],textStyle:{color:c.muted},inRange:{color:[c.track,c.blue]}},calendar:{range:[days[0][0],days[days.length-1][0]],left:44,right:20,top:25,bottom:49,cellSize:['auto','auto'],yearLabel:{show:false},monthLabel:{color:c.muted},dayLabel:{firstDay:1,nameMap:['S','M','T','W','T','F','S'],color:c.muted},splitLine:{show:false},itemStyle:{color:c.panel,borderColor:c.panel,borderWidth:3}},series:[{type:'heatmap',coordinateSystem:'calendar',data:days}]});
+  }
+  function renderRunMap(c,runs) {
+    if(!runs.some(run=>run.runId===selectedRunId))selectedRunId=runs.slice().sort((a,b)=>b.startedAt-a.startedAt)[0]?.runId??null;
+    phaseSelect.replaceChildren();phaseSelect.disabled=runs.length===0;
+    if(runs.length===0){const option=document.createElement('option');option.textContent='No matching runs';phaseSelect.appendChild(option);}
+    runs.forEach(run=>{const option=document.createElement('option');option.value=run.runId;option.textContent=runLabel(run);phaseSelect.appendChild(option);});
+    if(selectedRunId!==null)phaseSelect.value=selectedRunId;
+    const groups=new Map();
+    runs.forEach(run=>{
+      const key=run.sequenceId!==null?run.sequenceId+':generation:'+run.generation:run.projectName+':standalone';
+      if(!groups.has(key))groups.set(key,{label:run.projectName+' · '+(run.sequenceName??'Standalone')+(run.generation>1?' · replacement':''),runs:[]});
+      groups.get(key).runs.push(run);
+    });
+    const rows=[...groups.values()];const cells=[];
+    rows.forEach((group,row)=>group.runs.forEach((run,index)=>cells.push({value:[run.ordinal===null?index:run.ordinal-1,row,stateIndex(run.state)],runId:run.runId,name:run.phaseLabel??'Run '+(index+1),itemStyle:{color:[c.completed,c.risk,c.blue,c.waiting,c.blocked][stateIndex(run.state)],opacity:run.runId===selectedRunId?1:.72},label:{show:root.clientWidth>650,fontSize:11,color:c.text,formatter:(run.phaseLabel??'R'+(index+1))+(run.generation>1?' ↺':'')}})));
+    const columns=Math.max(1,...cells.map(cell=>cell.value[0]+1));
+    const chartElement=root.querySelector('#hub-phase-chart');chartElement.style.height=Math.max(145,rows.length*43+60)+'px';
+    chartElement.setAttribute('aria-label',runs.length+' illustrative runs started in range across '+groups.size+' sequence or standalone rows. Each cell selects one exact run.');
+    const chart=setChart('hub-phase-chart',{...common(c),grid:{left:root.clientWidth<450?105:225,right:12,top:12,bottom:42},tooltip:{...common(c).tooltip,formatter:params=>{const run=sampleRuns.find(run=>run.runId===params.data.runId);return runLabel(run)+'<br>'+run.runId+'<br>'+run.state+'<br>Started '+localTime(run.startedAt);}},xAxis:{type:'category',data:Array.from({length:columns},(_,i)=>String(i+1)),name:'Phase ordinal / standalone run slot',nameLocation:'middle',nameGap:25,axisLabel:{color:c.muted,fontSize:11,interval:root.clientWidth<450?3:0},axisLine:{show:false},axisTick:{show:false}},yAxis:{type:'category',inverse:true,data:rows.map(row=>row.label),axisLabel:{color:c.muted,fontSize:11,width:root.clientWidth<450?95:210,overflow:'truncate'},axisLine:{show:false},axisTick:{show:false}},series:[{type:'heatmap',data:cells,emphasis:{itemStyle:{opacity:1}}}],graphic:runs.length===0?[{type:'text',left:'center',top:'35%',style:{text:'No runs started in this range',fill:c.muted,fontSize:14,fontFamily:'system-ui'}}]:[]});
+    chart.off('click');chart.on('click',event=>{closeAttempt();selectedRunId=event.data.runId;render();save();});
+    const sequenceIds=new Set(runs.filter(run=>run.sequenceId!==null).map(run=>run.sequenceId));
+    const standalone=runs.filter(run=>run.sequenceId===null).length;
+    root.querySelector('#hub-map-summary').textContent=runs.length+' started runs · '+sequenceIds.size+' sequences · '+standalone+' standalone runs · each replacement kept separate';
+    const selected=selectedRun();
+    root.querySelector('#hub-selected-run-summary').textContent=selected?selected.runId+' · started '+localTime(selected.startedAt)+(selected.sourceRunId?' · replaces '+selected.sourceRunId:''):'No selection';
+  }
+  function render() {
+    const c=colors();const runs=matchingRuns();
+    const visible=projects.filter(p=>selection==='all'||p.name===selection).map(project=>{const selected=runs.filter(run=>run.projectName===project.name);const groupCounts=new Map();selected.forEach(run=>{const key=run.sequenceName??'Standalone';groupCounts.set(key,(groupCounts.get(key)??0)+1);});return {...project,counts:states.map((_,i)=>selected.filter(run=>stateIndex(run.state)===i).length),groups:[...groupCounts]};}).filter(project=>total(project)>0);
+    const unknown=sampleRuns.filter(run=>projectMatches(run)&&run.startedAt===null).length;
+    root.querySelector('#hub-range-summary').textContent=runs.length+' matching started runs · '+unknown+' without a recorded execution launch excluded · Activity uses dates of the chosen metric';
+    const sum=(i)=>visible.reduce((a,p)=>a+p.counts[i],0);
+    root.querySelector('#hub-run-count').textContent=visible.reduce((a,p)=>a+total(p),0);
+    root.querySelector('#hub-completed-count').textContent=sum(0);
+    root.querySelector('#hub-risk-count').textContent=sum(1);
+    root.querySelector('#hub-attention-count').textContent=sum(3)+sum(4);
+    setChart('hub-project-chart',{...common(c),color:[c.completed,c.risk,c.blue,c.waiting,c.blocked],legend:{bottom:0,itemWidth:10,itemHeight:10,textStyle:{color:c.muted,fontSize:11}},grid:{left:root.clientWidth<450?108:133,right:15,top:12,bottom:67},tooltip:{...common(c).tooltip,trigger:'axis',axisPointer:{type:'shadow'}},xAxis:{type:'value',minInterval:1,name:'Runs',nameLocation:'middle',nameGap:24,axisLabel:{color:c.muted},splitLine:{lineStyle:{color:c.border}}},yAxis:{type:'category',data:visible.map(p=>p.name),axisLabel:{color:c.muted,overflow:'truncate',width:root.clientWidth<450?99:120},axisLine:{show:false},axisTick:{show:false}},series:states.map((name,i)=>({name,type:'bar',stack:'runs',barWidth:28,data:visible.map(p=>p.counts[i])}))});
+    setChart('hub-capacity-chart',{...common(c),series:[64,27].map((remaining,i)=>({type:'gauge',center:[i?'76%':'25%','49%'],radius:'61%',startAngle:210,endAngle:-30,min:0,max:100,splitNumber:4,progress:{show:true,width:12,itemStyle:{color:i?c.risk:c.completed}},axisLine:{lineStyle:{width:12,color:[[1,c.track]]}},pointer:{show:false},axisTick:{show:false},splitLine:{show:false},axisLabel:{show:false},detail:{valueAnimation:false,offsetCenter:[0,'1%'],fontSize:26,fontWeight:500,color:c.text,formatter:'{value}%'},title:{offsetCenter:[0,'53%'],fontSize:12,color:c.muted},data:[{value:remaining,name:i?'Weekly remaining':'5-hour remaining'}],tooltip:{formatter:i?'Weekly window<br>27% remaining · 73% used':'5-hour window<br>64% remaining · 36% used'}}))});
+    renderRunMap(c,runs);
+    renderTimeline(c);
+    renderActivity(c);
+    setChart('hub-workload-chart',{...common(c),tooltip:{...common(c).tooltip,formatter:p=>p.name+'<br>'+p.value+' observed runs'},series:[{type:'treemap',top:7,bottom:8,left:0,right:0,roam:false,nodeClick:false,breadcrumb:{show:false},color:[c.softBlue],colorSaturation:[0.25,0.55],label:{color:c.text,fontSize:12,formatter:p=>p.name+'\n'+p.value+' runs'},upperLabel:{show:true,height:26,color:c.text,fontSize:12},itemStyle:{gapWidth:3,borderWidth:0,borderColor:c.panel},levels:[{upperLabel:{show:false},itemStyle:{gapWidth:4,borderWidth:0,borderColor:c.panel}},{upperLabel:{show:true},itemStyle:{gapWidth:3,borderWidth:0,borderColor:c.panel}}],data:visible.map(p=>({name:p.name,value:total(p),children:p.groups.map(([name,value])=>({name,value}))}))}]});
+  }
+  function boot() {
+    if(!window.echarts){root.querySelectorAll('.hub-chart,.hub-phase-chart').forEach(el=>el.textContent='Chart preview could not load. Use the ECharts example link.');return;}
+    render();
+    projectSelect.addEventListener('change',()=>{closeAttempt();selection=projectSelect.value;render();save();});
+    activitySelect.addEventListener('change',()=>{activityMetric=activitySelect.value;renderActivity(colors());save();});
+    phaseSelect.addEventListener('change',()=>{closeAttempt();selectedRunId=phaseSelect.value;render();save();});
+    const applyRange=event=>{event.preventDefault();const error=root.querySelector('#hub-range-error');if(!validRange(rangeFrom.value,rangeUntil.value)){error.textContent='Until must be after From.';error.hidden=false;return;}if(instant(rangeUntil.value)-instant(rangeFrom.value)>366*DAY){error.textContent='Select up to 366 days in this preview.';error.hidden=false;return;}error.hidden=true;rangeStart=rangeFrom.value;rangeEnd=rangeUntil.value;closeAttempt();render();save();};
+    root.querySelector('#hub-apply-range').addEventListener('click',applyRange);
+    root.querySelector('#hub-time-range').addEventListener('keydown',event=>{if(event.key==='Enter')applyRange(event);});
+    root.querySelector('#hub-attempt-close').addEventListener('click',closeAttempt);
+    dialog.addEventListener('close',clearAttempt);
+    contentButtons.forEach((button,i)=>button.addEventListener('click',()=>loadContent(['prompt','stdout','stderr'][i])));
+    root.querySelector('#hub-load-more').addEventListener('click',()=>loadContent(contentKind,true));
+    let resizeFrame;
+    new ResizeObserver(()=>{cancelAnimationFrame(resizeFrame);resizeFrame=requestAnimationFrame(()=>{charts.forEach(chart=>chart.resize());render();});}).observe(root);
+    const media=window.matchMedia('(prefers-color-scheme: dark)');media.addEventListener('change',render);
+    window.addEventListener('openai:set_globals',event=>{const next=event.detail?.globals?.widgetState?.modelContent;if(!next)return;if(next.project==='all'||names.includes(next.project))selection=next.project;if(sampleRuns.some(run=>run.runId===next.selectedRunId))selectedRunId=next.selectedRunId;if(validRange(next.rangeStart,next.rangeEnd)&&instant(next.rangeEnd)-instant(next.rangeStart)<=366*DAY){rangeStart=next.rangeStart;rangeEnd=next.rangeEnd;rangeFrom.value=rangeStart;rangeUntil.value=rangeEnd;}if(activityKinds.includes(next.activityMetric))activityMetric=next.activityMetric;projectSelect.value=selection;render();});
+    if(globalThis.Tweak){const state={compact:false};const tweak=new Tweak({container:root,onChange:()=>{root.style.setProperty('--hub-density',state.compact?'12px':'18px');root.querySelectorAll('.hub-panel').forEach(p=>p.style.padding=state.compact?'12px':'17px 18px 12px');charts.forEach(chart=>chart.resize());}});tweak.addToggle(state,'compact',{label:'Compact spacing'});}
+  }
+  boot();
+})();
+</script>

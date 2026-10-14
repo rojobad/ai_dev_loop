@@ -1,0 +1,34 @@
+{
+  "capturedAt": "2026-10-14",
+  "synthetic": true,
+  "files": {
+    "dashboard-preview.html": {
+      "sha256": "aed4d80990ff262c40f6e8f022c1a9e8d4d2937b5be9e99fe4e146c2bbcdc70b",
+      "bytes": 134205
+    },
+    "dashboard-proposal.html": {
+      "sha256": "0418ac52718adb2acc6041bc28a14228f5bd5b8216fb6c79b958e20756eb5ccf",
+      "bytes": 47616
+    },
+    "dashboard-preview.png": {
+      "sha256": "b64baca10f9acdbe2b720ac5a8eea40490449f7cb8669e95490c5adf59189ff6",
+      "bytes": 97885
+    },
+    "time-range-control.png": {
+      "sha256": "237401ce8130d6f3cab46257329ea6334e3576a723beb7a6ddea77abca1b5ebf",
+      "bytes": 6273
+    },
+    "filtered-run-map.png": {
+      "sha256": "354fdff7685c4b4a198dfa4a6d0d7fb06f68c7575bccff74a169591fe9782b64",
+      "bytes": 40173
+    },
+    "attempt-modal.png": {
+      "sha256": "75a1b8cdd0482003e7017ce4acf7e9772c2d36b0e55803e49ae281797c583668",
+      "bytes": 34713
+    },
+    "activity-hours.png": {
+      "sha256": "5cf5756e9c95a97d4ba6cb5b19fb17b1e96aea555b949b8573668cd2a25b4a1f",
+      "bytes": 14674
+    }
+  }
+}
