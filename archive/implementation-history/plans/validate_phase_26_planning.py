@@ -20,6 +20,7 @@ def main() -> None:
 
     manifest_path = plans / "phase-26-sequence.yaml"
     manifest = SequenceManifest.model_validate(yaml.safe_load(manifest_path.read_text()))
+    assert manifest.schema_version == 2
     assert len(manifest.phases) == 7
     sections = (
         "Goals",
@@ -48,10 +49,16 @@ def main() -> None:
         effort = "xhigh" if ordinal in (1, 2, 7) else "high"
         assert phase.codex.review_model == "gpt-6.1-sol"
         assert phase.codex.review_reasoning_effort == effort
-        assert phase.cursor is not None and phase.cursor.model == "grok-4.7-high"
+        assert phase.cursor is None
+        assert phase.implementer is not None
+        assert phase.implementer.provider == "codex"
+        assert phase.implementer.command == "codex"
+        assert phase.implementer.model == "gpt-5.6-sol"
+        assert phase.implementer.reasoning_effort == "xhigh"
+        assert phase.implementer.timeout_minutes == 90
         assert phase.workflow is not None
         assert phase.workflow.max_review_iterations == 7
-        assert phase.workflow.cursor_timeout_minutes == 90
+        assert phase.workflow.cursor_timeout_minutes is None
         assert phase.workflow.codex_timeout_minutes == 90
         assert bool(phase.commit_message) == (ordinal < 7)
         own = sorted(set(re.findall(rf"C26{ordinal}-[1-9]", body)))
@@ -129,6 +136,8 @@ def main() -> None:
             {
                 "status": "PASS",
                 "manifestPhases": 7,
+                "manifestVersion": 2,
+                "implementer": "codex / gpt-5.6-sol / xhigh",
                 "contracts": len(contracts),
                 "rulePaths": len(rules),
                 "internalLinks": internal_links,

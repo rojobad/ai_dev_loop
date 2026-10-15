@@ -1,7 +1,7 @@
 # Phase 26.5: Attempt modal and explicit content inspection
 
 Status: operator-requested implementation scope; implementation pending.
-Sequence position: 5/7. Cursor: grok-4.7-high.
+Sequence position: 5/7. Implementer: Codex gpt-5.6-sol / xhigh (90 minutes).
 Reviewer: gpt-6.1-sol / high, selected by the operator on 2026-10-14.
 One ordinary automatic run, with accepted predecessor dependency and one final
 operator walkthrough in 26.7. Planning does not prepare/submit/start the sequence.
@@ -24,11 +24,15 @@ Scheduler artifact writers, new Cursor prompt capture, review identity/result sc
 
 ## Required Context
 
-Planning baseline is `main` at `90262eed1af7c76c46139855e249de4ea8ec0d5e`, observed 2026-10-14:
-Phase 23 production plus planning-only Phases 24/25 and the non-interactive prompt
-fix. Neither 24 nor 25 is a dependency. At this planning baseline, SQLite schema
-is 13 and local API is 1.5, before 26.1 adds dashboard capability/additive minor.
-Python >=3.11 and `uv` are the current runtime/tooling.
+Refreshed planning baseline is `main` at `466b8e09724430cebddbdeca6f1961b2d6243531`, observed 2026-10-15:
+Phase 27.1–27.7 dual implementer, role-aware inspection and recovery code is merged.
+Phases 24/25 remain planning-only and are not dependencies. SQLite schema is 16;
+local API is 1.8 before 26.1 adds dashboard capability in compatible minor 1.9.
+Python >=3.11 and `uv` remain the runtime/tooling. The selected implementer is
+Codex `gpt-5.6-sol / xhigh`, independently bound from reviewer B. Manifest v2
+freezes provider/model/effort/90-minute timeout per phase. Existing Phase 27
+findings retain their historical full-suite/build verification limits; this
+phase owns its changed contracts and 26.7 integration gate, not a replay of 27.
 Recheck relevant accepted code once at admission. A future predecessor plan or
 staged patch is not evidence of accepted runtime. If a producer changed, stop
 only dependent work and report its exact incompatible/missing contract.
@@ -47,6 +51,20 @@ Existing `integration_api/artifact_reader.py`, `review_reader.py`, `review_servi
 resolvers are the production content source. Read genuine pre-21.4 historical
 prompt fixtures and current active/complete output tests. Exact Cursor correction
 attempt envelope is not a new available public contract; preserve this limit.
+
+
+Provider-aware prerequisite: read `scheduler/domain/codex_contract.py`,
+`tests/integration/test_phase27_3_inspection.py` and the accepted Phase 27
+source/inspection DTOs. Execution includes `cursor.run_turn`,
+`codex.implementer_bootstrap`, `codex.implementer_resume`,
+`codex.bootstrap_review` and `codex.resume_review`. Only the final two are
+review rounds. `component=codex_implementer` identifies implementation, while
+`component=codex` plus the review effect allowlist identifies reviewer attempts.
+Preserve implementerProvider, pending role/turn/capacity and retry metadata;
+historical absent provider stays Cursor. An `implementer_retry` replacement is
+authoritative lineage, never a reason to parse run IDs. Existing public process
+output supports both providers; there is no exact per-attempt implementer-prompt
+read contract to invent from private files.
 
 ## Cursor Rules And Skills
 
@@ -68,7 +86,7 @@ current source/privacy requirements rather than historical Phase 8 restrictions.
 The separate final reviewer follows
 `.agents/skills/review-staged-ai-dev-loop-execution/SKILL.md`; implementation does
 not invoke or modify it. There is no `.cursor/skills/` directory. Codex authored
-the new dashboard rule/shared contract; Cursor does not change those policies,
+the new dashboard rule/shared contract; the implementer does not change those policies,
 planning/review skills or reviewer/correction/result schemas to pass acceptance.
 
 ## Architecture Guardrails
@@ -112,7 +130,10 @@ from display strings. Any incompatible prerequisite is a dependent-work blocker.
 2. Add deliberate prompt/stdout/stderr controls. Codex review prompt requests its
    exact runId/attemptId through existing review-content; optional availability
    detail is loaded only with that deliberate inspection. Cursor initial prompt
-   is labelled Initial run prompt (context); do not claim the exact turn envelope.
+   and Codex implementer frozen initial input are labelled Initial run prompt
+   (context); do not claim the exact turn envelope. Gate reviewer-content on
+   the reviewer component/effect pair; a Codex implementer attempt uses only
+   existing generic process-output readers and contextual initial prompt.
    Show exact correction prompt as unavailable without a public binding. An
    explicit review-owned cursor-fix-prompt keeps that review ownership visible.
 3. Implement shared UTF-8 incremental byte-window adapter for 65,536-byte chunks,
@@ -139,7 +160,7 @@ safety guard. IDs belong to this run and must appear in its completion report.
 
 | ID | Real producer -> consumer | Input/precondition | Independent expected result / defect caught |
 | --- | --- | --- | --- |
-| C265-1 | Timeline click -> metadata modal -> deliberate content request | Known exact attempt plus prompt/output sentinels; open then press one content control; click a different attempt. | No content call on open; chosen action targets the exact attempt/stream and initial Cursor prompt has contextual ownership label. Catches accidental prefetch and guessed correction binding. |
+| C265-1 | Timeline click -> metadata modal -> deliberate content request | Known exact Cursor/Codex implementer and reviewer attempts plus prompt/output sentinels; open then press one content control; click a different attempt. | No content call on open; chosen action targets the exact attempt/stream, initial implementer prompt has contextual ownership label, and Codex implementer never calls reviewer-content. Catches accidental prefetch and guessed correction binding. |
 | C265-2 | Existing verified artifact service -> HTTP -> window decoder | Historical prompt not_recorded, wrong ownership, UTF-8 boundary, >1 MiB output, active EOF, complete with hasMore and truncated/replaced stream. | Expected bytes/metadata/error behavior and bounded windows; no fake exact prompt, completion conflation or replacement merge. Catches decoding each chunk independently and serving runner stdout as process output. |
 | C265-3 | In-flight reader -> modal retirement -> late reply | Hold content response, then Escape/reselect/filter/route leave, with synchronized release. | Request retires, buffers/search cleared, modal/focus correct and late reply never reopens; no bodies in storage/logs/traces. Catches stale sensitive content leaking to a new attempt. |
 

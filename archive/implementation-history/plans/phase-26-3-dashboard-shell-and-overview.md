@@ -1,7 +1,7 @@
 # Phase 26.3: Dashboard shell and overview charts
 
 Status: operator-requested implementation scope; implementation pending.
-Sequence position: 3/7. Cursor: grok-4.7-high.
+Sequence position: 3/7. Implementer: Codex gpt-5.6-sol / xhigh (90 minutes).
 Reviewer: gpt-6.1-sol / high, selected by the operator on 2026-10-14.
 One ordinary automatic run, with accepted predecessor dependency and one final
 operator walkthrough in 26.7. Planning does not prepare/submit/start the sequence.
@@ -24,11 +24,15 @@ Data metric algorithms already owned by 26.1, new HTTP operations, Hub auth/URLs
 
 ## Required Context
 
-Planning baseline is `main` at `90262eed1af7c76c46139855e249de4ea8ec0d5e`, observed 2026-10-14:
-Phase 23 production plus planning-only Phases 24/25 and the non-interactive prompt
-fix. Neither 24 nor 25 is a dependency. At this planning baseline, SQLite schema
-is 13 and local API is 1.5, before 26.1 adds dashboard capability/additive minor.
-Python >=3.11 and `uv` are the current runtime/tooling.
+Refreshed planning baseline is `main` at `466b8e09724430cebddbdeca6f1961b2d6243531`, observed 2026-10-15:
+Phase 27.1–27.7 dual implementer, role-aware inspection and recovery code is merged.
+Phases 24/25 remain planning-only and are not dependencies. SQLite schema is 16;
+local API is 1.8 before 26.1 adds dashboard capability in compatible minor 1.9.
+Python >=3.11 and `uv` remain the runtime/tooling. The selected implementer is
+Codex `gpt-5.6-sol / xhigh`, independently bound from reviewer B. Manifest v2
+freezes provider/model/effort/90-minute timeout per phase. Existing Phase 27
+findings retain their historical full-suite/build verification limits; this
+phase owns its changed contracts and 26.7 integration gate, not a replay of 27.
 Recheck relevant accepted code once at admission. A future predecessor plan or
 staged patch is not evidence of accepted runtime. If a producer changed, stop
 only dependent work and report its exact incompatible/missing contract.
@@ -47,6 +51,20 @@ visual guidance, not data. No frontend exists on planning baseline; this run mus
 introduce its build/test tools and prove their commands. The Hub's intended
 React 18/ECharts 6/echarts-for-react 3 stack supplies compatibility intent, not an
 installed local dependency or code permission to alter that separate repo.
+
+
+Provider-aware prerequisite: read `scheduler/domain/codex_contract.py`,
+`tests/integration/test_phase27_3_inspection.py` and the accepted Phase 27
+source/inspection DTOs. Execution includes `cursor.run_turn`,
+`codex.implementer_bootstrap`, `codex.implementer_resume`,
+`codex.bootstrap_review` and `codex.resume_review`. Only the final two are
+review rounds. `component=codex_implementer` identifies implementation, while
+`component=codex` plus the review effect allowlist identifies reviewer attempts.
+Preserve implementerProvider, pending role/turn/capacity and retry metadata;
+historical absent provider stays Cursor. An `implementer_retry` replacement is
+authoritative lineage, never a reason to parse run IDs. Existing public process
+output supports both providers; there is no exact per-attempt implementer-prompt
+read contract to invent from private files.
 
 ## Cursor Rules And Skills
 
@@ -68,7 +86,7 @@ current source/privacy requirements rather than historical Phase 8 restrictions.
 The separate final reviewer follows
 `.agents/skills/review-staged-ai-dev-loop-execution/SKILL.md`; implementation does
 not invoke or modify it. There is no `.cursor/skills/` directory. Codex authored
-the new dashboard rule/shared contract; Cursor does not change those policies,
+the new dashboard rule/shared contract; the implementer does not change those policies,
 planning/review skills or reviewer/correction/result schemas to pass acceptance.
 
 ## Architecture Guardrails
@@ -127,7 +145,8 @@ from display strings. Any incompatible prerequisite is a dependent-work blocker.
    percentage/reset/observed time; unknown values are unavailable, not zero.
    Capacity is visibly independent of project/time and no other read probes Codex.
 5. Add light/dark theme, responsive layout and chart lifetime/ResizeObserver
-   disposal. All labels/tooltips use safe text or escaped rich text; keyboard
+   disposal. All labels/tooltips use safe text or escaped rich text; provider/role labels and optional metadata
+   remain compatible with historical omitted fields and unknown additive strings; keyboard
    buttons/companion rows expose equivalent selection. Persist only theme.
 6. Add real API-backed page/browser smoke with deterministic fixture ledger;
    update factual development/build notes and record

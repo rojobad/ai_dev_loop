@@ -16,7 +16,10 @@ Codex owns this rule and the plans; implementation does not edit governance.
   with JSON Integration API; domain rules import no web/database frameworks.
 - Read only with validated scheduler state/lineage and confined registered
   artifact readers; no migration, repair, tick, reservation, Git or model turn.
-- Start cohort means first owned execution launch request; exclude chat creation,
+- Start cohort includes Cursor/Codex implementer and Codex reviewer execution
+  effects. Reviewer rounds include review effects only; codex_implementer is never
+  a reviewer. Preserve historical provider defaults and current role/retry fields.
+  Exclude chat creation,
   preflight/probes, ingestion and unknown effects. Project comes from projectName.
 - Distinguish started cohort from submissions/review rounds/process seconds.
   Retry grouping is runId+iteration; recorded parallel process seconds are summed.
@@ -28,7 +31,8 @@ Codex owns this rule and the plans; implementation does not edit governance.
   assets; no login, remote control, arbitrary paths/commands, wildcard CORS or CDN.
 - Keep UI source strings escaped. Content loads explicitly by exact resource ID,
   stays memory-only, is paginated and cleared on close/reselection/filter change.
-  Do not reconstruct missing exact Cursor prompts or infer review-attempt linkage.
+  Do not reconstruct exact implementer prompts or infer review-attempt linkage;
+  reviewer-content never targets a Codex implementer attempt.
 - UI components depend on DashboardDataSource, not localhost or future Hub URLs.
   Live polling obeys visibility/Pause/cancellation/generations and bounded work;
   sensitive readers never auto-refresh. No durable dashboard cache or telemetry.

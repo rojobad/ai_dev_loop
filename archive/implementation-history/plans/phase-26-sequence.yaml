@@ -1,53 +1,116 @@
-# Phase 26 planning only; no scheduler preparation/start has been performed.
-# Operator-selected reviewers on 2026-10-14. Fixed budgets; Phase 24/25 not required.
-schema_version: 1
-name: phase-26-local-dashboard
+# Phase 26 replacement authorized 2026-10-15; reviewer selections unchanged.
+# Explicit Codex implementer settings require native manifest v2.
+schema_version: 2
+name: phase-26-local-dashboard-codex
 phases:
-  - name: phase-26-1-shared-dashboard-queries
-    plan_path: archive/implementation-history/plans/phase-26-1-shared-dashboard-queries.md
-    prompt_source_path: archive/implementation-history/plans/prompt_phase-26-1-shared-dashboard-queries.txt
-    commit_message: "feat: add Phase 26.1 shared-dashboard-queries"
-    cursor: {model: grok-4.7-high}
-    codex: {review_model: gpt-6.1-sol, review_reasoning_effort: xhigh}
-    workflow: {max_review_iterations: 7, cursor_timeout_minutes: 90, codex_timeout_minutes: 90}
-  - name: phase-26-2-loopback-read-server
-    plan_path: archive/implementation-history/plans/phase-26-2-loopback-read-server.md
-    prompt_source_path: archive/implementation-history/plans/prompt_phase-26-2-loopback-read-server.txt
-    commit_message: "feat: add Phase 26.2 loopback-read-server"
-    cursor: {model: grok-4.7-high}
-    codex: {review_model: gpt-6.1-sol, review_reasoning_effort: xhigh}
-    workflow: {max_review_iterations: 7, cursor_timeout_minutes: 90, codex_timeout_minutes: 90}
-  - name: phase-26-3-dashboard-shell-and-overview
-    plan_path: archive/implementation-history/plans/phase-26-3-dashboard-shell-and-overview.md
-    prompt_source_path: archive/implementation-history/plans/prompt_phase-26-3-dashboard-shell-and-overview.txt
-    commit_message: "feat: add Phase 26.3 dashboard-shell-and-overview"
-    cursor: {model: grok-4.7-high}
-    codex: {review_model: gpt-6.1-sol, review_reasoning_effort: high}
-    workflow: {max_review_iterations: 7, cursor_timeout_minutes: 90, codex_timeout_minutes: 90}
-  - name: phase-26-4-linked-run-map-and-timeline
-    plan_path: archive/implementation-history/plans/phase-26-4-linked-run-map-and-timeline.md
-    prompt_source_path: archive/implementation-history/plans/prompt_phase-26-4-linked-run-map-and-timeline.txt
-    commit_message: "feat: add Phase 26.4 linked-run-map-and-timeline"
-    cursor: {model: grok-4.7-high}
-    codex: {review_model: gpt-6.1-sol, review_reasoning_effort: high}
-    workflow: {max_review_iterations: 7, cursor_timeout_minutes: 90, codex_timeout_minutes: 90}
-  - name: phase-26-5-attempt-modal-and-content
-    plan_path: archive/implementation-history/plans/phase-26-5-attempt-modal-and-content.md
-    prompt_source_path: archive/implementation-history/plans/prompt_phase-26-5-attempt-modal-and-content.txt
-    commit_message: "feat: add Phase 26.5 attempt-modal-and-content"
-    cursor: {model: grok-4.7-high}
-    codex: {review_model: gpt-6.1-sol, review_reasoning_effort: high}
-    workflow: {max_review_iterations: 7, cursor_timeout_minutes: 90, codex_timeout_minutes: 90}
-  - name: phase-26-6-activity-and-visible-refresh
-    plan_path: archive/implementation-history/plans/phase-26-6-activity-and-visible-refresh.md
-    prompt_source_path: archive/implementation-history/plans/prompt_phase-26-6-activity-and-visible-refresh.txt
-    commit_message: "feat: add Phase 26.6 activity-and-visible-refresh"
-    cursor: {model: grok-4.7-high}
-    codex: {review_model: gpt-6.1-sol, review_reasoning_effort: high}
-    workflow: {max_review_iterations: 7, cursor_timeout_minutes: 90, codex_timeout_minutes: 90}
-  - name: phase-26-7-installed-dashboard-acceptance
-    plan_path: archive/implementation-history/plans/phase-26-7-installed-dashboard-acceptance.md
-    prompt_source_path: archive/implementation-history/plans/prompt_phase-26-7-installed-dashboard-acceptance.txt
-    cursor: {model: grok-4.7-high}
-    codex: {review_model: gpt-6.1-sol, review_reasoning_effort: xhigh}
-    workflow: {max_review_iterations: 7, cursor_timeout_minutes: 90, codex_timeout_minutes: 90}
+- name: phase-26-1-shared-dashboard-queries
+  plan_path: archive/implementation-history/plans/phase-26-1-shared-dashboard-queries.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-26-1-shared-dashboard-queries.txt
+  commit_message: 'feat: add Phase 26.1 shared-dashboard-queries'
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: xhigh
+  workflow:
+    max_review_iterations: 7
+    codex_timeout_minutes: 90
+  implementer:
+    provider: codex
+    command: codex
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
+    timeout_minutes: 90
+- name: phase-26-2-loopback-read-server
+  plan_path: archive/implementation-history/plans/phase-26-2-loopback-read-server.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-26-2-loopback-read-server.txt
+  commit_message: 'feat: add Phase 26.2 loopback-read-server'
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: xhigh
+  workflow:
+    max_review_iterations: 7
+    codex_timeout_minutes: 90
+  implementer:
+    provider: codex
+    command: codex
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
+    timeout_minutes: 90
+- name: phase-26-3-dashboard-shell-and-overview
+  plan_path: archive/implementation-history/plans/phase-26-3-dashboard-shell-and-overview.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-26-3-dashboard-shell-and-overview.txt
+  commit_message: 'feat: add Phase 26.3 dashboard-shell-and-overview'
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: high
+  workflow:
+    max_review_iterations: 7
+    codex_timeout_minutes: 90
+  implementer:
+    provider: codex
+    command: codex
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
+    timeout_minutes: 90
+- name: phase-26-4-linked-run-map-and-timeline
+  plan_path: archive/implementation-history/plans/phase-26-4-linked-run-map-and-timeline.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-26-4-linked-run-map-and-timeline.txt
+  commit_message: 'feat: add Phase 26.4 linked-run-map-and-timeline'
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: high
+  workflow:
+    max_review_iterations: 7
+    codex_timeout_minutes: 90
+  implementer:
+    provider: codex
+    command: codex
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
+    timeout_minutes: 90
+- name: phase-26-5-attempt-modal-and-content
+  plan_path: archive/implementation-history/plans/phase-26-5-attempt-modal-and-content.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-26-5-attempt-modal-and-content.txt
+  commit_message: 'feat: add Phase 26.5 attempt-modal-and-content'
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: high
+  workflow:
+    max_review_iterations: 7
+    codex_timeout_minutes: 90
+  implementer:
+    provider: codex
+    command: codex
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
+    timeout_minutes: 90
+- name: phase-26-6-activity-and-visible-refresh
+  plan_path: archive/implementation-history/plans/phase-26-6-activity-and-visible-refresh.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-26-6-activity-and-visible-refresh.txt
+  commit_message: 'feat: add Phase 26.6 activity-and-visible-refresh'
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: high
+  workflow:
+    max_review_iterations: 7
+    codex_timeout_minutes: 90
+  implementer:
+    provider: codex
+    command: codex
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
+    timeout_minutes: 90
+- name: phase-26-7-installed-dashboard-acceptance
+  plan_path: archive/implementation-history/plans/phase-26-7-installed-dashboard-acceptance.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-26-7-installed-dashboard-acceptance.txt
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: xhigh
+  workflow:
+    max_review_iterations: 7
+    codex_timeout_minutes: 90
+  implementer:
+    provider: codex
+    command: codex
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
+    timeout_minutes: 90
