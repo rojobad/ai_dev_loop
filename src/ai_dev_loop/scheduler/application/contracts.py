@@ -377,6 +377,14 @@ def blocked_safe_next_action(
     from ai_dev_loop.runners.codex_failure import is_operational_review_block_kind
 
     detail = block_reason_kind or "blocked"
+    if block_reason_kind in {"cursor_failure", "codex_implementer_failure"}:
+        return SafeNextAction(
+            kind=SafeNextActionKind.SCHEDULER_TICK,
+            command=(
+                f"ai_dev_loop scheduler implementer-retry {run_id} --force "
+                "(authenticate and publish one recovery successor; tick dispatches it)."
+            ),
+        )
     if block_reason_kind == "codex_implementer_not_implemented":
         return SafeNextAction(
             kind=SafeNextActionKind.INSPECT_BLOCKED,

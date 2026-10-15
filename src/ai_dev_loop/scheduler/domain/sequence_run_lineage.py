@@ -33,8 +33,11 @@ SEQUENCE_RUN_LINEAGE_SCHEMA_VERSION_V2 = 2
 SEQUENCE_ATTEMPT_KIND_PLANNED = "planned_run"
 SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY = "same_reviewer_retry"
 SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY = "cursor_retry"
+SEQUENCE_ATTEMPT_KIND_IMPLEMENTER_RETRY = "implementer_retry"
 
-SequenceAttemptKind = Literal["planned_run", "same_reviewer_retry", "cursor_retry"]
+SequenceAttemptKind = Literal[
+    "planned_run", "same_reviewer_retry", "cursor_retry", "implementer_retry"
+]
 SequenceLineageSchemaVersion = Literal[1, 2]
 
 SEQUENCE_ADVANCING_TERMINAL_OUTCOMES = frozenset({"completed", "completed_with_residual_risk"})
@@ -86,7 +89,11 @@ def _replacement_kinds(schema_version: int) -> frozenset[str]:
     if schema_version == 1:
         return frozenset({SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY})
     return frozenset(
-        {SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY, SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY}
+        {
+            SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY,
+            SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY,
+            SEQUENCE_ATTEMPT_KIND_IMPLEMENTER_RETRY,
+        }
     )
 
 
@@ -159,6 +166,11 @@ class SequenceRunAttempt(DomainModel):
                 raise ValueError("cursor_retry requires lineage schema version 2")
             if self.generation < 2:
                 raise ValueError("cursor_retry requires generation >= 2")
+        if self.attempt_kind == SEQUENCE_ATTEMPT_KIND_IMPLEMENTER_RETRY:
+            if self.schema_version != SEQUENCE_RUN_ATTEMPT_SCHEMA_VERSION_V2:
+                raise ValueError("implementer_retry requires lineage schema version 2")
+            if self.generation < 2:
+                raise ValueError("implementer_retry requires generation >= 2")
         return self
 
 
@@ -218,6 +230,7 @@ class SequencePhaseExecution(DomainModel):
                 SEQUENCE_ATTEMPT_KIND_PLANNED,
                 SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY,
                 SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY,
+                SEQUENCE_ATTEMPT_KIND_IMPLEMENTER_RETRY,
             }:
                 raise ValueError("attempt_kind is unsupported")
             if current.attempt_kind == SEQUENCE_ATTEMPT_KIND_PLANNED and current.generation != 1:
@@ -234,6 +247,11 @@ class SequencePhaseExecution(DomainModel):
                 and current.generation < 2
             ):
                 raise ValueError("cursor_retry requires generation >= 2")
+            if (
+                current.attempt_kind == SEQUENCE_ATTEMPT_KIND_IMPLEMENTER_RETRY
+                and current.generation < 2
+            ):
+                raise ValueError("implementer_retry requires generation >= 2")
             if previous.terminal_outcome is None or previous.resolved_at is None:
                 raise ValueError("superseded attempt must be terminal")
         leaf = self.attempts[-1]

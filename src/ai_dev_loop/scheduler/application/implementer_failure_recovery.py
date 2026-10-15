@@ -1,4 +1,4 @@
-"""Standalone Codex implementer generic-failure recovery and publication."""
+"""Codex implementer generic-failure recovery and publication."""
 
 from __future__ import annotations
 
@@ -263,6 +263,22 @@ def load_implementer_recovery_record(
             or str(parent_row["record_sha256"] or "") != record.parent_record_sha256
         ):
             raise _corrupt("implementer recovery parent authority is invalid")
+    if record.source_run_id:
+        source, _, _ = store.load_validated_snapshot(conn, record.source_run_id)
+        if source.context.sequence is not None:
+            from ai_dev_loop.scheduler.application.sequence_implementer_recovery import (
+                authenticate_adopted_sequence_implementer_authority,
+            )
+
+            authenticate_adopted_sequence_implementer_authority(
+                store,
+                conn,
+                source_run_id=record.source_run_id,
+                successor_run_id=run_id,
+                recovery_key=record.recovery_key,
+                record_digest=record_sha,
+                require_current_leaf=False,
+            )
     return record
 
 
@@ -279,7 +295,39 @@ def implementer_recovery_blocks_dispatch(
         conn,
         successor_run_id=run_id,
     )
-    return row is not None and str(row["status"]) != "ready"
+    if row is None:
+        return False
+    if str(row["status"]) != "ready":
+        return True
+    intent = _verified_recovery_intent(row)
+    record_digest = str(row["record_sha256"] or "")
+    if (
+        not record_digest
+        or hashlib.sha256(intent.record.canonical_bytes()).hexdigest() != record_digest
+    ):
+        raise _corrupt("implementer recovery record digest binding is invalid")
+    source, _, _ = store.load_validated_snapshot(conn, intent.source_run_id)
+    if source.context.sequence is not None:
+        if not store.schema_supports_sequence_implementer_replacement(conn):
+            raise _corrupt("sequence implementer replacement schema is unavailable")
+        from ai_dev_loop.scheduler.application.sequence_implementer_recovery import (
+            authenticate_adopted_sequence_implementer_authority,
+        )
+
+        return not authenticate_adopted_sequence_implementer_authority(
+            store,
+            conn,
+            source_run_id=intent.source_run_id,
+            successor_run_id=intent.successor_run_id,
+            recovery_key=intent.recovery_key,
+            record_digest=record_digest,
+            require_current_leaf=True,
+        )
+    if store.schema_supports_sequence_implementer_replacement(conn):
+        sequence_row = store.get_sequence_implementer_replacement_by_successor(conn, run_id)
+        if sequence_row is not None:
+            raise _corrupt("standalone implementer recovery has sequence replacement authority")
+    return False
 
 
 def authenticate_implementer_recovery_dispatch(
@@ -295,6 +343,21 @@ def authenticate_implementer_recovery_dispatch(
     record = load_implementer_recovery_record(store, artifacts, conn, state.run_id)
     if record is None:
         return None
+    if state.context.sequence is not None:
+        from ai_dev_loop.scheduler.application.sequence_implementer_recovery import (
+            authenticate_adopted_sequence_implementer_authority,
+        )
+
+        if not authenticate_adopted_sequence_implementer_authority(
+            store,
+            conn,
+            source_run_id=record.source_run_id,
+            successor_run_id=state.run_id,
+            recovery_key=record.recovery_key,
+            record_digest=hashlib.sha256(record.canonical_bytes()).hexdigest(),
+            require_current_leaf=True,
+        ):
+            raise _invalid("recovered sequence run is not the active current leaf")
     effect_turn = effect_payload.get("turn")
     effect_iteration = effect_payload.get("iteration")
     recovery_fields = {
@@ -449,7 +512,7 @@ def authenticate_implementer_recovery_dispatch(
 
 
 class CodexImplementerFailureRecoveryService:
-    """Create or converge one standalone successor for a generic Codex failure."""
+    """Create or converge one successor for a generic Codex implementer failure."""
 
     def __init__(
         self,
@@ -547,8 +610,6 @@ class CodexImplementerFailureRecoveryService:
                 state, _, _ = self.store.load_validated_snapshot(conn, run_id)
                 if not isinstance(state, BlockedState):
                     raise _invalid("forced implementer recovery requires a blocked run")
-                if state.context.sequence is not None:
-                    raise _invalid("sequence implementer recovery is deferred to Phase 27.6")
                 implementer = state.context.implementer
                 if implementer is None or implementer.provider != "codex":
                     raise _invalid("forced implementer recovery requires a Codex implementer")
@@ -1200,7 +1261,6 @@ class CodexImplementerFailureRecoveryService:
                 if (
                     not isinstance(source, BlockedState)
                     or source.block_reason_kind != _RECOVERY_REASON
-                    or source.context.sequence is not None
                 ):
                     raise _conflict("implementer recovery source changed before publication")
                 attempt = self.store.get_attempt_by_id(conn, intent.failed_attempt_id)
@@ -1237,6 +1297,18 @@ class CodexImplementerFailureRecoveryService:
                     if existing is None:
                         raise _conflict("implementer recovery relation was not recorded")
                     return existing
+                from ai_dev_loop.scheduler.application.sequence_implementer_recovery import (
+                    bind_pending_sequence_implementer_intent,
+                )
+
+                bind_pending_sequence_implementer_intent(
+                    self.store,
+                    conn,
+                    source_run_id=intent.source_run_id,
+                    successor_run_id=intent.successor_run_id,
+                    recovery_key=intent.recovery_key,
+                    now=now,
+                )
                 row = self.store.get_codex_implementer_recovery_by_key(
                     conn,
                     recovery_key=intent.recovery_key,
@@ -1526,6 +1598,20 @@ class CodexImplementerFailureRecoveryService:
                 IMPLEMENTER_RECOVERY_RECORD_REL,
                 expected_sha256=record_sha,
             )
+            source, _, _ = self.store.load_validated_snapshot(conn, intent.source_run_id)
+            if source.context.sequence is not None:
+                from ai_dev_loop.scheduler.application.sequence_implementer_recovery import (
+                    adopt_sequence_implementer_successor,
+                )
+
+                adopt_sequence_implementer_successor(
+                    self.store,
+                    conn,
+                    source_run_id=intent.source_run_id,
+                    recovery_key=intent.recovery_key,
+                    record_digest=record_sha,
+                    now=now,
+                )
             changed = self.store.update_codex_implementer_recovery_status(
                 conn,
                 recovery_key=intent.recovery_key,
@@ -1582,6 +1668,20 @@ class CodexImplementerFailureRecoveryService:
                 recovery_key=recovery_key,
             )
             if row is None or str(row["status"]) != "pending":
+                return
+            source, _, _ = self.store.load_validated_snapshot(conn, str(row["source_run_id"]))
+            if source.context.sequence is not None:
+                from ai_dev_loop.scheduler.application.sequence_implementer_recovery import (
+                    cancel_pending_sequence_implementer_recovery,
+                )
+
+                cancel_pending_sequence_implementer_recovery(
+                    self.store,
+                    conn,
+                    sequence_id=source.context.sequence.sequence_id,
+                    source_run_id=source.run_id,
+                    now=self.now(),
+                )
                 return
             self.store.update_codex_implementer_recovery_status(
                 conn,

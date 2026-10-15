@@ -102,7 +102,7 @@ def test_inspection_wait_provider_role_privacy_and_mutation_free_reads(
     assert scheduler_paths["db_path"].read_bytes() == before
     caps = build_integration_info_data().capabilities
     assert caps.dual_implementers and caps.mixed_implementer_sequences
-    assert not caps.codex_implementer_manual_recovery
+    assert caps.codex_implementer_manual_recovery
 
 
 @pytest.mark.parametrize("stream", ["stdout", "stderr"])

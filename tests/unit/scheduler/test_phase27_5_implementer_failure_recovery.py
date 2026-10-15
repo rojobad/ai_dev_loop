@@ -54,6 +54,7 @@ from ai_dev_loop.scheduler.application.recovery_ancestry import recovery_ancesto
 from ai_dev_loop.scheduler.application.review_budget_extend import ReviewBudgetExtendService
 from ai_dev_loop.scheduler.application.sequence_start import start_sequence
 from ai_dev_loop.scheduler.application.start import start_run
+from ai_dev_loop.scheduler.domain.sequence import ActiveSequenceState
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SCHEMA_VERSION, SqliteSchedulerStore
 
@@ -174,7 +175,7 @@ def _exhaust_automatic_timeout_retries_into_generic_failure(
     return blocked
 
 
-def test_schema_v15_and_real_cli_initial_recovery_preserve_prompt_identity_and_source(
+def test_current_schema_and_real_cli_initial_recovery_preserve_prompt_identity_and_source(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
@@ -219,7 +220,7 @@ def test_schema_v15_and_real_cli_initial_recovery_preserve_prompt_identity_and_s
         "completed",
     )
 
-    assert SCHEMA_VERSION == 15
+    assert SCHEMA_VERSION == 16
     assert completed.codex.implementer_session_id == IMPLEMENTER_ID
     assert completed.codex.reviewer_session_id == REVIEWER_ID
     assert [path.read_bytes() for path in sorted(witness.glob("*.bin"))] == [
@@ -713,17 +714,21 @@ def test_v14_migration_adds_relation_without_rewriting_existing_runs(tmp_path: P
     store.bootstrap()
     with store.begin_immediate() as conn:
         before = conn.execute("SELECT COUNT(*) FROM scheduler_runs").fetchone()[0]
+        conn.execute("DROP TABLE scheduler_sequence_implementer_replacements")
+        conn.execute(
+            "DROP INDEX IF EXISTS idx_scheduler_sequence_implementer_replacements_sequence"
+        )
         conn.execute("DROP TABLE scheduler_codex_implementer_recoveries")
         conn.execute("DROP INDEX IF EXISTS idx_scheduler_codex_implementer_recoveries_successor")
         conn.execute("DROP INDEX IF EXISTS idx_scheduler_codex_implementer_recoveries_status")
-        conn.execute("DELETE FROM scheduler_schema_migrations WHERE version = 15")
+        conn.execute("DELETE FROM scheduler_schema_migrations WHERE version >= 15")
         conn.execute("PRAGMA user_version = 14")
     historical = SqliteSchedulerStore.open_readonly(db)
     with historical.begin_read() as conn:
         assert recovery_ancestor_edges(historical, conn, "historical-run") == ()
     store.bootstrap()
     with store.begin_read() as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 15
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 16
         assert conn.execute("SELECT COUNT(*) FROM scheduler_runs").fetchone()[0] == before
         assert (
             int(
@@ -1082,7 +1087,7 @@ def test_abort_pending_publication_cancels_without_dispatch_and_preserves_source
     assert current.model_dump_json() == source_payload
 
 
-def test_sequence_leaf_force_rejects_before_relation_and_preserves_current_authority(
+def test_sequence_leaf_force_adopts_successor_and_preserves_blocked_source(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
@@ -1102,19 +1107,23 @@ def test_sequence_leaf_force_rejects_before_relation_and_preserves_current_autho
     else:
         raise AssertionError("sequence leaf did not reach generic implementer block")
     assert leaf.block_reason_kind == "codex_implementer_failure"
-    before_sequence = sequence_state(scheduler_paths, prepared.sequence_id).model_dump_json()
-    witness = _authority_witness(scheduler_paths)
-    with pytest.raises(SchedulerEngineError, match="deferred to Phase 27.6"):
-        _service(scheduler_paths).force(started.run_id)
-    assert _authority_witness(scheduler_paths) == witness
-    assert (
-        sequence_state(scheduler_paths, prepared.sequence_id).model_dump_json() == before_sequence
-    )
+    source_payload = leaf.model_dump_json()
+    successor, changed = _service(scheduler_paths).force(started.run_id)
+    assert changed is True
+    sequence = sequence_state(scheduler_paths, prepared.sequence_id)
+    assert isinstance(sequence, ActiveSequenceState)
+    assert sequence.current_ordinal == 1
+    assert sequence.current_run_id == successor
+    assert leaf_state(scheduler_paths, started.run_id).model_dump_json() == source_payload
     with sqlite3.connect(scheduler_paths["db_path"]) as conn:
         assert conn.execute(
             "SELECT COUNT(*) FROM scheduler_codex_implementer_recoveries"
-        ).fetchone() == (0,)
-        assert conn.execute("SELECT COUNT(*) FROM scheduler_runs").fetchone() == (1,)
+        ).fetchone() == (1,)
+        assert conn.execute(
+            "SELECT COUNT(*) FROM scheduler_sequence_implementer_replacements "
+            "WHERE adopted_at IS NOT NULL"
+        ).fetchone() == (1,)
+        assert conn.execute("SELECT COUNT(*) FROM scheduler_runs").fetchone() == (2,)
 
 
 def test_corrupt_failure_rejects_without_successor_publication(

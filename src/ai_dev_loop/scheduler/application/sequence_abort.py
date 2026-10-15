@@ -250,6 +250,17 @@ class SequenceAbortService:
                     source_run_id=source_run_id,
                     now=now,
                 )
+                from ai_dev_loop.scheduler.application.sequence_implementer_recovery import (
+                    cancel_pending_sequence_implementer_recovery,
+                )
+
+                cancel_pending_sequence_implementer_recovery(
+                    self.store,
+                    conn,
+                    sequence_id=state.sequence_id,
+                    source_run_id=source_run_id,
+                    now=now,
+                )
                 self.store.cancel_outstanding_sequence_execution_replacements(
                     conn,
                     sequence_id=state.sequence_id,
@@ -290,15 +301,26 @@ class SequenceAbortService:
                             conn,
                             refreshed.current_run_id,
                         )
+                        implementer_row = (
+                            self.store.get_sequence_implementer_replacement_by_successor(
+                                conn, refreshed.current_run_id
+                            )
+                            if self.store.schema_supports_sequence_implementer_replacement(conn)
+                            else None
+                        )
                         if (
                             cursor_row is not None
                             and str(cursor_row["source_run_id"]) == source_run_id
                             and cursor_row["adopted_at"] is not None
+                        ) or (
+                            implementer_row is not None
+                            and str(implementer_row["source_run_id"]) == source_run_id
+                            and implementer_row["adopted_at"] is not None
                         ):
                             adopted_during_abort = True
                             raise SchedulerEngineError(
                                 SchedulerEngineErrorKind.CONFLICT,
-                                "sequence cursor leaf was adopted during blocked abort",
+                                "sequence leaf replacement was adopted during blocked abort",
                             )
                     raise SchedulerEngineError(
                         SchedulerEngineErrorKind.CONFLICT,

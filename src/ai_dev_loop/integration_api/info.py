@@ -18,7 +18,7 @@ def build_integration_info_data() -> IntegrationInfoData:
                 "codexCapacity": True,
                 "dualImplementers": True,
                 "mixedImplementerSequences": True,
-                "codexImplementerManualRecovery": False,
+                "codexImplementerManualRecovery": True,
             },
         }
     )

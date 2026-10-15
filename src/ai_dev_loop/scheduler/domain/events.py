@@ -330,7 +330,7 @@ class CursorInitialRecoverySuccessorCreatedEvent(DomainModel):
 
 
 class CodexImplementerRecoverySuccessorCreatedEvent(DomainModel):
-    """Successor created for one authenticated standalone implementer failure."""
+    """Successor created for one authenticated Codex implementer failure."""
 
     kind: str = Field(default=CODEX_IMPLEMENTER_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND)
     source_run_id: NonEmptyStr

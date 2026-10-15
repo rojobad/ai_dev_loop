@@ -106,7 +106,8 @@ evidencia estructurada/provider, o por un probe post-fallo `EXHAUSTED` con ident
 autenticada y terminación resuelta,
 entra en `waiting_codex_capacity` y se reanuda automáticamente solo cuando el
 probe actual informa capacidad. Los manifests de secuencia v1 siguen siendo solo
-Cursor; no hay provider switching ni recuperación automática de timeout Codex.
+Cursor; no hay provider switching. Los timeouts Codex confirmados usan la política
+acotada compartida de tres reintentos automáticos por turno.
 
 El scheduler impone `workspace-write` al proceso Codex. El wrapper y la skill de
 review siguen exigiendo revisar únicamente el staged y no editar, stagear ni
@@ -365,7 +366,7 @@ entra en `waiting_codex_capacity` y luego reanuda el mismo turno y presupuesto. 
 identidad incierta, evidencia corrupta o terminación no resuelta no autorizan el retry;
 los holds de integridad conservan la reserva hasta abort explícito.
 
-Con `--force`, un run **standalone** bloqueado por
+Con `--force`, un run bloqueado por
 `codex_implementer_failure` puede publicar un único sucesor si el intento terminó,
 la sesión implementer quedó autenticada y la evidencia de invocación, resultado y
 artefactos coincide. El origen bloqueado permanece inmutable. El sucesor conserva
@@ -376,15 +377,18 @@ trabajo parcial: en el límite de recuperación comprueba que el estado actual c
 con el capturado al terminar el intento, sin exigir un baseline limpio. Una publicación
 pendiente no despacha; `tick` reconcilia los artefactos y solo una relación `ready`
 instala `codex.implementer_resume`. Repetir el comando devuelve el mismo sucesor, y un
-sucesor que falle de nuevo necesita otro `--force`.
+sucesor que falle de nuevo necesita otro `--force`. Si el origen es la hoja vigente
+de una secuencia, el sucesor se adopta en el mismo ordinal y entrada congelada mediante
+intent durable, lineage `implementer_retry` y transferencia de reserva antes del
+dispatch. Tras aceptación continúa el checkpoint no final ordinario o el staging final.
 
 Para provider Cursor, este comando compartido delega en la misma recuperación
 autenticada de `scheduler cursor-retry --force`; el comando Cursor existente conserva
 su compatibilidad y sus recibos propios.
 
-En esta fase `--force` rechaza hojas de secuencia (su adopción queda para 27.6),
-timeouts, esperas de capacidad, abortos, terminación incierta, identidad no ligada y
-evidencia corrupta sin crear sucesor. `status` e inspect de run/secuencia exponen
+`--force` rechaza timeouts, esperas de capacidad, abortos, terminación incierta,
+identidad no ligada, hojas obsoletas sin relación y evidencia corrupta sin crear
+sucesor. `status` e inspect de run/secuencia exponen
 `implementer_retry_wait_until`, el contador automático y el límite de timeout.
 `history` registra `codex_implementer_timeout_retry` sin publicar IDs completos,
 prompts ni salida del agente.

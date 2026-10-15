@@ -1,4 +1,4 @@
-"""Immutable authority for standalone Codex implementer failure recovery."""
+"""Immutable authority for Codex implementer failure recovery."""
 
 from __future__ import annotations
 

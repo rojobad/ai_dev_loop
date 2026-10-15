@@ -213,6 +213,24 @@ class AttemptService:
         )
         if cleanup is not None:
             return cleanup
+
+        # Dispatch fences intentionally reject recovered sequence leaves once their
+        # run or sequence has been aborted.  An already-aborted run can still own a
+        # cancelled process, though, and that process must remain observable until
+        # its exact unit is authenticated as stopped.  Give only terminal abort
+        # reconciliation priority here; every live launch/relaunch path remains
+        # behind the recovery authority checks below.
+        with self.store.begin_read() as conn:
+            state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+        if isinstance(state, AbortedState):
+            reconcile = self._reconcile_existing_attempt(
+                tick_owner_id,
+                tick_lease_generation,
+                run_id,
+            )
+            if reconcile is not None:
+                return reconcile
+
         from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
             cursor_initial_recovery_blocks_dispatch,
         )
@@ -376,6 +394,15 @@ class AttemptService:
                 return None
             if version < scheduled_version:
                 return TickRunReceipt(run_id=run_id, action="attempt_stale")
+            from ai_dev_loop.scheduler.application.implementer_failure_recovery import (
+                implementer_recovery_blocks_dispatch,
+            )
+
+            if implementer_recovery_blocks_dispatch(self.store, conn, run_id):
+                return TickRunReceipt(
+                    run_id=run_id,
+                    action="codex_implementer_recovery_dispatch_fenced",
+                )
             if not self.store.try_acquire_capacity(
                 conn,
                 run_id=run_id,
@@ -1600,6 +1627,16 @@ class AttemptService:
             if codex_implementer_attempt:
                 if not isinstance(state, _CODEX_IMPLEMENTER_ATTEMPT_STATES):
                     return TickRunReceipt(run_id=run_id, action="attempt_state_changed")
+                from ai_dev_loop.scheduler.application.implementer_failure_recovery import (
+                    implementer_recovery_blocks_dispatch,
+                )
+
+                if implementer_recovery_blocks_dispatch(self.store, conn, run_id):
+                    return TickRunReceipt(
+                        run_id=run_id,
+                        action="codex_implementer_recovery_dispatch_fenced",
+                        detail=attempt_id,
+                    )
             elif codex_attempt:
                 if not isinstance(state, _CODEX_ATTEMPT_STATES):
                     return TickRunReceipt(run_id=run_id, action="attempt_state_changed")
@@ -1821,6 +1858,7 @@ class AttemptService:
             claim_id=claim_id,
             tick_owner_id=tick_owner_id,
             tick_lease_generation=tick_lease_generation,
+            codex_implementer_attempt=codex_implementer_attempt,
         ):
             return TickRunReceipt(
                 run_id=run_id,
@@ -1852,9 +1890,17 @@ class AttemptService:
         claim_id: str,
         tick_owner_id: str,
         tick_lease_generation: int,
+        codex_implementer_attempt: bool = False,
     ) -> bool:
         now = self._now_factory()
         with self.store.begin_read() as conn:
+            if codex_implementer_attempt:
+                from ai_dev_loop.scheduler.application.implementer_failure_recovery import (
+                    implementer_recovery_blocks_dispatch,
+                )
+
+                if implementer_recovery_blocks_dispatch(self.store, conn, run_id):
+                    return False
             return self.store.verify_launch_authority(
                 conn,
                 attempt_id=attempt_id,

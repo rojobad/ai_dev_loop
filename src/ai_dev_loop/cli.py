@@ -512,14 +512,14 @@ def scheduler_implementer_retry_command(
         typer.Option(
             "--force",
             help=(
-                "Create/replay a standalone Codex successor for an authenticated generic "
-                "failure; sequence leaves are deferred to Phase 27.6."
+                "Create/replay a Codex successor for an authenticated generic failure "
+                "in a standalone run or the current sequence leaf."
             ),
         ),
     ] = False,
     output: OutputOption = DEFAULT_OUTPUT,
 ) -> None:
-    """Continue a timeout, or force eligible standalone Codex failure recovery."""
+    """Continue a timeout, or force eligible Codex failure recovery."""
 
     def run() -> None:
         from ai_dev_loop.scheduler.application.implementer_timeout_retry import (

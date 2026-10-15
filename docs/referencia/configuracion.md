@@ -194,10 +194,11 @@ operativos documentados son:
   provider congelado. En Codex conserva sesión, modelo, effort, timeout y prompt;
   admite tres reintentos automáticos por turno con espera de 30 minutos. No toma
   valores nuevos de YAML ni de la configuración local de Codex.
-  `--force` publica o repite un sucesor standalone para un fallo genérico Codex
-  terminado y autenticado. Conserva los settings enviados y las identidades exactas;
-  no permite cambiar provider/modelo ni reintentar una identidad incierta. Las hojas
-  de secuencia siguen rechazadas hasta la fase 27.6.
+  `--force` publica o repite un sucesor para un fallo genérico Codex terminado y
+  autenticado. Conserva los settings enviados y las identidades exactas; no permite
+  cambiar provider/modelo ni reintentar una identidad incierta. Una hoja vigente de
+  secuencia se adopta en el mismo ordinal antes del dispatch; una hoja obsoleta sin
+  relación se rechaza.
 - `scheduler abort`: cancelacion no destructiva; preserva artefactos y cambios staged.
 - Runs interrumpidos o bloqueados: inspecciona `scheduler status` y
   `scheduler history`; la accion segura depende del checkpoint durable en el ledger.

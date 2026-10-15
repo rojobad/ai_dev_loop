@@ -63,9 +63,10 @@ existing references; it does not imply a public `resume` command.
 - Do not reject normal Cursor output solely because Cursor changed the index.
   Preserve supported artifact/content checks without expanding them into
   exhaustive Git-status emulation.
-- Expected partial work from a usage-limited implementation turn is preserved
-  for continuation; do not demand a new clean baseline or discard it. Codex
-  implementer timeout recovery is not automated and blocks safely.
+- Expected partial work from a usage-limited, timed-out, or explicitly recovered
+  implementation turn is preserved for continuation; do not demand a new clean
+  baseline or discard it. Codex recovery keeps the exact authenticated session,
+  frozen settings, prompt bytes, and retry consumption.
 - Standalone runs and final sequence phases leave changes staged. Only an
   explicitly started sequence authorizes the existing local unsigned/no-hook
   checkpoint commit for an accepted non-final phase. Authenticate the reviewed
@@ -100,6 +101,20 @@ existing references; it does not imply a public `resume` command.
   must not be bypassed through the timeout-retry command.
 - Preserve each attempt's artifacts separately. Do not overwrite prior output,
   rerun admission, or confuse an attempt retry with a completed correction.
+
+## Codex Implementer Continuation
+
+- `scheduler implementer-retry` preserves the authenticated implementer session,
+  frozen command/model/effort/timeout, exact prompt bytes, reviewer identity, and
+  effective review ceiling. Confirmed timeouts use the bounded same-run policy;
+  `--force` publishes one successor for an eligible terminated generic failure.
+- A current sequence leaf successor is bound to the same sequence, ordinal, and
+  frozen entry. Publication, reservation transfer, lineage CAS, and dispatch
+  eligibility converge atomically; pending publication cannot dispatch. Duplicate
+  force returns the existing relation, while an unrelated stale leaf is rejected.
+- Sequence abort cancels an unadopted successor. Adoption followed by acceptance
+  uses the ordinary non-final checkpoint or final staged handoff; recovery grants
+  no additional Git authority and never rewrites the blocked source.
 
 ## Reviewer Retry And Recovery
 

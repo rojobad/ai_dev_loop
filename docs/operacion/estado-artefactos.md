@@ -87,10 +87,12 @@ No existe `recover` publico en el scheduler central. Ante fallos:
   autorizar más reviews tras agotar el presupuesto; consulta las condiciones en
   la [referencia CLI](../referencia/cli.md);
 - usa `scheduler implementer-retry <run-id> --force` para un fallo genérico Codex
-  standalone terminado y con sesión ligada. La relación vive en
+  terminado y con sesión ligada. La relación vive en
   `scheduler_codex_implementer_recoveries`; el sucesor guarda el intent y el record
   inmutables bajo `implementer/failure-recovery/`. Un estado `pending` conserva la
-  reserva pero no puede ejecutar. Las hojas de secuencia todavía se rechazan;
+  reserva pero no puede ejecutar. Para la hoja vigente de secuencia,
+  `scheduler_sequence_implementer_replacements` liga ordinal, generación, entrada
+  congelada y adopción; lineage registra `implementer_retry`;
 - `scheduler abort` cancela sin borrar artefactos ni cambios staged;
 - para trabajo nuevo tras un run terminal, `scheduler submit` con
   `--resubmission-id <uuid>`, modelo y razonamiento de review explícitos

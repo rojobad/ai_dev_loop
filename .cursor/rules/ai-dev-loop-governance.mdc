@@ -88,7 +88,8 @@ an unresolved decision would change safety behavior.
   and dispatch Codex for implementation and corrections; keep that implementer
   session independent from reviewer B. Mixed-provider sequences freeze settings
   per ordinal; v1 remains Cursor-only. Do not add provider switching during a
-  run or automatic implementer timeout recovery.
+  run. Keep timeout and generic-failure recovery on the authenticated shared
+  retry policy; never switch providers or identities during recovery.
 - Do not invoke real Cursor or Codex model activity in automated tests.
 - Do not store API keys, tokens, authentication files, or full process environments.
 - Do not write orchestrator state inside target repositories.

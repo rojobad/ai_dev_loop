@@ -5,7 +5,7 @@ futuro supervise el scheduler local sin acceder a SQLite ni rutas privadas.
 
 ## Versión del contrato
 
-- Versión actual de la API: **1.7** (`apiVersion.major` / `apiVersion.minor`).
+- Versión actual de la API: **1.8** (`apiVersion.major` / `apiVersion.minor`).
 - Misma major: compatible; campos desconocidos se ignoran en consumidores.
 - Major distinta: el consumidor debe detenerse con `UPDATE_REQUIRED` y no emitir
   más peticiones de recursos.
@@ -18,7 +18,7 @@ Todas las órdenes bajo `integration` escriben **un único documento JSON** en s
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 7 },
+  "apiVersion": { "major": 1, "minor": 8 },
   "ok": true,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": {},
@@ -30,7 +30,7 @@ Error:
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 7 },
+  "apiVersion": { "major": 1, "minor": 8 },
   "ok": false,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": null,
@@ -63,7 +63,7 @@ ai_dev_loop integration info [--output json]
 - No requiere ledger del scheduler, no crea directorios XDG y no sondea Codex.
 - `data.aiDevLoopVersion` es la versión del paquete instalado.
 - `data.capabilities` declara de forma honesta qué lecturas existen en esta
-  versión. En **1.7**, `runs`, `sequences`, `reviewInspection`, `processOutput`
+  versión. En **1.8**, `runs`, `sequences`, `reviewInspection`, `processOutput`
   y `codexCapacity` son `true`.
 
 ## Capacidad Codex local (API 1.5)
@@ -185,7 +185,7 @@ ai_dev_loop integration run output RUN_ID --attempt ATTEMPT_ID --stream stdout|s
 
 Los esquemas empaquetados viven en `src/ai_dev_loop/schemas/integration-api-*.json`.
 
-## Implementer, capacidad y timeout por rol (API 1.7)
+## Implementer, capacidad y timeout por rol (API 1.7+)
 
 Los resúmenes de run incluyen `implementerProvider`; inspect agrega
 `codexPendingRole`, `codexPendingTurn` y `codexCapacityReason` en espera de capacidad.
@@ -200,11 +200,10 @@ Status/history/timeline exponen provider/componente y rol/turno sin prompts,
 respuestas ni IDs completos. El siguiente paso de espera implementer es tick.
 
 Capabilities: `dualImplementers=true`, `mixedImplementerSequences=true`,
-`codexImplementerManualRecovery=false`. La capability permanece falsa porque
-la superficie integrada solo la anuncia cuando `--force` cubra tanto standalone
-como la hoja vigente de secuencia; 27.5 implementa únicamente standalone y 27.6
-queda pendiente. El retry acotado de timeout se proyecta mediante los campos
-aditivos de API 1.7.
+`codexImplementerManualRecovery=true`. API 1.8 la habilita porque `--force` cubre
+standalone y la hoja vigente de secuencia. `phase-runs` expone el intento aditivo
+`implementer_retry`; los consumidores de la misma major deben tolerar este valor
+nuevo. El retry acotado de timeout conserva los campos aditivos introducidos en 1.7.
 `review(s)` sigue siendo el índice del reviewer. `run output` sirve stdout/stderr
 de intentos `codex_implementer` bajo `implementer/turns/`, autenticando intent y
 completion del rol correcto, paths confinados y hashes capturados cuando existen.

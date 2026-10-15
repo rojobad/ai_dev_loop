@@ -16,6 +16,7 @@ from ai_dev_loop.scheduler.application.contracts import (
 )
 from ai_dev_loop.scheduler.domain.state import (
     AbortedState,
+    BlockedState,
     SchedulerState,
     WaitingCodexCapacityState,
     WaitingCodexReviewRetryState,
@@ -29,6 +30,17 @@ def safe_next_action_for_scheduler_state(
     conn: sqlite3.Connection,
     state: SchedulerState,
 ) -> SafeNextAction:
+    if isinstance(state, BlockedState) and state.block_reason_kind in {
+        "cursor_failure",
+        "codex_implementer_failure",
+    }:
+        return SafeNextAction(
+            kind=SafeNextActionKind.SCHEDULER_TICK,
+            command=(
+                f"ai_dev_loop scheduler implementer-retry {state.run_id} --force "
+                "(authenticate and publish one recovery successor; tick dispatches it)."
+            ),
+        )
     if (
         is_codex_implementer_reservation_hold(state)
         and store.get_reservation_for_run(conn, state.run_id) is not None

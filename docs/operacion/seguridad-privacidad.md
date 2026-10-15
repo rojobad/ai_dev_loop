@@ -252,7 +252,7 @@ congelado. La evidencia incierta o corrupta retiene la reserva; abort explícito
 la libera después de resolver cualquier terminación pendiente.
 
 Con `--force`, la misma autenticación se amplía únicamente al fallo genérico
-standalone. El record protegido fija el intento fuente, la sesión implementer, los
+elegible. El record protegido fija el intento fuente, la sesión implementer, los
 settings, config, prompt exacto y estado parcial autenticado; en corrección fija también
 reviewer B, fix, patch revisado y presupuesto. El origen y sus artefactos no se
 reescriben. El sucesor toma o readquiere la reserva antes de publicar, no ejecuta
@@ -262,8 +262,11 @@ limpio. Un status autenticado de cero bytes se publica explícitamente con su ha
 permisos protegidos; no habilita artefactos vacíos generales. La autoridad del record
 solo cubre el turno recuperado y sus continuaciones timeout/capacidad: una corrección
 posterior usa su propio checkpoint y prompt durable, conservando la misma identidad y
-la ascendencia autenticada. No se aceptan sesiones sin ligar, evidencia de quota/timeout
-reutilizada ni hojas de secuencia en 27.5.
+la ascendencia autenticada. No se aceptan sesiones sin ligar ni evidencia de
+quota/timeout reutilizada. En secuencia, otro intent protegido liga la hoja vigente,
+ordinal, generación, entrada congelada, reserva y digest del record. Solo la adopción
+atómica hace dispatchable al sucesor; abort cancela una publicación pendiente y una
+hoja obsoleta sin relación no puede revivirse.
 
 El record también fija el consumo autenticado de reintentos automáticos del turno. Un
 sucesor no recibe un presupuesto nuevo por cambiar de run: reconstruye el contador

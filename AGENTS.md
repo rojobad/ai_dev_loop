@@ -42,8 +42,9 @@
   exact pending role and session; it never
   starts review early. Manifest v2 freezes independent implementer settings per
   phase and supports mixed providers; historical v1 stays Cursor-only. Provider
-  switching during a run, automatic Codex implementer timeout recovery, and a scheduler-managed Cursor
-  master/executor stage are not implemented configuration options.
+  switching during a run and a scheduler-managed Cursor master/executor stage
+  are not implemented configuration options. Confirmed Codex timeouts and
+  authenticated generic failures use the shared bounded recovery policy.
   Unsafe implementer identity or incomplete evidence blocks with the repository
   reservation retained. Explicit `scheduler abort` cancels these held Codex
   blocks and releases resources only after attempt termination is resolved.
@@ -77,13 +78,14 @@ become a general-purpose controller of every worktree change.
 
 ## Recovery and operator actions
 
-- Use the durable state and safe next action: `scheduler cursor-retry` for an
-  eligible terminated Cursor timeout, `scheduler cursor-retry --force` for an
-  eligible failed standalone or current sequence-leaf Cursor implementation or
-  correction turn, `scheduler review retry` for eligible review failures/capacity
-  waits, and `scheduler extend` for an explicitly increased review ceiling after
-  `max_iterations_reached`. `--force` on a sequence leaf reuses the same sequence
-  and ordinal; a stale leaf with no existing relation is rejected.
+- Use the durable state and safe next action: `scheduler implementer-retry` for
+  eligible provider-specific timeouts and authenticated generic failures,
+  `scheduler cursor-retry` for the compatible Cursor-only surface (including an
+  eligible terminated timeout and `--force` failure recovery), `scheduler review
+  retry` for eligible review failures/capacity waits, and `scheduler extend` for
+  an explicitly increased review ceiling after `max_iterations_reached`.
+  `implementer-retry --force` on a current Codex or Cursor sequence leaf reuses
+  the same sequence and ordinal; a stale leaf with no existing relation is rejected.
 - Same-reviewer recovery preserves the authenticated reviewer binding. An
   eligible blocked run may have a successor; the blocked source is immutable.
   `scheduler extend` is a separate explicit same-run transition and does not

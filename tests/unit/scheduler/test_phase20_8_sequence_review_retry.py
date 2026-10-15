@@ -139,7 +139,7 @@ class TestPhase208Schema:
         db_path = tmp_path / "engine.sqlite3"
         store = SqliteSchedulerStore(db_path)
         store.bootstrap()
-        assert SCHEMA_VERSION == 15
+        assert SCHEMA_VERSION == 16
         with store.begin_read() as conn:
             tables = {
                 row[0]
