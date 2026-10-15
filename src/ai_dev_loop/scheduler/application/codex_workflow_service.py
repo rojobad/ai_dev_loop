@@ -774,6 +774,9 @@ class CodexWorkflowService:
                         "Codex implementer exited unsuccessfully; "
                         f"post-failure capacity probe was {observation.status.value}"
                     ),
+                    implementer_session_id=effective_session,
+                    binding_artifact_path=binding_path,
+                    binding_artifact_sha256=binding_sha,
                 )
 
         if usage_limit:
@@ -856,6 +859,9 @@ class CodexWorkflowService:
                 attempt_id=attempt_id,
                 reason_kind="codex_implementer_failure",
                 summary="Codex implementer exited with an unclassified failure",
+                implementer_session_id=effective_session,
+                binding_artifact_path=binding_path,
+                binding_artifact_sha256=binding_sha,
             )
         if effective_session is None or binding_path is None or binding_sha is None:
             return self._block_implementer(
@@ -1752,6 +1758,9 @@ class CodexWorkflowService:
         attempt_id: str,
         reason_kind: str,
         summary: str,
+        implementer_session_id: str | None = None,
+        binding_artifact_path: str | None = None,
+        binding_artifact_sha256: str | None = None,
     ) -> TickRunReceipt:
         now = self._now_factory()
         with self.store.begin_immediate() as conn:
@@ -1773,6 +1782,12 @@ class CodexWorkflowService:
                 run_id=run_id,
                 block_reason_kind=reason_kind,
                 block_reason_summary=summary,
+                attempt_id=attempt_id or None,
+                implementer_session_id_prefix=(
+                    None if implementer_session_id is None else implementer_session_id[:8]
+                ),
+                binding_artifact_path=binding_artifact_path,
+                binding_artifact_sha256=binding_artifact_sha256,
             )
             blocked = apply_codex_implementer_blocked(
                 state,

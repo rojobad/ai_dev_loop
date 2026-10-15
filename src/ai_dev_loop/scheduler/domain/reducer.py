@@ -932,6 +932,7 @@ def apply_waiting_for_cursor_fix_entered(
             "review_iteration": event.review_iteration,
             "reviews_completed": state.codex.reviews_completed + 1,
             "implementer_timeout_continuation": None,
+            "implementer_timeout_automatic_retries_consumed": 0,
             **reset_routing_auto_retry_for_new_review_iteration(),
         }
     )
@@ -1106,6 +1107,7 @@ def apply_review_budget_extended(
             "latest_fix_prompt_sha256": event.fix_prompt_sha256,
             "latest_correction_envelope_path": event.correction_envelope_path,
             "latest_correction_envelope_sha256": event.correction_envelope_sha256,
+            "implementer_timeout_automatic_retries_consumed": 0,
             **reset_routing_auto_retry_for_new_review_iteration(),
         }
     )

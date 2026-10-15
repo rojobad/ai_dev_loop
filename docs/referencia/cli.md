@@ -351,9 +351,11 @@ implementador seleccionado. Para Cursor delega a la política existente de
 `cursor-retry`; ese comando histórico sigue siendo Cursor-only. Para Codex conserva
 el mismo run, sesión autenticada, provider, modelo, effort, timeout y bytes del prompt.
 El scheduler permite como máximo tres reintentos automáticos por turno, separados por
-30 minutos. Una invocación manual adelanta la espera sin consumir su autorización
-automática, o autoriza otra continuación después de agotarlas. La CLI solo persiste o
-adelanta el efecto; `scheduler tick` es quien despacha el proceso.
+30 minutos. El consumo acompaña a un sucesor `--force` que continúa el mismo turno y
+solo se reinicia al comenzar un turno inicial/corrección genuinamente nuevo. Una
+invocación manual adelanta la espera sin consumir su autorización automática, o
+autoriza otra continuación después de agotarlas. La CLI solo persiste o adelanta el
+efecto; `scheduler tick` es quien despacha el proceso.
 
 Un timeout Codex requiere terminación confirmada, resultado e invocación autenticados,
 identidad ya capturada y reserva vigente. El intent inmutable bajo
@@ -363,11 +365,29 @@ entra en `waiting_codex_capacity` y luego reanuda el mismo turno y presupuesto. 
 identidad incierta, evidencia corrupta o terminación no resuelta no autorizan el retry;
 los holds de integridad conservan la reserva hasta abort explícito.
 
-`--force` está reservado por el contrato público, pero esta fase lo rechaza sin mutar
-el run; la recuperación de fallos clasificados llega en fases posteriores. `status` e
-inspect de run/secuencia exponen `implementer_retry_wait_until`, el contador automático
-y el límite. `history` registra `codex_implementer_timeout_retry` sin publicar IDs
-completos, prompts ni salida del agente.
+Con `--force`, un run **standalone** bloqueado por
+`codex_implementer_failure` puede publicar un único sucesor si el intento terminó,
+la sesión implementer quedó autenticada y la evidencia de invocación, resultado y
+artefactos coincide. El origen bloqueado permanece inmutable. El sucesor conserva
+provider, comando, modelo, effort, timeout, sandbox, sesión y bytes exactos del prompt;
+una corrección conserva además el mismo reviewer B, fix crudo, patch revisado,
+reviews completadas y techo efectivo extendido. No repite admisión limpia ni descarta
+trabajo parcial: en el límite de recuperación comprueba que el estado actual coincide
+con el capturado al terminar el intento, sin exigir un baseline limpio. Una publicación
+pendiente no despacha; `tick` reconcilia los artefactos y solo una relación `ready`
+instala `codex.implementer_resume`. Repetir el comando devuelve el mismo sucesor, y un
+sucesor que falle de nuevo necesita otro `--force`.
+
+Para provider Cursor, este comando compartido delega en la misma recuperación
+autenticada de `scheduler cursor-retry --force`; el comando Cursor existente conserva
+su compatibilidad y sus recibos propios.
+
+En esta fase `--force` rechaza hojas de secuencia (su adopción queda para 27.6),
+timeouts, esperas de capacidad, abortos, terminación incierta, identidad no ligada y
+evidencia corrupta sin crear sucesor. `status` e inspect de run/secuencia exponen
+`implementer_retry_wait_until`, el contador automático y el límite de timeout.
+`history` registra `codex_implementer_timeout_retry` sin publicar IDs completos,
+prompts ni salida del agente.
 
 ## `scheduler extend`
 
@@ -379,9 +399,10 @@ Autoriza un techo absoluto mayor de reviews Codex para el mismo run cuando esta 
 `max_iterations_reached`. El comando es process-free: no invoca Cursor ni Codex;
 reacquire la reserva del worktree, registra el evento `review_budget_extended`,
 transiciona a `waiting_for_cursor_fix` con el fix prompt exacto de la review
-agotada y encola un efecto de correccion Cursor. Repetir el mismo objetivo absoluto
-es idempotente. Fuera de ese replay, un objetivo menor o igual al techo efectivo
-actual se rechaza.
+agotada y encola el efecto de correccion del implementer congelado: `cursor.run_turn`
+para Cursor o resume de la misma sesión implementer para Codex. Repetir el mismo
+objetivo absoluto es idempotente. Fuera de ese replay, un objetivo menor o igual al
+techo efectivo actual se rechaza.
 
 ## `scheduler review retry`
 

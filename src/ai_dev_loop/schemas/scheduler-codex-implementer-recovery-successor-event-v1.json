@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CodexImplementerRecoverySuccessorCreatedEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "kind": { "const": "codex_implementer_recovery_successor_created" },
+    "source_run_id": { "type": "string", "minLength": 1 },
+    "successor_run_id": { "type": "string", "minLength": 1 },
+    "recovery_key": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "failed_attempt_id": { "type": "string", "minLength": 1 },
+    "turn": { "enum": ["initial", "correction"] },
+    "iteration": { "type": "integer", "minimum": 1 }
+  },
+  "required": [
+    "kind", "source_run_id", "successor_run_id", "recovery_key",
+    "failed_attempt_id", "turn", "iteration"
+  ]
+}

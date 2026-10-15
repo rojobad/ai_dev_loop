@@ -223,6 +223,15 @@ class AttemptService:
                     run_id=run_id,
                     action="cursor_initial_recovery_publication_pending",
                 )
+            from ai_dev_loop.scheduler.application.implementer_failure_recovery import (
+                implementer_recovery_blocks_dispatch,
+            )
+
+            if implementer_recovery_blocks_dispatch(self.store, conn, run_id):
+                return TickRunReceipt(
+                    run_id=run_id,
+                    action="codex_implementer_recovery_publication_pending",
+                )
         reconcile = self._reconcile_existing_attempt(
             tick_owner_id,
             tick_lease_generation,
@@ -974,6 +983,22 @@ class AttemptService:
             if codex_checkpoint is not None
             else None
         )
+        recovery = None
+        with self.store.begin_read() as conn:
+            current, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            if not isinstance(current, _CODEX_IMPLEMENTER_ATTEMPT_STATES):
+                raise ValidationError("Codex implementer state changed before dispatch")
+            from ai_dev_loop.scheduler.application.implementer_failure_recovery import (
+                authenticate_implementer_recovery_dispatch,
+            )
+
+            recovery = authenticate_implementer_recovery_dispatch(
+                self.store,
+                self.artifacts,
+                conn,
+                current,
+                effect_payload=effect_payload or {},
+            )
         if timeout_continuation is not None:
             from ai_dev_loop.scheduler.application.implementer_timeout_retry import (
                 CodexImplementerTimeoutRetryService,
@@ -995,7 +1020,12 @@ class AttemptService:
         turn = "correction" if isinstance(state, WaitingForCursorFixState) else "initial"
         prompt_path: str | None
         prompt_sha: str | None
-        if continuation is not None and continuation.role == "implementer":
+        if recovery is not None:
+            if effect_kind != RESUME_CODEX_IMPLEMENTER_EFFECT_KIND:
+                raise ValidationError("implementer recovery must resume its exact session")
+            prompt_path = recovery.exact_prompt.relative_path
+            prompt_sha = recovery.exact_prompt.sha256
+        elif continuation is not None and continuation.role == "implementer":
             if continuation.turn != turn:
                 raise ValidationError("Codex implementer continuation turn mismatch")
             prompt_path = continuation.prompt_artifact_path
@@ -1059,6 +1089,14 @@ class AttemptService:
                     "timeout_retry_generation": timeout_continuation.retry_generation,
                     "timeout_retry_intent_path": timeout_continuation.intent_path,
                     "timeout_retry_intent_sha256": timeout_continuation.intent_sha256,
+                }
+            )
+        if recovery is not None:
+            binding.update(
+                {
+                    "implementer_recovery_key": recovery.recovery_key,
+                    "implementer_recovery_source": recovery.source_run_id,
+                    "implementer_recovery_attempt": recovery.failed_attempt_id,
                 }
             )
         return binding

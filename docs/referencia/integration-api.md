@@ -201,8 +201,10 @@ respuestas ni IDs completos. El siguiente paso de espera implementer es tick.
 
 Capabilities: `dualImplementers=true`, `mixedImplementerSequences=true`,
 `codexImplementerManualRecovery=false`. La capability permanece falsa porque
-todavía no existe la recuperación `--force` standalone y de hoja de secuencia; el
-retry acotado de timeout se proyecta mediante los campos aditivos de API 1.7.
+la superficie integrada solo la anuncia cuando `--force` cubra tanto standalone
+como la hoja vigente de secuencia; 27.5 implementa únicamente standalone y 27.6
+queda pendiente. El retry acotado de timeout se proyecta mediante los campos
+aditivos de API 1.7.
 `review(s)` sigue siendo el índice del reviewer. `run output` sirve stdout/stderr
 de intentos `codex_implementer` bajo `implementer/turns/`, autenticando intent y
 completion del rol correcto, paths confinados y hashes capturados cuando existen.

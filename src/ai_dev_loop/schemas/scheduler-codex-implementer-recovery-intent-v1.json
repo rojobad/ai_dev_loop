@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "scheduler-codex-implementer-recovery-intent-v1.json",
+  "title": "CodexImplementerRecoveryIntentV1",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "recovery_key": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "source_run_id": { "type": "string", "minLength": 1 },
+    "successor_run_id": { "type": "string", "minLength": 1 },
+    "failed_attempt_id": { "type": "string", "minLength": 1 },
+    "failed_dispatch_id": { "type": "string", "minLength": 1 },
+    "turn_kind": { "enum": ["initial", "correction"] },
+    "iteration": { "type": "integer", "minimum": 1 },
+    "exact_prompt_path": { "type": "string", "minLength": 1 },
+    "exact_prompt_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "implementer_session_id": { "type": "string", "format": "uuid" },
+    "record": { "$ref": "scheduler-codex-implementer-recovery-record-v1.json" }
+  },
+  "required": [
+    "schema_version", "recovery_key", "source_run_id", "successor_run_id",
+    "failed_attempt_id", "failed_dispatch_id", "turn_kind", "iteration",
+    "exact_prompt_path", "exact_prompt_sha256", "implementer_session_id", "record"
+  ]
+}

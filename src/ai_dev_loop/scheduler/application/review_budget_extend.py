@@ -31,13 +31,21 @@ from ai_dev_loop.scheduler.application.review_checkpoint_verify import (
     verify_review_retry_repository_checkpoint,
 )
 from ai_dev_loop.scheduler.application.safe_actions import safe_next_action_for_scheduler_state
+from ai_dev_loop.scheduler.domain.codex_contract import (
+    RESUME_CODEX_IMPLEMENTER_EFFECT_ID,
+    RESUME_CODEX_IMPLEMENTER_EFFECT_KIND,
+)
 from ai_dev_loop.scheduler.domain.cursor_contract import (
     RUN_CURSOR_TURN_EFFECT_ID,
     RUN_CURSOR_TURN_EFFECT_KIND,
 )
 from ai_dev_loop.scheduler.domain.events import ReviewBudgetExtendedEvent
 from ai_dev_loop.scheduler.domain.reducer import apply_review_budget_extended
-from ai_dev_loop.scheduler.domain.state import MaxIterationsReachedState, SchedulerState
+from ai_dev_loop.scheduler.domain.state import (
+    MaxIterationsReachedState,
+    SchedulerState,
+    resolved_implementer_provider,
+)
 from ai_dev_loop.scheduler.infrastructure.paths import default_artifact_root, default_engine_db_path
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
@@ -233,17 +241,29 @@ class ReviewBudgetExtendService:
                     SchedulerEngineErrorKind.CONFLICT,
                     "review budget extension lost a concurrent state update",
                 )
+            if resolved_implementer_provider(new_state.context) == "codex":
+                effect_id = RESUME_CODEX_IMPLEMENTER_EFFECT_ID
+                effect_kind = RESUME_CODEX_IMPLEMENTER_EFFECT_KIND
+                effect_payload: dict[str, object] = {
+                    "iteration": exhausted.review_iteration + 1,
+                    "turn": "correction",
+                    "prompt_path": correction_execution_envelope_path(exhausted.review_iteration),
+                }
+            else:
+                effect_id = RUN_CURSOR_TURN_EFFECT_ID
+                effect_kind = RUN_CURSOR_TURN_EFFECT_KIND
+                effect_payload = {
+                    "iteration": exhausted.review_iteration + 1,
+                    "prompt_path": correction_execution_envelope_path(exhausted.review_iteration),
+                }
             self.store.insert_effect(
                 conn,
                 dispatch_id=self._dispatch_id_factory(),
                 source_event_id=event_id,
                 run_id=run_id,
-                effect_id=RUN_CURSOR_TURN_EFFECT_ID,
-                effect_kind=RUN_CURSOR_TURN_EFFECT_KIND,
-                effect_payload={
-                    "iteration": exhausted.review_iteration + 1,
-                    "prompt_path": correction_execution_envelope_path(exhausted.review_iteration),
-                },
+                effect_id=effect_id,
+                effect_kind=effect_kind,
+                effect_payload=effect_payload,
                 available_at=now,
                 claimed_run_version=new_state.version,
                 now=now,

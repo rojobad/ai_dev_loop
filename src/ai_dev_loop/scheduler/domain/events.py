@@ -46,6 +46,9 @@ PREFLIGHT_BLOCKED_EVENT_KIND = "preflight_blocked"
 IMPLEMENTER_DISPATCH_BLOCKED_EVENT_KIND = "implementer_dispatch_blocked"
 CURSOR_CHAT_CREATED_EVENT_KIND = "cursor_chat_created"
 CURSOR_INITIAL_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND = "cursor_initial_recovery_successor_created"
+CODEX_IMPLEMENTER_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND = (
+    "codex_implementer_recovery_successor_created"
+)
 CURSOR_CHAT_BLOCKED_EVENT_KIND = "cursor_chat_blocked"
 CURSOR_TURN_COMPLETED_EVENT_KIND = "cursor_turn_completed"
 CURSOR_TURN_BLOCKED_EVENT_KIND = "cursor_turn_blocked"
@@ -326,6 +329,34 @@ class CursorInitialRecoverySuccessorCreatedEvent(DomainModel):
         return value
 
 
+class CodexImplementerRecoverySuccessorCreatedEvent(DomainModel):
+    """Successor created for one authenticated standalone implementer failure."""
+
+    kind: str = Field(default=CODEX_IMPLEMENTER_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND)
+    source_run_id: NonEmptyStr
+    successor_run_id: NonEmptyStr
+    recovery_key: Sha256Hex
+    failed_attempt_id: NonEmptyStr
+    turn: Literal["initial", "correction"]
+    iteration: int = Field(ge=1)
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_codex_implementer_recovery_successor_created(cls, value: str) -> str:
+        if value != CODEX_IMPLEMENTER_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND:
+            raise ValueError("kind must be codex_implementer_recovery_successor_created")
+        return value
+
+    @field_validator("iteration", mode="before")
+    @classmethod
+    def iteration_is_strict_int(cls, value: object) -> object:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("iteration must be a JSON integer")
+        if value < 1:
+            raise ValueError("iteration must be >= 1")
+        return value
+
+
 class CursorChatCreatedEvent(DomainModel):
     kind: str = Field(default=CURSOR_CHAT_CREATED_EVENT_KIND)
     run_id: str
@@ -480,6 +511,37 @@ class CodexImplementerBlockedEvent(DomainModel):
     run_id: str
     block_reason_kind: NonEmptyStr
     block_reason_summary: NonEmptyStr
+    attempt_id: NonEmptyStr | None = None
+    implementer_session_id_prefix: NonEmptyStr | None = None
+    binding_artifact_path: NonEmptyStr | None = None
+    binding_artifact_sha256: Sha256Hex | None = None
+
+    @model_serializer(mode="wrap")
+    def omit_historical_optional_authority(
+        self,
+        handler: Callable[[CodexImplementerBlockedEvent], dict[str, object]],
+    ) -> dict[str, object]:
+        data = handler(self)
+        for field in (
+            "attempt_id",
+            "implementer_session_id_prefix",
+            "binding_artifact_path",
+            "binding_artifact_sha256",
+        ):
+            if getattr(self, field) is None:
+                data.pop(field, None)
+        return data
+
+    @model_validator(mode="after")
+    def binding_is_complete(self) -> CodexImplementerBlockedEvent:
+        binding = (
+            self.implementer_session_id_prefix,
+            self.binding_artifact_path,
+            self.binding_artifact_sha256,
+        )
+        if any(value is None for value in binding) and any(value is not None for value in binding):
+            raise ValueError("implementer blocked binding must be complete or absent")
+        return self
 
     @field_validator("kind")
     @classmethod
@@ -1096,6 +1158,10 @@ SchedulerEvent = Annotated[
     | Annotated[
         CursorInitialRecoverySuccessorCreatedEvent,
         Tag(CURSOR_INITIAL_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND),
+    ]
+    | Annotated[
+        CodexImplementerRecoverySuccessorCreatedEvent,
+        Tag(CODEX_IMPLEMENTER_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND),
     ]
     | Annotated[CursorChatBlockedEvent, Tag(CURSOR_CHAT_BLOCKED_EVENT_KIND)]
     | Annotated[CursorTurnCompletedEvent, Tag(CURSOR_TURN_COMPLETED_EVENT_KIND)]

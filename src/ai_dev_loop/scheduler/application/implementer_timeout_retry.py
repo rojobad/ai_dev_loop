@@ -248,7 +248,7 @@ class CodexImplementerTimeoutRetryService:
             )
             self._require_idle(conn, run_id)
             prior = self._codex(state).implementer_timeout_continuation
-            count = 0
+            count = self._codex(state).implementer_timeout_automatic_retries_consumed
             generation = 1
             if prior is not None:
                 if prior.turn != evidence["turn"] or prior.iteration != state.cursor.iteration:
@@ -638,6 +638,7 @@ class CodexImplementerTimeoutRetryService:
                 "implementer_binding_artifact_path": binding_artifact_path,
                 "implementer_binding_artifact_sha256": binding_artifact_sha256,
                 "implementer_timeout_continuation": continuation,
+                "implementer_timeout_automatic_retries_consumed": (continuation.automatic_retries),
                 "capacity_continuation": None,
                 "capacity_evidence_source": None,
                 "inferred_operational_failure_kind": None,
@@ -715,21 +716,53 @@ class ImplementerRetryService:
         self.now = now_factory
 
     def retry(self, run_id: str, *, force: bool = False) -> ImplementerRetryResult:
-        if force:
-            raise _invalid("implementer-retry --force is not supported until Phase 27.5")
         with self.store.begin_read() as conn:
             state, _, _ = self.store.load_validated_snapshot(conn, run_id)
             provider = resolved_implementer_provider(state.context)
+        if force:
+            if provider == "cursor":
+                from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
+                    CursorInitialRecoveryService,
+                )
+
+                recovery_result = CursorInitialRecoveryService(
+                    self.store,
+                    self.artifacts,
+                    now_factory=self.now,
+                ).force(run_id)
+                return ImplementerRetryResult(
+                    run_id=recovery_result.successor_run_id,
+                    provider="cursor",
+                    changed=recovery_result.changed,
+                    available_at=None,
+                    automatic_retries=0,
+                )
+            from ai_dev_loop.scheduler.application.implementer_failure_recovery import (
+                CodexImplementerFailureRecoveryService,
+            )
+
+            successor_run_id, changed = CodexImplementerFailureRecoveryService(
+                self.store,
+                self.artifacts,
+                now_factory=self.now,
+            ).force(run_id)
+            return ImplementerRetryResult(
+                run_id=successor_run_id,
+                provider="codex",
+                changed=changed,
+                available_at=None,
+                automatic_retries=0,
+            )
         if provider == "cursor":
-            result = CursorTimeoutRetryService(
+            timeout_result = CursorTimeoutRetryService(
                 self.store, self.artifacts, now_factory=self.now
             ).retry(run_id)
             return ImplementerRetryResult(
-                run_id=result.run_id,
+                run_id=timeout_result.run_id,
                 provider="cursor",
-                changed=result.changed,
-                available_at=result.available_at,
-                automatic_retries=result.automatic_retries,
+                changed=timeout_result.changed,
+                available_at=timeout_result.available_at,
+                automatic_retries=timeout_result.automatic_retries,
             )
         return CodexImplementerTimeoutRetryService(
             self.store, self.artifacts, now_factory=self.now

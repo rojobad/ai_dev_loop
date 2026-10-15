@@ -13,7 +13,7 @@ from ai_dev_loop.iterations import (
     correction_execution_envelope_path,
     fix_prompt_path,
 )
-from ai_dev_loop.paths import schema_path
+from ai_dev_loop.paths import schema_path, set_sensitive_file_mode
 from ai_dev_loop.process import run_process_streaming
 from ai_dev_loop.response_schema import validate_codex_response_schema
 from ai_dev_loop.review_result import CodexReviewResult
@@ -386,6 +386,11 @@ def _run_codex_review(
         drain_after_limit=True,
         incremental_file_capture=True,
     )
+    # ``--output-last-message`` is written by the Codex child rather than by
+    # our atomic writers. Harden it before it can become protected recovery
+    # authority or be hashed into the completion outcome.
+    if result_path.is_file() and not result_path.is_symlink():
+        set_sensitive_file_mode(result_path)
 
     bootstrap_session_id: str | None = None
     bootstrap_uncertainty: str | None = None

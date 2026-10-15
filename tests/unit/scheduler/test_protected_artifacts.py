@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import stat
 from pathlib import Path
@@ -176,6 +177,42 @@ def test_f11_publish_or_verify_conflicting_size_raises_protected_artifact_error(
     store.publish_or_verify_bytes("run-1", rel, b"short", max_bytes=1024)
     with pytest.raises(ProtectedArtifactError, match="hash|mismatch"):
         store.publish_or_verify_bytes("run-1", rel, b"longer-bytes", max_bytes=1024)
+
+
+def test_explicit_empty_publication_is_hash_bound_protected_and_idempotent(
+    tmp_path: Path,
+) -> None:
+    store = ProtectedArtifactStore(tmp_path / "artifacts")
+    empty_sha = hashlib.sha256(b"").hexdigest()
+    first = store.publish_or_verify_empty_bytes(
+        "run-1",
+        "attempts/status-after.txt",
+        expected_sha256=empty_sha,
+    )
+    replay = store.publish_or_verify_empty_bytes(
+        "run-1",
+        "attempts/status-after.txt",
+        expected_sha256=empty_sha,
+    )
+    assert first == replay
+    assert first.size_bytes == 0
+    path = store.run_root("run-1") / first.relative_path
+    assert path.read_bytes() == b""
+    if os.name != "nt":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    with pytest.raises(ProtectedArtifactError, match="hash mismatch"):
+        store.publish_or_verify_empty_bytes(
+            "run-1",
+            "attempts/other-status.txt",
+            expected_sha256="a" * 64,
+        )
+    with pytest.raises(ProtectedArtifactError, match="content is empty"):
+        store.publish_or_verify_bytes(
+            "run-1",
+            "attempts/not-explicit.txt",
+            b"",
+            max_bytes=1,
+        )
 
 
 def test_write_text_or_verify_accepts_concurrent_identical_publish(tmp_path: Path) -> None:

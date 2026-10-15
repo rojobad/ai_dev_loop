@@ -564,6 +564,7 @@ class CodexWorkflowCheckpoint(DomainModel):
     implementer_binding_artifact_sha256: Sha256Hex | None = None
     capacity_continuation: CodexCapacityContinuation | None = None
     implementer_timeout_continuation: CodexImplementerTimeoutContinuation | None = None
+    implementer_timeout_automatic_retries_consumed: int = Field(default=0, ge=0, le=3)
     implementer_no_session_bootstrap_retries: int = Field(default=0)
 
     @model_serializer(mode="wrap")
@@ -576,6 +577,8 @@ class CodexWorkflowCheckpoint(DomainModel):
             data.pop("capacity_continuation", None)
         if self.implementer_timeout_continuation is None:
             data.pop("implementer_timeout_continuation", None)
+        if self.implementer_timeout_automatic_retries_consumed == 0:
+            data.pop("implementer_timeout_automatic_retries_consumed", None)
         if self.implementer_no_session_bootstrap_retries == 0:
             data.pop("implementer_no_session_bootstrap_retries", None)
         return data
@@ -586,6 +589,7 @@ class CodexWorkflowCheckpoint(DomainModel):
         "review_retry_generation",
         "capacity_wait_generation",
         "routing_auto_retry_authorizations_used",
+        "implementer_timeout_automatic_retries_consumed",
         "implementer_no_session_bootstrap_retries",
         mode="before",
     )
@@ -605,6 +609,7 @@ class CodexWorkflowCheckpoint(DomainModel):
         "review_retry_generation",
         "capacity_wait_generation",
         "routing_auto_retry_authorizations_used",
+        "implementer_timeout_automatic_retries_consumed",
         "implementer_no_session_bootstrap_retries",
     )
     @classmethod

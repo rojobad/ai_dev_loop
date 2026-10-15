@@ -503,17 +503,23 @@ def scheduler_cursor_retry_command(
 
 @scheduler_app.command("implementer-retry")
 def scheduler_implementer_retry_command(
-    run_id: Annotated[str, typer.Argument(help="Scheduler run ID with a confirmed timeout.")],
+    run_id: Annotated[
+        str,
+        typer.Argument(help="Scheduler run ID with an eligible implementer failure."),
+    ],
     force: Annotated[
         bool,
         typer.Option(
             "--force",
-            help="Reserved for classified failure recovery in a later phase.",
+            help=(
+                "Create/replay a standalone Codex successor for an authenticated generic "
+                "failure; sequence leaves are deferred to Phase 27.6."
+            ),
         ),
     ] = False,
     output: OutputOption = DEFAULT_OUTPUT,
 ) -> None:
-    """Authorize a provider-neutral implementer timeout continuation."""
+    """Continue a timeout, or force eligible standalone Codex failure recovery."""
 
     def run() -> None:
         from ai_dev_loop.scheduler.application.implementer_timeout_retry import (
@@ -524,10 +530,16 @@ def scheduler_implementer_retry_command(
         if output.value == "json":
             typer.echo(result.model_dump_json(indent=2))
         else:
-            typer.echo(
-                f"{result.provider.title()} implementer retry: {result.run_id}; "
-                f"ready at {result.available_at}"
-            )
+            if force:
+                typer.echo(
+                    f"{result.provider.title()} implementer recovery successor: {result.run_id}; "
+                    f"changed={str(result.changed).lower()}"
+                )
+            else:
+                typer.echo(
+                    f"{result.provider.title()} implementer retry: {result.run_id}; "
+                    f"ready at {result.available_at}"
+                )
 
     _handle(run)
 

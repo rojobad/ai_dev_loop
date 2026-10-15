@@ -473,6 +473,7 @@ def test_dual_failure_replay_from_committed_capture(tmp_path: Path) -> None:
     shutil.copy(engine_src, db_dst)
     shutil.copytree(artifact_src, tmp_path / "artifacts")
     run_id = str(manifest["run_id"])
+    _normalize_run_artifact_permissions(tmp_path / "artifacts", run_id)
     store = SqliteSchedulerStore.open_readonly(db_dst)
     artifacts = ReadOnlyProtectedArtifactStore(tmp_path / "artifacts")
     with store.begin_read() as conn:
@@ -532,6 +533,7 @@ def test_dual_failure_capture_authenticates_retained_attempt_artifacts(tmp_path:
     shutil.copy(engine_src, tmp_path / "engine.sqlite3")
     shutil.copytree(artifact_src, tmp_path / "artifacts")
     run_id = str(manifest["run_id"])
+    _normalize_run_artifact_permissions(tmp_path / "artifacts", run_id)
     store = SqliteSchedulerStore.open_readonly(tmp_path / "engine.sqlite3")
     artifacts = ReadOnlyProtectedArtifactStore(tmp_path / "artifacts")
     analysis = analyze_cursor_recovery_evidence(store, artifacts, run_id)

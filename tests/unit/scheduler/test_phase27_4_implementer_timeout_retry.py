@@ -151,6 +151,13 @@ class _InlineCodexBackend(FakeAgentProcessBackend):
                     ]
                 )
                 returncode, timed_out, stderr = 2, False, "usage limit"
+            elif mode == "fail":
+                workspace = Path(str(kwargs["cwd"]))
+                with (workspace / "inline-generic-failure.txt").open(
+                    "a", encoding="utf-8"
+                ) as handle:
+                    handle.write(f"generic failure {index + 1}\n")
+                returncode, timed_out, stderr = 2, False, "generic failure"
             else:
                 workspace = Path(str(kwargs["cwd"]))
                 with (workspace / "inline-timeout-partial.txt").open(
@@ -1061,14 +1068,14 @@ def test_force_rejects_before_mutation_and_manual_auto_race_dispatches_once(
         ProtectedArtifactStore(scheduler_paths["artifact_root"]),
         now_factory=clock,
     )
-    with pytest.raises(SchedulerEngineError, match="not supported"):
+    with pytest.raises(SchedulerEngineError, match="blocked run"):
         service.retry(run_id, force=True)
     assert _state(scheduler_paths, run_id).version == before_version
     rejected = CliRunner().invoke(
         app, ["scheduler", "implementer-retry", run_id, "--force", "--output", "json"]
     )
     assert rejected.exit_code == 4
-    assert "not supported until Phase 27.5" in rejected.output
+    assert "requires a blocked run" in rejected.output
     assert _state(scheduler_paths, run_id).version == before_version
 
     clock.advance(minutes=CODEX_IMPLEMENTER_TIMEOUT_RETRY_DELAY_SECONDS // 60)

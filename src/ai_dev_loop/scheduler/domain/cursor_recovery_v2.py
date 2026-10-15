@@ -78,7 +78,7 @@ ReviewerFormV2 = Annotated[
 class AncestorEdgeV2(DomainModel):
     """One authenticated recovery edge. The chain is explicit and acyclic."""
 
-    relation: Literal["cursor_recovery", "review_recovery"]
+    relation: Literal["cursor_recovery", "review_recovery", "implementer_recovery"]
     source_run_id: str = Field(min_length=1)
     successor_run_id: str = Field(min_length=1)
     recovery_key: str = Field(min_length=1)
@@ -88,6 +88,10 @@ class AncestorEdgeV2(DomainModel):
         if self.relation == "cursor_recovery":
             if not _is_sha256(self.recovery_key):
                 raise ValueError("cursor recovery key must be a sha256 digest")
+            return self
+        if self.relation == "implementer_recovery":
+            if not _is_sha256(self.recovery_key):
+                raise ValueError("implementer recovery key must be a sha256 digest")
             return self
         kind, separator, attempt_id = self.recovery_key.partition(":")
         if (

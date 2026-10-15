@@ -245,6 +245,17 @@ class TickService:
                     now=self._now_factory(),
                 )
             )
+            from ai_dev_loop.scheduler.application.implementer_failure_recovery import (
+                reconcile_pending_codex_implementer_recoveries,
+            )
+
+            receipts.extend(
+                reconcile_pending_codex_implementer_recoveries(
+                    self.store,
+                    self.artifacts,
+                    now_factory=self._now_factory,
+                )
+            )
 
             for sequence_id in pending_report_sequence_ids:
                 self._reconcile_completion_report_publication(sequence_id)

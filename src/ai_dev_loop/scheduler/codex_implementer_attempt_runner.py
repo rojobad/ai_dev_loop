@@ -28,6 +28,7 @@ from ai_dev_loop.scheduler.application.codex_evidence import (
 )
 from ai_dev_loop.scheduler.application.codex_subprocess_env import sanitize_codex_subprocess_env
 from ai_dev_loop.scheduler.application.cursor_evidence import verify_prompt_binding
+from ai_dev_loop.scheduler.application.worktree_boundary import worktree_content_fingerprint
 from ai_dev_loop.scheduler.domain.codex_contract import (
     BOOTSTRAP_CODEX_IMPLEMENTER_EFFECT_KIND,
     IMPLEMENTER_ATTEMPT_EFFECT_KINDS,
@@ -210,6 +211,7 @@ def _execute(evidence: dict[str, object], run_root: Path, run_id: str) -> dict[s
     )
     after_text = _status_text(repo_root)
     atomic_write_text(run_root / after_rel, after_text, sensitive=True)
+    partial_work_sha256 = worktree_content_fingerprint(repo_root, status_text=after_text)
     events_text = events_path.read_text(encoding="utf-8") if events_path.is_file() else ""
     final_text = _final_message(events_text)
     atomic_write_text(run_root / final_rel, final_text, sensitive=True)
@@ -264,7 +266,10 @@ def _execute(evidence: dict[str, object], run_root: Path, run_id: str) -> dict[s
         "stderr_path": stderr_rel,
         "final_path": final_rel,
         "status_before_path": before_rel,
+        "status_before_sha256": sha256_file(run_root / before_rel),
         "status_after_path": after_rel,
+        "status_after_sha256": sha256_file(run_root / after_rel),
+        "partial_work_sha256": partial_work_sha256,
         "session_id": captured_session,
         "session_capture_path": session_rel,
         "session_capture_sha256": session_sha,
@@ -326,6 +331,11 @@ def _execute(evidence: dict[str, object], run_root: Path, run_id: str) -> dict[s
         "metadata_sha256": sha256_file(run_root / metadata_rel),
         "events_sha256": sha256_file(events_path),
         "stderr_sha256": sha256_file(stderr_path),
+        "status_before_path": before_rel,
+        "status_before_sha256": sha256_file(run_root / before_rel),
+        "status_after_path": after_rel,
+        "status_after_sha256": sha256_file(run_root / after_rel),
+        "partial_work_sha256": partial_work_sha256,
         "prompt_sha256": prompt_sha,
         "prompt_artifact_path": prompt_path,
         "worktree_unchanged": before_text == after_text,
