@@ -138,7 +138,24 @@ class ProtectedArtifactStore:
         *,
         max_bytes: int,
     ) -> StoredArtifact:
-        if not content:
+        return self._write_bytes(
+            run_id,
+            relative_path,
+            content,
+            max_bytes=max_bytes,
+            allow_empty=False,
+        )
+
+    def _write_bytes(
+        self,
+        run_id: str,
+        relative_path: str,
+        content: bytes,
+        *,
+        max_bytes: int,
+        allow_empty: bool,
+    ) -> StoredArtifact:
+        if not content and not allow_empty:
             raise ProtectedArtifactError("artifact content is empty")
         if len(content) > max_bytes:
             raise ProtectedArtifactError("artifact exceeds size limit")
@@ -236,6 +253,46 @@ class ProtectedArtifactStore:
                 relative_path,
                 expected_sha256=digest,
                 expected_size=len(content),
+            )
+
+    def publish_or_verify_empty_bytes(
+        self,
+        run_id: str,
+        relative_path: str,
+        *,
+        expected_sha256: str,
+    ) -> StoredArtifact:
+        """Publish one explicitly authenticated empty artifact idempotently."""
+
+        empty_sha256 = hashlib.sha256(b"").hexdigest()
+        validate_sha256_hex(expected_sha256)
+        if expected_sha256 != empty_sha256:
+            raise ProtectedArtifactError("empty artifact hash mismatch")
+        root = self.run_root(run_id)
+        destination = resolve_run_relative_path(root, relative_path)
+        if destination.exists():
+            return self._verify_stored_digest(
+                run_id,
+                relative_path,
+                expected_sha256=expected_sha256,
+                expected_size=0,
+            )
+        try:
+            return self._write_bytes(
+                run_id,
+                relative_path,
+                b"",
+                max_bytes=0,
+                allow_empty=True,
+            )
+        except ProtectedArtifactError as exc:
+            if "already exists" not in str(exc):
+                raise
+            return self._verify_stored_digest(
+                run_id,
+                relative_path,
+                expected_sha256=expected_sha256,
+                expected_size=0,
             )
 
     def write_text(

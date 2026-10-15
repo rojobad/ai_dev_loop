@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
+from typing import TypedDict
 
 from ai_dev_loop.scheduler.application.contracts import (
     SafeNextAction,
@@ -19,6 +20,7 @@ from ai_dev_loop.scheduler.application.contracts import (
     awaiting_finalization_sequence_safe_next_action,
     blocked_sequence_safe_next_action,
     prepared_sequence_safe_next_action,
+    scheduler_status_projection_from_state,
 )
 from ai_dev_loop.scheduler.application.safe_actions import safe_next_action_for_scheduler_state
 from ai_dev_loop.scheduler.application.sequence_lineage_projection import (
@@ -49,6 +51,16 @@ from ai_dev_loop.scheduler.domain.state import (
 from ai_dev_loop.scheduler.infrastructure.paths import default_engine_db_path
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
+
+
+class _ProviderProjection(TypedDict, total=False):
+    current_implementer_provider: str | None
+    codex_pending_role: str | None
+    codex_pending_turn: str | None
+    codex_capacity_reason: str | None
+    implementer_retry_wait_until: str | None
+    implementer_timeout_automatic_retries: int | None
+    implementer_timeout_retry_limit: int | None
 
 
 class SequenceStatusService:
@@ -104,6 +116,30 @@ class SequenceStatusService:
             SchedulerEngineErrorKind.CORRUPTION,
             "sequence state has unexpected type",
         )
+
+    def _provider_projection(self, conn: sqlite3.Connection, state: object) -> _ProviderProjection:
+        run_id = getattr(state, "current_run_id", None) or getattr(state, "final_run_id", None)
+        if run_id is None:
+            return {}
+        run_state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+        projection = scheduler_status_projection_from_state(run_state)
+        return {
+            "current_implementer_provider": "cursor"
+            if run_state.context.implementer is None
+            else run_state.context.implementer.provider,
+            "codex_pending_role": projection["codex_pending_role"],
+            "codex_pending_turn": projection["codex_pending_turn"],
+            "codex_capacity_reason": projection["codex_capacity_reason"],
+            "implementer_retry_wait_until": projection["implementer_retry_wait_until"],
+            "implementer_timeout_automatic_retries": int(
+                projection["implementer_timeout_automatic_retries"]
+            )
+            if projection["implementer_timeout_automatic_retries"] is not None
+            else None,
+            "implementer_timeout_retry_limit": int(projection["implementer_timeout_retry_limit"])
+            if projection["implementer_timeout_retry_limit"] is not None
+            else None,
+        }
 
     def _entry_summaries(
         self,
@@ -163,6 +199,9 @@ class SequenceStatusService:
             summaries.append(
                 SequenceEntrySummary(
                     ordinal=entry.ordinal,
+                    implementer_provider="cursor"
+                    if entry.implementer is None
+                    else entry.implementer.provider,
                     phase_name=entry.phase_name,
                     planned_run_id_prefix=entry.planned_run_id[:8],
                     commit_message_present=entry.commit_message is not None,
@@ -241,6 +280,7 @@ class SequenceStatusService:
 
         if isinstance(state, AwaitingFinalizationSequenceState):
             return SequenceStatusResult(
+                **self._provider_projection(conn, state),
                 sequence_id=state.sequence_id,
                 name=definition.name,
                 project_name=definition.project_name,
@@ -266,6 +306,7 @@ class SequenceStatusService:
 
         if isinstance(state, PreparedSequenceState):
             return SequenceStatusResult(
+                **self._provider_projection(conn, state),
                 sequence_id=state.sequence_id,
                 name=definition.name,
                 project_name=definition.project_name,
@@ -283,6 +324,7 @@ class SequenceStatusService:
 
         if isinstance(state, AbortedSequenceState):
             return SequenceStatusResult(
+                **self._provider_projection(conn, state),
                 sequence_id=state.sequence_id,
                 name=definition.name,
                 project_name=definition.project_name,
@@ -307,6 +349,7 @@ class SequenceStatusService:
             run_state, _, _ = self.store.load_validated_snapshot(conn, state.current_run_id)
             run_block_kind = getattr(run_state, "block_reason_kind", None)
             return SequenceStatusResult(
+                **self._provider_projection(conn, state),
                 sequence_id=state.sequence_id,
                 name=definition.name,
                 project_name=definition.project_name,
@@ -337,6 +380,7 @@ class SequenceStatusService:
         if isinstance(state, AbortPendingSequenceState):
             run_state, _, _ = self.store.load_validated_snapshot(conn, state.current_run_id)
             return SequenceStatusResult(
+                **self._provider_projection(conn, state),
                 sequence_id=state.sequence_id,
                 name=definition.name,
                 project_name=definition.project_name,
@@ -367,6 +411,7 @@ class SequenceStatusService:
         )
         safe_action = self._safe_action_for_active(conn, state, run_state)
         return SequenceStatusResult(
+            **self._provider_projection(conn, state),
             sequence_id=state.sequence_id,
             name=definition.name,
             project_name=definition.project_name,

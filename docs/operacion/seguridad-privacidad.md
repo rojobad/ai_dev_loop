@@ -143,8 +143,16 @@ solo revalida los inputs congelados y los checkpoints durablemente registrados.
 
 ## Identidad de agentes
 
-- Un run crea o reutiliza exactamente un Cursor chat ID.
-- Todo review resume la identidad Codex exacta congelada para ese run.
+- Un run cuyo implementer es Cursor crea o reutiliza exactamente un Cursor chat ID.
+- Un implementer Codex, cuando se selecciona, es una identidad distinta del reviewer B.
+  Su session ID queda vacío hasta una captura autenticada y no se adivina. El
+  scheduler la persiste en un artefacto protegido, reanuda exactamente esa sesión
+  para correcciones y conserva `cursor_fix_prompt` byte por byte en el sobre de
+  ejecución. Nunca comparte la sesión del reviewer.
+- Todo review resume la identidad reviewer Codex exacta congelada para ese run.
+- Un wait de capacidad persiste rol y evidencia. El probe no puede convertir un
+  wait implementer en reviewer, y cuota, timeout o identidad incierta no autorizan
+  staging ni review.
 - En runs controller A frescos, A elige `--codex-review-model` y
   `--codex-review-reasoning-effort` en `scheduler submit`; no hay fallback desde
   YAML, sesion preexistente ni default de CLI en review time.
@@ -223,3 +231,44 @@ CODEX_HOME=/mnt/c/Users/<usuario>/.codex
 ```
 
 El puente soportado expone rollouts de sesiones por ID. No expone SQLite, auth, indices ni toda la home.
+
+## Secuencias v2 y espera Codex
+
+La autoridad Git y los límites del implementer se aplican a Cursor y Codex. Cada
+fase tiene sus propias identidades; el reviewer permanece independiente y staged-only.
+Una espera implementer no requiere identidad reviewer ni patch ya revisado.
+El restart continúa la hoja reservada y no exige descartar cambios parciales ni
+repite admisión limpia. Un abort durable cancela continuación y fases futuras;
+la reserva se retiene mientras una terminación exacta siga incierta. El probe
+model-agnostic es conservador y solo `AVAILABLE` autoriza una continuación.
+La inspección explícita de output puede revelar prompts/IDs en bytes capturados;
+los resúmenes y errores públicos mantienen la privacidad existente.
+
+`scheduler implementer-retry` tampoco toma comandos ni prompts de la salida del
+agente. Para Codex autentica el envelope terminal, la evidencia de invocación, la
+sesión capturada y el intent inmutable antes de adelantar o crear un efecto. La
+configuración y los bytes del prompt provienen únicamente del submit/checkpoint
+congelado. La evidencia incierta o corrupta retiene la reserva; abort explícito solo
+la libera después de resolver cualquier terminación pendiente.
+
+Con `--force`, la misma autenticación se amplía únicamente al fallo genérico
+elegible. El record protegido fija el intento fuente, la sesión implementer, los
+settings, config, prompt exacto y estado parcial autenticado; en corrección fija también
+reviewer B, fix, patch revisado y presupuesto. El origen y sus artefactos no se
+reescriben. El sucesor toma o readquiere la reserva antes de publicar, no ejecuta
+mientras la relación esté `pending`, y el abort de ese sucesor impide cerrar la
+publicación. La comprobación puntual del estado parcial no es una admisión de baseline
+limpio. Un status autenticado de cero bytes se publica explícitamente con su hash y
+permisos protegidos; no habilita artefactos vacíos generales. La autoridad del record
+solo cubre el turno recuperado y sus continuaciones timeout/capacidad: una corrección
+posterior usa su propio checkpoint y prompt durable, conservando la misma identidad y
+la ascendencia autenticada. No se aceptan sesiones sin ligar ni evidencia de
+quota/timeout reutilizada. En secuencia, otro intent protegido liga la hoja vigente,
+ordinal, generación, entrada congelada, reserva y digest del record. Solo la adopción
+atómica hace dispatchable al sucesor; abort cancela una publicación pendiente y una
+hoja obsoleta sin relación no puede revivirse.
+
+El record también fija el consumo autenticado de reintentos automáticos del turno. Un
+sucesor no recibe un presupuesto nuevo por cambiar de run: reconstruye el contador
+desde eventos protegidos y su ascendencia same-turn, sin reutilizar el intento ni el
+efecto anterior. Solo una corrección posterior con nueva iteración reinicia ese consumo.

@@ -32,6 +32,10 @@ from ai_dev_loop.scheduler.application.scheduler_preflight import (
     SchedulerPreflightResult,
 )
 from ai_dev_loop.scheduler.application.tick_fencing import tick_lease_is_active
+from ai_dev_loop.scheduler.domain.codex_contract import (
+    BOOTSTRAP_CODEX_IMPLEMENTER_EFFECT_ID,
+    BOOTSTRAP_CODEX_IMPLEMENTER_EFFECT_KIND,
+)
 from ai_dev_loop.scheduler.domain.cursor_contract import (
     CREATE_CHAT_EFFECT_ID,
     CREATE_CHAT_EFFECT_KIND,
@@ -73,6 +77,7 @@ from ai_dev_loop.scheduler.domain.state import (
     PreflightCompleteState,
     WaitingForCursorFixState,
     WaitingUsageLimitState,
+    resolved_implementer_provider,
 )
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import (
     ProtectedArtifactError,
@@ -413,14 +418,26 @@ class CursorWorkflowService:
             ):
                 return TickRunReceipt(run_id=run_id, action="preflight_stale")
             next_dispatch = self._dispatch_id_factory()
+            if resolved_implementer_provider(state.context) == "codex":
+                effect_id = BOOTSTRAP_CODEX_IMPLEMENTER_EFFECT_ID
+                effect_kind = BOOTSTRAP_CODEX_IMPLEMENTER_EFFECT_KIND
+                effect_payload = {
+                    "iteration": 1,
+                    "turn": "initial",
+                    "prompt_path": state.context.plan_prompt.prompt_artifact_path,
+                }
+            else:
+                effect_id = CREATE_CHAT_EFFECT_ID
+                effect_kind = CREATE_CHAT_EFFECT_KIND
+                effect_payload = {}
             self.store.insert_effect(
                 conn,
                 dispatch_id=next_dispatch,
                 source_event_id=event_id,
                 run_id=run_id,
-                effect_id=CREATE_CHAT_EFFECT_ID,
-                effect_kind=CREATE_CHAT_EFFECT_KIND,
-                effect_payload={},
+                effect_id=effect_id,
+                effect_kind=effect_kind,
+                effect_payload=effect_payload,
                 available_at=commit_now,
                 claimed_run_version=completed_state.version,
                 now=commit_now,
@@ -510,6 +527,16 @@ class CursorWorkflowService:
                     detail="pre_staging_validation_failed",
                 )
             try:
+                prompt_path = (
+                    state.codex.latest_correction_envelope_path
+                    if resolved_implementer_provider(state.context) == "codex"
+                    and state.cursor.iteration > 1
+                    and state.codex.latest_correction_envelope_path
+                    else (
+                        state.cursor.continuation_envelope_path
+                        or state.context.plan_prompt.prompt_artifact_path
+                    )
+                )
                 staging = run_git_staging(
                     run_state,
                     run_directory,
@@ -517,10 +544,7 @@ class CursorWorkflowService:
                     iteration_number=iteration,
                     cursor_started_at=now,
                     cursor_exit_code=0,
-                    prompt_path=(
-                        state.cursor.continuation_envelope_path
-                        or state.context.plan_prompt.prompt_artifact_path
-                    ),
+                    prompt_path=prompt_path,
                 )
             except Exception as exc:
                 event = StagingBlockedEvent(
@@ -1054,8 +1078,7 @@ class CursorWorkflowService:
                     or state.context.plan_prompt.prompt_artifact_path
                 )
                 original_prompt_sha = (
-                    state.cursor.original_prompt_sha256
-                    or state.context.plan_prompt.prompt_sha256
+                    state.cursor.original_prompt_sha256 or state.context.plan_prompt.prompt_sha256
                 )
             try:
                 original_prompt = self.artifacts.read_verified_bytes(

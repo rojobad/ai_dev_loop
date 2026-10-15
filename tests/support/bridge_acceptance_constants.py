@@ -36,8 +36,17 @@ PROMPT_MARKER_LATEST_CURSOR = b"\n\n## Latest Cursor final response\n\n"
 PROMPT_MARKER_ARTIFACT_PATHS = b"\n\n## Artifact paths for auditability\n"
 REVIEW_PROMPT_FOOTER_BYTES = (
     b"Your final response must conform to codex-review-result-v1.json.\n"
-    b"When actionable findings exist, return a complete English cursor_fix_prompt.\n"
+    b"When actionable findings exist, return a complete English cursor_fix_prompt; "
+    b"this legacy field is forwarded byte-for-byte to the selected implementer.\n"
     b"When there are no actionable findings, return cursor_fix_prompt: null.\n"
+)
+
+# Independent current-execution expectation, not imported from the production runner.
+# Historical prompt/response fixtures keep their original captured bytes.
+CURSOR_INVOCATION_PREFIX_BYTES = (
+    b"This is a non-interactive run. Do not ask for confirmation or tell the user to "
+    b"reply continue. Implement and edit files in this turn. If you are truly blocked, "
+    b"emit BLOCKED_CONTRACT with the reason.\n\n"
 )
 
 SEQUENCE_COMPLETION_REPORT_SCHEMA_VERSION = 1
@@ -52,9 +61,9 @@ _GIT_OBJECT_SHA = re.compile(r"^[a-f0-9]{40}$")
 
 
 def expected_cursor_final_response_bytes(agent_prompt_bytes: bytes) -> bytes:
-    """Mirror fake `agent` stream-json result: done: <first 32 chars of positional prompt>."""
+    """Predict fake `agent` output from the frozen payload and invocation prefix."""
 
-    prompt_text = agent_prompt_bytes.decode("utf-8")
+    prompt_text = (CURSOR_INVOCATION_PREFIX_BYTES + agent_prompt_bytes).decode("utf-8")
     return f"done: {prompt_text[:32]}".encode()
 
 

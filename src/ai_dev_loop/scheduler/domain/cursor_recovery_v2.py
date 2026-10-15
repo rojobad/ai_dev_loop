@@ -78,7 +78,7 @@ ReviewerFormV2 = Annotated[
 class AncestorEdgeV2(DomainModel):
     """One authenticated recovery edge. The chain is explicit and acyclic."""
 
-    relation: Literal["cursor_recovery", "review_recovery"]
+    relation: Literal["cursor_recovery", "review_recovery", "implementer_recovery"]
     source_run_id: str = Field(min_length=1)
     successor_run_id: str = Field(min_length=1)
     recovery_key: str = Field(min_length=1)
@@ -88,6 +88,10 @@ class AncestorEdgeV2(DomainModel):
         if self.relation == "cursor_recovery":
             if not _is_sha256(self.recovery_key):
                 raise ValueError("cursor recovery key must be a sha256 digest")
+            return self
+        if self.relation == "implementer_recovery":
+            if not _is_sha256(self.recovery_key):
+                raise ValueError("implementer recovery key must be a sha256 digest")
             return self
         kind, separator, attempt_id = self.recovery_key.partition(":")
         if (
@@ -152,7 +156,11 @@ class BudgetCarryV1(DomainModel):
             raise ValueError("schema_version must be 1")
         if field_name == "inherited_reviews_completed" and number < 0:
             raise ValueError("inherited_reviews_completed must be >= 0")
-        if field_name != "inherited_reviews_completed" and field_name != "schema_version" and number < 1:
+        if (
+            field_name != "inherited_reviews_completed"
+            and field_name != "schema_version"
+            and number < 1
+        ):
             raise ValueError(f"{field_name} must be >= 1")
         return number
 
@@ -248,7 +256,10 @@ class CursorRecoveryRecordV2(DomainModel):
             raise ValueError("reviews_completed must be >= 0")
         if field_name == "iteration" and number < 1:
             raise ValueError("iteration must be >= 1")
-        if field_name in {"submitted_max_review_iterations", "effective_review_ceiling"} and number < 1:
+        if (
+            field_name in {"submitted_max_review_iterations", "effective_review_ceiling"}
+            and number < 1
+        ):
             raise ValueError(f"{field_name} must be >= 1")
         return number
 
@@ -294,7 +305,11 @@ class CursorRecoveryRecordV2(DomainModel):
         else:
             if not isinstance(self.reviewer, ReviewerNotCreatedV2):
                 raise ValueError("initial recovery reviewer form is not_created")
-            if self.raw_fix is not None or self.staged_patch is not None or self.review_result is not None:
+            if (
+                self.raw_fix is not None
+                or self.staged_patch is not None
+                or self.review_result is not None
+            ):
                 raise ValueError("initial recovery does not carry correction evidence")
             if self.reviews_completed != 0:
                 raise ValueError("initial recovery reviews_completed must be 0")
@@ -375,7 +390,10 @@ class CursorRecoveryPublicationIntentV2(DomainModel):
             raise ValueError("iteration must be >= 1")
         if field_name == "reviews_completed" and number < 1:
             raise ValueError("reviews_completed must be >= 1")
-        if field_name in {"submitted_max_review_iterations", "effective_review_ceiling"} and number < 1:
+        if (
+            field_name in {"submitted_max_review_iterations", "effective_review_ceiling"}
+            and number < 1
+        ):
             raise ValueError(f"{field_name} must be >= 1")
         return number
 

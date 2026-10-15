@@ -190,7 +190,10 @@ class TestAutomaticRoutingRetryTick:
         with tick.store.begin_read() as conn:
             state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
             assert isinstance(state, WaitingCodexReviewRetryState)
-            assert state.codex.review_retry_failure_kind == FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT
+            assert (
+                state.codex.review_retry_failure_kind
+                == FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT
+            )
             assert state.codex.routing_auto_retry_eligible is True
             due = state.codex.routing_auto_retry_due_at
             assert due is not None
@@ -222,7 +225,9 @@ class TestAutomaticRoutingRetryTick:
             state, _, _ = due_tick.store.load_validated_snapshot(conn, run_id)
             assert state.kind == "awaiting_codex_review"
             assert state.codex.routing_auto_retry_authorizations_used == 1
-            assert state.codex.review_retry_scheduled_generation == state.codex.review_retry_generation
+            assert (
+                state.codex.review_retry_scheduled_generation == state.codex.review_retry_generation
+            )
 
         replay_tick = _tick_service(
             git_repo,
@@ -308,7 +313,11 @@ class TestRoutingRetryAuthorizationGuards:
     ) -> None:
         failure_time = datetime(2026, 10, 2, 12, 0, 0, tzinfo=UTC)
         tick, run_id = _routing_failure_cycle(
-            git_repo, scheduler_paths, now=failure_time, fake_clis=fake_clis, monkeypatch=monkeypatch
+            git_repo,
+            scheduler_paths,
+            now=failure_time,
+            fake_clis=fake_clis,
+            monkeypatch=monkeypatch,
         )
         assert tick._codex_workflow is not None
         receipt = tick._codex_workflow._maybe_authorize_automatic_routing_retry(
@@ -332,7 +341,11 @@ class TestRoutingRetryAuthorizationGuards:
 
         failure_time = datetime(2026, 10, 2, 12, 0, 0, tzinfo=UTC)
         tick, run_id = _routing_failure_cycle(
-            git_repo, scheduler_paths, now=failure_time, fake_clis=fake_clis, monkeypatch=monkeypatch
+            git_repo,
+            scheduler_paths,
+            now=failure_time,
+            fake_clis=fake_clis,
+            monkeypatch=monkeypatch,
         )
         with tick.store.begin_read() as conn:
             state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
@@ -466,7 +479,10 @@ class TestRoutingCapacityPreservation:
         with tick.store.begin_read() as conn:
             state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
             assert state.kind == "waiting_codex_capacity"
-            assert state.codex.review_retry_failure_kind == FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT
+            assert (
+                state.codex.review_retry_failure_kind
+                == FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT
+            )
             assert state.codex.routing_auto_retry_eligible is True
             assert state.codex.routing_failure_post_probe_status == "exhausted"
             assert state.codex.routing_auto_retry_due_at is not None
@@ -482,7 +498,11 @@ class TestRoutingAutoRetryBound:
     ) -> None:
         failure_time = datetime(2026, 10, 2, 12, 0, 0, tzinfo=UTC)
         tick, run_id = _routing_failure_cycle(
-            git_repo, scheduler_paths, now=failure_time, fake_clis=fake_clis, monkeypatch=monkeypatch
+            git_repo,
+            scheduler_paths,
+            now=failure_time,
+            fake_clis=fake_clis,
+            monkeypatch=monkeypatch,
         )
         for index in range(ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS):
             offset = ROUTING_AUTO_RETRY_DELAY_SECONDS * (index + 1)
@@ -508,7 +528,9 @@ class TestRoutingAutoRetryBound:
             assert state.codex.routing_auto_retry_authorizations_used == (
                 ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS
             )
-        final_offset = ROUTING_AUTO_RETRY_DELAY_SECONDS * (ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS + 1)
+        final_offset = ROUTING_AUTO_RETRY_DELAY_SECONDS * (
+            ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS + 1
+        )
         _authorize_due_routing_retry(
             git_repo,
             scheduler_paths,
@@ -720,7 +742,11 @@ class TestRoutingCapacityRecoveryRegression:
     ) -> None:
         failure_time = datetime(2026, 10, 2, 12, 0, 0, tzinfo=UTC)
         tick, run_id = _routing_failure_cycle(
-            git_repo, scheduler_paths, now=failure_time, fake_clis=fake_clis, monkeypatch=monkeypatch
+            git_repo,
+            scheduler_paths,
+            now=failure_time,
+            fake_clis=fake_clis,
+            monkeypatch=monkeypatch,
         )
         _authorize_due_routing_retry(
             git_repo,

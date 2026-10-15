@@ -1,0 +1,5 @@
+Implement archive/implementation-history/plans/phase-27-5-standalone-implementer-recovery.md and phase-27-recovery-contract.md. Follow AGENTS.md and all repository rules/skills listed in the plan; they apply to Codex implementation too. The user approved the shared retry command/policy; recheck accepted prerequisites, and implement only this phase.
+
+Preserve exact implementer/reviewer identities, frozen settings and prompt bytes, immutable sources, reservations during uncertainty, idempotent publication and current-leaf sequence authority. Add mandatory automated tests through real production paths and run the plan's focused validation (full gate only in 27.7). Do not stage/commit yourself, modify ai_dev_loop.yaml or planning/review skills, operate live scheduler state, install packages/timers or invoke real models in tests.
+
+Report contract IDs, production callers, independent tests and exact commands/results. Identify mandatory unfinished work, blockers, historical compatibility and separately pending operator acceptance. Do not claim live workstation validation from fake tests.

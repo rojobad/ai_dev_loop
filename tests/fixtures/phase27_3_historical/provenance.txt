@@ -1,0 +1,5 @@
+Captured once from accepted commit 128b5cb (before Phase 27.3).
+Production SequencePrepareService with manifest v1, fake non-running executables,
+isolated HOME/XDG roots and filesystem-only repository discovery.
+No fields or bytes rewritten after capture. Absolute paths are historical metadata.
+New readers must preserve original canonical entry hashes; do not regenerate fixture.

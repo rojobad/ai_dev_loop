@@ -396,26 +396,42 @@ def build_review_wrapper_prompt(
     *,
     iteration: str,
     cursor_final_response: str | None,
+    implementer_provider: str = "cursor",
 ) -> str:
     review_skill = state.codex.review_skill
     plan_snapshot = run_directory / state.plan.snapshot_path
     prompt_snapshot = run_directory / state.prompt.snapshot_path
-    cursor_events = run_directory / f"cursor/iterations/{iteration}/events.jsonl"
-    cursor_final = run_directory / f"cursor/iterations/{iteration}/final.txt"
-    cursor_metadata = run_directory / f"cursor/iterations/{iteration}/metadata.json"
+    if implementer_provider == "codex":
+        implementer_label = "Codex implementer"
+        implementer_events = run_directory / "implementer/turns"
+        implementer_final = run_directory / f"implementer/iterations/{iteration}/final.txt"
+        implementer_metadata = run_directory / "implementer/turns"
+    else:
+        implementer_label = "Cursor"
+        implementer_events = run_directory / f"cursor/iterations/{iteration}/events.jsonl"
+        implementer_final = run_directory / f"cursor/iterations/{iteration}/final.txt"
+        implementer_metadata = run_directory / f"cursor/iterations/{iteration}/metadata.json"
     staged_stat = run_directory / f"git/diffs/{iteration}.stat"
     staged_name_only = run_directory / f"git/diffs/{iteration}.name-only.txt"
     staged_patch = run_directory / f"git/diffs/{iteration}.patch"
 
     cursor_prompt = prompt_snapshot.read_text(encoding="utf-8")
     if cursor_final_response is not None:
-        final_response_section = f"## Latest Cursor final response\n\n{cursor_final_response}\n"
+        final_response_section = (
+            f"## Latest {implementer_label} final response\n\n{cursor_final_response}\n"
+        )
     else:
         final_response_section = (
-            "## Latest Cursor final response\n\n"
-            "The orchestrator could not extract a final Cursor response from stream-json output. "
+            f"## Latest {implementer_label} final response\n\n"
+            f"The orchestrator could not extract a final {implementer_label} response. "
             "Review the staged changes and artifacts using the paths below.\n"
         )
+
+    original_prompt_label = (
+        "Original Codex implementer prompt"
+        if implementer_provider == "codex"
+        else "Original Cursor prompt"
+    )
 
     return (
         "This is an automated Codex review turn for the existing approved plan.\n\n"
@@ -428,20 +444,21 @@ def build_review_wrapper_prompt(
         "## Plan references\n"
         f"- Repository plan path: {state.plan.repository_path}\n"
         f"- Plan snapshot path: {plan_snapshot}\n\n"
-        "## Original Cursor prompt\n\n"
+        f"## {original_prompt_label}\n\n"
         f"{cursor_prompt}\n\n"
         f"{final_response_section}\n"
         "## Artifact paths for auditability\n"
         f"- Plan snapshot: {plan_snapshot}\n"
         f"- Prompt snapshot: {prompt_snapshot}\n"
-        f"- Cursor events: {cursor_events}\n"
-        f"- Cursor final message: {cursor_final}\n"
-        f"- Cursor metadata: {cursor_metadata}\n"
+        f"- {implementer_label} events: {implementer_events}\n"
+        f"- {implementer_label} final message: {implementer_final}\n"
+        f"- {implementer_label} metadata: {implementer_metadata}\n"
         f"- Staged diff stat: {staged_stat}\n"
         f"- Staged name-only diff: {staged_name_only}\n"
         f"- Staged patch: {staged_patch}\n\n"
         "Your final response must conform to codex-review-result-v1.json.\n"
-        "When actionable findings exist, return a complete English cursor_fix_prompt.\n"
+        "When actionable findings exist, return a complete English cursor_fix_prompt; "
+        "this legacy field is forwarded byte-for-byte to the selected implementer.\n"
         "When there are no actionable findings, return cursor_fix_prompt: null.\n"
     )
 

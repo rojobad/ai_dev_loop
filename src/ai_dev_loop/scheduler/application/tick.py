@@ -15,6 +15,7 @@ from ai_dev_loop.scheduler.application.attempt_service import (
     default_attempt_id_factory,
     default_launch_nonce_factory,
 )
+from ai_dev_loop.scheduler.application.codex_capacity_probe import CodexCapacityProbePort
 from ai_dev_loop.scheduler.application.codex_workflow_service import CodexWorkflowService
 from ai_dev_loop.scheduler.application.contracts import (
     TickReceipt,
@@ -82,6 +83,7 @@ class TickService:
         launch_nonce_factory: Callable[[], str] | None = None,
         attempt_backend: AgentProcessBackend | None = None,
         preflight_port: SchedulerPreflightPort | None = None,
+        codex_capacity_probe: CodexCapacityProbePort | None = None,
         before_effect_claim: Callable[[], None] | None = None,
         lease_ttl_seconds: int = DEFAULT_TICK_LEASE_SECONDS,
     ) -> None:
@@ -152,6 +154,7 @@ class TickService:
                 now_factory=self._now_factory,
                 event_id_factory=self._event_id_factory,
                 dispatch_id_factory=self._dispatch_id_factory,
+                capacity_probe=codex_capacity_probe,
                 sequence_handoff=self._sequence_handoff,
             )
             self._attempt_service = AttemptService(
@@ -240,6 +243,17 @@ class TickService:
                     self.store,
                     self.artifacts,
                     now=self._now_factory(),
+                )
+            )
+            from ai_dev_loop.scheduler.application.implementer_failure_recovery import (
+                reconcile_pending_codex_implementer_recoveries,
+            )
+
+            receipts.extend(
+                reconcile_pending_codex_implementer_recoveries(
+                    self.store,
+                    self.artifacts,
+                    now_factory=self._now_factory,
                 )
             )
 

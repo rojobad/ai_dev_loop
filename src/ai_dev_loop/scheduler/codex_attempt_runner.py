@@ -13,7 +13,7 @@ from ai_dev_loop.iterations import (
     correction_execution_envelope_path,
     fix_prompt_path,
 )
-from ai_dev_loop.paths import schema_path
+from ai_dev_loop.paths import schema_path, set_sensitive_file_mode
 from ai_dev_loop.process import run_process_streaming
 from ai_dev_loop.response_schema import validate_codex_response_schema
 from ai_dev_loop.review_result import CodexReviewResult
@@ -190,6 +190,14 @@ def _read_cursor_final(run_root: Path, iteration_label: str) -> str | None:
     return text or None
 
 
+def _read_codex_implementer_final(run_root: Path, iteration_label: str) -> str | None:
+    final_path = run_root / f"implementer/iterations/{iteration_label}/final.txt"
+    if not final_path.is_file():
+        return None
+    text = final_path.read_text(encoding="utf-8").strip()
+    return text or None
+
+
 def _write_attempt_artifacts(
     *,
     stdout_path: Path,
@@ -304,12 +312,18 @@ def _run_codex_review(
     )
 
     run_state = _run_state_from_binding(evidence, run_id)
-    cursor_final = _read_cursor_final(run_root, iteration_label)
+    implementer_provider = str(evidence.get("implementer_provider", "cursor"))
+    implementer_final = (
+        _read_codex_implementer_final(run_root, iteration_label)
+        if implementer_provider == "codex"
+        else _read_cursor_final(run_root, iteration_label)
+    )
     prompt = build_review_wrapper_prompt(
         run_state,
         run_root,
         iteration=iteration_label,
-        cursor_final_response=cursor_final,
+        cursor_final_response=implementer_final,
+        implementer_provider=implementer_provider,
     )
     if evidence.get("operational_review_retry"):
         prompt = REVIEW_RETRY_OPERATIONAL_ENVELOPE + prompt
@@ -372,6 +386,11 @@ def _run_codex_review(
         drain_after_limit=True,
         incremental_file_capture=True,
     )
+    # ``--output-last-message`` is written by the Codex child rather than by
+    # our atomic writers. Harden it before it can become protected recovery
+    # authority or be hashed into the completion outcome.
+    if result_path.is_file() and not result_path.is_symlink():
+        set_sensitive_file_mode(result_path)
 
     bootstrap_session_id: str | None = None
     bootstrap_uncertainty: str | None = None

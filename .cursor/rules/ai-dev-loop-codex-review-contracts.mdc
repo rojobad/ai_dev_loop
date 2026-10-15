@@ -126,7 +126,8 @@ codex exec --cd <repo-root> --sandbox workspace-write resume
   - `cursor_fix_prompt: null`.
 - Invalid output never implies acceptance. Preserve attempt diagnostics and
   route through the scheduler's classified failure handling: eligible bound
-  reviews may wait in `waiting_codex_review_retry` or `waiting_codex_capacity`;
+  reviews may wait in `waiting_codex_review_retry` or reviewer-role
+  `waiting_codex_capacity`;
   integrity or bootstrap-identity uncertainty blocks the run. Do not force the
   retired engine's universal `failed` status onto scheduler states.
 

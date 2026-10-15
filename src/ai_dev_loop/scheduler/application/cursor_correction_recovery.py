@@ -567,7 +567,11 @@ def _copy_inputs(service: _SERVICE, intent: CursorRecoveryPublicationIntentV2) -
         state, _, _ = service.store.load_validated_snapshot(conn, intent.source_run_id)
     context = state.context
     copies = [
-        (intent.source_run_id, context.plan_prompt.plan_artifact_path, context.plan_prompt.plan_sha256),
+        (
+            intent.source_run_id,
+            context.plan_prompt.plan_artifact_path,
+            context.plan_prompt.plan_sha256,
+        ),
         (
             intent.source_run_id,
             context.plan_prompt.prompt_artifact_path,
@@ -583,7 +587,11 @@ def _copy_inputs(service: _SERVICE, intent: CursorRecoveryPublicationIntentV2) -
             context.effective_config.source_config_artifact_path,
             context.effective_config.source_config_sha256,
         ),
-        (intent.admitted_owner_run_id, intent.admitted_artifact_path, intent.admitted_artifact_sha256),
+        (
+            intent.admitted_owner_run_id,
+            intent.admitted_artifact_path,
+            intent.admitted_artifact_sha256,
+        ),
         (intent.chat_owner_run_id, intent.chat_artifact_path, intent.chat_artifact_sha256),
         (intent.binding_run_id, intent.binding_artifact_path, intent.binding_artifact_sha256),
         (intent.fix_owner_run_id, intent.fix_prompt_path, intent.fix_prompt_sha256),
@@ -689,7 +697,8 @@ def _mark_ready(
         if (
             state.codex.reviewer_session_id != intent.reviewer_session_id
             or state.codex.reviews_completed != intent.reviews_completed
-            or state.context.workflow.max_review_iterations != intent.submitted_max_review_iterations
+            or state.context.workflow.max_review_iterations
+            != intent.submitted_max_review_iterations
         ):
             raise _corrupt("correction recovery successor lost reviewer or budget continuity")
         updated = state.model_copy(
@@ -839,7 +848,9 @@ def _verified_intent(row: sqlite3.Row) -> CursorRecoveryPublicationIntentV2:
 
 def _read_record(service: _SERVICE, successor_run_id: str) -> CursorRecoveryRecordV2:
     try:
-        payload = (service.artifacts.run_root(successor_run_id) / CORRECTION_RECORD_REL).read_bytes()
+        payload = (
+            service.artifacts.run_root(successor_run_id) / CORRECTION_RECORD_REL
+        ).read_bytes()
         record = CursorRecoveryRecordV2.model_validate_json(payload)
     except (OSError, ValidationError, UnicodeError) as exc:
         raise _corrupt("correction recovery record failed authentication") from exc
@@ -1058,9 +1069,7 @@ def authenticate_correction_publication_for_adoption(
     if record.raw_fix is not None:
         correction_bindings.append((record.raw_fix.relative_path, record.raw_fix.sha256))
     if record.staged_patch is not None:
-        correction_bindings.append(
-            (record.staged_patch.relative_path, record.staged_patch.sha256)
-        )
+        correction_bindings.append((record.staged_patch.relative_path, record.staged_patch.sha256))
     if record.review_result is not None:
         correction_bindings.append(
             (record.review_result.relative_path, record.review_result.sha256)

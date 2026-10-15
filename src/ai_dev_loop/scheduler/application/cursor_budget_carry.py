@@ -236,7 +236,9 @@ def build_budget_carry(
         if run_id != source_run_id:
             ancestor_row = _ready_cursor_row(store, conn, run_id)
             if ancestor_row is not None and _intent_is_v2(ancestor_row):
-                raise _corrupt("original extension history is already represented by a budget carry")
+                raise _corrupt(
+                    "original extension history is already represented by a budget carry"
+                )
         events, found = _events_for_run(store, conn, run_id)
         event_groups.extend(events)
         extension_evidence.extend(found)
@@ -376,6 +378,18 @@ def inherited_ceiling_for_run(
                 raise _corrupt("budget carry artifacts are missing")
             return None
         artifacts = ProtectedArtifactStore(root)
+    from ai_dev_loop.scheduler.application.implementer_failure_recovery import (
+        load_implementer_recovery_record,
+    )
+
+    implementer_record = load_implementer_recovery_record(
+        store,
+        artifacts,
+        conn,
+        state.run_id,
+    )
+    if implementer_record is not None:
+        return implementer_record.effective_review_ceiling
     carry = load_budget_carry_for_run(store, artifacts, conn, state.run_id)
     if carry is not None:
         return carry.inherited_effective_ceiling
@@ -420,6 +434,13 @@ def authenticated_reviews_completed(
         raise _corrupt("review budget ancestry cycle")
     visited.add(run_id)
     local = store.count_review_completion_events(conn, run_id)
+    from ai_dev_loop.scheduler.application.implementer_failure_recovery import (
+        load_implementer_recovery_record,
+    )
+
+    implementer_record = load_implementer_recovery_record(store, artifacts, conn, run_id)
+    if implementer_record is not None:
+        return implementer_record.reviews_completed + local
     carry = load_budget_carry_for_run(store, artifacts, conn, run_id)
     if carry is not None:
         return carry.inherited_reviews_completed + local
@@ -449,6 +470,13 @@ def inherited_completed_for_blocked_run(
         if not root.is_dir():
             return None
         artifacts = ProtectedArtifactStore(root)
+    from ai_dev_loop.scheduler.application.implementer_failure_recovery import (
+        load_implementer_recovery_record,
+    )
+
+    implementer_record = load_implementer_recovery_record(store, artifacts, conn, run_id)
+    if implementer_record is not None:
+        return implementer_record.reviews_completed
     carry = load_budget_carry_for_run(store, artifacts, conn, run_id)
     if carry is not None:
         return carry.inherited_reviews_completed

@@ -140,7 +140,10 @@ def validate_review_retry_authorization(
                 SchedulerEngineErrorKind.CONFLICT,
                 "automatic review retry is not yet due",
             )
-        if state.codex.routing_auto_retry_authorizations_used >= ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS:
+        if (
+            state.codex.routing_auto_retry_authorizations_used
+            >= ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS
+        ):
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.VALIDATION,
                 "automatic routing retry allowance is exhausted",

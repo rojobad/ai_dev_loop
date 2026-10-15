@@ -59,6 +59,14 @@
                   "source_run_id": { "$ref": "#/$defs/nonEmptyString" }
                 },
                 "required": ["attempt_kind", "generation", "source_run_id"]
+              },
+              {
+                "properties": {
+                  "attempt_kind": { "const": "implementer_retry" },
+                  "generation": { "$ref": "#/$defs/positiveInteger", "minimum": 2 },
+                  "source_run_id": { "$ref": "#/$defs/nonEmptyString" }
+                },
+                "required": ["attempt_kind", "generation", "source_run_id"]
               }
             ]
           }

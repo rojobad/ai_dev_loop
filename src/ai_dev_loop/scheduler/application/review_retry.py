@@ -259,6 +259,12 @@ class ReviewRetryService:
         *,
         now: datetime,
     ) -> ReviewRetryResult:
+        continuation = state.codex.capacity_continuation
+        if continuation is not None and continuation.role == "implementer":
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "scheduler review retry cannot dispatch a reviewer during an implementer capacity wait",
+            )
         try:
             verify_retry_state_repository(state, artifacts=self.artifacts)
         except ReviewCheckpointVerificationError as exc:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ai_dev_loop.scheduler.domain.codex_contract import (
     BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND,
+    IMPLEMENTER_ATTEMPT_EFFECT_KINDS,
     RESUME_CODEX_REVIEW_EFFECT_KIND,
 )
 from ai_dev_loop.scheduler.domain.cursor_contract import (
@@ -41,3 +42,5 @@ CODEX_ATTEMPT_EFFECT_KINDS = frozenset(
         RESUME_CODEX_REVIEW_EFFECT_KIND,
     }
 )
+
+CODEX_IMPLEMENTER_ATTEMPT_EFFECT_KINDS = IMPLEMENTER_ATTEMPT_EFFECT_KINDS

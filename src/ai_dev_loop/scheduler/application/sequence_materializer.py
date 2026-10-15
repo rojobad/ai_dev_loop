@@ -7,6 +7,7 @@ from ai_dev_loop.scheduler.domain.sequence import (
     PreparedSequenceDefinition,
 )
 from ai_dev_loop.scheduler.domain.state import (
+    SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
     ControllerBinding,
     CursorBinding,
@@ -58,7 +59,12 @@ def build_sequence_run_context(
     entry_hash: str,
 ) -> SubmittedRunContext:
     return SubmittedRunContext(
-        schema_version=SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
+        schema_version=(
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE
+            if entry.schema_version == 2
+            else SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE
+        ),
+        implementer=entry.implementer,
         project_name=definition.project_name,
         repository=RepositoryTargetBinding(
             root=definition.repository.root,

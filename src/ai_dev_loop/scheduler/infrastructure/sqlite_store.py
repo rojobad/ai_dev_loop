@@ -61,7 +61,7 @@ if TYPE_CHECKING:
         | AwaitingFinalizationSequenceState
     )
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 16
 SEQUENCE_SCHEMA_VERSION = 5
 REVIEW_RETRY_SCHEMA_VERSION = 6
 SEQUENCE_RUN_LINEAGE_SCHEMA_VERSION = 9
@@ -79,9 +79,14 @@ MIGRATION_V10_NAME = "0010_sequence_review_recovery"
 MIGRATION_V11_NAME = "0011_sequence_replacement_cancellation"
 MIGRATION_V12_NAME = "0012_cursor_initial_recovery"
 MIGRATION_V13_NAME = "0013_sequence_cursor_replacement"
+MIGRATION_V14_NAME = "0014_codex_implementer_attempts"
+MIGRATION_V15_NAME = "0015_codex_implementer_recovery"
+MIGRATION_V16_NAME = "0016_sequence_implementer_replacement"
 SEQUENCE_REVIEW_RECOVERY_SCHEMA_VERSION = 11
 CURSOR_INITIAL_RECOVERY_SCHEMA_VERSION = 12
 CURSOR_SEQUENCE_REPLACEMENT_SCHEMA_VERSION = 13
+CODEX_IMPLEMENTER_RECOVERY_SCHEMA_VERSION = 15
+SEQUENCE_IMPLEMENTER_REPLACEMENT_SCHEMA_VERSION = 16
 REQUIRED_TABLES = frozenset(
     {
         "scheduler_schema_migrations",
@@ -105,9 +110,14 @@ REQUIRED_TABLES = frozenset(
         "scheduler_sequence_execution_replacements",
         "scheduler_cursor_initial_recoveries",
         "scheduler_sequence_cursor_replacements",
+        "scheduler_codex_implementer_recoveries",
+        "scheduler_sequence_implementer_replacements",
     }
 )
-REQUIRED_TABLES_V12 = REQUIRED_TABLES - {"scheduler_sequence_cursor_replacements"}
+REQUIRED_TABLES_V15 = REQUIRED_TABLES - {"scheduler_sequence_implementer_replacements"}
+REQUIRED_TABLES_V14 = REQUIRED_TABLES_V15 - {"scheduler_codex_implementer_recoveries"}
+REQUIRED_TABLES_V13 = REQUIRED_TABLES_V14
+REQUIRED_TABLES_V12 = REQUIRED_TABLES_V13 - {"scheduler_sequence_cursor_replacements"}
 REQUIRED_TABLES_V11 = REQUIRED_TABLES_V12 - {"scheduler_cursor_initial_recoveries"}
 REQUIRED_TABLES_V9 = REQUIRED_TABLES_V11 - {"scheduler_sequence_execution_replacements"}
 REQUIRED_TABLES_V8 = REQUIRED_TABLES_V9 - {"scheduler_sequence_run_attempts"}
@@ -140,10 +150,21 @@ REQUIRED_INDEXES = frozenset(
         "idx_scheduler_cursor_initial_recoveries_successor",
         "idx_scheduler_cursor_initial_recoveries_status",
         "idx_scheduler_sequence_cursor_replacements_sequence",
+        "idx_scheduler_codex_implementer_recoveries_successor",
+        "idx_scheduler_codex_implementer_recoveries_status",
+        "idx_scheduler_sequence_implementer_replacements_sequence",
     }
 )
 REQUIRED_TABLES_V6 = REQUIRED_TABLES_V7 - {"scheduler_checkpoint_holds"}
-REQUIRED_INDEXES_V12 = REQUIRED_INDEXES - {
+REQUIRED_INDEXES_V15 = REQUIRED_INDEXES - {
+    "idx_scheduler_sequence_implementer_replacements_sequence",
+}
+REQUIRED_INDEXES_V14 = REQUIRED_INDEXES_V15 - {
+    "idx_scheduler_codex_implementer_recoveries_successor",
+    "idx_scheduler_codex_implementer_recoveries_status",
+}
+REQUIRED_INDEXES_V13 = REQUIRED_INDEXES_V14
+REQUIRED_INDEXES_V12 = REQUIRED_INDEXES_V13 - {
     "idx_scheduler_sequence_cursor_replacements_sequence",
 }
 REQUIRED_INDEXES_V11 = REQUIRED_INDEXES_V12 - {
@@ -282,6 +303,18 @@ def _migration_v13_sql() -> str:
     return _migration_sql("0013_sequence_cursor_replacement.sql")
 
 
+def _migration_v14_sql() -> str:
+    return _migration_sql("0014_codex_implementer_attempts.sql")
+
+
+def _migration_v15_sql() -> str:
+    return _migration_sql("0015_codex_implementer_recovery.sql")
+
+
+def _migration_v16_sql() -> str:
+    return _migration_sql("0016_sequence_implementer_replacement.sql")
+
+
 def _split_sql_statements(sql: str) -> list[str]:
     statements: list[str] = []
     for chunk in sql.split(";"):
@@ -324,6 +357,12 @@ def migration_checksum(version: int) -> str:
         return hashlib.sha256(_migration_v12_sql().encode("utf-8")).hexdigest()
     if version == 13:
         return hashlib.sha256(_migration_v13_sql().encode("utf-8")).hexdigest()
+    if version == 14:
+        return hashlib.sha256(_migration_v14_sql().encode("utf-8")).hexdigest()
+    if version == 15:
+        return hashlib.sha256(_migration_v15_sql().encode("utf-8")).hexdigest()
+    if version == 16:
+        return hashlib.sha256(_migration_v16_sql().encode("utf-8")).hexdigest()
     raise ValueError(f"unsupported migration version {version}")
 
 
@@ -522,6 +561,18 @@ class SqliteSchedulerStore:
                 for migration_version in range(1, 13):
                     self._verify_migration_checksum(conn, migration_version)
                 self._migrate_v12_to_v13(conn)
+            elif version == 13:
+                for migration_version in range(1, 14):
+                    self._verify_migration_checksum(conn, migration_version)
+                self._migrate_v13_to_v14(conn)
+            elif version == 14:
+                for migration_version in range(1, 15):
+                    self._verify_migration_checksum(conn, migration_version)
+                self._migrate_v14_to_v15(conn)
+            elif version == 15:
+                for migration_version in range(1, 16):
+                    self._verify_migration_checksum(conn, migration_version)
+                self._migrate_v15_to_v16(conn)
             else:
                 self._verify_current_schema(conn)
             self._apply_database_permissions(self.db_path)
@@ -865,14 +916,89 @@ class SqliteSchedulerStore:
         self._migrate_v12_to_v13(conn)
 
     def _migrate_v12_to_v13(self, conn: sqlite3.Connection) -> None:
-        if self._user_version(conn) >= 13:
+        if self._user_version(conn) < 13:
+            for migration_version in range(1, 13):
+                self._verify_migration_checksum(conn, migration_version)
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                for statement in _split_sql_statements(_migration_v13_sql()):
+                    self._fault_maybe_raise_migration(statement)
+                    conn.execute(statement)
+                applied_at = encode_utc_instant(datetime.now(tz=UTC))
+                conn.execute(
+                    """
+                    INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (13, MIGRATION_V13_NAME, migration_checksum(13), applied_at),
+                )
+                conn.execute("PRAGMA user_version = 13")
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            self._apply_database_permissions(self.db_path)
+        self._migrate_v13_to_v14(conn)
+
+    def _migrate_v13_to_v14(self, conn: sqlite3.Connection) -> None:
+        if self._user_version(conn) < 14:
+            for migration_version in range(1, 14):
+                self._verify_migration_checksum(conn, migration_version)
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                for statement in _split_sql_statements(_migration_v14_sql()):
+                    self._fault_maybe_raise_migration(statement)
+                    conn.execute(statement)
+                applied_at = encode_utc_instant(datetime.now(tz=UTC))
+                conn.execute(
+                    """
+                    INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (14, MIGRATION_V14_NAME, migration_checksum(14), applied_at),
+                )
+                conn.execute("PRAGMA user_version = 14")
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            self._apply_database_permissions(self.db_path)
+        self._migrate_v14_to_v15(conn)
+
+    def _migrate_v14_to_v15(self, conn: sqlite3.Connection) -> None:
+        if self._user_version(conn) < 15:
+            for migration_version in range(1, 15):
+                self._verify_migration_checksum(conn, migration_version)
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                for statement in _split_sql_statements(_migration_v15_sql()):
+                    self._fault_maybe_raise_migration(statement)
+                    conn.execute(statement)
+                applied_at = encode_utc_instant(datetime.now(tz=UTC))
+                conn.execute(
+                    """
+                    INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (15, MIGRATION_V15_NAME, migration_checksum(15), applied_at),
+                )
+                conn.execute("PRAGMA user_version = 15")
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            self._apply_database_permissions(self.db_path)
+        self._migrate_v15_to_v16(conn)
+
+    def _migrate_v15_to_v16(self, conn: sqlite3.Connection) -> None:
+        if self._user_version(conn) >= 16:
             self._verify_current_schema(conn)
             return
-        for migration_version in range(1, 13):
+        for migration_version in range(1, 16):
             self._verify_migration_checksum(conn, migration_version)
         try:
             conn.execute("BEGIN IMMEDIATE")
-            for statement in _split_sql_statements(_migration_v13_sql()):
+            for statement in _split_sql_statements(_migration_v16_sql()):
                 self._fault_maybe_raise_migration(statement)
                 conn.execute(statement)
             applied_at = encode_utc_instant(datetime.now(tz=UTC))
@@ -881,9 +1007,9 @@ class SqliteSchedulerStore:
                 INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
                 VALUES (?, ?, ?, ?)
                 """,
-                (13, MIGRATION_V13_NAME, migration_checksum(13), applied_at),
+                (16, MIGRATION_V16_NAME, migration_checksum(16), applied_at),
             )
-            conn.execute("PRAGMA user_version = 13")
+            conn.execute("PRAGMA user_version = 16")
             conn.commit()
         except Exception:
             conn.rollback()
@@ -929,6 +1055,12 @@ class SqliteSchedulerStore:
         if target >= SCHEMA_VERSION:
             tables = REQUIRED_TABLES
             indexes = REQUIRED_INDEXES
+        elif target >= 15:
+            tables = REQUIRED_TABLES_V15
+            indexes = REQUIRED_INDEXES_V15
+        elif target >= 13:
+            tables = REQUIRED_TABLES_V13
+            indexes = REQUIRED_INDEXES_V13
         elif target >= 12:
             tables = REQUIRED_TABLES_V12
             indexes = REQUIRED_INDEXES_V12
@@ -1098,6 +1230,7 @@ class SqliteSchedulerStore:
         *,
         context: object,
         resubmission_id: str | None,
+        historical_effective_config_sha256: str | None = None,
     ) -> sqlite3.Row | None:
         from ai_dev_loop.scheduler.application.submission import (
             submission_idempotency_key_candidates,
@@ -1115,6 +1248,7 @@ class SqliteSchedulerStore:
         for key in submission_idempotency_key_candidates(
             context,
             resubmission_id=resubmission_id,
+            historical_effective_config_sha256=historical_effective_config_sha256,
         ):
             existing = self.get_run_by_idempotency_key(conn, key)
             if existing is not None:
@@ -2008,11 +2142,11 @@ class SqliteSchedulerStore:
             )
         sequence_filter = ""
         if kind == "standalone":
-            sequence_filter = (
-                " AND COALESCE(json_extract(state_payload, '$.context.schema_version'), 0) != 4"
-            )
+            sequence_filter = " AND COALESCE(json_extract(state_payload, '$.context.schema_version'), 0) NOT IN (4, 6)"
         elif kind == "sequence":
-            sequence_filter = " AND json_extract(state_payload, '$.context.schema_version') = 4"
+            sequence_filter = (
+                " AND json_extract(state_payload, '$.context.schema_version') IN (4, 6)"
+            )
         elif kind != "all":
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.VALIDATION,
@@ -3934,6 +4068,37 @@ class SqliteSchedulerStore:
         ).fetchone()
         return cast(sqlite3.Row | None, row)
 
+    def get_latest_completed_codex_implementer_attempt(
+        self, conn: sqlite3.Connection, run_id: str
+    ) -> sqlite3.Row | None:
+        from ai_dev_loop.scheduler.domain.codex_contract import (
+            IMPLEMENTER_ATTEMPT_EFFECT_KINDS,
+        )
+
+        placeholders = ",".join("?" * len(IMPLEMENTER_ATTEMPT_EFFECT_KINDS))
+        row = conn.execute(
+            f"""
+            SELECT scheduler_attempts.*
+            FROM scheduler_attempts
+            JOIN scheduler_effects
+              ON scheduler_effects.dispatch_id = scheduler_attempts.dispatch_id
+            WHERE scheduler_attempts.run_id = ?
+              AND scheduler_attempts.status IN (?, ?)
+              AND scheduler_attempts.component = 'codex_implementer'
+              AND scheduler_attempts.ingested = 0
+              AND scheduler_effects.effect_kind IN ({placeholders})
+            ORDER BY scheduler_attempts.completed_at DESC, scheduler_attempts.attempt_id DESC
+            LIMIT 1
+            """,
+            (
+                run_id,
+                ATTEMPT_STATUS_COMPLETED,
+                ATTEMPT_STATUS_FAILED,
+                *IMPLEMENTER_ATTEMPT_EFFECT_KINDS,
+            ),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
     def get_latest_recorded_codex_attempt(
         self, conn: sqlite3.Connection, run_id: str
     ) -> sqlite3.Row | None:
@@ -4620,6 +4785,9 @@ class SqliteSchedulerStore:
     def schema_supports_cursor_sequence_replacement(self, conn: sqlite3.Connection) -> bool:
         return self._user_version(conn) >= CURSOR_SEQUENCE_REPLACEMENT_SCHEMA_VERSION
 
+    def schema_supports_sequence_implementer_replacement(self, conn: sqlite3.Connection) -> bool:
+        return self._user_version(conn) >= SEQUENCE_IMPLEMENTER_REPLACEMENT_SCHEMA_VERSION
+
     def insert_prepared_sequence(
         self,
         conn: sqlite3.Connection,
@@ -5117,6 +5285,130 @@ class SqliteSchedulerStore:
         )
         return cursor.rowcount == 1
 
+    def get_codex_implementer_recovery_by_source_attempt(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_run_id: str,
+        failed_attempt_id: str,
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_codex_implementer_recoveries
+            WHERE source_run_id = ? AND failed_attempt_id = ?
+            """,
+            (source_run_id, failed_attempt_id),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def get_codex_implementer_recovery_by_key(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        recovery_key: str,
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            "SELECT * FROM scheduler_codex_implementer_recoveries WHERE recovery_key = ?",
+            (recovery_key,),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def get_codex_implementer_recovery_by_successor(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        successor_run_id: str,
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            "SELECT * FROM scheduler_codex_implementer_recoveries WHERE successor_run_id = ?",
+            (successor_run_id,),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def list_pending_codex_implementer_recoveries(
+        self,
+        conn: sqlite3.Connection,
+    ) -> list[sqlite3.Row]:
+        rows = conn.execute(
+            """
+            SELECT * FROM scheduler_codex_implementer_recoveries
+            WHERE status = 'pending'
+            ORDER BY created_at ASC, recovery_key ASC
+            """
+        ).fetchall()
+        return [cast(sqlite3.Row, row) for row in rows]
+
+    def insert_codex_implementer_recovery(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        recovery_key: str,
+        source_run_id: str,
+        failed_attempt_id: str,
+        successor_run_id: str,
+        failed_dispatch_id: str,
+        intent_payload: str,
+        intent_payload_sha256: str,
+        now: datetime,
+    ) -> bool:
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            INSERT INTO scheduler_codex_implementer_recoveries(
+                recovery_key, source_run_id, failed_attempt_id, successor_run_id,
+                failed_dispatch_id, status, intent_payload, intent_payload_sha256,
+                intent_artifact_path, intent_artifact_sha256,
+                record_artifact_path, record_sha256, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, NULL, NULL, NULL, NULL, ?, ?)
+            ON CONFLICT(source_run_id, failed_attempt_id) DO NOTHING
+            """,
+            (
+                recovery_key,
+                source_run_id,
+                failed_attempt_id,
+                successor_run_id,
+                failed_dispatch_id,
+                intent_payload,
+                intent_payload_sha256,
+                now_text,
+                now_text,
+            ),
+        )
+        return cursor.rowcount == 1
+
+    def update_codex_implementer_recovery_status(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        recovery_key: str,
+        expected_status: str,
+        status: str,
+        intent_artifact_path: str | None,
+        intent_artifact_sha256: str | None,
+        record_artifact_path: str | None,
+        record_sha256: str | None,
+        now: datetime,
+    ) -> bool:
+        cursor = conn.execute(
+            """
+            UPDATE scheduler_codex_implementer_recoveries
+            SET status = ?, intent_artifact_path = ?, intent_artifact_sha256 = ?,
+                record_artifact_path = ?, record_sha256 = ?, updated_at = ?
+            WHERE recovery_key = ? AND status = ?
+            """,
+            (
+                status,
+                intent_artifact_path,
+                intent_artifact_sha256,
+                record_artifact_path,
+                record_sha256,
+                encode_utc_instant(now),
+                recovery_key,
+                expected_status,
+            ),
+        )
+        return cursor.rowcount == 1
+
     def claim_reservation_for_successor(
         self,
         conn: sqlite3.Connection,
@@ -5496,6 +5788,158 @@ class SqliteSchedulerStore:
         cursor = conn.execute(
             """
             UPDATE scheduler_sequence_cursor_replacements
+            SET intent_payload = ?, intent_payload_sha256 = ?,
+                adopted_at = ?, cancelled_at = ?
+            WHERE source_run_id = ? AND recovery_key = ?
+            """,
+            (
+                intent_payload,
+                intent_digest,
+                None if adopted_at is None else encode_utc_instant(adopted_at),
+                None if cancelled_at is None else encode_utc_instant(cancelled_at),
+                source_run_id,
+                recovery_key,
+            ),
+        )
+        return cursor.rowcount == 1
+
+    def get_sequence_implementer_replacement(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_run_id: str,
+        recovery_key: str,
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_sequence_implementer_replacements
+            WHERE source_run_id = ? AND recovery_key = ?
+            """,
+            (source_run_id, recovery_key),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def get_sequence_implementer_replacement_by_successor(
+        self,
+        conn: sqlite3.Connection,
+        successor_run_id: str,
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_sequence_implementer_replacements
+            WHERE successor_run_id = ?
+            """,
+            (successor_run_id,),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def get_sequence_implementer_replacement_for_generation(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        sequence_id: str,
+        ordinal: int,
+        source_generation: int,
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_sequence_implementer_replacements
+            WHERE sequence_id = ? AND ordinal = ? AND source_generation = ?
+            """,
+            (sequence_id, ordinal, source_generation),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def list_sequence_implementer_replacements_for_source(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_run_id: str,
+    ) -> list[sqlite3.Row]:
+        rows = conn.execute(
+            """
+            SELECT * FROM scheduler_sequence_implementer_replacements
+            WHERE source_run_id = ? ORDER BY created_at ASC
+            """,
+            (source_run_id,),
+        ).fetchall()
+        return [cast(sqlite3.Row, row) for row in rows]
+
+    def list_unadopted_sequence_implementer_replacements(
+        self,
+        conn: sqlite3.Connection,
+    ) -> list[sqlite3.Row]:
+        rows = conn.execute(
+            """
+            SELECT * FROM scheduler_sequence_implementer_replacements
+            WHERE adopted_at IS NULL AND cancelled_at IS NULL
+            ORDER BY created_at ASC
+            """
+        ).fetchall()
+        return [cast(sqlite3.Row, row) for row in rows]
+
+    def insert_sequence_implementer_replacement(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        intent: object,
+        intent_payload: str,
+        intent_digest: str,
+        now: datetime,
+    ) -> bool:
+        from ai_dev_loop.scheduler.domain.sequence_implementer_replacement import (
+            SequenceImplementerReplacementIntent,
+        )
+
+        if not isinstance(intent, SequenceImplementerReplacementIntent):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "sequence implementer replacement requires a typed intent",
+            )
+        if not self.schema_supports_sequence_implementer_replacement(conn):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.SCHEMA,
+                "sequence implementer replacement requires scheduler schema version 16",
+            )
+        cursor = conn.execute(
+            """
+            INSERT INTO scheduler_sequence_implementer_replacements(
+                sequence_id, ordinal, source_run_id, source_generation, recovery_key,
+                successor_run_id, successor_generation, provider, intent_payload,
+                intent_payload_sha256, created_at, adopted_at, cancelled_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+            ON CONFLICT(source_run_id, recovery_key) DO NOTHING
+            """,
+            (
+                intent.sequence_id,
+                intent.ordinal,
+                intent.source_run_id,
+                intent.source_generation,
+                intent.recovery_key,
+                intent.successor_run_id,
+                intent.successor_generation,
+                intent.provider,
+                intent_payload,
+                intent_digest,
+                encode_utc_instant(now),
+            ),
+        )
+        return cursor.rowcount == 1
+
+    def update_sequence_implementer_replacement_payload(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_run_id: str,
+        recovery_key: str,
+        intent_payload: str,
+        intent_digest: str,
+        adopted_at: datetime | None,
+        cancelled_at: datetime | None,
+    ) -> bool:
+        cursor = conn.execute(
+            """
+            UPDATE scheduler_sequence_implementer_replacements
             SET intent_payload = ?, intent_payload_sha256 = ?,
                 adopted_at = ?, cancelled_at = ?
             WHERE source_run_id = ? AND recovery_key = ?

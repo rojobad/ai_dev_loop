@@ -46,6 +46,11 @@ class IntegrationCapabilities(PublicWireModel):
     review_inspection: StrictBool = Field(False, alias="reviewInspection")
     process_output: StrictBool = Field(False, alias="processOutput")
     codex_capacity: StrictBool = Field(False, alias="codexCapacity")
+    dual_implementers: StrictBool = Field(False, alias="dualImplementers")
+    mixed_implementer_sequences: StrictBool = Field(False, alias="mixedImplementerSequences")
+    codex_implementer_manual_recovery: StrictBool = Field(
+        False, alias="codexImplementerManualRecovery"
+    )
 
 
 class IntegrationInfoData(PublicWireModel):
@@ -177,6 +182,7 @@ class IntegrationSafeNextAction(PublicWireModel):
 
 
 class IntegrationRunListItem(PublicWireModel):
+    implementer_provider: str = Field("cursor", alias="implementerProvider")
     run_id: str = Field(alias="runId")
     project_name: str = Field(alias="projectName")
     repository_root: str = Field(alias="repositoryRoot")
@@ -191,6 +197,10 @@ class IntegrationRunListItem(PublicWireModel):
 
 
 class IntegrationRunInspectData(PublicWireModel):
+    implementer_provider: str = Field("cursor", alias="implementerProvider")
+    codex_pending_role: str | None = Field(None, alias="codexPendingRole")
+    codex_pending_turn: str | None = Field(None, alias="codexPendingTurn")
+    codex_capacity_reason: str | None = Field(None, alias="codexCapacityReason")
     run_id: str = Field(alias="runId")
     project_name: str = Field(alias="projectName")
     repository_root: str = Field(alias="repositoryRoot")
@@ -205,6 +215,13 @@ class IntegrationRunInspectData(PublicWireModel):
     residual_risk: bool | None = Field(None, alias="residualRisk")
     block_reason: str | None = Field(None, alias="blockReason")
     cursor_wait_until: str | None = Field(None, alias="cursorWaitUntil")
+    implementer_retry_wait_until: str | None = Field(None, alias="implementerRetryWaitUntil")
+    implementer_timeout_automatic_retries: StrictInt | None = Field(
+        None, alias="implementerTimeoutAutomaticRetries", ge=0
+    )
+    implementer_timeout_retry_limit: StrictInt | None = Field(
+        None, alias="implementerTimeoutRetryLimit", ge=0
+    )
     safe_next_action: IntegrationSafeNextAction = Field(alias="safeNextAction")
     attempt_count: StrictInt = Field(alias="attemptCount", ge=0)
     codex_review_retry_failure_kind: str | None = Field(
@@ -340,6 +357,7 @@ class IntegrationSequencePhaseRunItem(PublicWireModel):
 
 
 class IntegrationSequencePhaseSummary(PublicWireModel):
+    implementer_provider: str = Field("cursor", alias="implementerProvider")
     ordinal: StrictInt = Field(ge=1)
     name: str
     initial_planned_run_id: str = Field(alias="initialPlannedRunId")
@@ -373,6 +391,17 @@ class IntegrationSequenceListData(PublicWireModel):
 
 
 class IntegrationSequenceInspectData(PublicWireModel):
+    current_implementer_provider: str | None = Field(None, alias="currentImplementerProvider")
+    codex_pending_role: str | None = Field(None, alias="codexPendingRole")
+    codex_pending_turn: str | None = Field(None, alias="codexPendingTurn")
+    codex_capacity_reason: str | None = Field(None, alias="codexCapacityReason")
+    implementer_retry_wait_until: str | None = Field(None, alias="implementerRetryWaitUntil")
+    implementer_timeout_automatic_retries: StrictInt | None = Field(
+        None, alias="implementerTimeoutAutomaticRetries", ge=0
+    )
+    implementer_timeout_retry_limit: StrictInt | None = Field(
+        None, alias="implementerTimeoutRetryLimit", ge=0
+    )
     sequence_id: str = Field(alias="sequenceId")
     name: str
     project_name: str = Field(alias="projectName")

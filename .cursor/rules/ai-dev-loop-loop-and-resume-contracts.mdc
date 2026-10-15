@@ -15,13 +15,13 @@ existing references; it does not imply a public `resume` command.
 - `scheduler submit` freezes inputs; `scheduler start` authorizes execution;
   bounded `scheduler tick` passes reconcile durable effects and attempt results.
 - `workflow.max_review_iterations` counts completed Codex reviews, including
-  the first review after the initial Cursor implementation. Operational retries
+  the first review after the initial implementation turn. Operational retries
   do not themselves consume another completed review.
 - Schema-validated Codex results drive acceptance and fixes. Never scrape
   Markdown, invent findings, or infer approval from silence or failed output.
 - Persist the exact `cursor_fix_prompt` and deterministic execution envelope.
   Embed the fix prompt byte-for-byte without rewriting, translating, reordering,
-  or adding findings. Forward it to the same Cursor chat.
+  or adding findings. Forward it to the same frozen implementer identity.
 - Findings schedule a correction only when the effective review budget permits.
   Exhaustion preserves the last fix prompt and staged changes in
   `max_iterations_reached`, without an extra Cursor turn.
@@ -32,9 +32,14 @@ existing references; it does not imply a public `resume` command.
 
 ## Agent Identity
 
-- Persist the Cursor chat before its first turn; reuse it for fixes and eligible
-  continuation. Missing identity after recorded work is not permission to create
-  another chat.
+- Persist the selected implementer's identity before relying on completed work;
+  reuse it for fixes and eligible continuation. Missing identity after recorded
+  work is not permission to create another chat or session.
+- A frozen Codex implementer is a separate identity from reviewer B. Historical
+  contexts without implementer metadata remain Cursor. Standalone runs and manifest v2 sequence leaves launch the
+  initial Codex turn and resume the exact authenticated session for corrections.
+  Role-aware capacity continuation records the pending initial/correction prompt
+  and never lets an implementer wait be retried as a reviewer wait.
 - Bootstrap Codex reviewer B once at the first review; subsequent reviews and
   eligible retries resume the exact authenticated B. Controller A is optional
   provenance, not reviewer identity. Never use `--last`.
@@ -48,17 +53,20 @@ existing references; it does not imply a public `resume` command.
   Do not add continuous baseline gates over normal agent edits (`AGENTS.md`).
 - Keep repository reservation/identity and frozen plan/prompt integrity. Preserve
   the existing reviewed-patch and attempt-evidence checks at their boundaries.
-- Cursor may update staging as required by authorized implementation/fixes.
+- The selected implementer may update staging as required by authorized
+  implementation/fixes.
   It must not commit, amend, reset, switch branches, stash, clean, merge, rebase,
   tag, push, or change repository identity under the ordinary execution envelope.
-- After a successful Cursor turn, `stage_mode: all` normalizes via `git add -A`
+- After a successful implementation turn, `stage_mode: all` normalizes via `git add -A`
   and records the complete staged snapshot before Codex review. Merely unstaging
   a tracked non-ignored change does not exclude it from that snapshot.
 - Do not reject normal Cursor output solely because Cursor changed the index.
   Preserve supported artifact/content checks without expanding them into
   exhaustive Git-status emulation.
-- Expected partial work from a timed-out or usage-limited Cursor turn is
-  preserved for continuation; do not demand a new clean baseline or discard it.
+- Expected partial work from a usage-limited, timed-out, or explicitly recovered
+  implementation turn is preserved for continuation; do not demand a new clean
+  baseline or discard it. Codex recovery keeps the exact authenticated session,
+  frozen settings, prompt bytes, and retry consumption.
 - Standalone runs and final sequence phases leave changes staged. Only an
   explicitly started sequence authorizes the existing local unsigned/no-hook
   checkpoint commit for an accepted non-final phase. Authenticate the reviewed
@@ -94,10 +102,25 @@ existing references; it does not imply a public `resume` command.
 - Preserve each attempt's artifacts separately. Do not overwrite prior output,
   rerun admission, or confuse an attempt retry with a completed correction.
 
+## Codex Implementer Continuation
+
+- `scheduler implementer-retry` preserves the authenticated implementer session,
+  frozen command/model/effort/timeout, exact prompt bytes, reviewer identity, and
+  effective review ceiling. Confirmed timeouts use the bounded same-run policy;
+  `--force` publishes one successor for an eligible terminated generic failure.
+- A current sequence leaf successor is bound to the same sequence, ordinal, and
+  frozen entry. Publication, reservation transfer, lineage CAS, and dispatch
+  eligibility converge atomically; pending publication cannot dispatch. Duplicate
+  force returns the existing relation, while an unrelated stale leaf is rejected.
+- Sequence abort cancels an unadopted successor. Adoption followed by acceptance
+  uses the ordinary non-final checkpoint or final staged handoff; recovery grants
+  no additional Git authority and never rewrites the blocked source.
+
 ## Reviewer Retry And Recovery
 
 - `scheduler review retry <run-id>` is process-free authorization. It handles
-  eligible `waiting_codex_review_retry` and `waiting_codex_capacity` states, or
+  eligible `waiting_codex_review_retry` and reviewer-role
+  `waiting_codex_capacity` states, or
   authenticated recovery of an eligible blocked review source. Tick launches
   the actual review afterward.
 - For the narrow `codex_workspace_routing_timeout` failure only, ticks may
@@ -109,7 +132,8 @@ existing references; it does not imply a public `resume` command.
   iteration. Use the returned safe next action; not every failure is retryable.
 - Blocked-source recovery creates or reuses an authenticated same-reviewer
   successor. Keep the source immutable, preserve required evidence and lineage,
-  and never repeat completed Cursor implementation merely to retry a review.
+  and never repeat completed implementation merely to retry a review. It must
+  reject an implementer-role capacity wait before mutation.
 - For sequences, atomically coordinate replacement intent, phase-run lineage,
   reservation, abort state, and successor adoption. Do not revive stale leaves
   or advance phases based on an unauthenticated successor.

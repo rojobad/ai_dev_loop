@@ -24,8 +24,12 @@ from ai_dev_loop.scheduler.application.output_observation import (
 )
 from ai_dev_loop.scheduler.domain.codex_contract import (
     CODEX_ATTEMPT_EFFECT_KINDS,
+    IMPLEMENTER_ATTEMPT_EFFECT_KINDS,
     codex_attempt_events_rel,
     codex_attempt_stderr_rel,
+    codex_implementer_events_rel,
+    codex_implementer_metadata_rel,
+    codex_implementer_stderr_rel,
     codex_review_metadata_rel,
 )
 from ai_dev_loop.scheduler.domain.cursor_contract import (
@@ -165,6 +169,26 @@ def resolve_process_stream(
         media = "text/plain"
         return ResolvedProcessStream(bound_rel, media, "text", "cursor")
 
+    if effect_kind in IMPLEMENTER_ATTEMPT_EFFECT_KINDS:
+        iteration = _cursor_iteration(auth)
+        if iteration is None:
+            return ResolvedProcessStream(
+                "", "", "text", "codex_implementer", unavailable_reason="not_captured"
+            )
+        if stream == "stdout":
+            return ResolvedProcessStream(
+                codex_implementer_events_rel(iteration, attempt_id),
+                "application/x-ndjson",
+                "jsonl",
+                "codex_implementer",
+            )
+        return ResolvedProcessStream(
+            codex_implementer_stderr_rel(iteration, attempt_id),
+            "text/plain",
+            "text",
+            "codex_implementer",
+        )
+
     if effect_kind in CODEX_ATTEMPT_EFFECT_KINDS:
         iteration = _codex_iteration(auth)
         if iteration is None:
@@ -208,6 +232,11 @@ def stream_availability_reason(
     if path.is_symlink():
         raise ProcessOutputIntegrityError("process output path is not safe to read")
     if path.is_file():
+        if resolved.component == "codex_implementer" and auth.outcome is not None:
+            key = "events_sha256" if resolved.stream_format == "jsonl" else "stderr_sha256"
+            expected = auth.outcome.get(key)
+            if expected is not None and sha256_file(path) != expected:
+                raise ProcessOutputIntegrityError("implementer child stream hash mismatch")
         return None
     if attempt_status in {"launching", "active"}:
         return "not_yet_produced"
@@ -284,18 +313,37 @@ def load_stream_truncation(
             stored_bytes=side.stored_bytes,
         )
 
-    if effect_kind in CODEX_ATTEMPT_EFFECT_KINDS:
-        iteration = _codex_iteration(auth)
+    if effect_kind in CODEX_ATTEMPT_EFFECT_KINDS | IMPLEMENTER_ATTEMPT_EFFECT_KINDS:
+        iteration = (
+            _cursor_iteration(auth)
+            if effect_kind in IMPLEMENTER_ATTEMPT_EFFECT_KINDS
+            else _codex_iteration(auth)
+        )
         if iteration is None:
             return ProcessStreamTruncation(truncated_at_source=None)
         truncated: bool | None = None
         stored: int | None = None
-        metadata_rel = codex_review_metadata_rel(iteration, attempt_id)
+        metadata_rel = (
+            codex_implementer_metadata_rel(iteration, attempt_id)
+            if effect_kind in IMPLEMENTER_ATTEMPT_EFFECT_KINDS
+            else codex_review_metadata_rel(iteration, attempt_id)
+        )
         try:
             meta_path = resolve_run_relative_path(run_root, metadata_rel)
         except ValueError as exc:
             raise ProcessOutputIntegrityError("codex capture metadata path invalid") from exc
+        if (
+            effect_kind in IMPLEMENTER_ATTEMPT_EFFECT_KINDS
+            and auth.outcome is not None
+            and auth.outcome.get("metadata_sha256") is not None
+            and (not meta_path.is_file() or meta_path.is_symlink())
+        ):
+            raise ProcessOutputIntegrityError("bound implementer capture metadata is missing")
         if meta_path.is_file() and not meta_path.is_symlink():
+            if effect_kind in IMPLEMENTER_ATTEMPT_EFFECT_KINDS and auth.outcome is not None:
+                expected = auth.outcome.get("metadata_sha256")
+                if expected is not None and sha256_file(meta_path) != expected:
+                    raise ProcessOutputIntegrityError("implementer capture metadata hash mismatch")
             try:
                 metadata = json.loads(meta_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:

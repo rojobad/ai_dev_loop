@@ -8,7 +8,9 @@ from pathlib import Path
 
 from ai_dev_loop.scheduler.application.codex_evidence import (
     CodexEvidenceError,
+    load_authenticated_codex_implementer_outcome,
     load_authenticated_codex_outcome,
+    verify_codex_implementer_invocation_evidence,
     verify_codex_invocation_evidence,
 )
 from ai_dev_loop.scheduler.application.cursor_evidence import (
@@ -16,7 +18,10 @@ from ai_dev_loop.scheduler.application.cursor_evidence import (
     load_authenticated_cursor_outcome,
     verify_cursor_invocation_evidence,
 )
-from ai_dev_loop.scheduler.domain.codex_contract import CODEX_ATTEMPT_EFFECT_KINDS
+from ai_dev_loop.scheduler.domain.codex_contract import (
+    CODEX_ATTEMPT_EFFECT_KINDS,
+    IMPLEMENTER_ATTEMPT_EFFECT_KINDS,
+)
 from ai_dev_loop.scheduler.domain.cursor_contract import (
     CREATE_CHAT_EFFECT_KIND,
     RUN_CURSOR_TURN_EFFECT_KIND,
@@ -90,8 +95,13 @@ def authenticate_process_attempt(
 
     try:
         assert_confined_artifact_path(run_root, invocation_evidence_rel(attempt_id))
-        if effect_kind in CODEX_ATTEMPT_EFFECT_KINDS:
-            invocation = verify_codex_invocation_evidence(
+        if effect_kind in CODEX_ATTEMPT_EFFECT_KINDS | IMPLEMENTER_ATTEMPT_EFFECT_KINDS:
+            verifier = (
+                verify_codex_implementer_invocation_evidence
+                if effect_kind in IMPLEMENTER_ATTEMPT_EFFECT_KINDS
+                else verify_codex_invocation_evidence
+            )
+            invocation = verifier(
                 run_root,
                 attempt_id=attempt_id,
                 run_id=run_id,
@@ -146,7 +156,21 @@ def authenticate_process_attempt(
         if "exit_code" in row_keys and attempt_row["exit_code"] is not None:
             exit_code = int(attempt_row["exit_code"])
         try:
-            if effect_kind in CODEX_ATTEMPT_EFFECT_KINDS:
+            if effect_kind in IMPLEMENTER_ATTEMPT_EFFECT_KINDS:
+                outcome = load_authenticated_codex_implementer_outcome(
+                    run_root,
+                    attempt_id=attempt_id,
+                    unit_identity=unit_identity,
+                    result_rel=result_rel,
+                    stdout_rel=stdout_rel,
+                    stderr_rel=stderr_rel,
+                    observed_exit_code=exit_code,
+                    observed_termination=None,
+                    expected_envelope_sha256=completion_envelope_sha256,
+                    expected_dispatch_id=dispatch_id,
+                    expected_effect_kind=effect_kind,
+                )
+            elif effect_kind in CODEX_ATTEMPT_EFFECT_KINDS:
                 outcome = load_authenticated_codex_outcome(
                     run_root,
                     attempt_id=attempt_id,

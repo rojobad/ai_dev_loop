@@ -67,7 +67,19 @@ class SchedulerStatusService:
             review_iterations_completed=reviews_completed,
             max_review_iterations=max_reviews,
             submitted_max_review_iterations=submitted_max,
+            codex_pending_role=projection["codex_pending_role"],
+            codex_pending_turn=projection["codex_pending_turn"],
+            codex_capacity_reason=projection["codex_capacity_reason"],
             cursor_wait_until=projection["cursor_wait_until"],
+            implementer_retry_wait_until=projection["implementer_retry_wait_until"],
+            implementer_timeout_automatic_retries=int(
+                projection["implementer_timeout_automatic_retries"]
+            )
+            if projection["implementer_timeout_automatic_retries"] is not None
+            else None,
+            implementer_timeout_retry_limit=int(projection["implementer_timeout_retry_limit"])
+            if projection["implementer_timeout_retry_limit"] is not None
+            else None,
             block_reason_kind=projection["block_reason_kind"],
             codex_routing_auto_retry_eligible=(
                 projection["codex_routing_auto_retry_eligible"] == "true"

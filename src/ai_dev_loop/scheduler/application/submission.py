@@ -15,7 +15,14 @@ from typing import Protocol, cast
 
 import yaml
 
-from ai_dev_loop.config import ConfigOverrides, ProjectConfig, resolve_effective_config
+from ai_dev_loop.config import (
+    CODEX_IMPLEMENTER_APPROVAL_POLICY,
+    CODEX_IMPLEMENTER_SANDBOX,
+    ConfigOverrides,
+    ProjectConfig,
+    project_config_yaml_bytes,
+    resolve_effective_config,
+)
 from ai_dev_loop.errors import UsageError, ValidationError
 from ai_dev_loop.fresh_codex_reviewer import (
     FRESH_REVIEWER_INPUT_ARTIFACT,
@@ -48,12 +55,14 @@ from ai_dev_loop.scheduler.domain.state import (
     SUBMITTED_CONTEXT_SCHEMA_VERSION,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH,
+    SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER,
     AbortedState,
     CodexRuntimeBinding,
     ControllerBinding,
     CursorBinding,
     EffectiveConfigBinding,
     FreshCodexReviewerBinding,
+    ImplementerBinding,
     PlanPromptBinding,
     RepositoryBinding,
     RepositoryTargetBinding,
@@ -122,6 +131,11 @@ class SubmitOptions:
     max_review_iterations: int | None = None
     cursor_timeout_minutes: int | None = None
     codex_timeout_minutes: int | None = None
+    implementer_provider: str | None = None
+    implementer_command: str | None = None
+    implementer_model: str | None = None
+    implementer_reasoning_effort: str | None = None
+    implementer_timeout_minutes: int | None = None
     db_path: Path | None = None
     artifact_root: Path | None = None
     resubmission_id: str | None = None
@@ -161,10 +175,39 @@ def _legacy_submission_idempotency_key(
     return canonical_json_sha256(payload)
 
 
+def historical_effective_config_sha256(effective: ProjectConfig) -> str:
+    """Hash of the effective config without the explicit implementer section."""
+
+    return sha256_bytes(project_config_yaml_bytes(effective, include_resolved_implementer=False))
+
+
+def _historical_cursor_context(
+    context: SubmittedRunContext,
+    *,
+    effective_config_sha256: str | None,
+) -> SubmittedRunContext | None:
+    if effective_config_sha256 is None:
+        return None
+    if context.schema_version != SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER:
+        return None
+    if context.implementer is None or context.implementer.provider != "cursor":
+        return None
+    return context.model_copy(
+        update={
+            "schema_version": SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
+            "implementer": None,
+            "effective_config": context.effective_config.model_copy(
+                update={"effective_config_sha256": effective_config_sha256}
+            ),
+        }
+    )
+
+
 def submission_idempotency_key_candidates(
     context: SubmittedRunContext,
     *,
     resubmission_id: str | None = None,
+    historical_effective_config_sha256: str | None = None,
 ) -> list[str]:
     """Ordered idempotency keys for current and historical controller-bearing submits."""
 
@@ -173,6 +216,17 @@ def submission_idempotency_key_candidates(
         legacy_key = _legacy_submission_idempotency_key(context, resubmission_id=resubmission_id)
         if legacy_key not in keys:
             keys.append(legacy_key)
+    historical = _historical_cursor_context(
+        context,
+        effective_config_sha256=historical_effective_config_sha256,
+    )
+    if historical is not None:
+        for key in submission_idempotency_key_candidates(
+            historical,
+            resubmission_id=resubmission_id,
+        ):
+            if key not in keys:
+                keys.append(key)
     return keys
 
 
@@ -198,6 +252,11 @@ def _build_overrides(options: SubmitOptions) -> ConfigOverrides:
         max_review_iterations=options.max_review_iterations,
         cursor_timeout_minutes=options.cursor_timeout_minutes,
         codex_timeout_minutes=options.codex_timeout_minutes,
+        implementer_provider=options.implementer_provider,
+        implementer_command=options.implementer_command,
+        implementer_model=options.implementer_model,
+        implementer_reasoning_effort=options.implementer_reasoning_effort,
+        implementer_timeout_minutes=options.implementer_timeout_minutes,
     )
 
 
@@ -231,16 +290,85 @@ def _resolve_frozen_command(command: str, *, label: str) -> str:
     return str(resolved)
 
 
-def _freeze_execution_commands(effective: ProjectConfig) -> ProjectConfig:
-    """Return the private effective config with stable Cursor and Codex paths."""
+def _reject_conflicting_implementer_selection(
+    options: SubmitOptions,
+    effective: ProjectConfig,
+) -> None:
+    if effective.implementer.provider != "codex":
+        return
+    cursor_overrides = [
+        name
+        for name, value in (
+            ("--cursor-command", options.cursor_command),
+            ("--cursor-model", options.cursor_model),
+            ("--cursor-output-format", options.cursor_output_format),
+            ("--cursor-timeout-minutes", options.cursor_timeout_minutes),
+        )
+        if value is not None
+    ]
+    if cursor_overrides:
+        names = ", ".join(cursor_overrides)
+        raise ValidationError(
+            "Cursor overrides conflict with Codex implementer selection: " + names
+        )
 
-    cursor_command = _resolve_frozen_command(effective.cursor.command, label="Cursor")
+
+def _freeze_execution_commands(effective: ProjectConfig) -> ProjectConfig:
+    """Return the private effective config with stable executable paths.
+
+    Codex implementer selection does not require the Cursor binary.
+    """
+
     codex_command = _resolve_frozen_command(effective.codex.command, label="Codex")
-    return effective.model_copy(
-        update={
-            "cursor": effective.cursor.model_copy(update={"command": cursor_command}),
-            "codex": effective.codex.model_copy(update={"command": codex_command}),
-        }
+    updates: dict[str, object] = {
+        "codex": effective.codex.model_copy(update={"command": codex_command}),
+    }
+    if effective.implementer.provider == "cursor":
+        cursor_command = _resolve_frozen_command(effective.cursor.command, label="Cursor")
+        updates["cursor"] = effective.cursor.model_copy(update={"command": cursor_command})
+    else:
+        implementer_command = effective.implementer.command or "codex"
+        frozen_implementer = _resolve_frozen_command(
+            implementer_command,
+            label="Codex implementer",
+        )
+        updates["implementer"] = effective.implementer.model_copy(
+            update={"command": frozen_implementer}
+        )
+    return effective.model_copy(update=updates)
+
+
+def _implementer_binding(effective: ProjectConfig) -> ImplementerBinding:
+    if effective.implementer.provider == "cursor":
+        return ImplementerBinding(
+            provider="cursor",
+            purpose="implementer",
+            command=effective.cursor.command,
+            model=effective.cursor.model,
+            reasoning_effort=None,
+            timeout_minutes=effective.workflow.cursor_timeout_minutes,
+            sandbox=effective.cursor.sandbox,
+            approval_policy=None,
+            session_id=None,
+        )
+    section = effective.implementer
+    if (
+        section.command is None
+        or section.model is None
+        or section.reasoning_effort is None
+        or section.timeout_minutes is None
+    ):
+        raise ValidationError("codex implementer settings are incomplete")
+    return ImplementerBinding(
+        provider="codex",
+        purpose="implementer",
+        command=section.command,
+        model=section.model,
+        reasoning_effort=section.reasoning_effort,
+        timeout_minutes=section.timeout_minutes,
+        sandbox=CODEX_IMPLEMENTER_SANDBOX,
+        approval_policy=CODEX_IMPLEMENTER_APPROVAL_POLICY,
+        session_id=None,
     )
 
 
@@ -306,7 +434,7 @@ def _build_agent_led_context(
 ) -> SubmittedRunContext:
     repo_root = str(repo_target.root)
     return SubmittedRunContext(
-        schema_version=SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
+        schema_version=SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER,
         project_name=effective.project.name,
         repository=RepositoryTargetBinding(
             root=repo_root,
@@ -353,6 +481,7 @@ def _build_agent_led_context(
             require_clean_worktree=effective.workflow.require_clean_worktree,
         ),
         controller=ControllerBinding(controller_session_id=controller_session_id),
+        implementer=_implementer_binding(effective),
     )
 
 
@@ -581,6 +710,7 @@ class SubmissionService:
             config_path=options.config_path,
             overrides=_build_overrides(options),
         )
+        _reject_conflicting_implementer_selection(options, effective)
         effective = _freeze_execution_commands(effective)
         plan_path, prompt_source_path = _resolve_inputs(options, repo_target)
         controller_session_id = (
@@ -605,16 +735,13 @@ class SubmissionService:
         )
 
         plan_bytes = plan_path.read_bytes()
-        effective_yaml = yaml.safe_dump(
-            effective.model_dump(by_alias=True),
-            sort_keys=False,
-            allow_unicode=True,
-        ).encode("utf-8")
+        effective_yaml = project_config_yaml_bytes(effective, include_resolved_implementer=True)
         source_yaml = yaml.safe_dump(
             source_repo_config.model_dump(by_alias=True),
             sort_keys=False,
             allow_unicode=True,
         ).encode("utf-8")
+        historical_config_sha256 = historical_effective_config_sha256(effective)
         fresh_binding_bytes = _fresh_input_artifact_bytes(
             review_model=review_model,
             review_reasoning_effort=review_reasoning,
@@ -640,6 +767,7 @@ class SubmissionService:
             context,
             resubmission_id=resubmission_id,
         )
+        historical_sha = historical_config_sha256
         wt_key = context.repository.worktree_key
         now = self._now_factory()
 
@@ -648,6 +776,7 @@ class SubmissionService:
                 conn,
                 context=context,
                 resubmission_id=resubmission_id,
+                historical_effective_config_sha256=historical_sha,
             )
             if existing is not None:
                 state, _, _ = self.store.load_validated_snapshot(conn, str(existing["run_id"]))

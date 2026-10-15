@@ -36,6 +36,7 @@ from ai_dev_loop.scheduler.domain.state import (
     AdmittedState,
     AuthorizedState,
     AwaitingCodexReviewState,
+    BlockedState,
     CheckpointPendingState,
     CursorReadyState,
     PreflightCompleteState,
@@ -43,6 +44,7 @@ from ai_dev_loop.scheduler.domain.state import (
     WaitingCodexReviewRetryState,
     WaitingForCursorFixState,
     WaitingUsageLimitState,
+    is_codex_implementer_reservation_hold,
 )
 from ai_dev_loop.scheduler.infrastructure.paths import (
     default_artifact_root,
@@ -152,14 +154,18 @@ class SchedulerAbortService:
         now = self._now_factory()
         with self.store.begin_read() as conn:
             state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            held_implementer = (
+                is_codex_implementer_reservation_hold(state)
+                and self.store.get_reservation_for_run(conn, run_id) is not None
+            )
         if isinstance(state, AbortedState):
             return self._reconcile_existing_abort(run_id, now=now)
-        if state.kind in SCHEDULER_TERMINAL_STATE_KINDS:
+        if state.kind in SCHEDULER_TERMINAL_STATE_KINDS and not held_implementer:
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.CONFLICT,
                 f"cannot abort terminal scheduler run in state {state.kind}",
             )
-        if state.kind not in SCHEDULER_ABORTABLE_STATE_KINDS:
+        if state.kind not in SCHEDULER_ABORTABLE_STATE_KINDS and not held_implementer:
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.CONFLICT,
                 f"scheduler run state {state.kind} is not abortable",
@@ -171,9 +177,13 @@ class SchedulerAbortService:
         deferred_checkpoint_abort = False
         with self.store.begin_immediate() as conn:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
+            held_implementer = (
+                is_codex_implementer_reservation_hold(state)
+                and self.store.get_reservation_for_run(conn, run_id) is not None
+            )
             if isinstance(state, AbortedState):
                 concurrent_aborted = True
-            elif state.kind in SCHEDULER_TERMINAL_STATE_KINDS:
+            elif state.kind in SCHEDULER_TERMINAL_STATE_KINDS and not held_implementer:
                 raise SchedulerEngineError(
                     SchedulerEngineErrorKind.CONFLICT,
                     f"cannot abort terminal scheduler run in state {state.kind}",
@@ -228,7 +238,8 @@ class SchedulerAbortService:
                     | WaitingCodexReviewRetryState
                     | WaitingForCursorFixState
                     | CheckpointPendingState
-                    | AbortedState,
+                    | AbortedState
+                    | BlockedState,
                     state,
                 )
                 new_state = apply_run_aborted(abortable_state, aborted_event, now_text=now_text)

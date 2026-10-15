@@ -26,6 +26,7 @@ from ai_dev_loop.scheduler.domain.sequence import (
 )
 from ai_dev_loop.scheduler.domain.sequence_run_lineage import (
     SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY,
+    SEQUENCE_ATTEMPT_KIND_IMPLEMENTER_RETRY,
     SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY,
     MaterializedSequenceState,
     SequenceAttemptKind,
@@ -103,7 +104,10 @@ class SequenceExecutionCASExpectation:
 
 def _document_schema_version(rows: list[sqlite3.Row]) -> SequenceLineageSchemaVersion:
     for row in rows:
-        if str(row["attempt_kind"]) == SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY:
+        if str(row["attempt_kind"]) in {
+            SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY,
+            SEQUENCE_ATTEMPT_KIND_IMPLEMENTER_RETRY,
+        }:
             return 2
     return 1
 
@@ -119,7 +123,12 @@ def _row_to_attempt(
         kind = str(row["attempt_kind"])
         version = schema_version
         if version is None:
-            version = 2 if kind == SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY else 1
+            version = (
+                2
+                if kind
+                in {SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY, SEQUENCE_ATTEMPT_KIND_IMPLEMENTER_RETRY}
+                else 1
+            )
         return SequenceRunAttempt(
             schema_version=version,
             generation=int(row["generation"]),
@@ -482,10 +491,9 @@ def authenticate_checkpoint_successor_replacement_chain(
         if str(row["attempt_kind"]) not in {
             SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY,
             SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY,
+            SEQUENCE_ATTEMPT_KIND_IMPLEMENTER_RETRY,
         }:
-            raise AppValidationError(
-                "checkpoint successor replacement kind is not authenticated"
-            )
+            raise AppValidationError("checkpoint successor replacement kind is not authenticated")
 
 
 def _max_generation(
@@ -559,16 +567,19 @@ def compare_and_swap_sequence_execution_leaf(
             SchedulerEngineErrorKind.VALIDATION,
             "replacement attempt must reference expected current leaf",
         )
-    if replacement_attempt.attempt_kind == SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY:
+    if replacement_attempt.attempt_kind in {
+        SEQUENCE_ATTEMPT_KIND_CURSOR_RETRY,
+        SEQUENCE_ATTEMPT_KIND_IMPLEMENTER_RETRY,
+    }:
         if replacement_attempt.schema_version != 2:
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.VALIDATION,
-                "cursor_retry replacement requires lineage schema version 2",
+                "implementer replacement requires lineage schema version 2",
             )
     elif replacement_attempt.attempt_kind != SEQUENCE_ATTEMPT_KIND_SAME_REVIEWER_RETRY:
         raise SchedulerEngineError(
             SchedulerEngineErrorKind.VALIDATION,
-            "replacement attempt kind must be same_reviewer_retry or cursor_retry",
+            "replacement attempt kind is unsupported",
         )
     if updated_sequence_state.sequence_id != sequence_id:
         raise SchedulerEngineError(

@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 from ai_dev_loop.errors import AiDevLoopError, ValidationError
 from ai_dev_loop.scheduler.domain.state import (
     CodexRuntimeBinding,
+    CodexWorkflowCheckpoint,
     SchedulerState,
     SubmittedRunContext,
 )
@@ -76,7 +77,14 @@ class SchedulerRunSummary(AppModel):
     submitted_at: str
     updated_at: str
     safe_next_action: SafeNextAction
+    implementer_provider: str = "cursor"
+    codex_pending_role: str | None = None
+    codex_pending_turn: str | None = None
+    codex_capacity_reason: str | None = None
     cursor_wait_until: str | None = None
+    implementer_retry_wait_until: str | None = None
+    implementer_timeout_automatic_retries: int | None = None
+    implementer_timeout_retry_limit: int | None = None
     block_reason_kind: str | None = None
     codex_routing_auto_retry_eligible: bool | None = None
     codex_routing_auto_retry_due_at: str | None = None
@@ -279,7 +287,20 @@ def waiting_codex_review_retry_safe_next_action(
     )
 
 
-def waiting_codex_capacity_safe_next_action(run_id: str | None = None) -> SafeNextAction:
+def waiting_codex_capacity_safe_next_action(
+    run_id: str | None = None,
+    *,
+    capacity_role: str = "reviewer",
+) -> SafeNextAction:
+    if capacity_role == "implementer":
+        return SafeNextAction(
+            kind=SafeNextActionKind.SCHEDULER_TICK,
+            command=(
+                "ai_dev_loop scheduler tick "
+                "(waiting for Codex implementer capacity; an available probe resumes the "
+                "exact pending implementation turn automatically)."
+            ),
+        )
     retry_hint = ""
     if run_id:
         retry_hint = (
@@ -356,6 +377,24 @@ def blocked_safe_next_action(
     from ai_dev_loop.runners.codex_failure import is_operational_review_block_kind
 
     detail = block_reason_kind or "blocked"
+    if block_reason_kind in {"cursor_failure", "codex_implementer_failure"}:
+        return SafeNextAction(
+            kind=SafeNextActionKind.SCHEDULER_TICK,
+            command=(
+                f"ai_dev_loop scheduler implementer-retry {run_id} --force "
+                "(authenticate and publish one recovery successor; tick dispatches it)."
+            ),
+        )
+    if block_reason_kind == "codex_implementer_not_implemented":
+        return SafeNextAction(
+            kind=SafeNextActionKind.INSPECT_BLOCKED,
+            command=(
+                f"Codex implementer selection for run {run_id} is frozen, but "
+                "implementation dispatch is not available in this phase. "
+                "No implementer process was launched. Inspect scheduler status "
+                f"{run_id}."
+            ),
+        )
     if block_reason_kind and is_operational_review_block_kind(block_reason_kind):
         return SafeNextAction(
             kind=SafeNextActionKind.SCHEDULER_TICK,
@@ -395,8 +434,18 @@ def safe_next_action_for_state_kind(
     run_id: str,
     *,
     cursor_wait_until: str | None = None,
+    implementer_retry_wait_until: str | None = None,
     block_reason_kind: str | None = None,
 ) -> SafeNextAction:
+    if block_reason_kind == "codex_implementer_timeout_retry":
+        return SafeNextAction(
+            kind=(
+                SafeNextActionKind.WAIT_UNTIL
+                if implementer_retry_wait_until
+                else SafeNextActionKind.NONE
+            ),
+            command=f"ai_dev_loop scheduler implementer-retry {run_id}",
+        )
     if block_reason_kind == "cursor_timeout_retry":
         return SafeNextAction(
             kind=SafeNextActionKind.WAIT_UNTIL if cursor_wait_until else SafeNextActionKind.NONE,
@@ -523,12 +572,8 @@ def _apply_codex_routing_projection(
         codex.routing_auto_retry_authorizations_used
     )
     projection["codex_routing_auto_retry_limit"] = str(ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS)
-    projection["codex_routing_failure_post_probe_status"] = (
-        codex.routing_failure_post_probe_status
-    )
-    projection["codex_routing_failure_post_probe_reason"] = (
-        codex.routing_failure_post_probe_reason
-    )
+    projection["codex_routing_failure_post_probe_status"] = codex.routing_failure_post_probe_status
+    projection["codex_routing_failure_post_probe_reason"] = codex.routing_failure_post_probe_reason
     if block_reason_from_failure_kind and codex.review_retry_failure_kind:
         projection["block_reason_kind"] = codex.review_retry_failure_kind
 
@@ -537,6 +582,7 @@ def scheduler_status_projection_from_state(state: object) -> dict[str, str | Non
     from ai_dev_loop.scheduler.domain.state import (
         BlockedState,
         CursorReadyState,
+        PreflightCompleteState,
         WaitingCodexCapacityState,
         WaitingCodexReviewRetryState,
         WaitingForCursorFixState,
@@ -544,7 +590,13 @@ def scheduler_status_projection_from_state(state: object) -> dict[str, str | Non
     )
 
     projection: dict[str, str | None] = {
+        "codex_pending_role": None,
+        "codex_pending_turn": None,
+        "codex_capacity_reason": None,
         "cursor_wait_until": None,
+        "implementer_retry_wait_until": None,
+        "implementer_timeout_automatic_retries": None,
+        "implementer_timeout_retry_limit": None,
         "block_reason_kind": None,
         "codex_routing_auto_retry_eligible": None,
         "codex_routing_auto_retry_due_at": None,
@@ -569,6 +621,26 @@ def scheduler_status_projection_from_state(state: object) -> dict[str, str | Non
             projection,
             block_reason_from_failure_kind=isinstance(state, WaitingCodexReviewRetryState),
         )
+    if isinstance(state, WaitingCodexCapacityState):
+        continuation = state.codex.capacity_continuation
+        projection["codex_pending_role"] = "reviewer" if continuation is None else continuation.role
+        projection["codex_pending_turn"] = "review" if continuation is None else continuation.turn
+        projection["codex_capacity_reason"] = "capacity_unavailable_or_exhausted"
+    codex = getattr(state, "codex", None)
+    timeout = (
+        codex.implementer_timeout_continuation
+        if isinstance(codex, CodexWorkflowCheckpoint)
+        else None
+    )
+    if timeout is not None and isinstance(
+        state,
+        (PreflightCompleteState, WaitingForCursorFixState, WaitingCodexCapacityState),
+    ):
+        projection["implementer_retry_wait_until"] = timeout.wait_until
+        projection["implementer_timeout_automatic_retries"] = str(timeout.automatic_retries)
+        projection["implementer_timeout_retry_limit"] = "3"
+        if not isinstance(state, WaitingCodexCapacityState):
+            projection["block_reason_kind"] = "codex_implementer_timeout_retry"
     return projection
 
 
@@ -584,7 +656,13 @@ def summary_from_context(
     review_iterations_completed: int | None = None,
     max_review_iterations: int | None = None,
     submitted_max_review_iterations: int | None = None,
+    codex_pending_role: str | None = None,
+    codex_pending_turn: str | None = None,
+    codex_capacity_reason: str | None = None,
     cursor_wait_until: str | None = None,
+    implementer_retry_wait_until: str | None = None,
+    implementer_timeout_automatic_retries: int | None = None,
+    implementer_timeout_retry_limit: int | None = None,
     block_reason_kind: str | None = None,
     codex_routing_auto_retry_eligible: bool | None = None,
     codex_routing_auto_retry_due_at: str | None = None,
@@ -601,6 +679,7 @@ def summary_from_context(
         state_kind,
         run_id,
         cursor_wait_until=cursor_wait_until,
+        implementer_retry_wait_until=implementer_retry_wait_until,
         block_reason_kind=block_reason_kind,
     )
     sequence_binding = context.sequence
@@ -608,6 +687,12 @@ def summary_from_context(
         run_id=run_id,
         state_kind=state_kind,
         project_name=context.project_name,
+        implementer_provider="cursor"
+        if context.implementer is None
+        else context.implementer.provider,
+        codex_pending_role=codex_pending_role,
+        codex_pending_turn=codex_pending_turn,
+        codex_capacity_reason=codex_capacity_reason,
         repository_root=context.repository.root,
         controller_session_id_prefix=redacted_controller_prefix(
             context.controller.controller_session_id
@@ -626,6 +711,9 @@ def summary_from_context(
         updated_at=updated_at,
         safe_next_action=action,
         cursor_wait_until=cursor_wait_until,
+        implementer_retry_wait_until=implementer_retry_wait_until,
+        implementer_timeout_automatic_retries=implementer_timeout_automatic_retries,
+        implementer_timeout_retry_limit=implementer_timeout_retry_limit,
         block_reason_kind=block_reason_kind,
         codex_routing_auto_retry_eligible=codex_routing_auto_retry_eligible,
         codex_routing_auto_retry_due_at=codex_routing_auto_retry_due_at,
@@ -644,6 +732,7 @@ def summary_from_context(
 
 
 class SequenceEntrySummary(AppModel):
+    implementer_provider: str = "cursor"
     ordinal: int
     phase_name: str
     planned_run_id_prefix: str
@@ -681,6 +770,13 @@ class SequencePrepareResult(AppModel):
 
 
 class SequenceStatusResult(AppModel):
+    current_implementer_provider: str | None = None
+    codex_pending_role: str | None = None
+    codex_pending_turn: str | None = None
+    codex_capacity_reason: str | None = None
+    implementer_retry_wait_until: str | None = None
+    implementer_timeout_automatic_retries: int | None = None
+    implementer_timeout_retry_limit: int | None = None
     sequence_id: str
     name: str
     state_kind: str

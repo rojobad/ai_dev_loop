@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CodexImplementerTimeoutRetryEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "kind": { "const": "codex_implementer_timeout_retry", "default": "codex_implementer_timeout_retry" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "attempt_id": { "type": "string", "minLength": 1 },
+    "iteration": { "type": "integer", "minimum": 1 },
+    "turn": { "enum": ["initial", "correction"] },
+    "retry_generation": { "type": "integer", "minimum": 1 },
+    "automatic_retries": { "type": "integer", "minimum": 0, "maximum": 3 },
+    "action": { "enum": ["automatic", "manual", "exhausted"] },
+    "available_at": { "type": ["string", "null"], "default": null }
+  },
+  "required": [
+    "run_id", "attempt_id", "iteration", "turn", "retry_generation",
+    "automatic_retries", "action"
+  ]
+}

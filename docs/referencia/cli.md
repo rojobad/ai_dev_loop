@@ -68,6 +68,11 @@ Opciones principales:
 --max-review-iterations INTEGER
 --cursor-timeout-minutes INTEGER
 --codex-timeout-minutes INTEGER
+--implementer-provider [cursor|codex]
+--implementer-command TEXT
+--implementer-model TEXT
+--implementer-reasoning-effort TEXT
+--implementer-timeout-minutes INTEGER
 --resubmission-id UUID   (opcional; envio fresco idempotente tras un run terminal)
 --output [text|json]
 ```
@@ -84,7 +89,25 @@ Modelo y razonamiento del reviewer deben ser explícitos en los flags de submit.
 Los campos YAML `codex.review_model` y `codex.review_reasoning_effort`, los datos
 de A y los defaults del CLI no sustituyen esos flags. Los valores quedan
 congelados para bootstrap, correcciones y reintentos. `--cursor-model` selecciona
-por separado el modelo del ejecutor; no cambia el proveedor ni el modelo de Codex.
+por separado el modelo del ejecutor Cursor; no cambia el modelo ni el reasoning
+del reviewer.
+
+`--implementer-provider` elige `cursor` (default) o `codex`. Si se omite, el run
+sigue siendo Cursor. Para `codex`, `--implementer-model` y
+`--implementer-reasoning-effort` son obligatorios y quedan congelados aparte del
+reviewer. `--implementer-command` default `codex` y `--implementer-timeout-minutes`
+default 90. Esos campos se rechazan si el proveedor es Cursor. Los flags
+`--cursor-*` se rechazan cuando la selección es Codex. El sandbox del implementer
+Codex es `workspace-write` y la política de aprobación no interactiva es explícita
+(`never`); no hay bypass. En un run standalone o una hoja de secuencia v2, los ticks ejecutan la
+implementación inicial, normalizan staging, crean un reviewer B independiente y
+reanudan la sesión implementer exacta para correcciones. Una cuota detectada por
+evidencia estructurada/provider, o por un probe post-fallo `EXHAUSTED` con identidad
+autenticada y terminación resuelta,
+entra en `waiting_codex_capacity` y se reanuda automáticamente solo cuando el
+probe actual informa capacidad. Los manifests de secuencia v1 siguen siendo solo
+Cursor; no hay provider switching. Los timeouts Codex confirmados usan la política
+acotada compartida de tres reintentos automáticos por turno.
 
 El scheduler impone `workspace-write` al proceso Codex. El wrapper y la skill de
 review siguen exigiendo revisar únicamente el staged y no editar, stagear ni
@@ -112,6 +135,50 @@ ai_dev_loop scheduler sequence start <sequence-id> [--output text|json]
 ai_dev_loop scheduler sequence status <sequence-id> [--output text|json]
 ai_dev_loop scheduler sequence abort <sequence-id> [--output text|json]
 ```
+
+Manifest v2 selecciona el implementer por fase. Ejemplo completo de dos fases:
+
+```yaml
+schema_version: 2
+name: codex-then-cursor
+phases:
+  - name: implementation
+    plan_path: docs/plans/implementation.md
+    prompt_source_path: docs/plans/prompt_implementation.txt
+    commit_message: "checkpoint: implementation accepted"
+    implementer:
+      provider: codex
+      model: gpt-5.6-sol
+      reasoning_effort: xhigh
+      timeout_minutes: 90
+    codex:
+      review_model: gpt-6.1-sol
+      review_reasoning_effort: high
+  - name: final-validation
+    plan_path: docs/plans/final-validation.md
+    prompt_source_path: docs/plans/prompt_final-validation.txt
+    cursor:
+      model: grok-4.7-high
+    codex:
+      review_model: gpt-6.1-sol
+      review_reasoning_effort: high
+```
+
+```bash
+ai_dev_loop scheduler sequence prepare --repo-path /path/al/repo --manifest /path/to/sequence.yaml
+ai_dev_loop scheduler sequence start <sequence-id>
+ai_dev_loop scheduler tick
+ai_dev_loop scheduler sequence status <sequence-id>
+```
+
+Cada fase crea identidades implementer/reviewer independientes. Una espera Codex
+inicial o de corrección conserva la hoja actual, ordinal, reserva, prompt y
+trabajo parcial; ni crea checkpoint ni materializa sucesor hasta el review
+aceptado. `AVAILABLE` desde el probe reanuda la misma sesión exacta, incluso tras
+reiniciar el servicio. `EXHAUSTED` o `UNAVAILABLE` conserva la espera. No existe
+`resume` manual de implementer Codex; el siguiente paso es `scheduler tick`.
+Abort impide la siguiente fase y conserva trabajo/evidencia. Una terminación
+incierta mantiene la reserva hasta reconciliar el proceso exacto.
 
 Phase 20.1 congela una definicion lineal inmutable de 2 a 32 fases sin reservar el
 repositorio, sin invocar Git y sin crear filas en `scheduler_runs`. Cada fase congela
@@ -190,6 +257,10 @@ ai_dev_loop scheduler timeline <run-id> [--limit N] [--order oldest|newest] [--o
 
 `scheduler abort` persiste primero la cancelacion durable, invalida effects/timers/claims
 pendientes y no borra artefactos ni cambios staged o unstaged del repositorio objetivo.
+Un bloqueo Codex implementer por identidad incierta o evidencia incompleta conserva
+la reserva del repositorio. Ese bloqueo permite `scheduler abort` explícito para
+cancelar el run; la reserva se libera solo cuando la terminación del intento está
+resuelta. Los demás estados terminales mantienen su política de rechazo de abort.
 
 `scheduler history` devuelve eventos acotados y redactados.
 
@@ -270,6 +341,58 @@ Los bloqueos `cursor_timeout` de versiones anteriores no se migran. El timeout d
 `create-chat`, los fallos de integridad y las terminaciones inciertas no son reintentables
 por este comando.
 
+## `scheduler implementer-retry`
+
+```bash
+ai_dev_loop scheduler implementer-retry <run-id> [--force] [--output text|json]
+```
+
+Sin flags, autoriza la continuación de un timeout terminal autenticado del
+implementador seleccionado. Para Cursor delega a la política existente de
+`cursor-retry`; ese comando histórico sigue siendo Cursor-only. Para Codex conserva
+el mismo run, sesión autenticada, provider, modelo, effort, timeout y bytes del prompt.
+El scheduler permite como máximo tres reintentos automáticos por turno, separados por
+30 minutos. El consumo acompaña a un sucesor `--force` que continúa el mismo turno y
+solo se reinicia al comenzar un turno inicial/corrección genuinamente nuevo. Una
+invocación manual adelanta la espera sin consumir su autorización automática, o
+autoriza otra continuación después de agotarlas. La CLI solo persiste o adelanta el
+efecto; `scheduler tick` es quien despacha el proceso.
+
+Un timeout Codex requiere terminación confirmada, resultado e invocación autenticados,
+identidad ya capturada y reserva vigente. El intent inmutable bajo
+`implementer/timeouts/` fija el intento fuente, sesión, prompt y configuración. La
+continuación no repite admisión, staging ni review. Si encuentra capacidad agotada,
+entra en `waiting_codex_capacity` y luego reanuda el mismo turno y presupuesto. Abort,
+identidad incierta, evidencia corrupta o terminación no resuelta no autorizan el retry;
+los holds de integridad conservan la reserva hasta abort explícito.
+
+Con `--force`, un run bloqueado por
+`codex_implementer_failure` puede publicar un único sucesor si el intento terminó,
+la sesión implementer quedó autenticada y la evidencia de invocación, resultado y
+artefactos coincide. El origen bloqueado permanece inmutable. El sucesor conserva
+provider, comando, modelo, effort, timeout, sandbox, sesión y bytes exactos del prompt;
+una corrección conserva además el mismo reviewer B, fix crudo, patch revisado,
+reviews completadas y techo efectivo extendido. No repite admisión limpia ni descarta
+trabajo parcial: en el límite de recuperación comprueba que el estado actual coincide
+con el capturado al terminar el intento, sin exigir un baseline limpio. Una publicación
+pendiente no despacha; `tick` reconcilia los artefactos y solo una relación `ready`
+instala `codex.implementer_resume`. Repetir el comando devuelve el mismo sucesor, y un
+sucesor que falle de nuevo necesita otro `--force`. Si el origen es la hoja vigente
+de una secuencia, el sucesor se adopta en el mismo ordinal y entrada congelada mediante
+intent durable, lineage `implementer_retry` y transferencia de reserva antes del
+dispatch. Tras aceptación continúa el checkpoint no final ordinario o el staging final.
+
+Para provider Cursor, este comando compartido delega en la misma recuperación
+autenticada de `scheduler cursor-retry --force`; el comando Cursor existente conserva
+su compatibilidad y sus recibos propios.
+
+`--force` rechaza timeouts, esperas de capacidad, abortos, terminación incierta,
+identidad no ligada, hojas obsoletas sin relación y evidencia corrupta sin crear
+sucesor. `status` e inspect de run/secuencia exponen
+`implementer_retry_wait_until`, el contador automático y el límite de timeout.
+`history` registra `codex_implementer_timeout_retry` sin publicar IDs completos,
+prompts ni salida del agente.
+
 ## `scheduler extend`
 
 ```bash
@@ -280,9 +403,10 @@ Autoriza un techo absoluto mayor de reviews Codex para el mismo run cuando esta 
 `max_iterations_reached`. El comando es process-free: no invoca Cursor ni Codex;
 reacquire la reserva del worktree, registra el evento `review_budget_extended`,
 transiciona a `waiting_for_cursor_fix` con el fix prompt exacto de la review
-agotada y encola un efecto de correccion Cursor. Repetir el mismo objetivo absoluto
-es idempotente. Fuera de ese replay, un objetivo menor o igual al techo efectivo
-actual se rechaza.
+agotada y encola el efecto de correccion del implementer congelado: `cursor.run_turn`
+para Cursor o resume de la misma sesión implementer para Codex. Repetir el mismo
+objetivo absoluto es idempotente. Fuera de ese replay, un objetivo menor o igual al
+techo efectivo actual se rechaza.
 
 ## `scheduler review retry`
 
@@ -296,12 +420,12 @@ el intento. La acción depende del checkpoint durable:
 | Estado de origen | Comportamiento |
 | --- | --- |
 | `waiting_codex_review_retry` | Encola un reintento del mismo run, reviewer, modelo, razonamiento e iteración. |
-| `waiting_codex_capacity` | Permite autorizar explícitamente el reintento conservando el reviewer; no cambia de modelo ni garantiza cuota disponible. |
+| `waiting_codex_capacity` con rol reviewer histórico/actual | Permite autorizar explícitamente el reintento conservando el reviewer; no cambia de modelo ni garantiza cuota disponible. Un wait con rol implementer se rechaza sin mutación porque lo gobierna el probe automático del tick. |
 | `blocked` elegible | Crea o reutiliza un sucesor con el mismo reviewer y evidencia autenticada; conserva inmutable el origen. |
 
 En una secuencia, la recuperación coordina el reemplazo con su lineage y reserva.
-No vuelve a ejecutar una implementación Cursor ya completada para reintentar la
-review. Un reintento operativo no consume por sí solo una revisión completada.
+No vuelve a ejecutar una implementación ya completada para reintentar la review.
+Un reintento operativo no consume por sí solo una revisión completada.
 La repetición de una autorización ya registrada no debe duplicar el intento.
 
 Cuando el fallo clasificado es `codex_workspace_routing_timeout` (mensaje terminal
@@ -507,3 +631,28 @@ Los siguientes comandos ya no existen en la CLI publica:
 La accion segura para trabajo nuevo es `scheduler submit` + `scheduler start` + `scheduler tick`
 (o timer habilitado explicitamente). Para retirar estado legacy, usa
 `scheduler cutover cleanup` solo tras aceptacion humana independiente.
+
+## Ejemplo standalone Codex
+
+```bash
+ai_dev_loop scheduler submit \
+  --repo-path /path/al/repo \
+  --plan-path docs/plans/implementation.md \
+  --prompt-source-path docs/plans/prompt_implementation.txt \
+  --implementer-provider codex \
+  --implementer-model gpt-5.6-sol \
+  --implementer-reasoning-effort xhigh \
+  --codex-review-model gpt-6.1-sol \
+  --codex-review-reasoning-effort high \
+  < /path/al/repo/docs/plans/prompt_implementation.txt
+ai_dev_loop scheduler start <run-id>
+ai_dev_loop scheduler tick
+```
+
+La recuperación manual y automática de timeout/fallo genérico del implementer
+Codex, los sucesores de recuperación y el cambio de provider/modelo quedan
+diferidos. `cursor-retry` y recovery de review no pueden recuperar implementación
+Codex ni convertir su espera de capacidad en review. La continuidad automática
+por capacidad sí está implementada. El probe compartido no separa cuota por
+modelo: conserva ventanas relevantes con política conservadora; una fecha
+transcurrida por sí sola no autoriza reintento.

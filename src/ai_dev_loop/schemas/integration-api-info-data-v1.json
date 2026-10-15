@@ -22,7 +22,10 @@
         "sequences": { "type": "boolean" },
         "reviewInspection": { "type": "boolean" },
         "processOutput": { "type": "boolean" },
-        "codexCapacity": { "type": "boolean" }
+        "codexCapacity": { "type": "boolean" },
+        "dualImplementers": { "type": "boolean" },
+        "mixedImplementerSequences": { "type": "boolean" },
+        "codexImplementerManualRecovery": { "type": "boolean" }
       }
     }
   }

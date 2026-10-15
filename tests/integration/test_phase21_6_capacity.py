@@ -70,7 +70,7 @@ def test_c01_cli_available_capacity_with_fake_app_server(
     monkeypatch.setenv("FAKE_CODEX_CAPACITY_SHAPE", "primary_only")
     code, payload, stderr = _invoke(["integration", "codex-capacity"])
     assert code == 0
-    assert payload["apiVersion"] == {"major": 1, "minor": 5}
+    assert payload["apiVersion"] == {"major": 1, "minor": 8}
     data = payload["data"]
     assert data["status"] == "available"
     assert data["reason"] is None

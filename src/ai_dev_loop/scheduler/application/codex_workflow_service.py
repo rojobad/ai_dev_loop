@@ -16,6 +16,7 @@ from ai_dev_loop.runners.codex_failure import (
     is_codex_usage_limit_recovery_eligible,
     is_operational_review_block_kind,
 )
+from ai_dev_loop.scheduler.application.attempt_backend import TerminationClass
 from ai_dev_loop.scheduler.application.codex_capacity_probe import (
     CodexAppServerCapacityProbe,
     CodexCapacityObservation,
@@ -25,6 +26,7 @@ from ai_dev_loop.scheduler.application.codex_capacity_probe import (
 from ai_dev_loop.scheduler.application.codex_evidence import (
     CodexEvidenceError,
     integrity_reason_kind_from_codex_evidence,
+    load_authenticated_codex_implementer_outcome,
     load_authenticated_codex_outcome,
     load_validated_review_result,
     validate_codex_review_outcome_integrity,
@@ -39,21 +41,35 @@ from ai_dev_loop.scheduler.application.review_retry import ReviewRetryService
 from ai_dev_loop.scheduler.application.sequence_handoff import SequenceHandoffService
 from ai_dev_loop.scheduler.application.tick_fencing import tick_lease_is_active
 from ai_dev_loop.scheduler.domain.codex_contract import (
+    BOOTSTRAP_CODEX_IMPLEMENTER_EFFECT_ID,
+    BOOTSTRAP_CODEX_IMPLEMENTER_EFFECT_KIND,
     BOOTSTRAP_CODEX_REVIEW_EFFECT_ID,
     BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND,
+    CODEX_IMPLEMENTER_RESERVATION_HOLD_BLOCK_KINDS,
+    IMPLEMENTER_ATTEMPT_EFFECT_KINDS,
+    RESUME_CODEX_IMPLEMENTER_EFFECT_ID,
+    RESUME_CODEX_IMPLEMENTER_EFFECT_KIND,
     RESUME_CODEX_REVIEW_EFFECT_ID,
     RESUME_CODEX_REVIEW_EFFECT_KIND,
     SCHEDULER_CODEX_BINDING_ARTIFACT,
     SCHEDULER_CODEX_UNCERTAINTY_ARTIFACT,
+    codex_implementer_session_rel,
+    codex_implementer_wait_intent_rel,
 )
 from ai_dev_loop.scheduler.domain.codex_routing_policy import (
     FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT,
     ROUTING_AUTO_RETRY_DELAY_SECONDS,
 )
 from ai_dev_loop.scheduler.domain.common import encode_utc_instant
+from ai_dev_loop.scheduler.domain.cursor_contract import (
+    NORMALIZE_STAGING_EFFECT_ID,
+    NORMALIZE_STAGING_EFFECT_KIND,
+)
 from ai_dev_loop.scheduler.domain.events import (
     CodexBootstrapUncertainEvent,
     CodexCapacityAvailableEvent,
+    CodexImplementerBlockedEvent,
+    CodexImplementerTurnCompletedEvent,
     CodexReviewBlockedEvent,
     CodexReviewerBoundEvent,
     CodexReviewRetryableFailureEvent,
@@ -67,10 +83,13 @@ from ai_dev_loop.scheduler.domain.events import (
 from ai_dev_loop.scheduler.domain.reducer import (
     apply_codex_bootstrap_uncertain,
     apply_codex_capacity_available,
+    apply_codex_implementer_blocked,
+    apply_codex_implementer_turn_completed,
     apply_codex_review_blocked,
     apply_codex_review_retryable_failure,
     apply_codex_reviewer_bound,
     apply_codex_usage_capacity_detected,
+    apply_implementer_usage_capacity_detected,
     apply_max_iterations_reached,
     apply_run_completed,
     apply_run_completed_with_residual_risk,
@@ -79,8 +98,12 @@ from ai_dev_loop.scheduler.domain.reducer import (
 from ai_dev_loop.scheduler.domain.state import (
     AwaitingCodexReviewState,
     BlockedState,
+    CodexCapacityContinuation,
+    PreflightCompleteState,
     WaitingCodexCapacityState,
     WaitingCodexReviewRetryState,
+    WaitingForCursorFixState,
+    resolved_implementer_provider,
 )
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import (
     ProtectedArtifactError,
@@ -138,6 +161,13 @@ class CodexWorkflowService:
         )
         if scheduled is not None:
             receipts.append(scheduled)
+        implementer_ingested = self._maybe_ingest_completed_implementer_attempt(
+            tick_owner_id,
+            tick_lease_generation,
+            run_id,
+        )
+        if implementer_ingested is not None:
+            receipts.append(implementer_ingested)
         ingested = self._maybe_ingest_completed_codex_attempt(
             tick_owner_id,
             tick_lease_generation,
@@ -169,7 +199,23 @@ class CodexWorkflowService:
             if not isinstance(state, WaitingCodexCapacityState):
                 return None
             review_iteration = state.codex.review_iteration
-            codex_command = state.context.codex.command
+            continuation = state.codex.capacity_continuation
+            capacity_role: Literal["implementer", "reviewer"] = (
+                "implementer"
+                if continuation is not None and continuation.role == "implementer"
+                else "reviewer"
+            )
+            if capacity_role == "implementer":
+                implementer = state.context.implementer
+                if implementer is None or implementer.provider != "codex":
+                    return TickRunReceipt(
+                        run_id=run_id,
+                        action="codex_capacity_state_changed",
+                        detail="codex_implementer_capacity_binding_invalid",
+                    )
+                codex_command = implementer.command
+            else:
+                codex_command = state.context.codex.command
 
         observation = self._capacity_probe.probe(codex_command)
         if observation.status == CodexCapacityStatus.EXHAUSTED:
@@ -180,6 +226,7 @@ class CodexWorkflowService:
         event = CodexCapacityAvailableEvent(
             run_id=run_id,
             review_iteration=review_iteration,
+            capacity_role=capacity_role,
         )
         with self.store.begin_immediate() as conn:
             commit_now = self._now_factory()
@@ -195,7 +242,29 @@ class CodexWorkflowService:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
             if not isinstance(state, WaitingCodexCapacityState):
                 return TickRunReceipt(run_id=run_id, action="codex_capacity_state_changed")
+            current_continuation = state.codex.capacity_continuation
+            if capacity_role == "implementer" and (
+                current_continuation is None or current_continuation.role != "implementer"
+            ):
+                return TickRunReceipt(run_id=run_id, action="codex_capacity_state_changed")
             new_state = apply_codex_capacity_available(state, event, now_text=now_text)
+            if (
+                current_continuation is not None
+                and current_continuation.role == "implementer"
+                and current_continuation.no_session_bootstrap
+            ):
+                assert new_state.codex is not None
+                new_state = new_state.model_copy(
+                    update={
+                        "codex": new_state.codex.model_copy(
+                            update={
+                                "implementer_no_session_bootstrap_retries": (
+                                    state.codex.implementer_no_session_bootstrap_retries + 1
+                                )
+                            }
+                        )
+                    }
+                )
             event_id = self._event_id_factory()
             sequence = self.store.next_event_sequence(conn, run_id)
             self.store.append_event(
@@ -214,6 +283,30 @@ class CodexWorkflowService:
                 now=commit_now,
             ):
                 return TickRunReceipt(run_id=run_id, action="codex_capacity_cas_lost")
+            if current_continuation is not None and current_continuation.role == "implementer":
+                if current_continuation.session_id:
+                    effect_id = RESUME_CODEX_IMPLEMENTER_EFFECT_ID
+                    effect_kind = RESUME_CODEX_IMPLEMENTER_EFFECT_KIND
+                else:
+                    effect_id = BOOTSTRAP_CODEX_IMPLEMENTER_EFFECT_ID
+                    effect_kind = BOOTSTRAP_CODEX_IMPLEMENTER_EFFECT_KIND
+                self.store.insert_effect(
+                    conn,
+                    dispatch_id=self._dispatch_id_factory(),
+                    source_event_id=event_id,
+                    run_id=run_id,
+                    effect_id=effect_id,
+                    effect_kind=effect_kind,
+                    effect_payload={
+                        "iteration": new_state.cursor.iteration,
+                        "turn": current_continuation.turn,
+                        "prompt_path": current_continuation.prompt_artifact_path,
+                        "capacity_wait_generation": state.codex.capacity_wait_generation,
+                    },
+                    available_at=commit_now,
+                    claimed_run_version=new_state.version,
+                    now=commit_now,
+                )
         return TickRunReceipt(run_id=run_id, action="codex_capacity_available")
 
     def _maybe_schedule_codex_review_effect(
@@ -316,6 +409,522 @@ class CodexWorkflowService:
                 now=commit_now,
             )
         return TickRunReceipt(run_id=run_id, action="codex_review_scheduled", detail=effect_kind)
+
+    def _maybe_ingest_completed_implementer_attempt(
+        self,
+        tick_owner_id: str,
+        tick_lease_generation: int,
+        run_id: str,
+    ) -> TickRunReceipt | None:
+        now = self._now_factory()
+        with self.store.begin_read() as conn:
+            if not tick_lease_is_active(
+                self.store,
+                conn,
+                owner_id=tick_owner_id,
+                generation=tick_lease_generation,
+                now=now,
+            ):
+                return None
+            attempt = self.store.get_latest_completed_codex_implementer_attempt(conn, run_id)
+            if attempt is None or int(attempt["ingested"]) == 1:
+                return None
+        return self._ingest_codex_implementer(run_id, attempt)
+
+    def _authenticated_implementer_outcome(
+        self,
+        run_id: str,
+        attempt: object,
+    ) -> dict[str, object]:
+        attempt_id = str(attempt["attempt_id"])  # type: ignore[index]
+        dispatch_id = str(attempt["dispatch_id"])  # type: ignore[index]
+        with self.store.begin_read() as conn:
+            dispatch = self.store.get_effect_by_dispatch_id(conn, dispatch_id)
+        if dispatch is None:
+            raise CodexEvidenceError("implementer dispatch is missing")
+        effect_kind = str(dispatch["effect_kind"])
+        if effect_kind not in IMPLEMENTER_ATTEMPT_EFFECT_KINDS:
+            raise CodexEvidenceError("attempt is not a Codex implementer attempt")
+        raw_exit = attempt["exit_code"]  # type: ignore[index]
+        raw_termination = attempt["termination_class"]  # type: ignore[index]
+        return load_authenticated_codex_implementer_outcome(
+            self.artifacts.run_root(run_id),
+            attempt_id=attempt_id,
+            unit_identity=str(attempt["unit_identity"]),  # type: ignore[index]
+            result_rel=str(attempt["result_artifact_path"]),  # type: ignore[index]
+            stdout_rel=str(attempt["stdout_artifact_path"]),  # type: ignore[index]
+            stderr_rel=str(attempt["stderr_artifact_path"]),  # type: ignore[index]
+            observed_exit_code=int(raw_exit) if raw_exit is not None else None,
+            observed_termination=(
+                TerminationClass(str(raw_termination)) if raw_termination is not None else None
+            ),
+            expected_envelope_sha256=(
+                str(attempt["completion_envelope_sha256"])  # type: ignore[index]
+                if attempt["completion_envelope_sha256"]  # type: ignore[index]
+                else None
+            ),
+            expected_dispatch_id=dispatch_id,
+            expected_effect_kind=effect_kind,
+        )
+
+    def _persist_implementer_binding(
+        self,
+        run_id: str,
+        state: PreflightCompleteState | WaitingForCursorFixState,
+        *,
+        attempt_id: str,
+        session_id: str,
+        outcome: dict[str, object],
+    ) -> tuple[str, str]:
+        implementer = state.context.implementer
+        if implementer is None or implementer.provider != "codex":
+            raise CodexEvidenceError("frozen Codex implementer binding is missing")
+        if state.codex is not None and state.codex.reviewer_session_id == session_id:
+            raise CodexEvidenceError("implementer identity collides with reviewer B")
+        capture_rel = str(outcome.get("session_capture_path", "")).strip()
+        capture_sha = str(outcome.get("session_capture_sha256", "")).strip()
+        if not capture_rel or not capture_sha:
+            raise CodexEvidenceError("implementer session capture artifact is missing")
+        capture_path = self.artifacts.run_root(run_id) / capture_rel
+        if sha256_file(capture_path) != capture_sha:
+            raise CodexEvidenceError("implementer session capture digest mismatch")
+        try:
+            capture = json.loads(capture_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CodexEvidenceError("implementer session capture is invalid") from exc
+        if not isinstance(capture, dict):
+            raise CodexEvidenceError("implementer session capture must be an object")
+        if (
+            capture.get("role") != "implementer"
+            or capture.get("session_id") != session_id
+            or capture.get("attempt_id") != attempt_id
+        ):
+            raise CodexEvidenceError("implementer session capture binding mismatch")
+
+        relative = codex_implementer_session_rel()
+        path = self.artifacts.run_root(run_id) / relative
+        if path.is_file():
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise CodexEvidenceError("implementer binding artifact is invalid") from exc
+            if not isinstance(payload, dict):
+                raise CodexEvidenceError("implementer binding artifact must be an object")
+            if (
+                payload.get("role") != "implementer"
+                or payload.get("purpose") != "implementation"
+                or payload.get("session_id") != session_id
+                or payload.get("model") != implementer.model
+                or payload.get("reasoning_effort") != implementer.reasoning_effort
+            ):
+                raise CodexEvidenceError("implementer binding artifact conflicts with identity")
+            return relative, sha256_file(path)
+
+        payload = {
+            "schema_version": 1,
+            "role": "implementer",
+            "purpose": "implementation",
+            "session_id": session_id,
+            "model": implementer.model,
+            "reasoning_effort": implementer.reasoning_effort,
+            "bootstrap_attempt_id": attempt_id,
+            "bound_at": self._now_factory().astimezone(UTC).isoformat(),
+        }
+        stored = self.artifacts.write_text_or_verify(
+            run_id,
+            relative,
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            max_bytes=16_384,
+        )
+        return stored.relative_path, stored.sha256
+
+    def _load_implementer_wait_continuation(
+        self,
+        run_id: str,
+        *,
+        attempt_id: str,
+        outcome: dict[str, object],
+        session_id: str | None,
+        no_session_bootstrap: bool,
+    ) -> CodexCapacityContinuation:
+        relative = codex_implementer_wait_intent_rel(attempt_id)
+        recorded_relative = str(outcome.get("wait_intent_path", "")).strip()
+        recorded_sha = str(outcome.get("wait_intent_sha256", "")).strip()
+        if recorded_relative != relative or not recorded_sha:
+            raise CodexEvidenceError("implementer capacity wait intent reference mismatch")
+        path = self.artifacts.run_root(run_id) / relative
+        if sha256_file(path) != recorded_sha:
+            raise CodexEvidenceError("implementer capacity wait intent digest mismatch")
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CodexEvidenceError("implementer capacity wait intent is invalid") from exc
+        if not isinstance(payload, dict):
+            raise CodexEvidenceError("implementer capacity wait intent must be an object")
+        expected = {
+            "role": "implementer",
+            "turn": str(outcome.get("turn", "")),
+            "prompt_sha256": str(outcome.get("prompt_sha256", "")),
+            "prompt_artifact_path": str(outcome.get("prompt_artifact_path", "")),
+            "terminated_attempt_id": attempt_id,
+        }
+        if any(payload.get(key) != value for key, value in expected.items()):
+            raise CodexEvidenceError("implementer capacity wait intent binding mismatch")
+        recorded_session = str(payload.get("session_id") or "").strip() or None
+        if recorded_session != session_id:
+            raise CodexEvidenceError("implementer capacity wait session mismatch")
+        capture_path = str(payload.get("session_capture_path") or "").strip()
+        capture_sha = str(payload.get("session_capture_sha256") or "").strip()
+        if capture_path != str(outcome.get("session_capture_path") or "").strip():
+            raise CodexEvidenceError("implementer wait identity reference mismatch")
+        if capture_sha != str(outcome.get("session_capture_sha256") or "").strip():
+            raise CodexEvidenceError("implementer wait identity digest mismatch")
+        partial_output_path = str(payload.get("partial_output_path") or "").strip() or None
+        partial_output_sha = str(payload.get("partial_output_sha256") or "").strip() or None
+        if partial_output_sha != str(outcome.get("final_sha256") or "").strip():
+            raise CodexEvidenceError("implementer partial output digest binding mismatch")
+        if partial_output_path is not None:
+            partial = self.artifacts.run_root(run_id) / partial_output_path
+            if not partial.is_file():
+                raise CodexEvidenceError("implementer partial output artifact is missing")
+            if partial_output_sha is None or sha256_file(partial) != partial_output_sha:
+                raise CodexEvidenceError("implementer partial output digest mismatch")
+        return CodexCapacityContinuation(
+            role="implementer",
+            turn=expected["turn"],  # type: ignore[arg-type]
+            prompt_sha256=expected["prompt_sha256"],
+            prompt_artifact_path=expected["prompt_artifact_path"],
+            session_id=session_id,
+            wait_intent_path=relative,
+            wait_intent_sha256=recorded_sha,
+            partial_output_path=partial_output_path,
+            partial_output_sha256=partial_output_sha,
+            terminated_attempt_id=attempt_id,
+            no_session_bootstrap=no_session_bootstrap,
+        )
+
+    def _ingest_codex_implementer(self, run_id: str, attempt: object) -> TickRunReceipt:
+        attempt_id = str(attempt["attempt_id"])  # type: ignore[index]
+        try:
+            outcome = self._authenticated_implementer_outcome(run_id, attempt)
+        except (CodexEvidenceError, ValueError, TypeError, KeyError, OSError):
+            return self._block_implementer(
+                run_id,
+                attempt_id=attempt_id,
+                reason_kind="codex_implementer_outcome_evidence_invalid",
+                summary="authenticated Codex implementer outcome failed validation",
+            )
+
+        with self.store.begin_read() as conn:
+            state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+        if not isinstance(state, (PreflightCompleteState, WaitingForCursorFixState)):
+            return TickRunReceipt(run_id=run_id, action="implementer_ingest_state_changed")
+        implementer = state.context.implementer
+        if implementer is None or implementer.provider != "codex":
+            return self._block_implementer(
+                run_id,
+                attempt_id=attempt_id,
+                reason_kind="codex_implementer_binding_invalid",
+                summary="run does not have frozen Codex implementer settings",
+            )
+        effect_kind = str(outcome.get("effect_kind", ""))
+        turn = str(outcome.get("turn", ""))
+        expected_turn = "correction" if isinstance(state, WaitingForCursorFixState) else "initial"
+        if turn != expected_turn:
+            return self._block_implementer(
+                run_id,
+                attempt_id=attempt_id,
+                reason_kind="codex_implementer_turn_mismatch",
+                summary="Codex implementer outcome does not match the pending turn",
+            )
+        checkpoint = state.codex
+        bound_session = checkpoint.implementer_session_id if checkpoint is not None else None
+        captured_session = str(outcome.get("session_id", "")).strip() or None
+        uncertainty = str(outcome.get("bootstrap_uncertainty_reason", "")).strip()
+        timed_out = bool(outcome.get("timed_out"))
+        incomplete = bool(outcome.get("output_incomplete"))
+        usage_limit = bool(outcome.get("usage_limit"))
+        returncode = outcome.get("returncode", 0)
+        if isinstance(returncode, bool) or not isinstance(returncode, int):
+            returncode = 1
+
+        if incomplete:
+            return self._block_implementer(
+                run_id,
+                attempt_id=attempt_id,
+                reason_kind="codex_implementer_output_incomplete",
+                summary="Codex implementer output was truncated; identity and termination are unsafe",
+            )
+
+        no_session_bootstrap = False
+        if effect_kind == BOOTSTRAP_CODEX_IMPLEMENTER_EFFECT_KIND:
+            no_session_bootstrap = bool(
+                usage_limit
+                and captured_session is None
+                and uncertainty == "missing_identity"
+                and outcome.get("worktree_unchanged") is True
+                and outcome.get("work_observed") is False
+            )
+            if captured_session is None and not no_session_bootstrap:
+                return self._block_implementer(
+                    run_id,
+                    attempt_id=attempt_id,
+                    reason_kind="codex_implementer_identity_uncertain",
+                    summary="Codex implementer bootstrap identity is missing or conflicting",
+                )
+            if captured_session is not None and uncertainty:
+                return self._block_implementer(
+                    run_id,
+                    attempt_id=attempt_id,
+                    reason_kind="codex_implementer_identity_uncertain",
+                    summary="Codex implementer bootstrap emitted uncertain identity evidence",
+                )
+        elif effect_kind == RESUME_CODEX_IMPLEMENTER_EFFECT_KIND:
+            if not bound_session or captured_session != bound_session or uncertainty:
+                return self._block_implementer(
+                    run_id,
+                    attempt_id=attempt_id,
+                    reason_kind="codex_implementer_identity_conflict",
+                    summary="Codex implementer resume did not preserve its exact identity",
+                )
+        else:
+            return self._block_implementer(
+                run_id,
+                attempt_id=attempt_id,
+                reason_kind="codex_implementer_effect_invalid",
+                summary="Codex implementer effect kind is not supported",
+            )
+
+        binding_path: str | None = None
+        binding_sha: str | None = None
+        effective_session = captured_session or bound_session
+        if effective_session is not None:
+            try:
+                binding_path, binding_sha = self._persist_implementer_binding(
+                    run_id,
+                    state,
+                    attempt_id=attempt_id,
+                    session_id=effective_session,
+                    outcome=outcome,
+                )
+            except (CodexEvidenceError, ProtectedArtifactError, OSError):
+                return self._block_implementer(
+                    run_id,
+                    attempt_id=attempt_id,
+                    reason_kind="codex_implementer_binding_conflict",
+                    summary="Codex implementer identity artifact failed authentication",
+                )
+
+        if timed_out:
+            if effective_session is None or binding_path is None or binding_sha is None:
+                return self._block_implementer(
+                    run_id,
+                    attempt_id=attempt_id,
+                    reason_kind="codex_implementer_timeout_evidence_invalid",
+                    summary="Codex implementer timeout lacks a safely bound identity",
+                )
+            from ai_dev_loop.scheduler.application.implementer_timeout_retry import (
+                CodexImplementerTimeoutEvidenceError,
+                CodexImplementerTimeoutRetryService,
+            )
+
+            try:
+                return CodexImplementerTimeoutRetryService(
+                    self.store,
+                    self.artifacts,
+                    now_factory=self._now_factory,
+                    event_id_factory=self._event_id_factory,
+                    dispatch_id_factory=self._dispatch_id_factory,
+                ).record_timeout(
+                    run_id,
+                    attempt_id,
+                    binding_artifact_path=binding_path,
+                    binding_artifact_sha256=binding_sha,
+                )
+            except CodexImplementerTimeoutEvidenceError:
+                return self._block_implementer(
+                    run_id,
+                    attempt_id=attempt_id,
+                    reason_kind="codex_implementer_timeout_evidence_invalid",
+                    summary="Codex implementer timeout evidence failed authentication",
+                )
+
+        evidence_source = self._capacity_evidence_source_from_outcome(outcome)
+        inferred_failure_kind = None
+        if (
+            not usage_limit
+            and returncode > 0
+            and str(attempt["termination_class"]) == TerminationClass.NONZERO_EXIT.value  # type: ignore[index]
+            and effective_session is not None
+        ):
+            observation = self._capacity_probe.probe(implementer.command)
+            if observation.status == CodexCapacityStatus.EXHAUSTED:
+                # The adapter persisted the exact continuation before publishing
+                # completion. Only this contemporaneous exhausted observation
+                # gives an otherwise classified failure capacity-retry authority.
+                usage_limit = True
+                evidence_source = "post_failure_capacity_probe"
+                inferred_failure_kind = "codex_implementer_failure"
+            else:
+                return self._block_implementer(
+                    run_id,
+                    attempt_id=attempt_id,
+                    reason_kind="codex_implementer_failure",
+                    summary=(
+                        "Codex implementer exited unsuccessfully; "
+                        f"post-failure capacity probe was {observation.status.value}"
+                    ),
+                    implementer_session_id=effective_session,
+                    binding_artifact_path=binding_path,
+                    binding_artifact_sha256=binding_sha,
+                )
+
+        if usage_limit:
+            if (
+                no_session_bootstrap
+                and checkpoint is not None
+                and checkpoint.implementer_no_session_bootstrap_retries >= 1
+            ):
+                return self._block_implementer(
+                    run_id,
+                    attempt_id=attempt_id,
+                    reason_kind="codex_implementer_bootstrap_retry_exhausted",
+                    summary="Codex implementer exhausted the single proven no-session bootstrap retry",
+                )
+            try:
+                continuation = self._load_implementer_wait_continuation(
+                    run_id,
+                    attempt_id=attempt_id,
+                    outcome=outcome,
+                    session_id=effective_session,
+                    no_session_bootstrap=no_session_bootstrap,
+                )
+            except (CodexEvidenceError, ValueError, OSError):
+                return self._block_implementer(
+                    run_id,
+                    attempt_id=attempt_id,
+                    reason_kind="codex_implementer_capacity_evidence_invalid",
+                    summary="Codex implementer capacity continuation evidence is invalid",
+                )
+            event = CodexUsageCapacityDetectedEvent(
+                run_id=run_id,
+                review_iteration=state.cursor.iteration,
+                evidence_source=evidence_source,
+                operational_failure_kind=inferred_failure_kind,
+                capacity_role="implementer",
+                capacity_turn=expected_turn,  # type: ignore[arg-type]
+            )
+            now = self._now_factory()
+            now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            with self.store.begin_immediate() as conn:
+                current, version, _ = self.store.load_validated_snapshot(conn, run_id)
+                current_attempt = self.store.get_attempt_by_id(conn, attempt_id)
+                if current_attempt is not None and int(current_attempt["ingested"]):
+                    return TickRunReceipt(run_id=run_id, action="implementer_result_stale")
+                if not isinstance(current, (PreflightCompleteState, WaitingForCursorFixState)):
+                    return TickRunReceipt(run_id=run_id, action="implementer_ingest_state_changed")
+                wait_state = apply_implementer_usage_capacity_detected(
+                    current,
+                    event,
+                    now_text=now_text,
+                    continuation=continuation,
+                    implementer_session_id=effective_session,
+                    binding_artifact_path=binding_path,
+                    binding_artifact_sha256=binding_sha,
+                )
+                event_id = self._event_id_factory()
+                sequence = self.store.next_event_sequence(conn, run_id)
+                self.store.append_event(
+                    conn,
+                    event_id=event_id,
+                    run_id=run_id,
+                    sequence=sequence,
+                    event=event,
+                    now=now,
+                )
+                if not self.store.compare_and_swap_state(
+                    conn,
+                    run_id=run_id,
+                    expected_version=version,
+                    new_state=wait_state,
+                    now=now,
+                ):
+                    return TickRunReceipt(run_id=run_id, action="implementer_capacity_cas_lost")
+                self.store.mark_attempt_ingested(conn, attempt_id=attempt_id, now=now)
+            return TickRunReceipt(run_id=run_id, action="waiting_codex_capacity")
+
+        if returncode != 0:
+            return self._block_implementer(
+                run_id,
+                attempt_id=attempt_id,
+                reason_kind="codex_implementer_failure",
+                summary="Codex implementer exited with an unclassified failure",
+                implementer_session_id=effective_session,
+                binding_artifact_path=binding_path,
+                binding_artifact_sha256=binding_sha,
+            )
+        if effective_session is None or binding_path is None or binding_sha is None:
+            return self._block_implementer(
+                run_id,
+                attempt_id=attempt_id,
+                reason_kind="codex_implementer_identity_uncertain",
+                summary="successful Codex implementation did not authenticate its identity",
+            )
+
+        now = self._now_factory()
+        completion_event = CodexImplementerTurnCompletedEvent(
+            run_id=run_id,
+            iteration=state.cursor.iteration,
+            turn=expected_turn,  # type: ignore[arg-type]
+            implementer_session_id_prefix=effective_session[:8],
+            binding_artifact_path=binding_path,
+            binding_artifact_sha256=binding_sha,
+        )
+        with self.store.begin_immediate() as conn:
+            current, version, _ = self.store.load_validated_snapshot(conn, run_id)
+            current_attempt = self.store.get_attempt_by_id(conn, attempt_id)
+            if current_attempt is not None and int(current_attempt["ingested"]):
+                return TickRunReceipt(run_id=run_id, action="implementer_result_stale")
+            if not isinstance(current, (PreflightCompleteState, WaitingForCursorFixState)):
+                return TickRunReceipt(run_id=run_id, action="implementer_ingest_state_changed")
+            ready = apply_codex_implementer_turn_completed(
+                current,
+                completion_event,
+                now_text=now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                implementer_session_id=effective_session,
+            )
+            event_id = self._event_id_factory()
+            sequence = self.store.next_event_sequence(conn, run_id)
+            self.store.append_event(
+                conn,
+                event_id=event_id,
+                run_id=run_id,
+                sequence=sequence,
+                event=completion_event,
+                now=now,
+            )
+            if not self.store.compare_and_swap_state(
+                conn,
+                run_id=run_id,
+                expected_version=version,
+                new_state=ready,
+                now=now,
+            ):
+                return TickRunReceipt(run_id=run_id, action="implementer_ingest_cas_lost")
+            self.store.mark_attempt_ingested(conn, attempt_id=attempt_id, now=now)
+            self.store.insert_effect(
+                conn,
+                dispatch_id=self._dispatch_id_factory(),
+                source_event_id=event_id,
+                run_id=run_id,
+                effect_id=NORMALIZE_STAGING_EFFECT_ID,
+                effect_kind=NORMALIZE_STAGING_EFFECT_KIND,
+                effect_payload={"iteration": ready.cursor.iteration},
+                available_at=now,
+                claimed_run_version=ready.version,
+                now=now,
+            )
+        return TickRunReceipt(run_id=run_id, action="codex_implementer_turn_completed")
 
     def _maybe_ingest_completed_codex_attempt(
         self,
@@ -575,6 +1184,13 @@ class CodexWorkflowService:
         bootstrap_session_id: str,
         outcome: dict[str, object],
     ) -> TickRunReceipt | str:
+        if state.codex.implementer_session_id == bootstrap_session_id:
+            return self._block_review(
+                run_id,
+                attempt_id=str(outcome.get("attempt_id", "")),
+                reason_kind="agent_identity_collision",
+                summary="reviewer B identity conflicts with the bound implementer",
+            )
         if state.codex.reviewer_session_id:
             if state.codex.reviewer_session_id != bootstrap_session_id:
                 return self._block_review(
@@ -944,24 +1560,36 @@ class CodexWorkflowService:
                 ):
                     return TickRunReceipt(run_id=run_id, action="codex_decision_cas_lost")
                 self.store.mark_attempt_ingested(conn, attempt_id=attempt_id, now=now)
-                from ai_dev_loop.scheduler.domain.cursor_contract import (
-                    RUN_CURSOR_TURN_EFFECT_ID,
-                    RUN_CURSOR_TURN_EFFECT_KIND,
-                )
-
                 next_dispatch = self._dispatch_id_factory()
                 envelope_path = correction_execution_envelope_path(review_iteration)
+                if resolved_implementer_provider(fix_state.context) == "codex":
+                    effect_id = RESUME_CODEX_IMPLEMENTER_EFFECT_ID
+                    effect_kind = RESUME_CODEX_IMPLEMENTER_EFFECT_KIND
+                    effect_payload = {
+                        "iteration": review_iteration + 1,
+                        "turn": "correction",
+                        "prompt_path": envelope_path,
+                    }
+                else:
+                    from ai_dev_loop.scheduler.domain.cursor_contract import (
+                        RUN_CURSOR_TURN_EFFECT_ID,
+                        RUN_CURSOR_TURN_EFFECT_KIND,
+                    )
+
+                    effect_id = RUN_CURSOR_TURN_EFFECT_ID
+                    effect_kind = RUN_CURSOR_TURN_EFFECT_KIND
+                    effect_payload = {
+                        "iteration": review_iteration + 1,
+                        "prompt_path": envelope_path,
+                    }
                 self.store.insert_effect(
                     conn,
                     dispatch_id=next_dispatch,
                     source_event_id=event_id,
                     run_id=run_id,
-                    effect_id=RUN_CURSOR_TURN_EFFECT_ID,
-                    effect_kind=RUN_CURSOR_TURN_EFFECT_KIND,
-                    effect_payload={
-                        "iteration": review_iteration + 1,
-                        "prompt_path": envelope_path,
-                    },
+                    effect_id=effect_id,
+                    effect_kind=effect_kind,
+                    effect_payload=effect_payload,
                     available_at=now,
                     claimed_run_version=fix_state.version,
                     now=now,
@@ -1108,6 +1736,80 @@ class CodexWorkflowService:
             summary=summary,
         )
 
+    def block_implementer_launch_guard_failure(
+        self,
+        run_id: str,
+        *,
+        attempt_id: str,
+        reason_kind: str,
+        summary: str,
+    ) -> TickRunReceipt:
+        return self._block_implementer(
+            run_id,
+            attempt_id=attempt_id,
+            reason_kind=reason_kind,
+            summary=summary,
+        )
+
+    def _block_implementer(
+        self,
+        run_id: str,
+        *,
+        attempt_id: str,
+        reason_kind: str,
+        summary: str,
+        implementer_session_id: str | None = None,
+        binding_artifact_path: str | None = None,
+        binding_artifact_sha256: str | None = None,
+    ) -> TickRunReceipt:
+        now = self._now_factory()
+        with self.store.begin_immediate() as conn:
+            state, version, _ = self.store.load_validated_snapshot(conn, run_id)
+            if attempt_id:
+                current_attempt = self.store.get_attempt_by_id(conn, attempt_id)
+                if current_attempt is not None and int(current_attempt["ingested"]):
+                    return TickRunReceipt(run_id=run_id, action="implementer_result_stale")
+            if not isinstance(
+                state,
+                (PreflightCompleteState, WaitingForCursorFixState, WaitingCodexCapacityState),
+            ):
+                return TickRunReceipt(run_id=run_id, action="implementer_block_state_changed")
+            if isinstance(state, WaitingCodexCapacityState):
+                continuation = state.codex.capacity_continuation
+                if continuation is None or continuation.role != "implementer":
+                    return TickRunReceipt(run_id=run_id, action="implementer_block_state_changed")
+            event = CodexImplementerBlockedEvent(
+                run_id=run_id,
+                block_reason_kind=reason_kind,
+                block_reason_summary=summary,
+                attempt_id=attempt_id or None,
+                implementer_session_id_prefix=(
+                    None if implementer_session_id is None else implementer_session_id[:8]
+                ),
+                binding_artifact_path=binding_artifact_path,
+                binding_artifact_sha256=binding_artifact_sha256,
+            )
+            blocked = apply_codex_implementer_blocked(
+                state,
+                event,
+                now_text=now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            )
+            self._append_block(
+                conn,
+                run_id=run_id,
+                event=event,
+                new_state=blocked,
+                version=version,
+                now=now,
+                release_reservation=reason_kind
+                not in CODEX_IMPLEMENTER_RESERVATION_HOLD_BLOCK_KINDS,
+            )
+            if attempt_id:
+                attempt = self.store.get_attempt_by_id(conn, attempt_id)
+                if attempt is not None:
+                    self.store.mark_attempt_ingested(conn, attempt_id=attempt_id, now=now)
+        return TickRunReceipt(run_id=run_id, action="blocked", detail=reason_kind)
+
     def _capacity_evidence_source_from_outcome(
         self,
         outcome: dict[str, object],
@@ -1144,7 +1846,10 @@ class CodexWorkflowService:
             state, _, _ = self.store.load_validated_snapshot(conn, run_id)
             if not isinstance(state, WaitingCodexReviewRetryState):
                 return None
-            if state.codex.review_retry_failure_kind != FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT:
+            if (
+                state.codex.review_retry_failure_kind
+                != FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT
+            ):
                 return None
             due_at = state.codex.routing_auto_retry_due_at
             if (
@@ -1406,7 +2111,9 @@ class CodexWorkflowService:
                         "routing_auto_retry_authorizations_used"
                     ],
                     "routing_auto_retry_due_at": routing_preserve["routing_auto_retry_due_at"],
-                    "routing_auto_retry_exhausted": routing_preserve["routing_auto_retry_exhausted"],
+                    "routing_auto_retry_exhausted": routing_preserve[
+                        "routing_auto_retry_exhausted"
+                    ],
                     "routing_failure_post_probe_status": routing_preserve[
                         "routing_failure_post_probe_status"
                     ],
@@ -1498,19 +2205,13 @@ class CodexWorkflowService:
             failure_kind=failure_kind,
             attempt_id=attempt_id,
             retry_generation=next_generation,
-            routing_auto_retry_policy_version=routing_fields[
-                "routing_auto_retry_policy_version"
-            ],  # type: ignore[arg-type]
+            routing_auto_retry_policy_version=routing_fields["routing_auto_retry_policy_version"],  # type: ignore[arg-type]
             routing_auto_retry_eligible=bool(routing_fields["routing_auto_retry_eligible"]),
             routing_auto_retry_authorizations_used=recorded_authorizations,
             routing_auto_retry_due_at=routing_fields["routing_auto_retry_due_at"],  # type: ignore[arg-type]
             routing_auto_retry_exhausted=bool(routing_fields["routing_auto_retry_exhausted"]),
-            routing_failure_post_probe_status=routing_fields[
-                "routing_failure_post_probe_status"
-            ],  # type: ignore[arg-type]
-            routing_failure_post_probe_reason=routing_fields[
-                "routing_failure_post_probe_reason"
-            ],  # type: ignore[arg-type]
+            routing_failure_post_probe_status=routing_fields["routing_failure_post_probe_status"],  # type: ignore[arg-type]
+            routing_failure_post_probe_reason=routing_fields["routing_failure_post_probe_reason"],  # type: ignore[arg-type]
         )
         with self.store.begin_immediate() as conn:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
@@ -1609,6 +2310,7 @@ class CodexWorkflowService:
         new_state: BlockedState,
         version: int,
         now: datetime,
+        release_reservation: bool = True,
     ) -> None:
         event_id = self._event_id_factory()
         sequence = self.store.next_event_sequence(conn, run_id)  # type: ignore[arg-type]
@@ -1627,11 +2329,12 @@ class CodexWorkflowService:
             new_state=new_state,
             now=now,
         )
-        self.store.release_reservation(
-            conn,  # type: ignore[arg-type]
-            worktree_key=new_state.context.repository.worktree_key,
-            now=now,
-        )
+        if release_reservation:
+            self.store.release_reservation(
+                conn,  # type: ignore[arg-type]
+                worktree_key=new_state.context.repository.worktree_key,
+                now=now,
+            )
 
     def _append_terminal(
         self,

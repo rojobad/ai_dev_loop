@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "sequence_id": "fixture-project-seq-092a0f42ba04",
+  "version": 1,
+  "prepared_at": "2026-10-14T17:42:07.722456Z",
+  "updated_at": "2026-10-14T17:42:07.722456Z",
+  "idempotency_key": "092a0f42ba04bdc1c370a8ed7f765797ec3842e45d20f8d85762da083bdce537",
+  "definition": {
+    "schema_version": 1,
+    "sequence_id": "fixture-project-seq-092a0f42ba04",
+    "name": "accepted-v1",
+    "project_name": "fixture-project",
+    "repository": {
+      "root": "/tmp/phase273-history-a9k6oygs/repo",
+      "worktree_key": "b1b76c1631e28f83b97da4bd6192bad9f88d3d3937d4be63fcd9e82034d580a6"
+    },
+    "manifest_original_artifact_path": "manifest/original.yaml",
+    "manifest_original_sha256": "18d4faa71b3461972a5f7ab10e485ae379614eb2f76b4adb1e07060a7ec329c4",
+    "manifest_resolved_artifact_path": "manifest/resolved.yaml",
+    "manifest_resolved_sha256": "064c045ca4a9828078bd8ec362a3c23ee81ae2d895b530b02e352cb84123c8f1",
+    "controller": {
+      "controller_session_id": null
+    },
+    "entries": [
+      {
+        "schema_version": 1,
+        "ordinal": 1,
+        "phase_name": "phase-1",
+        "planned_run_id": "fixture-project-8b2a7d7c2051",
+        "commit_message": "historical accepted checkpoint",
+        "plan_prompt": {
+          "plan_repository_path": "docs/plans/sample-plan.md",
+          "prompt_source_repository_path": "docs/plans/prompt_sample-plan.txt",
+          "plan_artifact_path": "entries/01/plan/plan.md",
+          "plan_sha256": "0ba8876fcb7d7e9672095388801988261ba0d998d0233d9c0e71947ba8834bd0",
+          "prompt_artifact_path": "entries/01/prompts/cursor-initial.txt",
+          "prompt_sha256": "cb8104296f15453bbc5287bf7d6037e7bcb68294cd0cffa0621163a7d2ec0cfb"
+        },
+        "effective_config": {
+          "effective_config_artifact_path": "entries/01/effective-config.yaml",
+          "effective_config_sha256": "4154bbe4c8ead93df8c1b78646494c3cc5ce0cc5fc94d07ff1223da69d32c34b",
+          "source_config_artifact_path": "entries/01/source-config.yaml",
+          "source_config_sha256": "db4f70395a2a1015db7d5f16053538e310de351eae349aafa629de0176395d2a"
+        },
+        "codex": {
+          "review_model": "gpt-6.1-sol",
+          "review_reasoning_effort": "high",
+          "review_model_source": "explicit",
+          "review_reasoning_source": "explicit",
+          "command": "/tmp/phase273-history-a9k6oygs/bin/codex",
+          "review_skill": "review-staged-cursor-execution",
+          "sandbox": "workspace-write",
+          "binding_artifact_path": "entries/01/codex/fresh-reviewer-input.json",
+          "binding_sha256": "e1ba24e84f9aba414f9069bfb6b735a211ed6da3ed5bfa533a5d3561ae3c3b7a"
+        },
+        "cursor": {
+          "command": "/tmp/phase273-history-a9k6oygs/bin/agent",
+          "model": "composer-2.5-fast",
+          "output_format": "stream-json",
+          "force": true,
+          "trust_workspace": true,
+          "sandbox": "disabled"
+        },
+        "workflow": {
+          "max_review_iterations": 3,
+          "stage_mode": "all",
+          "cursor_timeout_minutes": 90,
+          "codex_timeout_minutes": 90,
+          "require_clean_worktree": true
+        }
+      },
+      {
+        "schema_version": 1,
+        "ordinal": 2,
+        "phase_name": "phase-2",
+        "planned_run_id": "fixture-project-ce4adccce9dd",
+        "commit_message": null,
+        "plan_prompt": {
+          "plan_repository_path": "docs/plans/sample-plan.md",
+          "prompt_source_repository_path": "docs/plans/prompt_sample-plan.txt",
+          "plan_artifact_path": "entries/02/plan/plan.md",
+          "plan_sha256": "0ba8876fcb7d7e9672095388801988261ba0d998d0233d9c0e71947ba8834bd0",
+          "prompt_artifact_path": "entries/02/prompts/cursor-initial.txt",
+          "prompt_sha256": "cb8104296f15453bbc5287bf7d6037e7bcb68294cd0cffa0621163a7d2ec0cfb"
+        },
+        "effective_config": {
+          "effective_config_artifact_path": "entries/02/effective-config.yaml",
+          "effective_config_sha256": "4154bbe4c8ead93df8c1b78646494c3cc5ce0cc5fc94d07ff1223da69d32c34b",
+          "source_config_artifact_path": "entries/02/source-config.yaml",
+          "source_config_sha256": "db4f70395a2a1015db7d5f16053538e310de351eae349aafa629de0176395d2a"
+        },
+        "codex": {
+          "review_model": "gpt-6.1-sol",
+          "review_reasoning_effort": "high",
+          "review_model_source": "explicit",
+          "review_reasoning_source": "explicit",
+          "command": "/tmp/phase273-history-a9k6oygs/bin/codex",
+          "review_skill": "review-staged-cursor-execution",
+          "sandbox": "workspace-write",
+          "binding_artifact_path": "entries/02/codex/fresh-reviewer-input.json",
+          "binding_sha256": "e1ba24e84f9aba414f9069bfb6b735a211ed6da3ed5bfa533a5d3561ae3c3b7a"
+        },
+        "cursor": {
+          "command": "/tmp/phase273-history-a9k6oygs/bin/agent",
+          "model": "composer-2.5-fast",
+          "output_format": "stream-json",
+          "force": true,
+          "trust_workspace": true,
+          "sandbox": "disabled"
+        },
+        "workflow": {
+          "max_review_iterations": 3,
+          "stage_mode": "all",
+          "cursor_timeout_minutes": 90,
+          "codex_timeout_minutes": 90,
+          "require_clean_worktree": true
+        }
+      }
+    ]
+  }
+}

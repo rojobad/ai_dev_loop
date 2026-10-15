@@ -7,7 +7,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, cast
 
 import yaml
 from pydantic import ValidationError as PydanticValidationError
@@ -30,14 +29,13 @@ from ai_dev_loop.scheduler.application.contracts import (
 )
 from ai_dev_loop.scheduler.application.submission import (
     _freeze_execution_commands,
+    _implementer_binding,
     require_resubmission_id,
 )
 from ai_dev_loop.scheduler.domain.common import canonical_json_sha256, worktree_key
 from ai_dev_loop.scheduler.domain.sequence import (
     ACTIVE_SEQUENCE_STATE_KIND,
-    FROZEN_SEQUENCE_ENTRY_SCHEMA_VERSION,
     MAX_MANIFEST_BYTES,
-    PREPARED_SEQUENCE_SCHEMA_VERSION,
     PREPARED_SEQUENCE_STATE_KIND,
     ActiveSequenceState,
     FrozenSequenceEntry,
@@ -182,10 +180,13 @@ def _parse_manifest(data: bytes) -> SequenceManifest:
 def _phase_overrides(
     global_options: SequencePrepareOptions,
     phase: SequenceManifestPhase,
+    *,
+    manifest_version: int = 1,
 ) -> ConfigOverrides:
     cursor = phase.cursor
     codex = phase.codex
     workflow = phase.workflow
+    implementer = phase.implementer
 
     def pick_str(global_value: str | None, phase_value: str | None) -> str | None:
         return phase_value if phase_value is not None else global_value
@@ -195,6 +196,13 @@ def _phase_overrides(
 
     return ConfigOverrides(
         project_name=global_options.project_name,
+        implementer_provider=(None if manifest_version == 1 else "cursor")
+        if implementer is None
+        else implementer.provider,
+        implementer_command=None if implementer is None else implementer.command,
+        implementer_model=None if implementer is None else implementer.model,
+        implementer_reasoning_effort=None if implementer is None else implementer.reasoning_effort,
+        implementer_timeout_minutes=None if implementer is None else implementer.timeout_minutes,
         cursor_command=pick_str(
             global_options.cursor_command, None if cursor is None else cursor.command
         ),
@@ -384,8 +392,28 @@ class SequencePrepareService:
             effective, source_repo_config, _repo_config_path = resolve_effective_config(
                 repo_root=repo_target.root,
                 config_path=options.config_path,
-                overrides=_phase_overrides(options, phase),
+                overrides=_phase_overrides(
+                    options, phase, manifest_version=manifest.schema_version
+                ),
             )
+            if manifest.schema_version == 1 and effective.implementer.provider == "codex":
+                raise ValidationError("v1 sequences stay Cursor-only; use manifest v2 for Codex")
+            if effective.implementer.provider == "codex" and (
+                phase.cursor is not None
+                or (
+                    phase.workflow is not None and phase.workflow.cursor_timeout_minutes is not None
+                )
+                or any(
+                    value is not None
+                    for value in (
+                        options.cursor_command,
+                        options.cursor_model,
+                        options.cursor_output_format,
+                        options.cursor_timeout_minutes,
+                    )
+                )
+            ):
+                raise ValidationError("Cursor overrides conflict with Codex implementer selection")
             effective = _freeze_execution_commands(effective)
             if project_name is None:
                 project_name = effective.project.name
@@ -402,8 +430,9 @@ class SequencePrepareService:
                 phase.codex.review_reasoning_effort
             )
 
+            effective_payload = effective.model_dump(by_alias=True)
             effective_yaml = yaml.safe_dump(
-                effective.model_dump(by_alias=True),
+                effective_payload,
                 sort_keys=False,
                 allow_unicode=True,
             ).encode("utf-8")
@@ -431,7 +460,10 @@ class SequencePrepareService:
                 commit_message = None
             frozen_entries.append(
                 FrozenSequenceEntry(
-                    schema_version=cast(Literal[1], FROZEN_SEQUENCE_ENTRY_SCHEMA_VERSION),
+                    schema_version=manifest.schema_version,
+                    implementer=_implementer_binding(effective)
+                    if manifest.schema_version == 2
+                    else None,
                     ordinal=ordinal,
                     phase_name=phase.name,
                     planned_run_id=IDENTITY_PLACEHOLDER,
@@ -488,7 +520,7 @@ class SequencePrepareService:
 
         assert project_name is not None
         identity_definition = PreparedSequenceDefinition(
-            schema_version=cast(Literal[1], PREPARED_SEQUENCE_SCHEMA_VERSION),
+            schema_version=manifest.schema_version,
             sequence_id=IDENTITY_PLACEHOLDER,
             name=manifest.name,
             project_name=project_name,

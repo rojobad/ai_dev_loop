@@ -2306,11 +2306,7 @@ def analyze_cursor_recovery_evidence(
 
         worktree_key = state.context.repository.worktree_key
         active = store.get_active_reservation(conn, worktree_key)
-        if (
-            reservation_must_match_run
-            and active is not None
-            and str(active["run_id"]) != run_id
-        ):
+        if reservation_must_match_run and active is not None and str(active["run_id"]) != run_id:
             return CursorRecoveryAnalysisResult(
                 receipt=receipt(
                     run_id,
@@ -2974,7 +2970,9 @@ def analyze_cursor_recovery_evidence(
         binding_artifact_sha256=(
             None if reviewer_proof is None else reviewer_proof.binding_artifact_sha256
         ),
-        bootstrap_attempt_id=None if reviewer_proof is None else reviewer_proof.bootstrap_attempt_id,
+        bootstrap_attempt_id=None
+        if reviewer_proof is None
+        else reviewer_proof.bootstrap_attempt_id,
         bootstrap_events_path=(
             None if reviewer_proof is None else reviewer_proof.bootstrap_events_path
         ),

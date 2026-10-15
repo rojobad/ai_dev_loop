@@ -89,6 +89,7 @@ def _safe_detail_for_event(event_kind: str, payload_text: str) -> str:
     if event_kind in {
         "worktree_admission_blocked",
         "preflight_blocked",
+        "implementer_dispatch_blocked",
         "cursor_chat_blocked",
         "cursor_turn_blocked",
         "staging_blocked",
@@ -96,7 +97,7 @@ def _safe_detail_for_event(event_kind: str, payload_text: str) -> str:
     }:
         kind = payload.get("block_reason_kind")
         return f"{event_kind}: block_reason_kind={kind}"
-    if event_kind == "cursor_timeout_retry":
+    if event_kind in {"cursor_timeout_retry", "codex_implementer_timeout_retry"}:
         return (
             f"{event_kind}: action={payload.get('action')} "
             f"automatic_retries={payload.get('automatic_retries')} "
@@ -114,7 +115,11 @@ def _safe_detail_for_event(event_kind: str, payload_text: str) -> str:
         routing_used = payload.get("routing_auto_retry_authorizations_used")
         probe_status = payload.get("routing_failure_post_probe_status")
         probe_reason = payload.get("routing_failure_post_probe_reason")
-        parts = [f"review_iteration={iteration}"]
+        role = payload.get("capacity_role")
+        turn = payload.get("capacity_turn")
+        parts = [f"review_iteration={iteration}", f"role={role or 'reviewer'}"]
+        if turn in {"initial", "correction"}:
+            parts.append(f"turn={turn}")
         if source:
             parts.append(f"evidence_source={source}")
         if operational:

@@ -10,7 +10,7 @@ from pathlib import Path
 from ai_dev_loop.scheduler.domain.cursor_sequence_replacement import (
     CursorSequenceReplacementIntent,
 )
-from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
+from ai_dev_loop.scheduler.infrastructure.sqlite_store import SCHEMA_VERSION, SqliteSchedulerStore
 
 DIGEST = "b" * 64
 NOW = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
@@ -62,7 +62,7 @@ def test_pending_intent_round_trip_and_readonly_inspection_does_not_migrate(tmp_
     assert row is not None
     assert row["adopted_at"] is None
     assert json.loads(str(row["intent_payload"]))["record_digest"] is None
-    assert version_after == version_before == 13
+    assert version_after == version_before == SCHEMA_VERSION
     assert int(attempts[0]) == 0
 
 

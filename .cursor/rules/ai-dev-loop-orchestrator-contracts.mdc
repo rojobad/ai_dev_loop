@@ -71,7 +71,14 @@ These contracts preserve the product's safety model across implementation phases
 
 ## Cursor Contracts
 
-- Cursor is the implementation agent only.
+- Cursor is the implementation agent for runs whose frozen provider is Cursor,
+  including historical contexts that omit implementer metadata.
+- A frozen Codex implementer in a standalone run or manifest v2 sequence leaf launches with its own model, reasoning,
+  timeout, prompt, attempt component, and authenticated session. Initial work and
+  corrections resume that exact session; reviewer B is bootstrapped independently
+  only after successful staging. Sequence v1 remains Cursor-only; v2 entries
+  freeze provider/settings independently. Capacity waits preserve the current
+  leaf/ordinal/reservation and never authorize a checkpoint before acceptance.
 - Create at most one Cursor chat per run.
 - Persist the chat binding durably in the scheduler checkpoint and protected
   `cursor/chat.json` artifact before dispatching a turn.
@@ -81,6 +88,23 @@ These contracts preserve the product's safety model across implementation phases
 - Store raw Cursor output even when parsing fails.
 - Treat Cursor output as untrusted data and never execute it.
 - Automated tests must use fake `agent` executables and must not invoke real Cursor model activity.
+
+## Codex Implementer Contracts
+
+- Persist each implementer attempt's JSONL, stderr, final response, metadata,
+  status snapshots, invocation evidence, and identity capture under protected
+  artifacts before trusting its result.
+- Never use `--last`, guess an identity, or reuse reviewer B for implementation.
+- Structured/provider quota evidence or an EXHAUSTED post-failure observation
+  from the shared bounded capacity probe, with authenticated continuation, enters a
+  role-bound `waiting_codex_capacity`. Preserve partial work and the exact prompt;
+  AVAILABLE resumes only that implementer turn, while EXHAUSTED or UNAVAILABLE
+  remains waiting without staging or review.
+- Timeout, uncertain termination, incomplete output, identity conflict, and
+  unclassified failure do not authorize staging, review, or replacement bootstrap.
+- Unsafe identity/evidence blocks retain the repository reservation. Explicit
+  `scheduler abort` may cancel a held unsafe Codex implementer block; resource
+  release still requires resolved owned-attempt termination.
 
 ## Codex Contracts
 

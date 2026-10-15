@@ -165,6 +165,27 @@ def test_verify_captured_review_prompt_accepts_fixture_shape() -> None:
     verify_captured_review_prompt_bytes(_minimal_valid_review_prompt(iteration=1), iteration=1)
 
 
+@pytest.mark.parametrize("iteration", [1, 2, 3])
+def test_current_cursor_response_oracle_includes_invocation_prefix(iteration: int) -> None:
+    # The fake CLI slices the actual positional prompt, including the noninteractive
+    # instruction, for initial work and both corrections. Do not infer this from API bytes.
+    assert (
+        expected_latest_cursor_final_response_for_review_iteration(iteration)
+        == b"done: This is a non-interactive run. D"
+    )
+
+
+def test_verify_captured_review_prompt_rejects_obsolete_footer() -> None:
+    old_footer = (
+        b"Your final response must conform to codex-review-result-v1.json.\n"
+        b"When actionable findings exist, return a complete English cursor_fix_prompt.\n"
+        b"When there are no actionable findings, return cursor_fix_prompt: null.\n"
+    )
+    prompt = _minimal_valid_review_prompt(iteration=1).removesuffix(REVIEW_PROMPT_FOOTER_BYTES)
+    with pytest.raises(AssertionError, match="expected footer contract"):
+        verify_captured_review_prompt_bytes(prompt + old_footer, iteration=1)
+
+
 def test_verify_captured_review_prompt_rejects_substituted_latest_cursor_response() -> None:
     bad = _minimal_valid_review_prompt(iteration=1).replace(
         EXPECTED_LATEST_CURSOR_FINAL_RESPONSE_ITERATION_01,

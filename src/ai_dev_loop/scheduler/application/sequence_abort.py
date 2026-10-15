@@ -32,7 +32,11 @@ from ai_dev_loop.scheduler.domain.sequence import (
     PreparedSequenceState,
     future_entry_ordinals,
 )
-from ai_dev_loop.scheduler.domain.state import SCHEDULER_TERMINAL_STATE_KINDS, AbortedState
+from ai_dev_loop.scheduler.domain.state import (
+    SCHEDULER_TERMINAL_STATE_KINDS,
+    AbortedState,
+    is_codex_implementer_reservation_hold,
+)
 from ai_dev_loop.scheduler.infrastructure.paths import default_artifact_root, default_engine_db_path
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
@@ -170,9 +174,13 @@ class SequenceAbortService:
     def _advance_pending_run_abort(self, state: AbortPendingSequenceState) -> AbortProcessAction:
         with self.store.begin_read() as conn:
             run_state, _, _ = self.store.load_validated_snapshot(conn, state.current_run_id)
+            held_implementer = (
+                is_codex_implementer_reservation_hold(run_state)
+                and self.store.get_reservation_for_run(conn, state.current_run_id) is not None
+            )
         if isinstance(run_state, AbortedState):
             return AbortProcessAction.NONE
-        if run_state.kind in SCHEDULER_TERMINAL_STATE_KINDS:
+        if run_state.kind in SCHEDULER_TERMINAL_STATE_KINDS and not held_implementer:
             return AbortProcessAction.NONE
         if self._run_abort is not None:
             result = self._run_abort.abort_run(
@@ -242,6 +250,17 @@ class SequenceAbortService:
                     source_run_id=source_run_id,
                     now=now,
                 )
+                from ai_dev_loop.scheduler.application.sequence_implementer_recovery import (
+                    cancel_pending_sequence_implementer_recovery,
+                )
+
+                cancel_pending_sequence_implementer_recovery(
+                    self.store,
+                    conn,
+                    sequence_id=state.sequence_id,
+                    source_run_id=source_run_id,
+                    now=now,
+                )
                 self.store.cancel_outstanding_sequence_execution_replacements(
                     conn,
                     sequence_id=state.sequence_id,
@@ -282,15 +301,26 @@ class SequenceAbortService:
                             conn,
                             refreshed.current_run_id,
                         )
+                        implementer_row = (
+                            self.store.get_sequence_implementer_replacement_by_successor(
+                                conn, refreshed.current_run_id
+                            )
+                            if self.store.schema_supports_sequence_implementer_replacement(conn)
+                            else None
+                        )
                         if (
                             cursor_row is not None
                             and str(cursor_row["source_run_id"]) == source_run_id
                             and cursor_row["adopted_at"] is not None
+                        ) or (
+                            implementer_row is not None
+                            and str(implementer_row["source_run_id"]) == source_run_id
+                            and implementer_row["adopted_at"] is not None
                         ):
                             adopted_during_abort = True
                             raise SchedulerEngineError(
                                 SchedulerEngineErrorKind.CONFLICT,
-                                "sequence cursor leaf was adopted during blocked abort",
+                                "sequence leaf replacement was adopted during blocked abort",
                             )
                     raise SchedulerEngineError(
                         SchedulerEngineErrorKind.CONFLICT,

@@ -17,15 +17,20 @@ from ai_dev_loop.scheduler.application.attempt_envelope import (
 )
 from ai_dev_loop.scheduler.application.cursor_evidence import (
     CursorEvidenceError,
+    frozen_repository_identity_from_evidence,
     invocation_evidence_sha256,
+    validate_frozen_repository_identity,
     verify_prompt_binding,
 )
 from ai_dev_loop.scheduler.domain.codex_contract import (
+    BOOTSTRAP_CODEX_IMPLEMENTER_EFFECT_KIND,
     BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND,
     CODEX_ATTEMPT_EFFECT_KINDS,
+    IMPLEMENTER_ATTEMPT_EFFECT_KINDS,
     LEGACY_SCHEDULER_CODEX_REVIEW_SANDBOX,
     MAX_CODEX_EVENTS_ARTIFACT_BYTES,
     MAX_CODEX_REVIEW_RESULT_BYTES,
+    RESUME_CODEX_IMPLEMENTER_EFFECT_KIND,
     RESUME_CODEX_REVIEW_EFFECT_KIND,
     SCHEDULER_CODEX_REVIEW_SANDBOX,
 )
@@ -165,6 +170,194 @@ def verify_pre_execution_codex_guards(
         elif effect_kind == BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND:
             if str(evidence.get("reviewer_session_id", "")).strip():
                 raise CodexEvidenceError("codex bootstrap cannot run with bound reviewer identity")
+
+
+def verify_codex_implementer_invocation_evidence(
+    run_root: Path,
+    *,
+    attempt_id: str,
+    run_id: str,
+    dispatch_id: str,
+    unit_identity: str,
+    launch_nonce: str,
+    launch_intent_sha256: str,
+    effect_kind: str,
+) -> dict[str, object]:
+    if effect_kind not in IMPLEMENTER_ATTEMPT_EFFECT_KINDS:
+        raise CodexEvidenceError(f"unsupported codex implementer effect kind: {effect_kind}")
+    evidence_path = run_root / invocation_evidence_rel(attempt_id)
+    if not evidence_path.is_file():
+        raise CodexEvidenceError("codex implementer invocation evidence is missing")
+    try:
+        payload = json.loads(evidence_path.read_bytes().decode("utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CodexEvidenceError("codex implementer invocation evidence is not valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise CodexEvidenceError("codex implementer invocation evidence must be a JSON object")
+    evidence_hash = invocation_evidence_sha256(payload)
+    launch_intent = json.dumps(
+        {
+            "attempt_id": attempt_id,
+            "dispatch_id": dispatch_id,
+            "run_id": run_id,
+            "unit_identity": unit_identity,
+            "launch_nonce": launch_nonce,
+            "effect_kind": effect_kind,
+            "invocation_evidence_sha256": evidence_hash,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    if payload_sha256(launch_intent) != launch_intent_sha256:
+        raise CodexEvidenceError(
+            "codex implementer launch intent does not match invocation evidence"
+        )
+    if str(payload.get("effect_kind", "")) != effect_kind:
+        raise CodexEvidenceError("codex implementer invocation evidence effect_kind mismatch")
+    if str(payload.get("role", "")) != "implementer":
+        raise CodexEvidenceError("codex implementer invocation evidence role mismatch")
+    if str(payload.get("run_id", "")) != run_id:
+        raise CodexEvidenceError("codex implementer invocation evidence run_id mismatch")
+    if str(payload.get("dispatch_id", "")) != dispatch_id:
+        raise CodexEvidenceError("codex implementer invocation evidence dispatch_id mismatch")
+    if str(payload.get("attempt_id", "")) != attempt_id:
+        raise CodexEvidenceError("codex implementer invocation evidence attempt_id mismatch")
+    return payload
+
+
+def verify_pre_execution_implementer_guards(
+    run_root: Path,
+    evidence: dict[str, object],
+    *,
+    run_id: str,
+) -> None:
+    if str(evidence.get("run_id", "")) != run_id:
+        raise CodexEvidenceError("codex implementer invocation evidence run_id mismatch")
+    if str(evidence.get("role", "")) != "implementer":
+        raise CodexEvidenceError("codex implementer role is not implementer")
+    repo_root = Path(str(evidence.get("repository_root", "")))
+    identity = frozen_repository_identity_from_evidence(evidence)
+    validate_frozen_repository_identity(
+        repo_root,
+        identity,
+        context="before codex implementer execution",
+    )
+    if str(evidence.get("codex_sandbox", "")).strip() != SCHEDULER_CODEX_REVIEW_SANDBOX:
+        raise CodexEvidenceError("codex implementer requires workspace-write sandbox")
+    if str(evidence.get("approval_policy", "")).strip() != "never":
+        raise CodexEvidenceError(
+            "codex implementer requires the explicit noninteractive approval policy"
+        )
+    if (
+        not str(evidence.get("model", "")).strip()
+        or not str(evidence.get("reasoning_effort", "")).strip()
+    ):
+        raise CodexEvidenceError("codex implementer requires frozen model and reasoning effort")
+    prompt_path = str(evidence.get("prompt_path", "")).strip()
+    prompt_sha = str(evidence.get("prompt_sha256", "")).strip()
+    if not prompt_path or not prompt_sha:
+        raise CodexEvidenceError("codex implementer missing exact prompt binding")
+    verify_prompt_binding(run_root, prompt_path=prompt_path, prompt_sha256=prompt_sha)
+    effect_kind = str(evidence.get("effect_kind", ""))
+    session_id = str(evidence.get("session_id", "")).strip()
+    if session_id == "--last":
+        raise CodexEvidenceError("codex implementer rejects --last")
+    if effect_kind == RESUME_CODEX_IMPLEMENTER_EFFECT_KIND and not session_id:
+        raise CodexEvidenceError("codex implementer resume requires the bound session")
+    if effect_kind == BOOTSTRAP_CODEX_IMPLEMENTER_EFFECT_KIND and session_id:
+        raise CodexEvidenceError("codex implementer bootstrap cannot run with a bound session")
+
+
+def authenticate_pinned_codex_implementer_evidence(
+    run_root: Path,
+    *,
+    attempt_id: str,
+    pinned_invocation_evidence_sha256: str,
+    run_id: str,
+    dispatch_id: str,
+    unit_identity: str,
+    launch_nonce: str,
+    launch_intent_sha256: str,
+    effect_kind: str,
+) -> dict[str, object]:
+    evidence_path = run_root / invocation_evidence_rel(attempt_id)
+    if not evidence_path.is_file():
+        raise CodexEvidenceError("invocation evidence artifact missing")
+    try:
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CodexEvidenceError("invocation evidence is not valid JSON") from exc
+    if not isinstance(evidence, dict):
+        raise CodexEvidenceError("invocation evidence must be a JSON object")
+    if invocation_evidence_sha256(evidence) != pinned_invocation_evidence_sha256:
+        raise CodexEvidenceError("pinned invocation evidence digest mismatch")
+    verified = verify_codex_implementer_invocation_evidence(
+        run_root,
+        attempt_id=attempt_id,
+        run_id=run_id,
+        dispatch_id=dispatch_id,
+        unit_identity=unit_identity,
+        launch_nonce=launch_nonce,
+        launch_intent_sha256=launch_intent_sha256,
+        effect_kind=effect_kind,
+    )
+    verify_pre_execution_implementer_guards(run_root, verified, run_id=run_id)
+    return verified
+
+
+def load_authenticated_codex_implementer_outcome(
+    run_root: Path,
+    *,
+    attempt_id: str,
+    unit_identity: str,
+    result_rel: str,
+    stdout_rel: str,
+    stderr_rel: str,
+    observed_exit_code: int | None,
+    observed_termination: TerminationClass | None,
+    expected_envelope_sha256: str | None,
+    expected_dispatch_id: str,
+    expected_effect_kind: str,
+) -> dict[str, object]:
+    """Authenticate the detached runner envelope before trusting its outcome."""
+
+    validated = validate_completion_evidence(
+        run_root=run_root,
+        attempt_id=attempt_id,
+        unit_identity=unit_identity,
+        result_rel=result_rel,
+        stdout_rel=stdout_rel,
+        stderr_rel=stderr_rel,
+        observed_exit_code=observed_exit_code,
+        observed_termination=observed_termination,
+    )
+    if expected_envelope_sha256 and validated.envelope_sha256 != expected_envelope_sha256:
+        raise CodexEvidenceError("implementer completion envelope hash mismatch")
+    try:
+        outcome = json.loads((run_root / stdout_rel).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CodexEvidenceError("implementer outcome is not valid JSON") from exc
+    if not isinstance(outcome, dict):
+        raise CodexEvidenceError("implementer outcome must be a JSON object")
+    effect_kind = str(outcome.get("effect_kind", ""))
+    if effect_kind not in IMPLEMENTER_ATTEMPT_EFFECT_KINDS:
+        raise CodexEvidenceError("implementer outcome effect kind is invalid")
+    if effect_kind != expected_effect_kind:
+        raise CodexEvidenceError("implementer outcome effect kind does not match dispatch")
+    if str(outcome.get("attempt_id", "")) != attempt_id:
+        raise CodexEvidenceError("implementer outcome attempt id mismatch")
+    if str(outcome.get("dispatch_id", "")) != expected_dispatch_id:
+        raise CodexEvidenceError("implementer outcome dispatch id mismatch")
+    if str(outcome.get("role", "")) != "implementer":
+        raise CodexEvidenceError("implementer outcome role mismatch")
+    if validated.exit_code == 0 and (
+        outcome.get("timed_out")
+        or outcome.get("usage_limit")
+        or outcome.get("output_incomplete")
+        or outcome.get("bootstrap_uncertainty_reason")
+    ):
+        raise CodexEvidenceError("implementer outcome contradicts successful envelope")
+    return outcome
 
 
 def load_authenticated_codex_outcome(

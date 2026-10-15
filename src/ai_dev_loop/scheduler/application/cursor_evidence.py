@@ -195,7 +195,9 @@ def verify_correction_envelope_binding(
     fix_digest = sha256_bytes(fix_abs.read_bytes())
     if fix_digest != fix_prompt_sha256:
         raise CursorEvidenceError("fix prompt artifact hash does not match binding")
-    envelope_text = (run_root / envelope_path).read_text(encoding="utf-8")
+    # Path.read_text() enables universal-newline translation. Recovery authenticates
+    # the exact prompt bytes, so decode bytes directly and preserve CRLF verbatim.
+    envelope_text = (run_root / envelope_path).read_bytes().decode("utf-8")
     embedded = extract_correction_fix_prompt(envelope_text)
     if sha256_bytes(embedded.encode("utf-8")) != fix_prompt_sha256:
         raise CursorEvidenceError("correction envelope does not embed exact fix prompt")

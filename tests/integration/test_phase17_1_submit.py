@@ -318,7 +318,9 @@ def test_submit_ignores_worktree_git_state_and_writes_no_baseline(
             conn,
             result.run_id,
         )
-    assert state.context.schema_version == 3
+    assert state.context.schema_version == 5
+    assert state.context.implementer is not None
+    assert state.context.implementer.provider == "cursor"
     assert state.context.workflow.require_clean_worktree is False
     assert state.context.baseline_status_artifact_path is None
     assert state.context.baseline_status_sha256 is None

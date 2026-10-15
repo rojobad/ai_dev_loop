@@ -22,6 +22,7 @@ from ai_dev_loop.scheduler.domain.sequence import (
 from ai_dev_loop.scheduler.domain.state import (
     SCHEDULER_TERMINAL_STATE_KINDS,
     AbortedState,
+    is_codex_implementer_reservation_hold,
 )
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
@@ -108,9 +109,16 @@ class SequenceReconcileService:
         conn: sqlite3.Connection,
         run_id: str,
     ) -> bool:
-        return self.store.has_unresolved_abort_hold(
-            conn, run_id
-        ) or self.store.has_checkpoint_reconciliation_hold(conn, run_id)
+        state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+        implementer_hold = (
+            is_codex_implementer_reservation_hold(state)
+            and self.store.get_reservation_for_run(conn, run_id) is not None
+        )
+        return (
+            implementer_hold
+            or self.store.has_unresolved_abort_hold(conn, run_id)
+            or self.store.has_checkpoint_reconciliation_hold(conn, run_id)
+        )
 
     def _reconcile_abort_pending(
         self,
@@ -121,7 +129,7 @@ class SequenceReconcileService:
         state, _, _ = self.store.load_validated_snapshot(conn, run_id)
         if not isinstance(state, AbortedState):
             if state.kind in SCHEDULER_TERMINAL_STATE_KINDS:
-                if self.store.has_unresolved_abort_hold(conn, run_id):
+                if self._sequence_reconciliation_hold_pending(conn, run_id):
                     return TickRunReceipt(
                         run_id=run_id,
                         action="sequence_abort_termination_pending",

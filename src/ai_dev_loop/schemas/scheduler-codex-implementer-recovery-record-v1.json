@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "scheduler-codex-implementer-recovery-record-v1.json",
+  "title": "CodexImplementerRecoveryRecordV1",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "owner_run_id": { "type": "string", "minLength": 1 },
+        "relative_path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "required": ["owner_run_id", "relative_path", "sha256"]
+    },
+    "reviewer_not_created": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "form": { "const": "not_created" } },
+      "required": ["form"]
+    },
+    "reviewer_bound": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "form": { "const": "bound" },
+        "session_id": { "type": "string", "format": "uuid" },
+        "bootstrap_run_id": { "type": "string", "minLength": 1 },
+        "bootstrap_attempt_id": { "type": "string", "minLength": 1 },
+        "bootstrap_events_path": { "type": "string", "minLength": 1 },
+        "bootstrap_events_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "binding_run_id": { "type": "string", "minLength": 1 },
+        "binding_artifact_path": { "type": "string", "minLength": 1 },
+        "binding_artifact_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "required": [
+        "form", "session_id", "bootstrap_run_id", "bootstrap_attempt_id",
+        "bootstrap_events_path", "bootstrap_events_sha256", "binding_run_id",
+        "binding_artifact_path", "binding_artifact_sha256"
+      ]
+    },
+    "implementer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "session_id": { "type": "string", "format": "uuid" },
+        "binding": { "$ref": "#/$defs/artifact" },
+        "bootstrap_attempt_id": { "type": "string", "minLength": 1 },
+        "command": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "reasoning_effort": { "type": "string", "minLength": 1 },
+        "timeout_seconds": { "type": "integer", "minimum": 1 },
+        "sandbox": { "const": "workspace-write" },
+        "approval_policy": { "const": "never" }
+      },
+      "required": [
+        "session_id", "binding", "bootstrap_attempt_id", "command", "model",
+        "reasoning_effort", "timeout_seconds", "sandbox", "approval_policy"
+      ]
+    },
+    "ancestor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "relation": {
+          "enum": ["cursor_recovery", "review_recovery", "implementer_recovery"]
+        },
+        "source_run_id": { "type": "string", "minLength": 1 },
+        "successor_run_id": { "type": "string", "minLength": 1 },
+        "recovery_key": { "type": "string", "minLength": 1 }
+      },
+      "required": ["relation", "source_run_id", "successor_run_id", "recovery_key"]
+    },
+    "nullable_artifact": {
+      "oneOf": [{ "$ref": "#/$defs/artifact" }, { "type": "null" }]
+    },
+    "nullable_sha": {
+      "oneOf": [
+        { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        { "type": "null" }
+      ]
+    },
+    "nullable_text": {
+      "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+    }
+  },
+  "properties": {
+    "schema_version": { "const": 1 },
+    "recovery_key": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "source_run_id": { "type": "string", "minLength": 1 },
+    "successor_run_id": { "type": "string", "minLength": 1 },
+    "failed_attempt_id": { "type": "string", "minLength": 1 },
+    "failed_dispatch_id": { "type": "string", "minLength": 1 },
+    "turn_kind": { "enum": ["initial", "correction"] },
+    "iteration": { "type": "integer", "minimum": 1 },
+    "invocation_evidence_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "completion_envelope_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "invocation_evidence": { "$ref": "#/$defs/artifact" },
+    "completion_envelope": { "$ref": "#/$defs/artifact" },
+    "implementer": { "$ref": "#/$defs/implementer" },
+    "reviewer": {
+      "oneOf": [{ "$ref": "#/$defs/reviewer_bound" }, { "$ref": "#/$defs/reviewer_not_created" }]
+    },
+    "reviews_completed": { "type": "integer", "minimum": 0 },
+    "submitted_max_review_iterations": { "type": "integer", "minimum": 1 },
+    "effective_review_ceiling": { "type": "integer", "minimum": 1 },
+    "timeout_automatic_retries_consumed": { "type": "integer", "minimum": 0, "maximum": 3 },
+    "admitted": { "$ref": "#/$defs/artifact" },
+    "plan": { "$ref": "#/$defs/artifact" },
+    "submitted_prompt": { "$ref": "#/$defs/artifact" },
+    "effective_config": { "$ref": "#/$defs/artifact" },
+    "source_config": { "$ref": "#/$defs/artifact" },
+    "baseline_status": { "$ref": "#/$defs/nullable_artifact" },
+    "partial_work_status": { "$ref": "#/$defs/artifact" },
+    "partial_work_fingerprint_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "exact_prompt": { "$ref": "#/$defs/artifact" },
+    "raw_fix": { "$ref": "#/$defs/nullable_artifact" },
+    "staged_patch": { "$ref": "#/$defs/nullable_artifact" },
+    "review_result": { "$ref": "#/$defs/nullable_artifact" },
+    "parent_source_run_id": { "$ref": "#/$defs/nullable_text" },
+    "parent_recovery_key": { "$ref": "#/$defs/nullable_sha" },
+    "parent_record_sha256": { "$ref": "#/$defs/nullable_sha" },
+    "ancestors": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": { "$ref": "#/$defs/ancestor" }
+    }
+  },
+  "required": [
+    "schema_version", "recovery_key", "source_run_id", "successor_run_id",
+    "failed_attempt_id", "failed_dispatch_id", "turn_kind", "iteration",
+    "invocation_evidence_sha256", "completion_envelope_sha256", "invocation_evidence",
+    "completion_envelope", "implementer",
+    "reviewer", "reviews_completed", "submitted_max_review_iterations",
+    "effective_review_ceiling", "admitted", "plan", "submitted_prompt",
+    "effective_config", "source_config", "baseline_status", "partial_work_status",
+    "partial_work_fingerprint_sha256",
+    "exact_prompt", "raw_fix", "staged_patch", "review_result",
+    "parent_source_run_id", "parent_recovery_key", "parent_record_sha256", "ancestors"
+  ]
+}

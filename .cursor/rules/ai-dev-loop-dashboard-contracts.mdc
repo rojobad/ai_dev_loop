@@ -1,0 +1,38 @@
+---
+description: "Phase 26 local dashboard, shared Integration API reads, and chart/inspection boundaries."
+globs: ["src/ai_dev_loop/dashboard/**", "src/ai_dev_loop/integration_api/dashboard*", "src/ai_dev_loop/commands/dashboard.py", "dashboard-web/**", "tests/**/dashboard/**"]
+alwaysApply: false
+---
+
+# Local dashboard contracts
+
+Use AGENTS.md and the active Phase 26 plan with
+`archive/implementation-history/plans/phase-26-dashboard-contract.md`.
+Codex owns this rule and the plans; implementation does not edit governance.
+
+- Phase 26 explicitly introduces a loopback HTTP adapter and dashboard CLI;
+  historical Phase 21's no-HTTP scope does not forbid this later approved work.
+- `ai_dev_loop` owns SQLite/artifact reads. Share semantic application queries
+  with JSON Integration API; domain rules import no web/database frameworks.
+- Read only with validated scheduler state/lineage and confined registered
+  artifact readers; no migration, repair, tick, reservation, Git or model turn.
+- Start cohort means first owned execution launch request; exclude chat creation,
+  preflight/probes, ingestion and unknown effects. Project comes from projectName.
+- Distinguish started cohort from submissions/review rounds/process seconds.
+  Retry grouping is runId+iteration; recorded parallel process seconds are summed.
+  Missing historic evidence is explicit; partial pages never become global totals.
+- Inputs/results/time budgets are bounded by the shared contract. Use typed
+  additive DTOs, explicit capability and major compatibility. Summary output
+  excludes bodies, sessions, private paths, environments and credentials.
+- HTTP binds 127.0.0.1 only, uses fixed same-origin typed read routes and package
+  assets; no login, remote control, arbitrary paths/commands, wildcard CORS or CDN.
+- Keep UI source strings escaped. Content loads explicitly by exact resource ID,
+  stays memory-only, is paginated and cleared on close/reselection/filter change.
+  Do not reconstruct missing exact Cursor prompts or infer review-attempt linkage.
+- UI components depend on DashboardDataSource, not localhost or future Hub URLs.
+  Live polling obeys visibility/Pause/cancellation/generations and bounded work;
+  sensitive readers never auto-refresh. No durable dashboard cache or telemetry.
+- Node is build/test-only; shipped Python wheel includes required static assets.
+  Use isolated temporary resources/fake providers for acceptance. Scheduler driver,
+  timer, root YAML, reviewer contracts and real workstation installation stay out
+  of implementation scope; final operator walkthrough is separate acceptance.

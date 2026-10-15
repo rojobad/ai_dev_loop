@@ -21,7 +21,7 @@
     "source_run_id": { "$ref": "#/$defs/nullableNonEmptyString" },
     "attempt_kind": {
       "type": "string",
-      "enum": ["planned_run", "same_reviewer_retry", "cursor_retry"]
+      "enum": ["planned_run", "same_reviewer_retry", "cursor_retry", "implementer_retry"]
     },
     "materialized_at": { "$ref": "#/$defs/nonEmptyString" },
     "terminal_outcome": {
@@ -82,7 +82,7 @@
         "properties": {
           "source_run_id": { "$ref": "#/$defs/nonEmptyString" },
           "attempt_kind": {
-            "enum": ["same_reviewer_retry", "cursor_retry"]
+            "enum": ["same_reviewer_retry", "cursor_retry", "implementer_retry"]
           }
         },
         "required": ["source_run_id", "attempt_kind"]
@@ -104,6 +104,18 @@
       "if": {
         "properties": {
           "attempt_kind": { "const": "cursor_retry" }
+        }
+      },
+      "then": {
+        "properties": {
+          "generation": { "$ref": "#/$defs/positiveInteger", "minimum": 2 }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "attempt_kind": { "const": "implementer_retry" }
         }
       },
       "then": {

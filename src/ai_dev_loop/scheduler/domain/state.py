@@ -15,6 +15,14 @@ from pydantic import (
     model_validator,
 )
 
+from ai_dev_loop.config import (
+    CODEX_IMPLEMENTER_APPROVAL_POLICY,
+    CODEX_IMPLEMENTER_SANDBOX,
+    CODEX_REVIEW_REASONING_EFFORTS,
+)
+from ai_dev_loop.scheduler.domain.codex_contract import (
+    CODEX_IMPLEMENTER_RESERVATION_HOLD_BLOCK_KINDS,
+)
 from ai_dev_loop.scheduler.domain.codex_routing_policy import (
     FAILURE_KIND_CODEX_WORKSPACE_ROUTING_TIMEOUT,
     ROUTING_AUTO_RETRY_MAX_AUTHORIZATIONS,
@@ -28,6 +36,9 @@ from ai_dev_loop.scheduler.domain.common import (
     UuidSessionId,
     encode_utc_instant,
 )
+from ai_dev_loop.scheduler.domain.implementer import (
+    assert_distinct_implementer_and_reviewer_sessions,
+)
 
 SUBMITTED_STATE_SCHEMA_VERSION = 1
 SCHEDULER_STATE_SCHEMA_VERSION = 2
@@ -36,6 +47,8 @@ SUBMITTED_CONTEXT_SCHEMA_VERSION = 1
 SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH = 2
 SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED = 3
 SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE = 4
+SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER = 5
+SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE = 6
 
 
 class RepositoryTargetBinding(DomainModel):
@@ -147,8 +160,61 @@ class SequenceRunBinding(DomainModel):
         return self
 
 
+class ImplementerBinding(DomainModel):
+    """Frozen implementer selection, independent of reviewer B.
+
+    ``session_id`` stays absent until an authenticated execution capture. The
+    durable ``purpose`` is always ``implementer`` and is never inferred.
+    """
+
+    schema_version: Literal[1] = 1
+    provider: Literal["cursor", "codex"]
+    purpose: Literal["implementer"] = "implementer"
+    command: NonEmptyStr
+    model: NonEmptyStr
+    reasoning_effort: NonEmptyStr | None = None
+    timeout_minutes: int
+    sandbox: NonEmptyStr
+    approval_policy: Literal["never"] | None = None
+    session_id: UuidSessionId | None = None
+
+    @field_validator("timeout_minutes", mode="before")
+    @classmethod
+    def reject_bool_timeout(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("timeout_minutes must be a positive integer")
+        return value
+
+    @field_validator("timeout_minutes")
+    @classmethod
+    def timeout_positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("timeout_minutes must be >= 1")
+        return value
+
+    @model_validator(mode="after")
+    def provider_settings(self) -> ImplementerBinding:
+        if self.provider == "cursor":
+            if self.reasoning_effort is not None or self.approval_policy is not None:
+                raise ValueError(
+                    "cursor implementer must not include Codex reasoning or approval policy"
+                )
+            return self
+        if self.reasoning_effort is None:
+            raise ValueError("codex implementer requires reasoning_effort")
+        if self.reasoning_effort not in CODEX_REVIEW_REASONING_EFFORTS:
+            raise ValueError("codex implementer reasoning_effort is not supported")
+        if self.sandbox != CODEX_IMPLEMENTER_SANDBOX:
+            raise ValueError("codex implementer sandbox must be workspace-write")
+        if self.approval_policy != CODEX_IMPLEMENTER_APPROVAL_POLICY:
+            raise ValueError(
+                "codex implementer approval policy must be the explicit noninteractive policy"
+            )
+        return self
+
+
 class SubmittedRunContext(DomainModel):
-    """Frozen immutable input context for a submitted A/B scheduler run."""
+    """Frozen immutable input context for a submitted scheduler run."""
 
     schema_version: int = Field(default=SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED)
     project_name: NonEmptyStr
@@ -160,6 +226,7 @@ class SubmittedRunContext(DomainModel):
     workflow: WorkflowLimits
     controller: ControllerBinding
     sequence: SequenceRunBinding | None = None
+    implementer: ImplementerBinding | None = None
     baseline_status_artifact_path: NonEmptyStr | None = None
     baseline_status_sha256: Sha256Hex | None = None
 
@@ -171,12 +238,29 @@ class SubmittedRunContext(DomainModel):
             SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
         }:
-            raise ValueError("schema_version must be 1, 2, 3, or 4")
+            raise ValueError("schema_version must be 1, 2, 3, 4, 5, or 6")
         return value
 
     @model_validator(mode="after")
     def codex_binding_matches_schema(self) -> SubmittedRunContext:
+        if (
+            self.schema_version
+            not in {
+                SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER,
+                SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
+            }
+            and self.implementer is not None
+        ):
+            raise ValueError("historical submitted contexts must not include implementer metadata")
+        reviewer_session = getattr(self.codex, "session_id", None)
+        implementer_session = None if self.implementer is None else self.implementer.session_id
+        assert_distinct_implementer_and_reviewer_sessions(
+            implementer_session if isinstance(implementer_session, str) else None,
+            reviewer_session if isinstance(reviewer_session, str) else None,
+        )
         if self.schema_version == SUBMITTED_CONTEXT_SCHEMA_VERSION:
             if not isinstance(self.codex, CodexRuntimeBinding):
                 raise ValueError("schema_version 1 requires CodexRuntimeBinding")
@@ -215,6 +299,25 @@ class SubmittedRunContext(DomainModel):
                 raise ValueError("schema_version 4 must not include baseline fields")
             if self.sequence is None:
                 raise ValueError("schema_version 4 requires sequence binding")
+        elif self.schema_version in {
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
+        }:
+            if not isinstance(self.codex, FreshCodexReviewerBinding):
+                raise ValueError("schema_version 5 requires FreshCodexReviewerBinding")
+            if not isinstance(self.repository, RepositoryTargetBinding):
+                raise ValueError("schema_version 5 requires RepositoryTargetBinding")
+            if (
+                self.baseline_status_artifact_path is not None
+                or self.baseline_status_sha256 is not None
+            ):
+                raise ValueError("schema_version 5 must not include baseline fields")
+            if (self.schema_version == SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE) != (
+                self.sequence is not None
+            ):
+                raise ValueError("schema_version 6 requires sequence; version 5 must omit it")
+            if self.implementer is None:
+                raise ValueError("schema_version 5 requires implementer binding")
         return self
 
     @model_serializer(mode="wrap")
@@ -226,11 +329,21 @@ class SubmittedRunContext(DomainModel):
         if self.schema_version in {
             SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
         }:
             data.pop("baseline_status_artifact_path", None)
             data.pop("baseline_status_sha256", None)
-        if self.schema_version != SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE:
+        if self.schema_version not in {
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
+        }:
             data.pop("sequence", None)
+        if self.schema_version not in {
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
+        }:
+            data.pop("implementer", None)
         return data
 
 
@@ -320,6 +433,17 @@ class BlockedState(SchedulerRunBase):
         return value
 
 
+def is_codex_implementer_reservation_hold(state: object) -> bool:
+    """Identify the narrow unsafe implementer block that permits explicit abort."""
+
+    return (
+        isinstance(state, BlockedState)
+        and state.context.implementer is not None
+        and state.context.implementer.provider == "codex"
+        and state.block_reason_kind in CODEX_IMPLEMENTER_RESERVATION_HOLD_BLOCK_KINDS
+    )
+
+
 class AdmittedRunCheckpoint(DomainModel):
     """Shared admission checkpoint fields for active scheduler runs."""
 
@@ -328,6 +452,71 @@ class AdmittedRunCheckpoint(DomainModel):
     admitted_at: NonEmptyStr
     admission_status_artifact_path: NonEmptyStr
     admission_status_sha256: Sha256Hex
+
+
+class CodexCapacityContinuation(DomainModel):
+    """Versioned role-bound continuation for one Codex capacity wait.
+
+    Historical waits omit this object and remain reviewer waits.
+    """
+
+    schema_version: Literal[1] = 1
+    role: Literal["implementer", "reviewer"]
+    turn: Literal["initial", "correction"]
+    prompt_sha256: Sha256Hex
+    prompt_artifact_path: NonEmptyStr
+    session_id: UuidSessionId | None = None
+    wait_intent_path: NonEmptyStr
+    wait_intent_sha256: Sha256Hex
+    partial_output_path: NonEmptyStr | None = None
+    partial_output_sha256: Sha256Hex | None = None
+    terminated_attempt_id: NonEmptyStr
+    no_session_bootstrap: bool = False
+
+    @model_validator(mode="after")
+    def partial_output_binding_complete(self) -> CodexCapacityContinuation:
+        if bool(self.partial_output_path) != bool(self.partial_output_sha256):
+            raise ValueError("partial output path and digest must appear together")
+        return self
+
+
+class CodexImplementerTimeoutContinuation(DomainModel):
+    """Exact same-turn continuation for one authenticated Codex timeout."""
+
+    schema_version: Literal[1] = 1
+    policy_version: Literal["codex-implementer-timeout-v1"] = "codex-implementer-timeout-v1"
+    turn: Literal["initial", "correction"]
+    iteration: int = Field(ge=1)
+    prompt_sha256: Sha256Hex
+    prompt_artifact_path: NonEmptyStr
+    session_id: UuidSessionId
+    source_attempt_id: NonEmptyStr
+    intent_path: NonEmptyStr
+    intent_sha256: Sha256Hex
+    retry_generation: int = Field(ge=1)
+    automatic_retries: int = Field(ge=0, le=3)
+    scheduled_generation: int | None = Field(default=None, ge=1)
+    wait_until: NonEmptyStr | None = None
+
+    @field_validator("wait_until")
+    @classmethod
+    def canonical_timeout_wait_until(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        canonical = encode_utc_instant(value)
+        if value != canonical:
+            raise ValueError("timeout wait_until must use canonical UTC Z encoding")
+        return value
+
+    @model_validator(mode="after")
+    def scheduled_timeout_fields_consistent(self) -> CodexImplementerTimeoutContinuation:
+        if bool(self.scheduled_generation) != bool(self.wait_until):
+            raise ValueError("scheduled generation and wait timestamp must appear together")
+        if self.scheduled_generation is not None and (
+            self.scheduled_generation != self.retry_generation
+        ):
+            raise ValueError("scheduled generation must match retry generation")
+        return self
 
 
 class CodexWorkflowCheckpoint(DomainModel):
@@ -366,10 +555,33 @@ class CodexWorkflowCheckpoint(DomainModel):
     routing_auto_retry_authorizations_used: int = Field(default=0)
     routing_auto_retry_due_at: NonEmptyStr | None = None
     routing_auto_retry_exhausted: bool = False
-    routing_failure_post_probe_status: (
-        Literal["available", "exhausted", "unavailable"] | None
-    ) = None
+    routing_failure_post_probe_status: Literal["available", "exhausted", "unavailable"] | None = (
+        None
+    )
     routing_failure_post_probe_reason: NonEmptyStr | None = None
+    implementer_session_id: UuidSessionId | None = None
+    implementer_binding_artifact_path: NonEmptyStr | None = None
+    implementer_binding_artifact_sha256: Sha256Hex | None = None
+    capacity_continuation: CodexCapacityContinuation | None = None
+    implementer_timeout_continuation: CodexImplementerTimeoutContinuation | None = None
+    implementer_timeout_automatic_retries_consumed: int = Field(default=0, ge=0, le=3)
+    implementer_no_session_bootstrap_retries: int = Field(default=0)
+
+    @model_serializer(mode="wrap")
+    def _serialize_codex_checkpoint(
+        self,
+        handler: Callable[[CodexWorkflowCheckpoint], dict[str, object]],
+    ) -> dict[str, object]:
+        data = handler(self)
+        if self.capacity_continuation is None:
+            data.pop("capacity_continuation", None)
+        if self.implementer_timeout_continuation is None:
+            data.pop("implementer_timeout_continuation", None)
+        if self.implementer_timeout_automatic_retries_consumed == 0:
+            data.pop("implementer_timeout_automatic_retries_consumed", None)
+        if self.implementer_no_session_bootstrap_retries == 0:
+            data.pop("implementer_no_session_bootstrap_retries", None)
+        return data
 
     @field_validator(
         "review_iteration",
@@ -377,6 +589,8 @@ class CodexWorkflowCheckpoint(DomainModel):
         "review_retry_generation",
         "capacity_wait_generation",
         "routing_auto_retry_authorizations_used",
+        "implementer_timeout_automatic_retries_consumed",
+        "implementer_no_session_bootstrap_retries",
         mode="before",
     )
     @classmethod
@@ -395,6 +609,8 @@ class CodexWorkflowCheckpoint(DomainModel):
         "review_retry_generation",
         "capacity_wait_generation",
         "routing_auto_retry_authorizations_used",
+        "implementer_timeout_automatic_retries_consumed",
+        "implementer_no_session_bootstrap_retries",
     )
     @classmethod
     def non_negative_review_counters_int(cls, value: int) -> int:
@@ -439,6 +655,14 @@ class CodexWorkflowCheckpoint(DomainModel):
 
     @model_validator(mode="after")
     def routing_auto_retry_fields_consistent(self) -> CodexWorkflowCheckpoint:
+        assert_distinct_implementer_and_reviewer_sessions(
+            self.implementer_session_id,
+            self.reviewer_session_id,
+        )
+        if bool(self.implementer_binding_artifact_path) != bool(
+            self.implementer_binding_artifact_sha256
+        ):
+            raise ValueError("implementer binding artifact path and digest must appear together")
         if isinstance(self.routing_auto_retry_authorizations_used, bool):
             raise ValueError("routing_auto_retry_authorizations_used must be an integer")
         if self.routing_auto_retry_authorizations_used < 0:
@@ -542,11 +766,22 @@ class PreflightCompleteState(SchedulerRunBase):
     schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
     checkpoint: AdmittedRunCheckpoint
     cursor: CursorWorkflowCheckpoint = Field(default_factory=CursorWorkflowCheckpoint)
+    codex: CodexWorkflowCheckpoint | None = None
 
     @field_validator("schema_version")
     @classmethod
     def schema_version_is_four(cls, value: int) -> int:
         return _schema_version_is_four(value)
+
+    @model_serializer(mode="wrap")
+    def _serialize_preflight_complete(
+        self,
+        handler: Callable[[PreflightCompleteState], dict[str, object]],
+    ) -> dict[str, object]:
+        data = handler(self)
+        if self.codex is None:
+            data.pop("codex", None)
+        return data
 
 
 class CursorReadyState(SchedulerRunBase):
@@ -565,6 +800,10 @@ class CursorReadyState(SchedulerRunBase):
 
     @model_validator(mode="after")
     def chat_id_required(self) -> CursorReadyState:
+        if resolved_implementer_provider(self.context) == "codex":
+            if self.cursor.chat_id:
+                raise ValueError("codex implementer cursor_ready must not bind a Cursor chat")
+            return self
         if not self.cursor.chat_id:
             raise ValueError("cursor_ready requires chat_id")
         return self
@@ -598,7 +837,7 @@ class WaitingUsageLimitState(SchedulerRunBase):
 
 
 class WaitingCodexCapacityState(SchedulerRunBase):
-    """Run waiting for Codex account capacity before resuming the bound reviewer."""
+    """Run waiting for Codex account capacity for its bound pending role."""
 
     kind: Literal["waiting_codex_capacity"] = "waiting_codex_capacity"
     schema_version: int = Field(default=SCHEDULER_STATE_SCHEMA_VERSION_V4)
@@ -613,12 +852,15 @@ class WaitingCodexCapacityState(SchedulerRunBase):
 
     @model_validator(mode="after")
     def capacity_wait_fields_required(self) -> WaitingCodexCapacityState:
+        if not self.codex.codex_capacity_wait_started_at:
+            raise ValueError("waiting_codex_capacity requires capacity wait timestamp")
+        continuation = self.codex.capacity_continuation
+        if continuation is not None and continuation.role == "implementer":
+            return self
         if not self.codex.reviewer_session_id:
             raise ValueError("waiting_codex_capacity requires bound reviewer identity")
         if not self.cursor.staged_patch_path or not self.cursor.staged_patch_sha256:
             raise ValueError("waiting_codex_capacity requires staged patch artifacts")
-        if not self.codex.codex_capacity_wait_started_at:
-            raise ValueError("waiting_codex_capacity requires capacity wait timestamp")
         return self
 
 
@@ -952,6 +1194,14 @@ def parse_scheduler_state(
     ):
         return payload
     return SCHEDULER_STATE_ADAPTER.validate_python(payload)
+
+
+def resolved_implementer_provider(context: SubmittedRunContext) -> Literal["cursor", "codex"]:
+    """Historical contexts omit implementer metadata and remain Cursor."""
+
+    if context.implementer is None:
+        return "cursor"
+    return context.implementer.provider
 
 
 def submission_identity_payload(context: SubmittedRunContext) -> dict[str, object]:

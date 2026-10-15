@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Annotated, Literal
 
-from pydantic import Discriminator, Field, Tag, TypeAdapter, field_validator, model_validator
+from pydantic import (
+    Discriminator,
+    Field,
+    Tag,
+    TypeAdapter,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from ai_dev_loop.scheduler.domain.admission_contract import (
     ADMISSION_BLOCKED_EVENT_KIND,
@@ -34,8 +43,12 @@ ATTEMPT_UNCERTAIN_EVENT_KIND = "attempt_uncertain"
 TICK_STALE_REJECTED_EVENT_KIND = "tick_stale_rejected"
 PREFLIGHT_COMPLETED_EVENT_KIND = "preflight_completed"
 PREFLIGHT_BLOCKED_EVENT_KIND = "preflight_blocked"
+IMPLEMENTER_DISPATCH_BLOCKED_EVENT_KIND = "implementer_dispatch_blocked"
 CURSOR_CHAT_CREATED_EVENT_KIND = "cursor_chat_created"
 CURSOR_INITIAL_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND = "cursor_initial_recovery_successor_created"
+CODEX_IMPLEMENTER_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND = (
+    "codex_implementer_recovery_successor_created"
+)
 CURSOR_CHAT_BLOCKED_EVENT_KIND = "cursor_chat_blocked"
 CURSOR_TURN_COMPLETED_EVENT_KIND = "cursor_turn_completed"
 CURSOR_TURN_BLOCKED_EVENT_KIND = "cursor_turn_blocked"
@@ -44,6 +57,8 @@ STAGING_COMPLETED_EVENT_KIND = "staging_completed"
 STAGING_BLOCKED_EVENT_KIND = "staging_blocked"
 AWAITING_CODEX_REVIEW_EVENT_KIND = "awaiting_codex_review_entered"
 CODEX_REVIEWER_BOUND_EVENT_KIND = "codex_reviewer_bound"
+CODEX_IMPLEMENTER_TURN_COMPLETED_EVENT_KIND = "codex_implementer_turn_completed"
+CODEX_IMPLEMENTER_BLOCKED_EVENT_KIND = "codex_implementer_blocked"
 CODEX_BOOTSTRAP_UNCERTAIN_EVENT_KIND = "codex_bootstrap_uncertain"
 CODEX_REVIEW_SCHEDULED_EVENT_KIND = "codex_review_scheduled"
 CODEX_REVIEW_COMPLETED_EVENT_KIND = "codex_review_completed"
@@ -76,6 +91,18 @@ class CursorTimeoutRetryEvent(DomainModel):
     run_id: NonEmptyStr
     attempt_id: NonEmptyStr
     iteration: int = Field(ge=1)
+    automatic_retries: int = Field(ge=0, le=3)
+    action: Literal["automatic", "manual", "exhausted"]
+    available_at: NonEmptyStr | None = None
+
+
+class CodexImplementerTimeoutRetryEvent(DomainModel):
+    kind: Literal["codex_implementer_timeout_retry"] = "codex_implementer_timeout_retry"
+    run_id: NonEmptyStr
+    attempt_id: NonEmptyStr
+    iteration: int = Field(ge=1)
+    turn: Literal["initial", "correction"]
+    retry_generation: int = Field(ge=1)
     automatic_retries: int = Field(ge=0, le=3)
     action: Literal["automatic", "manual", "exhausted"]
     available_at: NonEmptyStr | None = None
@@ -261,6 +288,20 @@ class PreflightBlockedEvent(DomainModel):
         return value
 
 
+class ImplementerDispatchBlockedEvent(DomainModel):
+    kind: str = Field(default=IMPLEMENTER_DISPATCH_BLOCKED_EVENT_KIND)
+    run_id: str
+    block_reason_kind: NonEmptyStr
+    block_reason_summary: NonEmptyStr
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_implementer_dispatch_blocked(cls, value: str) -> str:
+        if value != IMPLEMENTER_DISPATCH_BLOCKED_EVENT_KIND:
+            raise ValueError("kind must be implementer_dispatch_blocked")
+        return value
+
+
 class CursorInitialRecoverySuccessorCreatedEvent(DomainModel):
     """Successor created for a failed initial standalone Cursor turn."""
 
@@ -276,6 +317,34 @@ class CursorInitialRecoverySuccessorCreatedEvent(DomainModel):
     def kind_is_cursor_initial_recovery_successor_created(cls, value: str) -> str:
         if value != CURSOR_INITIAL_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND:
             raise ValueError("kind must be cursor_initial_recovery_successor_created")
+        return value
+
+    @field_validator("iteration", mode="before")
+    @classmethod
+    def iteration_is_strict_int(cls, value: object) -> object:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("iteration must be a JSON integer")
+        if value < 1:
+            raise ValueError("iteration must be >= 1")
+        return value
+
+
+class CodexImplementerRecoverySuccessorCreatedEvent(DomainModel):
+    """Successor created for one authenticated Codex implementer failure."""
+
+    kind: str = Field(default=CODEX_IMPLEMENTER_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND)
+    source_run_id: NonEmptyStr
+    successor_run_id: NonEmptyStr
+    recovery_key: Sha256Hex
+    failed_attempt_id: NonEmptyStr
+    turn: Literal["initial", "correction"]
+    iteration: int = Field(ge=1)
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_codex_implementer_recovery_successor_created(cls, value: str) -> str:
+        if value != CODEX_IMPLEMENTER_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND:
+            raise ValueError("kind must be codex_implementer_recovery_successor_created")
         return value
 
     @field_validator("iteration", mode="before")
@@ -420,6 +489,68 @@ class CodexReviewerBoundEvent(DomainModel):
         return value
 
 
+class CodexImplementerTurnCompletedEvent(DomainModel):
+    kind: str = Field(default=CODEX_IMPLEMENTER_TURN_COMPLETED_EVENT_KIND)
+    run_id: str
+    iteration: int = Field(ge=1)
+    turn: Literal["initial", "correction"]
+    implementer_session_id_prefix: NonEmptyStr
+    binding_artifact_path: NonEmptyStr
+    binding_artifact_sha256: Sha256Hex
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_codex_implementer_turn_completed(cls, value: str) -> str:
+        if value != CODEX_IMPLEMENTER_TURN_COMPLETED_EVENT_KIND:
+            raise ValueError("kind must be codex_implementer_turn_completed")
+        return value
+
+
+class CodexImplementerBlockedEvent(DomainModel):
+    kind: str = Field(default=CODEX_IMPLEMENTER_BLOCKED_EVENT_KIND)
+    run_id: str
+    block_reason_kind: NonEmptyStr
+    block_reason_summary: NonEmptyStr
+    attempt_id: NonEmptyStr | None = None
+    implementer_session_id_prefix: NonEmptyStr | None = None
+    binding_artifact_path: NonEmptyStr | None = None
+    binding_artifact_sha256: Sha256Hex | None = None
+
+    @model_serializer(mode="wrap")
+    def omit_historical_optional_authority(
+        self,
+        handler: Callable[[CodexImplementerBlockedEvent], dict[str, object]],
+    ) -> dict[str, object]:
+        data = handler(self)
+        for field in (
+            "attempt_id",
+            "implementer_session_id_prefix",
+            "binding_artifact_path",
+            "binding_artifact_sha256",
+        ):
+            if getattr(self, field) is None:
+                data.pop(field, None)
+        return data
+
+    @model_validator(mode="after")
+    def binding_is_complete(self) -> CodexImplementerBlockedEvent:
+        binding = (
+            self.implementer_session_id_prefix,
+            self.binding_artifact_path,
+            self.binding_artifact_sha256,
+        )
+        if any(value is None for value in binding) and any(value is not None for value in binding):
+            raise ValueError("implementer blocked binding must be complete or absent")
+        return self
+
+    @field_validator("kind")
+    @classmethod
+    def kind_is_codex_implementer_blocked(cls, value: str) -> str:
+        if value != CODEX_IMPLEMENTER_BLOCKED_EVENT_KIND:
+            raise ValueError("kind must be codex_implementer_blocked")
+        return value
+
+
 class CodexBootstrapUncertainEvent(DomainModel):
     kind: str = Field(default=CODEX_BOOTSTRAP_UNCERTAIN_EVENT_KIND)
     run_id: str
@@ -498,6 +629,20 @@ class CodexUsageCapacityDetectedEvent(DomainModel):
         None
     )
     routing_failure_post_probe_reason: NonEmptyStr | None = None
+    capacity_role: Literal["implementer", "reviewer"] | None = None
+    capacity_turn: Literal["initial", "correction"] | None = None
+
+    @model_serializer(mode="wrap")
+    def _serialize_capacity_event(
+        self,
+        handler: Callable[[CodexUsageCapacityDetectedEvent], dict[str, object]],
+    ) -> dict[str, object]:
+        data = handler(self)
+        if self.capacity_role is None:
+            data.pop("capacity_role", None)
+        if self.capacity_turn is None:
+            data.pop("capacity_turn", None)
+        return data
 
     @field_validator("routing_auto_retry_authorizations_used", mode="before")
     @classmethod
@@ -703,6 +848,17 @@ class CodexCapacityAvailableEvent(DomainModel):
     kind: str = Field(default=CODEX_CAPACITY_AVAILABLE_EVENT_KIND)
     run_id: str
     review_iteration: int
+    capacity_role: Literal["implementer", "reviewer"] | None = None
+
+    @model_serializer(mode="wrap")
+    def _serialize_capacity_available(
+        self,
+        handler: Callable[[CodexCapacityAvailableEvent], dict[str, object]],
+    ) -> dict[str, object]:
+        data = handler(self)
+        if self.capacity_role is None:
+            data.pop("capacity_role", None)
+        return data
 
     @field_validator("kind")
     @classmethod
@@ -978,6 +1134,10 @@ def _scheduler_event_discriminator(value: object) -> str:
 
 SchedulerEvent = Annotated[
     Annotated[CursorTimeoutRetryEvent, Tag("cursor_timeout_retry")]
+    | Annotated[
+        CodexImplementerTimeoutRetryEvent,
+        Tag("codex_implementer_timeout_retry"),
+    ]
     | Annotated[RunSubmittedEvent, Tag(SUBMITTED_EVENT_KIND)]
     | Annotated[RunAuthorizedEvent, Tag(AUTHORIZED_EVENT_KIND)]
     | Annotated[WorktreeAdmittedEvent, Tag(ADMISSION_EVENT_KIND)]
@@ -990,10 +1150,18 @@ SchedulerEvent = Annotated[
     | Annotated[TickStaleRejectedEvent, Tag(TICK_STALE_REJECTED_EVENT_KIND)]
     | Annotated[PreflightCompletedEvent, Tag(PREFLIGHT_COMPLETED_EVENT_KIND)]
     | Annotated[PreflightBlockedEvent, Tag(PREFLIGHT_BLOCKED_EVENT_KIND)]
+    | Annotated[
+        ImplementerDispatchBlockedEvent,
+        Tag(IMPLEMENTER_DISPATCH_BLOCKED_EVENT_KIND),
+    ]
     | Annotated[CursorChatCreatedEvent, Tag(CURSOR_CHAT_CREATED_EVENT_KIND)]
     | Annotated[
         CursorInitialRecoverySuccessorCreatedEvent,
         Tag(CURSOR_INITIAL_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND),
+    ]
+    | Annotated[
+        CodexImplementerRecoverySuccessorCreatedEvent,
+        Tag(CODEX_IMPLEMENTER_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND),
     ]
     | Annotated[CursorChatBlockedEvent, Tag(CURSOR_CHAT_BLOCKED_EVENT_KIND)]
     | Annotated[CursorTurnCompletedEvent, Tag(CURSOR_TURN_COMPLETED_EVENT_KIND)]
@@ -1003,6 +1171,11 @@ SchedulerEvent = Annotated[
     | Annotated[StagingBlockedEvent, Tag(STAGING_BLOCKED_EVENT_KIND)]
     | Annotated[AwaitingCodexReviewEnteredEvent, Tag(AWAITING_CODEX_REVIEW_EVENT_KIND)]
     | Annotated[CodexReviewerBoundEvent, Tag(CODEX_REVIEWER_BOUND_EVENT_KIND)]
+    | Annotated[
+        CodexImplementerTurnCompletedEvent,
+        Tag(CODEX_IMPLEMENTER_TURN_COMPLETED_EVENT_KIND),
+    ]
+    | Annotated[CodexImplementerBlockedEvent, Tag(CODEX_IMPLEMENTER_BLOCKED_EVENT_KIND)]
     | Annotated[CodexBootstrapUncertainEvent, Tag(CODEX_BOOTSTRAP_UNCERTAIN_EVENT_KIND)]
     | Annotated[CodexReviewScheduledEvent, Tag(CODEX_REVIEW_SCHEDULED_EVENT_KIND)]
     | Annotated[CodexReviewCompletedEvent, Tag(CODEX_REVIEW_COMPLETED_EVENT_KIND)]

@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/scheduler-sequence-implementer-replacement-intent-v1.json",
+  "title": "SequenceImplementerReplacementIntentV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "provider",
+    "sequence_id",
+    "sequence_version",
+    "ordinal",
+    "source_run_id",
+    "source_generation",
+    "successor_run_id",
+    "successor_generation",
+    "recovery_key",
+    "record_digest",
+    "entry_hash",
+    "worktree_key",
+    "repository_root",
+    "reservation_owner_run_id",
+    "publication_postcondition",
+    "adoption_state"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "provider": { "const": "codex" },
+    "sequence_id": { "$ref": "#/$defs/nonEmptyString" },
+    "sequence_version": { "$ref": "#/$defs/positiveInteger" },
+    "ordinal": { "$ref": "#/$defs/positiveInteger" },
+    "source_run_id": { "$ref": "#/$defs/nonEmptyString" },
+    "source_generation": { "$ref": "#/$defs/positiveInteger" },
+    "successor_run_id": { "$ref": "#/$defs/nonEmptyString" },
+    "successor_generation": { "type": "integer", "minimum": 2 },
+    "recovery_key": { "$ref": "#/$defs/sha256" },
+    "record_digest": {
+      "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/sha256" }]
+    },
+    "entry_hash": { "$ref": "#/$defs/sha256" },
+    "worktree_key": { "$ref": "#/$defs/nonEmptyString" },
+    "repository_root": { "$ref": "#/$defs/nonEmptyString" },
+    "reservation_owner_run_id": { "$ref": "#/$defs/nonEmptyString" },
+    "publication_postcondition": {
+      "const": "sequence_implementer_successor_dispatch_eligible"
+    },
+    "adoption_state": { "enum": ["pending", "adopted"] }
+  },
+  "$defs": {
+    "nonEmptyString": { "type": "string", "minLength": 1, "pattern": ".*\\S.*" },
+    "positiveInteger": { "type": "integer", "minimum": 1 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "adoption_state": { "const": "pending" } } },
+      "then": { "properties": { "record_digest": { "type": "null" } } }
+    },
+    {
+      "if": { "properties": { "adoption_state": { "const": "adopted" } } },
+      "then": { "properties": { "record_digest": { "$ref": "#/$defs/sha256" } } }
+    }
+  ]
+}

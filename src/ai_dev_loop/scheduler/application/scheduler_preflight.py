@@ -10,6 +10,12 @@ from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.runners.git import discover_repository
 from ai_dev_loop.runners.probes import (
     CompatibilityClassification,
+    ModelCompatibilityResult,
+    ProbeResult,
+    executable_probe,
+    probe_codex_auth,
+    probe_codex_model_compatibility,
+    probe_version,
     require_probe_success,
     run_start_probes,
     run_tool_compatibility_probes,
@@ -24,6 +30,7 @@ from ai_dev_loop.scheduler.domain.state import (
     RepositoryBinding,
     RepositoryTargetBinding,
     SubmittedRunContext,
+    resolved_implementer_provider,
 )
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import (
     ProtectedArtifactError,
@@ -139,6 +146,98 @@ def _validate_baseline_if_present(
         raise ValidationError("worktree status changed since prepare")
 
 
+def _codex_implementer_start_probes(
+    *,
+    implementer_command: str,
+    reviewer_command: str,
+) -> list[ProbeResult]:
+    commands = [("Git", "git"), ("Codex", implementer_command)]
+    if reviewer_command != implementer_command:
+        commands.append(("Codex", reviewer_command))
+    failures: list[ProbeResult] = []
+    for label, command in commands:
+        failure = executable_probe(command, label=label)
+        if failure is not None:
+            failures.append(failure)
+    if failures:
+        return failures
+    probes = [probe_codex_auth(implementer_command)]
+    if reviewer_command != implementer_command:
+        probes.append(probe_codex_auth(reviewer_command))
+    return probes
+
+
+def _codex_implementer_compatibility(
+    *,
+    implementer_command: str,
+    implementer_model: str,
+    implementer_effort: str,
+    reviewer_command: str,
+    reviewer_model: str,
+) -> list[ModelCompatibilityResult]:
+    implementer_version = probe_version(implementer_command, tool="codex")
+    results = [
+        probe_codex_model_compatibility(
+            implementer_command,
+            required_model=implementer_model,
+            installed_version=implementer_version.version,
+            required_reasoning_effort=implementer_effort,
+        )
+    ]
+    if reviewer_command == implementer_command and reviewer_model == implementer_model:
+        reviewer_version = implementer_version.version
+    else:
+        reviewer_version = probe_version(reviewer_command, tool="codex").version
+    results.append(
+        probe_codex_model_compatibility(
+            reviewer_command,
+            required_model=reviewer_model,
+            installed_version=reviewer_version,
+        )
+    )
+    return results
+
+
+def _compatibility_failure(
+    compat: list[ModelCompatibilityResult],
+    *,
+    reject_probe_failure: bool,
+) -> SchedulerPreflightResult | None:
+    incompatible = [
+        item
+        for item in compat
+        if item.classification == CompatibilityClassification.INCOMPATIBLE_MODEL
+    ]
+    if incompatible:
+        detail = incompatible[0].detail or "tool model compatibility check failed"
+        return SchedulerPreflightResult(
+            ok=False,
+            failure_kind="tool_incompatible",
+            failure_summary=detail,
+        )
+    unknown = [
+        item for item in compat if item.classification == CompatibilityClassification.UNKNOWN
+    ]
+    if unknown:
+        detail = unknown[0].detail or "tool model compatibility is unknown"
+        return SchedulerPreflightResult(
+            ok=False,
+            failure_kind="tool_compatibility_unknown",
+            failure_summary=detail,
+        )
+    failed = [
+        item for item in compat if item.classification == CompatibilityClassification.PROBE_FAILED
+    ]
+    if reject_probe_failure and failed:
+        detail = failed[0].detail or "tool model compatibility probe failed"
+        return SchedulerPreflightResult(
+            ok=False,
+            failure_kind="preflight_validation_failed",
+            failure_summary=detail,
+        )
+    return None
+
+
 def run_scheduler_preflight(
     *,
     run_id: str,
@@ -162,41 +261,41 @@ def run_scheduler_preflight(
         )
         _validate_plan_prompt_artifacts(context, artifacts, run_id)
         _validate_baseline_if_present(context, artifacts, run_id, repo_root)
-        require_probe_success(
-            run_start_probes(
+        provider = resolved_implementer_provider(context)
+        if provider == "codex":
+            implementer = context.implementer
+            if implementer is None or implementer.reasoning_effort is None:
+                raise ValidationError("codex implementer binding is incomplete")
+            require_probe_success(
+                _codex_implementer_start_probes(
+                    implementer_command=implementer.command,
+                    reviewer_command=context.codex.command,
+                )
+            )
+            compat = _codex_implementer_compatibility(
+                implementer_command=implementer.command,
+                implementer_model=implementer.model,
+                implementer_effort=implementer.reasoning_effort,
+                reviewer_command=context.codex.command,
+                reviewer_model=context.codex.review_model,
+            )
+        else:
+            require_probe_success(
+                run_start_probes(
+                    cursor_command=context.cursor.command,
+                    cursor_model=context.cursor.model,
+                    codex_command=context.codex.command,
+                )
+            )
+            compat, _versions = run_tool_compatibility_probes(
                 cursor_command=context.cursor.command,
                 cursor_model=context.cursor.model,
                 codex_command=context.codex.command,
+                codex_model=context.codex.review_model,
             )
-        )
-        compat, _versions = run_tool_compatibility_probes(
-            cursor_command=context.cursor.command,
-            cursor_model=context.cursor.model,
-            codex_command=context.codex.command,
-            codex_model=context.codex.review_model,
-        )
-        incompatible = [
-            item
-            for item in compat
-            if item.classification == CompatibilityClassification.INCOMPATIBLE_MODEL
-        ]
-        if incompatible:
-            detail = incompatible[0].detail or "tool model compatibility check failed"
-            return SchedulerPreflightResult(
-                ok=False,
-                failure_kind="tool_incompatible",
-                failure_summary=detail,
-            )
-        unknown = [
-            item for item in compat if item.classification == CompatibilityClassification.UNKNOWN
-        ]
-        if unknown:
-            detail = unknown[0].detail or "tool model compatibility is unknown"
-            return SchedulerPreflightResult(
-                ok=False,
-                failure_kind="tool_compatibility_unknown",
-                failure_summary=detail,
-            )
+        failure = _compatibility_failure(compat, reject_probe_failure=provider == "codex")
+        if failure is not None:
+            return failure
     except ValidationError as exc:
         return SchedulerPreflightResult(
             ok=False,

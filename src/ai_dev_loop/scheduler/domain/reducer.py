@@ -18,6 +18,8 @@ from ai_dev_loop.scheduler.domain.events import (
     CodexBootstrapUncertainEvent,
     CodexCapacityAvailableEvent,
     CodexCapacityRetryAuthorizedEvent,
+    CodexImplementerBlockedEvent,
+    CodexImplementerTurnCompletedEvent,
     CodexReviewBlockedEvent,
     CodexReviewCompletedEvent,
     CodexReviewerBoundEvent,
@@ -29,6 +31,7 @@ from ai_dev_loop.scheduler.domain.events import (
     CursorTurnBlockedEvent,
     CursorTurnCompletedEvent,
     CursorUsageLimitDetectedEvent,
+    ImplementerDispatchBlockedEvent,
     MaxIterationsReachedEvent,
     PreflightBlockedEvent,
     PreflightCompletedEvent,
@@ -57,6 +60,7 @@ from ai_dev_loop.scheduler.domain.state import (
     AwaitingCodexReviewState,
     BlockedState,
     CheckpointPendingState,
+    CodexCapacityContinuation,
     CodexWorkflowCheckpoint,
     CompletedState,
     CompletedWithResidualRiskState,
@@ -69,6 +73,7 @@ from ai_dev_loop.scheduler.domain.state import (
     WaitingCodexReviewRetryState,
     WaitingForCursorFixState,
     WaitingUsageLimitState,
+    is_codex_implementer_reservation_hold,
 )
 
 
@@ -222,6 +227,29 @@ def apply_preflight_blocked(
     )
 
 
+def apply_implementer_dispatch_blocked(
+    state: PreflightCompleteState,
+    event: ImplementerDispatchBlockedEvent,
+    *,
+    now_text: str,
+) -> BlockedState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    return BlockedState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        blocked_at=now_text,
+        block_reason_kind=event.block_reason_kind,
+        block_reason_summary=event.block_reason_summary,
+        authorized_at=state.checkpoint.authorized_at,
+        authorized_controller_session_id=state.checkpoint.authorized_controller_session_id,
+    )
+
+
 def apply_cursor_chat_created(
     state: PreflightCompleteState,
     event: CursorChatCreatedEvent,
@@ -302,6 +330,76 @@ def apply_cursor_turn_completed(
         checkpoint=state.checkpoint,
         cursor=cursor,
         codex=getattr(state, "codex", CodexWorkflowCheckpoint()),
+    )
+
+
+def apply_codex_implementer_turn_completed(
+    state: PreflightCompleteState | WaitingForCursorFixState,
+    event: CodexImplementerTurnCompletedEvent,
+    *,
+    now_text: str,
+    implementer_session_id: str,
+) -> CursorReadyState:
+    """Mark a successful Codex implementer turn ready for the existing staging path."""
+
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    if event.iteration != state.cursor.iteration:
+        raise ValueError("implementer completion iteration mismatch")
+    codex = state.codex if state.codex is not None else CodexWorkflowCheckpoint()
+    codex = codex.model_copy(
+        update={
+            "implementer_session_id": implementer_session_id,
+            "implementer_binding_artifact_path": event.binding_artifact_path,
+            "implementer_binding_artifact_sha256": event.binding_artifact_sha256,
+            "codex_capacity_wait_started_at": None,
+            "capacity_evidence_source": None,
+            "capacity_continuation": None,
+            "implementer_timeout_continuation": None,
+            "inferred_operational_failure_kind": None,
+        }
+    )
+    cursor = state.cursor.model_copy(
+        update={
+            "chat_id": None,
+            "timeout_attempt_id": None,
+            "timeout_automatic_retries": 0,
+            "wait_until": None,
+        }
+    )
+    return CursorReadyState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        checkpoint=state.checkpoint,
+        cursor=cursor,
+        codex=codex,
+    )
+
+
+def apply_codex_implementer_blocked(
+    state: PreflightCompleteState | WaitingForCursorFixState | WaitingCodexCapacityState,
+    event: CodexImplementerBlockedEvent,
+    *,
+    now_text: str,
+) -> BlockedState:
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    return BlockedState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        blocked_at=now_text,
+        block_reason_kind=event.block_reason_kind,
+        block_reason_summary=event.block_reason_summary,
+        authorized_at=state.checkpoint.authorized_at,
+        authorized_controller_session_id=state.checkpoint.authorized_controller_session_id,
     )
 
 
@@ -500,21 +598,67 @@ def apply_codex_usage_capacity_detected(
         and event.preserved_retry_generation is not None
     ):
         update.update(
-                {
-                    "review_retry_failure_kind": event.operational_failure_kind,
-                    "last_failed_attempt_id": event.preserved_failed_attempt_id,
-                    "review_retry_generation": event.preserved_retry_generation,
-                    "review_retry_scheduled_generation": None,
-                    "routing_auto_retry_policy_version": event.routing_auto_retry_policy_version,
-                    "routing_auto_retry_eligible": event.routing_auto_retry_eligible,
-                    "routing_auto_retry_authorizations_used": event.routing_auto_retry_authorizations_used,
-                    "routing_auto_retry_due_at": event.routing_auto_retry_due_at,
-                    "routing_auto_retry_exhausted": event.routing_auto_retry_exhausted,
-                    "routing_failure_post_probe_status": event.routing_failure_post_probe_status,
-                    "routing_failure_post_probe_reason": event.routing_failure_post_probe_reason,
-                }
+            {
+                "review_retry_failure_kind": event.operational_failure_kind,
+                "last_failed_attempt_id": event.preserved_failed_attempt_id,
+                "review_retry_generation": event.preserved_retry_generation,
+                "review_retry_scheduled_generation": None,
+                "routing_auto_retry_policy_version": event.routing_auto_retry_policy_version,
+                "routing_auto_retry_eligible": event.routing_auto_retry_eligible,
+                "routing_auto_retry_authorizations_used": event.routing_auto_retry_authorizations_used,
+                "routing_auto_retry_due_at": event.routing_auto_retry_due_at,
+                "routing_auto_retry_exhausted": event.routing_auto_retry_exhausted,
+                "routing_failure_post_probe_status": event.routing_failure_post_probe_status,
+                "routing_failure_post_probe_reason": event.routing_failure_post_probe_reason,
+            }
         )
     codex = state.codex.model_copy(update=update)
+    return WaitingCodexCapacityState(
+        run_id=state.run_id,
+        version=state.version + 1,
+        submitted_at=state.submitted_at,
+        updated_at=now_text,
+        idempotency_key=state.idempotency_key,
+        context=state.context,
+        checkpoint=state.checkpoint,
+        cursor=state.cursor,
+        codex=codex,
+    )
+
+
+def apply_implementer_usage_capacity_detected(
+    state: PreflightCompleteState | WaitingForCursorFixState,
+    event: CodexUsageCapacityDetectedEvent,
+    *,
+    now_text: str,
+    continuation: CodexCapacityContinuation,
+    implementer_session_id: str | None,
+    binding_artifact_path: str | None = None,
+    binding_artifact_sha256: str | None = None,
+) -> WaitingCodexCapacityState:
+    """Enter an implementer capacity wait without requiring reviewer B or a patch."""
+
+    if event.run_id != state.run_id:
+        raise ValueError("event run_id disagrees with state")
+    if continuation.role != "implementer":
+        raise ValueError("implementer capacity wait requires implementer role")
+    if event.capacity_role != "implementer":
+        raise ValueError("implementer capacity event role mismatch")
+    prior_codex = state.codex if state.codex is not None else CodexWorkflowCheckpoint()
+    next_wait_generation = max(prior_codex.capacity_wait_generation, 0) + 1
+    codex = prior_codex.model_copy(
+        update={
+            "codex_capacity_wait_started_at": now_text,
+            "capacity_evidence_source": event.evidence_source,
+            "inferred_operational_failure_kind": event.operational_failure_kind,
+            "capacity_wait_generation": next_wait_generation,
+            "capacity_retry_scheduled_generation": None,
+            "capacity_continuation": continuation,
+            "implementer_session_id": implementer_session_id,
+            "implementer_binding_artifact_path": binding_artifact_path,
+            "implementer_binding_artifact_sha256": binding_artifact_sha256,
+        }
+    )
     return WaitingCodexCapacityState(
         run_id=state.run_id,
         version=state.version + 1,
@@ -610,9 +754,49 @@ def apply_codex_capacity_available(
     event: CodexCapacityAvailableEvent,
     *,
     now_text: str,
-) -> AwaitingCodexReviewState | WaitingCodexReviewRetryState:
+) -> (
+    AwaitingCodexReviewState
+    | WaitingCodexReviewRetryState
+    | PreflightCompleteState
+    | WaitingForCursorFixState
+):
     if event.run_id != state.run_id:
         raise ValueError("event run_id disagrees with state")
+    continuation = state.codex.capacity_continuation
+    if continuation is not None and continuation.role == "implementer":
+        if event.capacity_role != "implementer":
+            raise ValueError("implementer capacity availability role mismatch")
+        codex = state.codex.model_copy(
+            update={
+                "codex_capacity_wait_started_at": None,
+                "capacity_retry_scheduled_generation": state.codex.capacity_wait_generation,
+            }
+        )
+        if continuation.turn == "correction":
+            return WaitingForCursorFixState(
+                run_id=state.run_id,
+                version=state.version + 1,
+                submitted_at=state.submitted_at,
+                updated_at=now_text,
+                idempotency_key=state.idempotency_key,
+                context=state.context,
+                checkpoint=state.checkpoint,
+                cursor=state.cursor,
+                codex=codex,
+            )
+        return PreflightCompleteState(
+            run_id=state.run_id,
+            version=state.version + 1,
+            submitted_at=state.submitted_at,
+            updated_at=now_text,
+            idempotency_key=state.idempotency_key,
+            context=state.context,
+            checkpoint=state.checkpoint,
+            cursor=state.cursor,
+            codex=codex,
+        )
+    if event.capacity_role not in {None, "reviewer"}:
+        raise ValueError("reviewer capacity availability role mismatch")
     codex = state.codex.model_copy(
         update={
             "review_iteration": event.review_iteration,
@@ -747,6 +931,8 @@ def apply_waiting_for_cursor_fix_entered(
             "latest_correction_envelope_sha256": event.correction_envelope_sha256,
             "review_iteration": event.review_iteration,
             "reviews_completed": state.codex.reviews_completed + 1,
+            "implementer_timeout_continuation": None,
+            "implementer_timeout_automatic_retries_consumed": 0,
             **reset_routing_auto_retry_for_new_review_iteration(),
         }
     )
@@ -921,6 +1107,7 @@ def apply_review_budget_extended(
             "latest_fix_prompt_sha256": event.fix_prompt_sha256,
             "latest_correction_envelope_path": event.correction_envelope_path,
             "latest_correction_envelope_sha256": event.correction_envelope_sha256,
+            "implementer_timeout_automatic_retries_consumed": 0,
             **reset_routing_auto_retry_for_new_review_iteration(),
         }
     )
@@ -1038,6 +1225,7 @@ def apply_run_aborted(
         | WaitingForCursorFixState
         | CheckpointPendingState
         | AbortedState
+        | BlockedState
     ),
     event: RunAbortedEvent,
     *,
@@ -1049,9 +1237,10 @@ def apply_run_aborted(
         if state.abort_reason != event.reason or state.prior_state_kind != event.prior_state_kind:
             raise ValueError("aborted state disagrees with event")
         return state
-    if state.kind in SCHEDULER_TERMINAL_STATE_KINDS:
+    held_implementer = is_codex_implementer_reservation_hold(state)
+    if state.kind in SCHEDULER_TERMINAL_STATE_KINDS and not held_implementer:
         raise ValueError("run_aborted applies only to non-terminal runs")
-    if state.kind not in SCHEDULER_ABORTABLE_STATE_KINDS:
+    if state.kind not in SCHEDULER_ABORTABLE_STATE_KINDS and not held_implementer:
         raise ValueError("run_aborted applies only to abortable runs")
     checkpoint, cursor, codex, authorized_at, authorized_controller_session_id = (
         _abort_checkpoint_from_state(state)

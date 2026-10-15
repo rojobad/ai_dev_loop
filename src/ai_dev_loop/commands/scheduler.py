@@ -110,8 +110,20 @@ def _render_summary(summary: SchedulerRunSummary, *, output: str) -> dict[str, o
             f"{summary.sequence_id_prefix} "
             f"phase {summary.sequence_ordinal}/{summary.sequence_total_phases}"
         )
+    lines.append(f"Implementer: {summary.implementer_provider}")
+    if summary.codex_pending_role:
+        lines.append(
+            f"Codex capacity wait: role={summary.codex_pending_role} turn={summary.codex_pending_turn} reason={summary.codex_capacity_reason}"
+        )
     if summary.cursor_wait_until:
         lines.append(f"Cursor wait until: {summary.cursor_wait_until}")
+    if summary.implementer_retry_wait_until:
+        lines.append(
+            "Implementer retry wait until: "
+            f"{summary.implementer_retry_wait_until} "
+            f"({summary.implementer_timeout_automatic_retries}/"
+            f"{summary.implementer_timeout_retry_limit} automatic retries)"
+        )
     if summary.block_reason_kind:
         lines.append(f"Block reason: {summary.block_reason_kind}")
     lines.append(f"Next action: {summary.safe_next_action.command}")
@@ -424,6 +436,13 @@ def render_sequence_status_output(result: SequenceStatusResult, *, output: str) 
             "current_run_id": result.current_run_id,
             "current_run_state_kind": result.current_run_state_kind,
             "current_phase_name": result.current_phase_name,
+            "current_implementer_provider": result.current_implementer_provider,
+            "codex_pending_role": result.codex_pending_role,
+            "codex_pending_turn": result.codex_pending_turn,
+            "codex_capacity_reason": result.codex_capacity_reason,
+            "implementer_retry_wait_until": result.implementer_retry_wait_until,
+            "implementer_timeout_automatic_retries": (result.implementer_timeout_automatic_retries),
+            "implementer_timeout_retry_limit": result.implementer_timeout_retry_limit,
             "residual_risk": result.residual_risk,
             "residual_risk_ordinals": list(result.residual_risk_ordinals),
             "block_reason_kind": result.block_reason_kind,
@@ -455,6 +474,19 @@ def render_sequence_status_output(result: SequenceStatusResult, *, output: str) 
         lines.append(f"Current phase: {result.current_ordinal:02d}/{result.entry_count}")
     if result.current_phase_name is not None:
         lines.append(f"Current phase name: {result.current_phase_name}")
+    if result.current_implementer_provider:
+        lines.append(f"Current implementer: {result.current_implementer_provider}")
+    if result.codex_pending_role:
+        lines.append(
+            f"Codex capacity wait: role={result.codex_pending_role} turn={result.codex_pending_turn} reason={result.codex_capacity_reason}"
+        )
+    if result.implementer_retry_wait_until:
+        lines.append(
+            "Implementer retry wait until: "
+            f"{result.implementer_retry_wait_until} "
+            f"({result.implementer_timeout_automatic_retries}/"
+            f"{result.implementer_timeout_retry_limit} automatic retries)"
+        )
     if result.current_run_id is not None:
         lines.append(f"Materialized run: {result.current_run_id}")
     if result.current_run_state_kind is not None:
@@ -506,7 +538,7 @@ def render_sequence_status_output(result: SequenceStatusResult, *, output: str) 
             status_bits.append("cancelled")
         status = f" [{', '.join(status_bits)}]" if status_bits else ""
         lines.append(
-            f"- Phase {entry.ordinal:02d}: {entry.phase_name} "
+            f"- Phase {entry.ordinal:02d}: {entry.phase_name} implementer={entry.implementer_provider} "
             f"(planned run prefix {entry.planned_run_id_prefix}){commit_note}{status}"
         )
     lines.append(f"Next action: {result.safe_next_action.command}")

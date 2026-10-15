@@ -816,7 +816,12 @@ def analyze_blocked_review_recovery(
                 if reviewer_bound_event is not None:
                     binding_run_id = ancestor_run_id
                     break
-    if chat_event is None or staging_event is None or turn_event is None or reviewer_bound_event is None:
+    if (
+        chat_event is None
+        or staging_event is None
+        or turn_event is None
+        or reviewer_bound_event is None
+    ):
         raise SchedulerEngineError(
             SchedulerEngineErrorKind.VALIDATION,
             "blocked source lacks completed cursor/staging/reviewer evidence",

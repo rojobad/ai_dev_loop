@@ -2,24 +2,27 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Literal
 
-from pydantic import Field, TypeAdapter, field_validator, model_validator
+from pydantic import Field, TypeAdapter, field_validator, model_serializer, model_validator
 
+from ai_dev_loop.config import CODEX_REVIEW_REASONING_EFFORTS
 from ai_dev_loop.scheduler.domain.common import DomainModel, GitObjectSha, NonEmptyStr, Sha256Hex
 from ai_dev_loop.scheduler.domain.state import (
     ControllerBinding,
     CursorBinding,
     EffectiveConfigBinding,
     FreshCodexReviewerBinding,
+    ImplementerBinding,
     PlanPromptBinding,
     RepositoryTargetBinding,
     WorkflowLimits,
 )
 
-SEQUENCE_MANIFEST_SCHEMA_VERSION = 1
-PREPARED_SEQUENCE_SCHEMA_VERSION = 1
-FROZEN_SEQUENCE_ENTRY_SCHEMA_VERSION = 1
+SEQUENCE_MANIFEST_SCHEMA_VERSION = 2
+PREPARED_SEQUENCE_SCHEMA_VERSION = 2
+FROZEN_SEQUENCE_ENTRY_SCHEMA_VERSION = 2
 PREPARED_SEQUENCE_STATE_KIND = "prepared"
 ACTIVE_SEQUENCE_STATE_KIND = "active"
 ABORT_PENDING_SEQUENCE_STATE_KIND = "abort_pending"
@@ -69,6 +72,40 @@ class SequenceManifestWorkflowOverrides(DomainModel):
     codex_timeout_minutes: int | None = None
 
 
+class SequenceManifestImplementerOverrides(DomainModel):
+    """Partial phase settings; Codex requirements are checked after YAML resolution."""
+
+    provider: Literal["cursor", "codex"] = "cursor"
+    command: NonEmptyStr | None = None
+    model: NonEmptyStr | None = None
+    reasoning_effort: NonEmptyStr | None = None
+    timeout_minutes: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_invalid_fields(cls, data: object) -> object:
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if value is None or (isinstance(value, str) and not value.strip()):
+                    raise ValueError(f"implementer.{key} must not be null or empty")
+                if key == "timeout_minutes" and (
+                    isinstance(value, bool) or not isinstance(value, int) or value < 1
+                ):
+                    raise ValueError("implementer.timeout_minutes must be a positive integer")
+        return data
+
+    @model_validator(mode="after")
+    def validate_provider_fields(self) -> SequenceManifestImplementerOverrides:
+        if self.provider == "cursor" and self.model_fields_set - {"provider"}:
+            raise ValueError("Codex implementer fields conflict with provider cursor")
+        if (
+            self.reasoning_effort is not None
+            and self.reasoning_effort not in CODEX_REVIEW_REASONING_EFFORTS
+        ):
+            raise ValueError("unsupported implementer reasoning_effort")
+        return self
+
+
 class SequenceManifestPhase(DomainModel):
     name: NonEmptyStr
     plan_path: NonEmptyStr
@@ -76,7 +113,27 @@ class SequenceManifestPhase(DomainModel):
     commit_message: str | None = None
     cursor: SequenceManifestCursorOverrides | None = None
     codex: SequenceManifestCodexOverrides
+    implementer: SequenceManifestImplementerOverrides | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_null_implementer(cls, data: object) -> object:
+        if isinstance(data, dict) and "implementer" in data and data["implementer"] is None:
+            raise ValueError("implementer must not be null")
+        return data
+
     workflow: SequenceManifestWorkflowOverrides | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_phase(
+        self, handler: Callable[[SequenceManifestPhase], dict[str, object]]
+    ) -> dict[str, object]:
+        data = handler(self)
+        if self.implementer is None:
+            data.pop("implementer", None)
+        else:
+            data["implementer"] = self.implementer.model_dump(mode="json", exclude_none=True)
+        return data
 
     @field_validator("name")
     @classmethod
@@ -87,7 +144,7 @@ class SequenceManifestPhase(DomainModel):
 
 
 class SequenceManifest(DomainModel):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     name: NonEmptyStr
     phases: list[SequenceManifestPhase]
 
@@ -116,6 +173,10 @@ class SequenceManifest(DomainModel):
 
     @model_validator(mode="after")
     def validate_commit_messages(self) -> SequenceManifest:
+        if self.schema_version == 1 and any(
+            "implementer" in phase.model_fields_set for phase in self.phases
+        ):
+            raise ValueError("manifest v1 is Cursor-only; implementer requires v2")
         total = len(self.phases)
         for index, phase in enumerate(self.phases, start=1):
             is_final = index == total
@@ -134,7 +195,7 @@ class SequenceManifest(DomainModel):
 
 
 class FrozenSequenceEntry(DomainModel):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     ordinal: int
     phase_name: NonEmptyStr
     planned_run_id: NonEmptyStr
@@ -144,6 +205,24 @@ class FrozenSequenceEntry(DomainModel):
     codex: FreshCodexReviewerBinding
     cursor: CursorBinding
     workflow: WorkflowLimits
+    implementer: ImplementerBinding | None = None
+
+    @model_validator(mode="after")
+    def validate_implementer_version(self) -> FrozenSequenceEntry:
+        if (self.schema_version == 2) != (self.implementer is not None):
+            raise ValueError("entry v2 requires implementer; v1 must omit it")
+        if self.implementer is not None and self.implementer.session_id is not None:
+            raise ValueError("prepared implementer must not have a session")
+        return self
+
+    @model_serializer(mode="wrap")
+    def serialize_entry(
+        self, handler: Callable[[FrozenSequenceEntry], dict[str, object]]
+    ) -> dict[str, object]:
+        data = handler(self)
+        if self.schema_version == 1:
+            data.pop("implementer", None)
+        return data
 
     @field_validator("ordinal")
     @classmethod
@@ -154,7 +233,7 @@ class FrozenSequenceEntry(DomainModel):
 
 
 class PreparedSequenceDefinition(DomainModel):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     sequence_id: NonEmptyStr
     name: NonEmptyStr
     project_name: NonEmptyStr
@@ -168,6 +247,8 @@ class PreparedSequenceDefinition(DomainModel):
 
     @model_validator(mode="after")
     def validate_entry_ordinals(self) -> PreparedSequenceDefinition:
+        if any(entry.schema_version != self.schema_version for entry in self.entries):
+            raise ValueError("definition and frozen entry versions must match")
         expected = len(self.entries)
         for index, entry in enumerate(self.entries, start=1):
             if entry.ordinal != index:

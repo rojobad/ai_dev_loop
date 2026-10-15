@@ -48,6 +48,71 @@ def build_scheduler_codex_bootstrap_args(
     ]
 
 
+def build_scheduler_codex_implementer_bootstrap_args(
+    *,
+    command: str,
+    repo_root: str,
+    model: str,
+    reasoning_effort: str,
+) -> list[str]:
+    """First Codex implementer turn. No review schema and no ``--last``."""
+
+    if not model.strip() or not reasoning_effort.strip():
+        raise ValidationError("codex implementer bootstrap requires frozen model and effort")
+    return [
+        command,
+        "exec",
+        "--cd",
+        repo_root,
+        "--sandbox",
+        SCHEDULER_CODEX_REVIEW_SANDBOX,
+        "-c",
+        'approval_policy="never"',
+        "--model",
+        model,
+        "-c",
+        f'model_reasoning_effort="{reasoning_effort}"',
+        "--json",
+        "-",
+    ]
+
+
+def build_scheduler_codex_implementer_resume_args(
+    *,
+    command: str,
+    repo_root: str,
+    model: str,
+    reasoning_effort: str,
+    session_id: str,
+) -> list[str]:
+    """Resume the exact implementer thread. Root options stay before ``resume``."""
+
+    if not session_id.strip():
+        raise ValidationError("codex implementer resume requires the bound implementer session")
+    if session_id.strip() == "--last":
+        raise ValidationError("codex implementer resume rejects --last")
+    if not model.strip() or not reasoning_effort.strip():
+        raise ValidationError("codex implementer resume requires frozen model and effort")
+    return [
+        command,
+        "exec",
+        "--cd",
+        repo_root,
+        "--sandbox",
+        SCHEDULER_CODEX_REVIEW_SANDBOX,
+        "-c",
+        'approval_policy="never"',
+        "resume",
+        "--model",
+        model,
+        "-c",
+        f'model_reasoning_effort="{reasoning_effort}"',
+        "--json",
+        session_id,
+        "-",
+    ]
+
+
 def build_scheduler_codex_resume_args(
     *,
     command: str,

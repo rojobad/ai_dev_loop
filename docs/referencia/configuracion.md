@@ -44,6 +44,10 @@ codex:
   review_skill: review-staged-cursor-execution
   sandbox: workspace-write
 
+# Opcional. Omitir la sección conserva el implementer Cursor.
+# implementer:
+#   provider: cursor
+
 workflow:
   max_review_iterations: 3
   require_clean_worktree: true
@@ -118,13 +122,38 @@ max
 ultra
 ```
 
+## `implementer`
+
+Sección opcional. Si falta, o si `provider` se omite, el implementer es Cursor y
+se usan `cursor` más `workflow.cursor_timeout_minutes`. Un mapping explícito
+`null`, un provider desconocido, strings vacíos o campos Codex sobre `cursor` se
+rechazan.
+
+| Campo | Default | Descripcion |
+| --- | --- | --- |
+| `provider` | `cursor` | `cursor` o `codex`. |
+| `command` | `codex` | Solo `provider: codex`. Rechazado para Cursor. |
+| `model` | obligatorio si es Codex | Modelo exacto. No sustituye `--codex-review-model`. |
+| `reasoning_effort` | obligatorio si es Codex | Vocabulario Codex existente, incluido `high` y `xhigh`. |
+| `timeout_minutes` | `90` | Entero positivo. `true` no se acepta como `1`. |
+
+El sandbox del implementer Codex queda congelado en `workspace-write`. La política
+de aprobación no interactiva queda congelada en `never`. No se acepta un bypass.
+En runs standalone y hojas de secuencia v2 el scheduler lanza la implementación inicial y reanuda la
+misma sesión autenticada para correcciones. Modelo, effort, timeout e identidad
+son independientes del reviewer. Los manifests de secuencia v1 siguen siendo
+Cursor-only; v2 permite elegir por fase. No existe cambio de provider durante el run.
+
+Los contextos antiguos sin metadata de implementer se leen como Cursor. Los runs
+nuevos persisten el provider de forma explícita.
+
 ## `workflow`
 
 | Campo | Default | Descripcion |
 | --- | --- | --- |
 | `max_review_iterations` | `3` | Numero maximo de reviews Codex, incluyendo el primero. |
 | `require_clean_worktree` | `true` | Se congela en submit; la admision one-shot ocurre en el primer tick. |
-| `stage_mode` | `all` | Solo `all` esta soportado (`git add -A` tras Cursor). |
+| `stage_mode` | `all` | Solo `all` esta soportado (`git add -A` tras un turno de implementación exitoso). |
 | `cursor_timeout_minutes` | `90` | Timeout por turno Cursor. |
 | `codex_timeout_minutes` | `90` | Timeout por review Codex. |
 
@@ -161,6 +190,15 @@ operativos documentados son:
   corrección, también cuando el run es la hoja bloqueada actual de una secuencia.
   La secuencia conserva el ordinal y la entrada congelada. Una hoja obsoleta,
   un aborto o una reserva ajena se rechazan.
+- `scheduler implementer-retry`: entrada compartida para el timeout confirmado del
+  provider congelado. En Codex conserva sesión, modelo, effort, timeout y prompt;
+  admite tres reintentos automáticos por turno con espera de 30 minutos. No toma
+  valores nuevos de YAML ni de la configuración local de Codex.
+  `--force` publica o repite un sucesor para un fallo genérico Codex terminado y
+  autenticado. Conserva los settings enviados y las identidades exactas; no permite
+  cambiar provider/modelo ni reintentar una identidad incierta. Una hoja vigente de
+  secuencia se adopta en el mismo ordinal antes del dispatch; una hoja obsoleta sin
+  relación se rechaza.
 - `scheduler abort`: cancelacion no destructiva; preserva artefactos y cambios staged.
 - Runs interrumpidos o bloqueados: inspecciona `scheduler status` y
   `scheduler history`; la accion segura depende del checkpoint durable en el ledger.
@@ -173,3 +211,22 @@ operativos documentados son:
 ai_dev_loop config validate --repo /path/al/repo
 ai_dev_loop config validate --repo /path/al/repo --output json
 ```
+
+## Manifest de secuencia v2
+
+`schema_version: 2` permite `implementer` por fase, con los campos anteriores.
+Omitir la sección o su provider selecciona Cursor, incluso si YAML seleccionaba
+Codex. Para `provider: codex`, los campos de fase prevalecen sobre defaults YAML
+del mismo provider; el modelo y effort deben quedar explícitamente resueltos.
+Cambiar de provider elimina los defaults incompatibles. Los campos Cursor
+explícitos (`cursor` o `workflow.cursor_timeout_minutes`, incluidos overrides
+CLI globales) entran en conflicto con una fase Codex y se rechazan.
+Los campos reviewer `codex.review_model` y `codex.review_reasoning_effort` siguen
+siendo obligatorios por fase y no se heredan del implementer.
+
+Prepare congela ejecutables, configuración, prompts y hashes independientes por
+ordinal sin ejecutar Git/agentes. Los cambios posteriores en YAML o manifest no
+alteran esa definición preparada. Un prepare con inputs distintos crea una nueva
+definición; no reemplaza la anterior. Manifest v1 y sus entradas congeladas
+históricas conservan Cursor y hashes, sin migración a Codex. Un prepare v1 nuevo
+rechaza defaults YAML que seleccionen Codex; usa manifest v2 para esa selección.

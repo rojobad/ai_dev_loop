@@ -259,6 +259,41 @@ def scheduler_submit_command(
         int | None,
         typer.Option("--codex-timeout-minutes", help="Override workflow.codex_timeout_minutes."),
     ] = None,
+    implementer_provider: Annotated[
+        str | None,
+        typer.Option(
+            "--implementer-provider",
+            help="Frozen implementer provider: cursor (default) or codex. Codex capacity continuation is automatic; manual implementer recovery is deferred.",
+        ),
+    ] = None,
+    implementer_command: Annotated[
+        str | None,
+        typer.Option(
+            "--implementer-command",
+            help="Codex implementer executable. Rejected when the provider is cursor.",
+        ),
+    ] = None,
+    implementer_model: Annotated[
+        str | None,
+        typer.Option(
+            "--implementer-model",
+            help="Required explicit Codex implementer model. Independent from the reviewer model.",
+        ),
+    ] = None,
+    implementer_reasoning_effort: Annotated[
+        str | None,
+        typer.Option(
+            "--implementer-reasoning-effort",
+            help="Required explicit Codex implementer reasoning effort. Independent from the reviewer.",
+        ),
+    ] = None,
+    implementer_timeout_minutes: Annotated[
+        int | None,
+        typer.Option(
+            "--implementer-timeout-minutes",
+            help="Positive Codex implementer timeout in minutes (default 90).",
+        ),
+    ] = None,
     resubmission_id: Annotated[
         str | None,
         typer.Option(
@@ -292,6 +327,11 @@ def scheduler_submit_command(
             max_review_iterations=max_review_iterations,
             cursor_timeout_minutes=cursor_timeout_minutes,
             codex_timeout_minutes=codex_timeout_minutes,
+            implementer_provider=implementer_provider,
+            implementer_command=implementer_command,
+            implementer_model=implementer_model,
+            implementer_reasoning_effort=implementer_reasoning_effort,
+            implementer_timeout_minutes=implementer_timeout_minutes,
             resubmission_id=resubmission_id,
         )
         result = submit_run(options)
@@ -457,6 +497,49 @@ def scheduler_cursor_retry_command(
             typer.echo(result.model_dump_json(indent=2))
         else:
             typer.echo(f"Cursor retry: {result.run_id}; ready at {result.available_at}")
+
+    _handle(run)
+
+
+@scheduler_app.command("implementer-retry")
+def scheduler_implementer_retry_command(
+    run_id: Annotated[
+        str,
+        typer.Argument(help="Scheduler run ID with an eligible implementer failure."),
+    ],
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help=(
+                "Create/replay a Codex successor for an authenticated generic failure "
+                "in a standalone run or the current sequence leaf."
+            ),
+        ),
+    ] = False,
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Continue a timeout, or force eligible Codex failure recovery."""
+
+    def run() -> None:
+        from ai_dev_loop.scheduler.application.implementer_timeout_retry import (
+            scheduler_implementer_retry,
+        )
+
+        result = scheduler_implementer_retry(run_id, force=force)
+        if output.value == "json":
+            typer.echo(result.model_dump_json(indent=2))
+        else:
+            if force:
+                typer.echo(
+                    f"{result.provider.title()} implementer recovery successor: {result.run_id}; "
+                    f"changed={str(result.changed).lower()}"
+                )
+            else:
+                typer.echo(
+                    f"{result.provider.title()} implementer retry: {result.run_id}; "
+                    f"ready at {result.available_at}"
+                )
 
     _handle(run)
 

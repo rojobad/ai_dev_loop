@@ -239,7 +239,9 @@ def test_sequence_final_phase_routing_retry_completes_sequence(
         ),
     )
     _run_until(phase_one_tick, start.run_id, target_kind="completed", max_ticks=160)
-    phase_two_id = SequenceStatusService(phase_one_tick.store).get_status(sequence_id).current_run_id
+    phase_two_id = (
+        SequenceStatusService(phase_one_tick.store).get_status(sequence_id).current_run_id
+    )
     assert phase_two_id == FIXED_RUN_IDS[1]
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "workspace_routing_timeout")
     monkeypatch.setenv("FAKE_CODEX_CAPACITY", "unavailable")
@@ -260,9 +262,7 @@ def test_sequence_final_phase_routing_retry_completes_sequence(
     else:
         with routing_tick.store.begin_read() as conn:
             state, _, _ = routing_tick.store.load_validated_snapshot(conn, phase_two_id)
-        raise AssertionError(
-            f"phase two did not reach routing retry wait (last kind={state.kind})"
-        )
+        raise AssertionError(f"phase two did not reach routing retry wait (last kind={state.kind})")
     with routing_tick.store.begin_read() as conn:
         phase_two, _, _ = routing_tick.store.load_validated_snapshot(conn, phase_two_id)
         reviewer = phase_two.codex.reviewer_session_id
