@@ -20,6 +20,7 @@ from tests.integration.test_phase23_1_cursor_recovery_check import _blocked_run
 from typer.testing import CliRunner
 
 from ai_dev_loop.cli import app
+from ai_dev_loop.runners.cursor import NON_INTERACTIVE_PROMPT
 from ai_dev_loop.scheduler.application.abort import scheduler_abort_run
 from ai_dev_loop.scheduler.application.contracts import SchedulerEngineError
 from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
@@ -50,6 +51,12 @@ from ai_dev_loop.scheduler.infrastructure.protected_artifacts import (
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
 NOW = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
+
+
+def _runtime_prompt_bytes(prompt: bytes) -> bytes:
+    """Return the exact prompt transported to the non-interactive Cursor CLI."""
+
+    return NON_INTERACTIVE_PROMPT.encode("utf-8") + b"\n\n" + prompt
 
 
 @pytest.fixture
@@ -163,7 +170,7 @@ def test_force_publishes_one_successor_and_preserves_worktree(
         if line.startswith("ARGS:") and "Recovery note:" in line
     ]
     assert prompt_args
-    assert prompt_args[-1][-1].encode("utf-8") == expected_prompt
+    assert prompt_args[-1][-1].encode("utf-8") == _runtime_prompt_bytes(expected_prompt)
     assert _state_kind(store, run_id) == "blocked"
     completed = runner.invoke(
         app, ["scheduler", "cursor-retry", run_id, "--force", "--output", "json"]
@@ -1077,8 +1084,8 @@ def test_usage_limit_continuation_keeps_the_current_prompt(
     assert continuation is not None
     assert continuation != effective
     prompts = _prompt_args(log_path)
-    assert effective in prompts
-    assert continuation in prompts
+    assert _runtime_prompt_bytes(effective) in prompts
+    assert _runtime_prompt_bytes(continuation) in prompts
     assert state.cursor.chat_id == analysis.evidence.chat_id
     assert state.codex.reviewer_session_id
     assert state.codex.reviews_completed == 1
@@ -1117,7 +1124,7 @@ def test_correction_usage_limit_is_not_overridden_by_iteration_one(
     assert waiting_iteration == 2
     assert continuation is not None
     assert continuation != effective
-    assert continuation in _prompt_args(log_path)
+    assert _runtime_prompt_bytes(continuation) in _prompt_args(log_path)
     assert state.cursor.chat_id == analysis.evidence.chat_id
     assert state.codex.reviewer_session_id
     assert state.codex.reviews_completed == 2
@@ -1564,7 +1571,7 @@ def test_literal_note_preserves_sentinels_and_separate_publishers(
         backend=_backend(),
     )
     _run_until(tick, successor, target_kind="completed", max_ticks=40)
-    assert expected in _prompt_args(log_path)
+    assert _runtime_prompt_bytes(expected) in _prompt_args(log_path)
 
 
 def test_separate_publishers_and_ready_replay_converge(

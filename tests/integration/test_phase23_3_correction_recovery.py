@@ -17,6 +17,7 @@ from tests.integration.test_phase23_1_cursor_recovery_check import _blocked_run
 from tests.integration.test_phase23_2_initial_recovery import (
     _drive_until,
     _rewrite_ready_record,
+    _runtime_prompt_bytes,
 )
 from tests.unit.scheduler.test_phase17_5_codex_corrections import BOOTSTRAP_ID
 from tests.unit.scheduler.test_phase23_1_cursor_recovery_evidence import (
@@ -484,7 +485,7 @@ def test_new_correction_after_recovery_uses_the_new_envelope(
     log_path.write_bytes(b"")
     _run_until(tick, second, target_kind="completed", max_ticks=40)
     prompts = _prompt_args(log_path)
-    assert prompts.count(effective) == 1
+    assert prompts.count(_runtime_prompt_bytes(effective)) == 1
     with store.begin_read() as conn:
         accepted, _, _ = store.load_validated_snapshot(conn, second)
     assert accepted.codex.reviewer_session_id == BOOTSTRAP_ID
@@ -643,8 +644,8 @@ def test_usage_limit_continuation_keeps_the_recovered_correction(
     assert effective in continuation
     assert raw_fix in continuation
     prompts = _prompt_args(log_path)
-    assert effective in prompts
-    assert continuation in prompts
+    assert _runtime_prompt_bytes(effective) in prompts
+    assert _runtime_prompt_bytes(continuation) in prompts
     assert state.codex.reviewer_session_id == BOOTSTRAP_ID
     assert state.codex.reviews_completed == record.reviews_completed + 1
     assert state.context.workflow.max_review_iterations == record.submitted_max_review_iterations
@@ -934,8 +935,8 @@ def test_correction_restart_dispatches_the_failed_envelope_once(
     _run_until(restart, restarted_successor, target_kind="completed", max_ticks=40)
     prompts = _prompt_args(log_path)
     expected = effective_prompt_bytes(failed_envelope)
-    assert expected in prompts
-    assert prompts.count(expected) == 1
+    assert _runtime_prompt_bytes(expected) in prompts
+    assert prompts.count(_runtime_prompt_bytes(expected)) == 1
     assert raw_fix in expected
     published = _record(artifacts, restarted_successor)
     assert published.raw_fix is not None
@@ -1148,7 +1149,7 @@ def test_usage_limit_failure_after_recovery_uses_the_terminal_attempt(
     )
     _run_until(complete, second, target_kind="completed", max_ticks=40)
     prompts = _prompt_args(log_path)
-    assert prompts.count(recovered) == 1
+    assert prompts.count(_runtime_prompt_bytes(recovered)) == 1
     with store.begin_read() as conn:
         source, _, _ = store.load_validated_snapshot(conn, run_id)
         accepted, _, _ = store.load_validated_snapshot(conn, second)
@@ -1460,7 +1461,7 @@ def test_ordinary_correction_usage_limit_recovers_the_same_reviewer(
     assert accepted.context.cursor.model == source.context.cursor.model
     assert accepted.cursor.iteration == record.iteration
     assert accepted.codex.reviews_completed == 2
-    assert _prompt_args(log_path).count(effective) == 1
+    assert _prompt_args(log_path).count(_runtime_prompt_bytes(effective)) == 1
 
 
 def _accept_usage_limited_correction(
@@ -1572,7 +1573,7 @@ def _accept_usage_limited_correction(
         ),
     )
     _run_until(complete, successor, target_kind="completed", max_ticks=40)
-    assert _prompt_args(log_path).count(effective) == 1
+    assert _prompt_args(log_path).count(_runtime_prompt_bytes(effective)) == 1
     with store.begin_read() as conn:
         accepted, _, _ = store.load_validated_snapshot(conn, successor)
         ceiling = effective_review_ceiling_for_run(store, conn, accepted, artifacts=artifacts)

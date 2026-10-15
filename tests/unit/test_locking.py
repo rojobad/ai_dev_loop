@@ -53,7 +53,7 @@ def test_read_lock_metadata_round_trip(tmp_path: Path) -> None:
     assert loaded == metadata
 
 
-def test_run_lock_prevents_concurrent_acquire(tmp_path: Path) -> None:
+def test_run_lock_prevents_concurrent_acquire(tmp_path: Path, isolated_xdg: Path) -> None:
     started = datetime.now(tz=UTC)
     metadata = LockMetadata(
         pid=os.getpid(),
@@ -93,7 +93,7 @@ def test_file_lock_release_allows_reacquire(tmp_path: Path) -> None:
     lock.release()
 
 
-def test_run_lock_released_when_repository_lock_fails(tmp_path: Path) -> None:
+def test_run_lock_released_when_repository_lock_fails(tmp_path: Path, isolated_xdg: Path) -> None:
     run_directory = tmp_path / "run-a"
     (run_directory / "locks").mkdir(parents=True)
     repo_path = tmp_path / "repo"

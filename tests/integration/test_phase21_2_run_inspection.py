@@ -811,7 +811,8 @@ def test_c02_history_pagination_capacity_waits_vs_attempt_durations(
     assert code == 0
     assert page1["data"]["items"][0]["kind"] == "codex_usage_capacity_detected"
     assert page1["data"]["items"][0]["safeDetail"] == (
-        "codex_usage_capacity_detected: review_iteration=1 evidence_source=capacity_probe"
+        "codex_usage_capacity_detected: review_iteration=1 role=reviewer "
+        "evidence_source=capacity_probe"
     )
 
     code, page2, stderr2 = _invoke(
