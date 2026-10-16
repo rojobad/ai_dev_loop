@@ -1,22 +1,14 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>ai_dev_loop dashboard</title>
-    <style>
-      :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
-      body { margin: 0; min-height: 100vh; display: grid; place-items: center; }
-      main { max-width: 42rem; padding: 2rem; }
-      code { font-family: ui-monospace, monospace; }
-    </style>
+    <script type="module" crossorigin src="/assets/dashboard.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/dashboard.css">
   </head>
   <body>
-    <main>
-      <h1>ai_dev_loop local dashboard</h1>
-      <p>The read-only loopback service is running.</p>
-      <p>The interactive dashboard frontend is planned for Phase 26.3.</p>
-      <p>This provisional page does not start, stop, retry, or modify scheduler work.</p>
-    </main>
+    <div id="root"></div>
   </body>
 </html>

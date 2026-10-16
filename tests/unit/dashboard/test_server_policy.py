@@ -191,12 +191,20 @@ def test_c262_4_manifest_headers_traversal_and_safe_internal_error() -> None:
     server, thread = _start(_ProjectsService(failure=RuntimeError(sentinel)))
     try:
         status, headers, body = _request(server.port, "GET", "/")
-        assert status == 200 and b"frontend is planned for Phase 26.3" in body
+        assert status == 200 and b"/assets/dashboard.js" in body
         assert headers["cache-control"] == "no-store"
         assert headers["x-content-type-options"] == "nosniff"
         assert headers["referrer-policy"] == "no-referrer"
         assert "unsafe-eval" not in headers["content-security-policy"]
         assert "access-control-allow-origin" not in headers
+
+        status, headers, body = _request(server.port, "GET", "/assets/dashboard.js")
+        assert status == 200 and headers["content-type"].startswith("application/javascript")
+        assert b"Project overview" in body
+
+        status, headers, body = _request(server.port, "GET", "/assets/dashboard.css")
+        assert status == 200 and headers["content-type"].startswith("text/css")
+        assert b".app-shell" in body
 
         for path in ("/unlisted.txt", "/../private", "/%2e%2e/private", "/index.html?path=x"):
             status, _, body = _request(server.port, "GET", path)

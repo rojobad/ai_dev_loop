@@ -29,6 +29,21 @@ uv sync --all-extras
 uv run ai_dev_loop --help
 ```
 
+Dashboard frontend development uses Node.js 24 LTS for build and test only. The
+Python runtime serves the committed output under
+`src/ai_dev_loop/dashboard/web_dist` and does not require Node:
+
+```bash
+cd dashboard-web
+npm ci
+npm run typecheck
+npm test -- --run
+npm run build
+```
+
+The dependency versions are frozen in `dashboard-web/package-lock.json`; the
+production build is same-origin and contains no CDN assets.
+
 User-level tool install:
 
 ```bash

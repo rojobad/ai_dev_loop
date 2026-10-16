@@ -143,6 +143,16 @@ DEFAULT_STATIC_MANIFEST: Mapping[str, StaticAsset] = {
         name="index.html",
         media_type="text/html; charset=utf-8",
     ),
+    "/assets/dashboard.js": StaticAsset(
+        package="ai_dev_loop.dashboard.web_dist",
+        name="assets/dashboard.js",
+        media_type="application/javascript; charset=utf-8",
+    ),
+    "/assets/dashboard.css": StaticAsset(
+        package="ai_dev_loop.dashboard.web_dist",
+        name="assets/dashboard.css",
+        media_type="text/css; charset=utf-8",
+    ),
 }
 
 

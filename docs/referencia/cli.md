@@ -631,8 +631,10 @@ entero entre 1 y 65535 y su valor por defecto es `8765`. El proceso enlaza
 exclusivamente `127.0.0.1`; no existe opción para cambiar host, ejecutarlo como
 daemon, abrir el navegador ni habilitar acceso LAN.
 
-La ruta `/` sirve una página provisional empaquetada que declara que el frontend
-interactivo pertenece a Phase 26.3. `POST /api/dashboard/read` expone solo las
+La ruta `/` sirve el frontend React/ECharts empaquetado: filtros aplicados,
+resumen por proyecto/estado, workload por secuencia o standalone y capacidad
+Codex actual. Los assets son same-origin y no usan CDN; Node solo interviene al
+construir o probar el frontend. `POST /api/dashboard/read` expone únicamente las
 operaciones tipadas y allowlisted documentadas en la [API de integración
 local](integration-api.md). El proceso no inicia, aborta, reintenta ni repara
 trabajo del scheduler. `Ctrl-C` cierra el socket y el trabajo de lectura propio.

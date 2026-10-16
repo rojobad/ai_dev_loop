@@ -16,6 +16,12 @@ __pycache__/
 
 site/
 
+# Dashboard frontend build/test working directories. Built package assets live in web_dist.
+dashboard-web/node_modules/
+dashboard-web/coverage/
+dashboard-web/playwright-report/
+dashboard-web/test-results/
+
 # ai_dev_loop snapshots these execution prompts outside the repository.
 archive/implementation-history/plans/prompt_*.txt
 
