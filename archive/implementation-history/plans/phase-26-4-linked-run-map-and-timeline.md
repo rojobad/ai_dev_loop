@@ -66,6 +66,16 @@ authoritative lineage, never a reason to parse run IDs. Existing public process
 output supports both providers; there is no exact per-attempt implementer-prompt
 read contract to invent from private files.
 
+Carried-over F-02 from Phase 26.3 (operator decision 2026-10-16): Phase 26.3 was
+accepted by the operator with every contract complete except F-02 (exact raw
+unknown state visibility under "Other", C263-2 step 4), which is moved into this
+phase as C264-4. The operator explicitly AUTHORIZES the additive change to the
+Phase 26.1 summary producer, public `DashboardSummaryData` DTO and its schemas
+needed to close it (for example an additive `projects[].otherStates[{state,count}]`
+aggregate, consistent with `stateCounts.other`). This is an authorized,
+compatible additive extension, not a prerequisite failure or an OpenQuestion.
+See `archive/implementation-history/findings/phase-26-3-dashboard-shell-and-overview.md`.
+
 ## Cursor Rules And Skills
 
 Follow `AGENTS.md` and these repo-local rules:
@@ -153,6 +163,17 @@ from display strings. Any incompatible prerequisite is a dependent-work blocker.
 6. Add production-path selection/page/race browser cases and record
    `archive/implementation-history/findings/phase-26-4-linked-run-map-and-timeline.md`.
 
+7. F-02 carry-over (C264-4, authorized additive DTO/schema change): extend the
+   Phase 26.1 summary producer in `integration_api/dashboard_models.py`, its public
+   `DashboardSummaryData` DTO and schemas with an additive per-project aggregate of
+   raw unknown states and counts (e.g. `otherStates[{state,count}]`) whose counts
+   sum exactly to `stateCounts.other`; keep the field additive/compatible (no
+   removals or renames, compatible API minor). Update the 26.3 summary parser to
+   validate that arithmetic and render the exact raw state strings under "Other"
+   as React text (escaped in chart tooltips). Never page `dashboard.runs`, read
+   private SQLite/artifacts or guess labels to obtain them. Update the 26.3
+   findings/docs reference for F-02 as closed by this phase.
+
 ## Testing Criteria
 
 Mandatory contracts are the acceptance boundary. Add/update automated unit,
@@ -165,6 +186,7 @@ safety guard. IDs belong to this run and must appear in its completion report.
 | C264-1 | Joined runs page + authoritative lineage -> map | Sequence with two replacement runs in one phase, independent run, queued/out-of-range runs, zero materialized phase and >25 matches. | Exact selected IDs/counts, distinct replacement cells/rows and explicit page coverage; future planned context has no selected run. Catches currentRunId-only or name-derived maps. |
 | C264-2 | Map/keyboard click -> data source -> selected inspect/timeline | Select an older replacement, then another run while first reply is held; change filters to exclude selected run. | Requests/responses target exact clicked IDs; late first result cannot reappear, excluded selection clears, no content endpoint invoked. Catches selected phase opening the latest run instead. |
 | C264-3 | Public timeline pages -> Gantt + attempt selection | Cursor implementer/Codex implementer/Codex reviewer retry attempts, active/missing launch, parallel intervals, gap and second page. | Positions/IDs/timestamps match an independent expected interval list; unknown durations are honest; same IDs selectable through chart/keyboard. Catches fabricated end times and page-as-complete rendering. |
+| C264-4 | Summary producer (additive otherStates) -> DTO/schema -> parseSummaryData -> SummaryPanels/charts | Ledger with two unknown raw states (one malicious string) plus known states in one project. | Producer/schema emit exact raw states and counts summing to stateCounts.other; UI shows exact labels under Other as literal text; inconsistent sums are rejected; schema change is additive only. Catches guessed/partial-page labels and hidden Other values. |
 
 ## Validation
 
@@ -179,7 +201,9 @@ npm run build
 npx playwright test e2e/linked-inspection.spec.ts
 ```
 
-Run affected filter/data-source regressions as needed, plus root
+For C264-4 also run the affected summary producer/schema Python tests (e.g.
+`uv run pytest tests/unit/dashboard -q`) and the 26.3 parser/DashboardApp/charts
+Vitest files. Run affected filter/data-source regressions as needed, plus root
 `uv run mkdocs build --strict` and `git diff --check` for changed docs.
 Browser cases use a real local server with isolated known ledger/lineage and
 fake providers; deterministic response holds prove selection fences. A screenshot
