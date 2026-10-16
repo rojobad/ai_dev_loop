@@ -1445,6 +1445,12 @@ class CodexImplementerFailureRecoveryService:
                 now_text,
             ),
         )
+        self.store.copy_run_short_name_if_absent(
+            conn,
+            source_run_id=intent.source_run_id,
+            successor_run_id=successor.run_id,
+            now=now,
+        )
         events: list[object] = [
             CodexImplementerRecoverySuccessorCreatedEvent(
                 source_run_id=intent.source_run_id,

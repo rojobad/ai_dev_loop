@@ -447,7 +447,7 @@ export function AttemptTimeline({
       <div className="panel-heading">
         <div>
           <h2 id="timeline-heading">Attempt timeline</h2>
-          <p>Selected run: <strong>{selectedRun.runId}</strong></p>
+          <p>Selected run: <strong>{selectedRun.shortName}</strong> · {selectedRun.runId}</p>
         </div>
         <span>{timeline.items.length} loaded / {metadata?.attemptCount ?? "?"} recorded attempts</span>
       </div>
@@ -461,6 +461,7 @@ export function AttemptTimeline({
       ) : null}
       {metadata ? (
         <dl className="run-metadata">
+          <div><dt>Run ID</dt><dd>{metadata.runId}</dd></div>
           <div><dt>Project</dt><dd>{metadata.projectName}</dd></div>
           <div><dt>Raw state</dt><dd>{metadata.state}</dd></div>
           <div><dt>Implementer</dt><dd>{metadata.implementerProvider}</dd></div>
@@ -474,7 +475,7 @@ export function AttemptTimeline({
       ) : inspect.loading ? <p className="loading-line">Reading selected run metadata…</p> : null}
       {selectedRun.sequenceBinding ? (
         <p className="lineage-line">
-          {selectedRun.sequenceBinding.sequenceName} · phase {selectedRun.sequenceBinding.ordinal} {selectedRun.sequenceBinding.phaseName} · generation {selectedRun.sequenceBinding.generation} · {selectedRun.sequenceBinding.attemptKind}
+          {selectedRun.sequenceBinding.sequenceShortName} · {selectedRun.sequenceBinding.sequenceName} · {selectedRun.sequenceBinding.sequenceId} · phase {selectedRun.sequenceBinding.ordinal} {selectedRun.sequenceBinding.phaseName} · generation {selectedRun.sequenceBinding.generation} · {selectedRun.sequenceBinding.attemptKind}
           {selectedRun.sequenceBinding.sourceRunId ? ` · replaces ${selectedRun.sequenceBinding.sourceRunId}` : ""}
         </p>
       ) : <p className="lineage-line">Standalone run</p>}

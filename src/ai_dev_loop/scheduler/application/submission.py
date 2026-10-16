@@ -114,6 +114,7 @@ class _SubmitResultState(Protocol):
 
 @dataclass(frozen=True)
 class SubmitOptions:
+    short_name: str | None = None
     config_path: Path | None = None
     project_name: str | None = None
     repo_path: Path | None = None
@@ -702,6 +703,9 @@ class SubmissionService:
         self._admission_pause_hook = admission_pause_hook
 
     def submit(self, options: SubmitOptions) -> SubmitResult:
+        from ai_dev_loop.scheduler.domain.presentation import require_short_name
+
+        short_name = require_short_name(options.short_name, field_name="--short-name")
         prompt_text = _read_stdin_prompt()
         repo_candidate = options.repo_path or Path.cwd()
         repo_target = self.repository_discoverer(repo_candidate)
@@ -815,6 +819,7 @@ class SubmissionService:
                 event_id=event_id,
                 event=event,
                 now=now,
+                short_name=short_name,
             )
             self.artifacts.write_bytes(run_id, PLAN_ARTIFACT, plan_bytes, max_bytes=MAX_PLAN_BYTES)
             self.artifacts.write_text(
@@ -853,6 +858,9 @@ def default_submission_service(
 
 
 def submit_run(options: SubmitOptions) -> SubmitResult:
+    from ai_dev_loop.scheduler.domain.presentation import require_short_name
+
+    require_short_name(options.short_name, field_name="--short-name")
     service = default_submission_service(
         db_path=options.db_path,
         artifact_root=options.artifact_root,

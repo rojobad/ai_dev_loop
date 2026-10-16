@@ -50,9 +50,14 @@ submit desde la sesion controller A.
 ## 3. Congelar y autorizar el run
 
 ```bash
-ai_dev_loop scheduler submit ... \
-  --codex-review-model ... --codex-review-reasoning-effort ... \
-  --output json < prompt.txt
+ai_dev_loop scheduler submit \
+  --short-name "Mi cambio" \
+  --repo-path /path/al/repo \
+  --plan-path docs/plans/mi-plan.md \
+  --prompt-source-path docs/plans/prompt_mi-plan.txt \
+  --codex-review-model "<review-model>" \
+  --codex-review-reasoning-effort high \
+  --output json < docs/plans/prompt_mi-plan.txt
 
 ai_dev_loop scheduler start <run-id>
 ```

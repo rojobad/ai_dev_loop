@@ -102,6 +102,7 @@ class DashboardWorkloadItem(PublicWireModel):
     project_name: str = Field(alias="projectName", min_length=1)
     sequence_id: str | None = Field(alias="sequenceId")
     sequence_name: str | None = Field(alias="sequenceName")
+    sequence_short_name: str | None = Field(alias="sequenceShortName")
     run_count: StrictInt = Field(alias="runCount", ge=0)
 
 
@@ -158,6 +159,7 @@ class DashboardSummaryData(PublicWireModel):
 class DashboardSequenceBinding(PublicWireModel):
     sequence_id: str = Field(alias="sequenceId", min_length=1)
     sequence_name: str = Field(alias="sequenceName", min_length=1)
+    sequence_short_name: str = Field(alias="sequenceShortName", min_length=1)
     ordinal: StrictInt = Field(ge=1)
     phase_name: str = Field(alias="phaseName", min_length=1)
     generation: StrictInt = Field(ge=1)
@@ -167,6 +169,7 @@ class DashboardSequenceBinding(PublicWireModel):
 
 class DashboardRunItem(PublicWireModel):
     run_id: str = Field(alias="runId", min_length=1)
+    short_name: str = Field(alias="shortName", min_length=1)
     project_name: str = Field(alias="projectName", min_length=1)
     implementer_provider: Literal["cursor", "codex"] = Field(alias="implementerProvider")
     state: str = Field(min_length=1)

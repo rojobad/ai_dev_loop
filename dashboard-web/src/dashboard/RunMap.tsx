@@ -49,6 +49,7 @@ export interface RunMapProps {
 interface RunMapGroup {
   key: string;
   label: string;
+  details: string | null;
   items: DashboardRunItem[];
 }
 
@@ -105,7 +106,7 @@ export function groupRunMapItems(items: DashboardRunItem[]): RunMapGroup[] {
     grouped.push(item);
     sequences.set(item.sequenceBinding.sequenceId, grouped);
   }
-  const result = [...sequences.entries()]
+  const result: RunMapGroup[] = [...sequences.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([sequenceId, runs]) => {
       const sorted = [...runs].sort((left, right) => {
@@ -120,7 +121,8 @@ export function groupRunMapItems(items: DashboardRunItem[]): RunMapGroup[] {
       });
       return {
         key: sequenceId,
-        label: `${sorted[0]?.sequenceBinding?.sequenceName ?? "Sequence"} · ${sequenceId}`,
+        label: sorted[0]?.sequenceBinding?.sequenceShortName ?? "Sequence",
+        details: `${sorted[0]?.sequenceBinding?.sequenceName ?? "Sequence"} · ${sequenceId}`,
         items: sorted,
       };
     });
@@ -128,6 +130,7 @@ export function groupRunMapItems(items: DashboardRunItem[]): RunMapGroup[] {
     result.push({
       key: "standalone",
       label: "Standalone runs",
+      details: null,
       items: [...standalone].sort((left, right) =>
         left.firstExecutionLaunchAt.localeCompare(right.firstExecutionLaunchAt) ||
         left.runId.localeCompare(right.runId),
@@ -169,10 +172,13 @@ export function runMapOption(items: DashboardRunItem[]): EChartsCoreOption {
     return {
       value: [x, groupIndex.get(groupKey) ?? 0],
       runId: item.runId,
+      shortName: item.shortName,
       projectName: item.projectName,
       state: item.state,
       provider: item.implementerProvider,
       phase: binding ? `${binding.ordinal}. ${binding.phaseName}` : "Standalone",
+      sequenceName: binding?.sequenceName ?? null,
+      sequenceId: binding?.sequenceId ?? null,
       generation: binding?.generation ?? null,
       attemptKind: binding?.attemptKind ?? null,
       itemStyle: { color: item.implementerProvider === "codex" ? "#8054ae" : "#2f76d2" },
@@ -197,10 +203,16 @@ export function runMapOption(items: DashboardRunItem[]): EChartsCoreOption {
           ? (event.data as Record<string, unknown>)
           : {};
         const runId = typeof item.runId === "string" ? item.runId : "Run";
+        const shortName = typeof item.shortName === "string" ? item.shortName : "Run";
         const phase = typeof item.phase === "string" ? item.phase : "Unknown phase";
+        const sequenceName = typeof item.sequenceName === "string" ? item.sequenceName : null;
+        const sequenceId = typeof item.sequenceId === "string" ? item.sequenceId : null;
         const state = typeof item.state === "string" ? item.state : "unknown";
         const provider = typeof item.provider === "string" ? item.provider : "unknown";
-        return `<strong>${escapeHtml(runId)}</strong><br>${escapeHtml(phase)}<br>${escapeHtml(provider)} · ${escapeHtml(state)}`;
+        const sequence = sequenceName && sequenceId
+          ? `<br>${escapeHtml(sequenceName)} · ${escapeHtml(sequenceId)}`
+          : "";
+        return `<strong>${escapeHtml(shortName)}</strong><br>Run ID: ${escapeHtml(runId)}${sequence}<br>${escapeHtml(phase)}<br>${escapeHtml(provider)} · ${escapeHtml(state)}`;
       },
     },
     xAxis: {
@@ -461,6 +473,7 @@ export function RunMap({
             {groups.map((group) => (
               <section key={group.key} className="run-map-group" aria-label={group.label}>
                 <h3>{group.label}</h3>
+                {group.details ? <p className="field-help">{group.details}</p> : null}
                 <div className="run-map-rows">
                   {group.items.map((run) => {
                     const binding = run.sequenceBinding;
@@ -475,8 +488,9 @@ export function RunMap({
                         aria-pressed={selectedRunId === run.runId}
                         onClick={() => select(run.runId, false)}
                       >
-                        <span className="run-row-title">{run.runId}</span>
+                        <span className="run-row-title">{run.shortName}</span>
                         <span>{run.implementerProvider} implementer · {run.state}</span>
+                        <span>Run ID: {run.runId}</span>
                         <span>
                           {binding
                             ? `Phase ${binding.ordinal} ${binding.phaseName} · generation ${binding.generation} · ${binding.attemptKind}`

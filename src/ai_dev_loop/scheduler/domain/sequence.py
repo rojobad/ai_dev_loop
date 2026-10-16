@@ -20,7 +20,7 @@ from ai_dev_loop.scheduler.domain.state import (
     WorkflowLimits,
 )
 
-SEQUENCE_MANIFEST_SCHEMA_VERSION = 2
+SEQUENCE_MANIFEST_SCHEMA_VERSION = 3
 PREPARED_SEQUENCE_SCHEMA_VERSION = 2
 FROZEN_SEQUENCE_ENTRY_SCHEMA_VERSION = 2
 PREPARED_SEQUENCE_STATE_KIND = "prepared"
@@ -108,6 +108,7 @@ class SequenceManifestImplementerOverrides(DomainModel):
 
 class SequenceManifestPhase(DomainModel):
     name: NonEmptyStr
+    short_name: str | None = None
     plan_path: NonEmptyStr
     prompt_source_path: NonEmptyStr
     commit_message: str | None = None
@@ -129,6 +130,8 @@ class SequenceManifestPhase(DomainModel):
         self, handler: Callable[[SequenceManifestPhase], dict[str, object]]
     ) -> dict[str, object]:
         data = handler(self)
+        if self.short_name is None:
+            data.pop("short_name", None)
         if self.implementer is None:
             data.pop("implementer", None)
         else:
@@ -142,11 +145,34 @@ class SequenceManifestPhase(DomainModel):
             raise ValueError(f"phase name must be at most {MAX_PHASE_NAME_LENGTH} characters")
         return value
 
+    @field_validator("short_name", mode="before")
+    @classmethod
+    def validate_short_name(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        from ai_dev_loop.errors import ValidationError
+        from ai_dev_loop.scheduler.domain.presentation import require_short_name
+
+        try:
+            return require_short_name(value, field_name="phase short_name")
+        except ValidationError as exc:
+            raise ValueError(str(exc)) from exc
+
 
 class SequenceManifest(DomainModel):
-    schema_version: Literal[1, 2] = 1
+    schema_version: Literal[1, 2, 3] = 1
     name: NonEmptyStr
+    short_name: str | None = None
     phases: list[SequenceManifestPhase]
+
+    @model_serializer(mode="wrap")
+    def serialize_manifest(
+        self, handler: Callable[[SequenceManifest], dict[str, object]]
+    ) -> dict[str, object]:
+        data = handler(self)
+        if self.short_name is None:
+            data.pop("short_name", None)
+        return data
 
     @field_validator("name")
     @classmethod
@@ -154,6 +180,19 @@ class SequenceManifest(DomainModel):
         if len(value) > MAX_SEQUENCE_NAME_LENGTH:
             raise ValueError(f"sequence name must be at most {MAX_SEQUENCE_NAME_LENGTH} characters")
         return value
+
+    @field_validator("short_name", mode="before")
+    @classmethod
+    def validate_short_name(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        from ai_dev_loop.errors import ValidationError
+        from ai_dev_loop.scheduler.domain.presentation import require_short_name
+
+        try:
+            return require_short_name(value, field_name="sequence short_name")
+        except ValidationError as exc:
+            raise ValueError(str(exc)) from exc
 
     @field_validator("phases")
     @classmethod
@@ -177,6 +216,17 @@ class SequenceManifest(DomainModel):
             "implementer" in phase.model_fields_set for phase in self.phases
         ):
             raise ValueError("manifest v1 is Cursor-only; implementer requires v2")
+        has_any_short_name = "short_name" in self.model_fields_set or any(
+            "short_name" in phase.model_fields_set for phase in self.phases
+        )
+        if self.schema_version < 3 and has_any_short_name:
+            raise ValueError("short_name requires manifest v3")
+        if self.schema_version == 3:
+            if self.short_name is None:
+                raise ValueError("manifest v3 requires sequence short_name")
+            missing = [phase.name for phase in self.phases if phase.short_name is None]
+            if missing:
+                raise ValueError("manifest v3 requires short_name for every phase")
         total = len(self.phases)
         for index, phase in enumerate(self.phases, start=1):
             is_final = index == total

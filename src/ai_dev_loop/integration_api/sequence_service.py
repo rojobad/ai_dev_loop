@@ -113,7 +113,12 @@ class IntegrationSequenceReadService:
                 )
                 for sequence_id in sequence_ids:
                     status = self._status.get_status(sequence_id)
-                    items.append(build_sequence_list_item(status))
+                    items.append(
+                        build_sequence_list_item(
+                            status,
+                            short_name=self.store.sequence_short_name(conn, sequence_id),
+                        )
+                    )
         except SchedulerEngineError as exc:
             raise _map_engine_error(exc) from exc
         except IntegrationApiError:

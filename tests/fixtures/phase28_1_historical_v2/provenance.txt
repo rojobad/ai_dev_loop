@@ -1,0 +1,6 @@
+source_commit: 67b8edc
+generator: tests/generate_phase28_v2_fixture.py against predecessor checkout
+sequence_id: fixture-project-seq-3f6324ec0d07
+manifest_schema_version: 2
+provider_sequence: codex,cursor
+no model process was launched; sequence prepare only

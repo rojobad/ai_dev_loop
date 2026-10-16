@@ -38,6 +38,10 @@ $XDG_STATE_HOME/ai_dev_loop/
 ```
 
 - `scheduler submit` congela un run `queued` sin lanzar agentes ni mutar el repo.
+- Schema 17 guarda aliases editables en `scheduler_run_presentation`,
+  `scheduler_sequence_presentation` y `scheduler_planned_run_presentation`. La
+  migración desde schema 16 rellena valores acotados sin tocar payloads/hashes y
+  es rerunnable con `ON CONFLICT DO NOTHING`; una edición posterior sobrevive.
 - `scheduler start` autoriza el run para ticks; la proveniencia controller A es opcional.
 - `scheduler tick` ejecuta preflight, el implementer congelado, staging, review y
   correcciones segun el checkpoint.
@@ -95,8 +99,8 @@ No existe `recover` publico en el scheduler central. Ante fallos:
   congelada y adopción; lineage registra `implementer_retry`;
 - `scheduler abort` cancela sin borrar artefactos ni cambios staged;
 - para trabajo nuevo tras un run terminal, `scheduler submit` con
-  `--resubmission-id <uuid>`, modelo y razonamiento de review explícitos
-  (controller A sigue siendo opcional);
+  `--short-name`, `--resubmission-id <uuid>`, modelo y razonamiento de review
+  explícitos (controller A sigue siendo opcional);
   repetir submit sin esa opcion reutiliza el run terminal existente.
 
 Los contratos de recovery legacy (`recover`, sucesores `interrupted`, checkpoints
@@ -130,9 +134,12 @@ sonda acotada al CLI Codex en `PATH`.
 
 ## Secuencias con implementer por fase
 
-Manifest/definición/entrada v2 congela provider y settings por ordinal; las hojas
+Manifest v3 exige `short_name` de secuencia y fase, mientras definición/entrada
+v2 sigue congelando provider y settings por ordinal; las hojas
 usan contexto submitido v6. Los envelopes de ciclo de vida de secuencia siguen v1.
 Entradas históricas v1 y contextos v4 conservan Cursor, identidad y hashes.
+Preparaciones v1/v2 ya aceptadas conservan replay/materialización exactos; inputs
+legacy nuevos deben actualizarse a v3.
 El layout protegido `implementer/` aplica igualmente a hojas Codex. Una espera
 inicial o de corrección conserva hoja, ordinal, reserva, prompt exacto, sesión y
 trabajo parcial entre ticks/reinicio. Solo aceptación de review autoriza el

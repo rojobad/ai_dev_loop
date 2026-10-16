@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "sequence_id": "fixture-project-seq-3f6324ec0d07",
+  "version": 1,
+  "prepared_at": "2026-10-16T20:30:24.348384Z",
+  "updated_at": "2026-10-16T20:30:24.348384Z",
+  "idempotency_key": "3f6324ec0d079136bb1769279d49870cd051df631a6fb705d211a93ed10fb510",
+  "definition": {
+    "schema_version": 2,
+    "sequence_id": "fixture-project-seq-3f6324ec0d07",
+    "name": "dual-provider-smoke",
+    "project_name": "fixture-project",
+    "repository": {
+      "root": "/tmp/phase28-v2-runtime/test_generate_phase28_v2_fixtu0/repo",
+      "worktree_key": "5eeaefe75852c1baa3ba6d1079a3ae95ca9d2ed01654b991012b8adf5d972ca5"
+    },
+    "manifest_original_artifact_path": "manifest/original.yaml",
+    "manifest_original_sha256": "4d4fa366466d0fe7f07fb7e616fe1c449b1496ca9d1ebdaa99a542b23609ba86",
+    "manifest_resolved_artifact_path": "manifest/resolved.yaml",
+    "manifest_resolved_sha256": "1e81c0943ea45ea4a122946ff7e35393a45474369042b5bbe3eedf1d02b21c01",
+    "controller": {
+      "controller_session_id": null
+    },
+    "entries": [
+      {
+        "schema_version": 2,
+        "ordinal": 1,
+        "phase_name": "phase-1",
+        "planned_run_id": "fixture-project-58f36f6f8cc5",
+        "commit_message": "accepted checkpoint 1",
+        "plan_prompt": {
+          "plan_repository_path": "docs/plans/sample-plan.md",
+          "prompt_source_repository_path": "docs/plans/prompt_sample-plan.txt",
+          "plan_artifact_path": "entries/01/plan/plan.md",
+          "plan_sha256": "0ba8876fcb7d7e9672095388801988261ba0d998d0233d9c0e71947ba8834bd0",
+          "prompt_artifact_path": "entries/01/prompts/cursor-initial.txt",
+          "prompt_sha256": "cb8104296f15453bbc5287bf7d6037e7bcb68294cd0cffa0621163a7d2ec0cfb"
+        },
+        "effective_config": {
+          "effective_config_artifact_path": "entries/01/effective-config.yaml",
+          "effective_config_sha256": "892c22e20ebbe56be0a4b90c9486f23e137ad228cf47e2910c3e6f9b3f8f5e50",
+          "source_config_artifact_path": "entries/01/source-config.yaml",
+          "source_config_sha256": "db4f70395a2a1015db7d5f16053538e310de351eae349aafa629de0176395d2a"
+        },
+        "codex": {
+          "review_model": "gpt-6.1-sol",
+          "review_reasoning_effort": "high",
+          "review_model_source": "explicit",
+          "review_reasoning_source": "explicit",
+          "command": "/tmp/phase28-v2-runtime/test_generate_phase28_v2_fixtu0/bin/codex",
+          "review_skill": "review-staged-cursor-execution",
+          "sandbox": "workspace-write",
+          "binding_artifact_path": "entries/01/codex/fresh-reviewer-input.json",
+          "binding_sha256": "e1ba24e84f9aba414f9069bfb6b735a211ed6da3ed5bfa533a5d3561ae3c3b7a"
+        },
+        "cursor": {
+          "command": "agent",
+          "model": "composer-2.5-fast",
+          "output_format": "stream-json",
+          "force": true,
+          "trust_workspace": true,
+          "sandbox": "disabled"
+        },
+        "workflow": {
+          "max_review_iterations": 3,
+          "stage_mode": "all",
+          "cursor_timeout_minutes": 90,
+          "codex_timeout_minutes": 90,
+          "require_clean_worktree": true
+        },
+        "implementer": {
+          "schema_version": 1,
+          "provider": "codex",
+          "purpose": "implementer",
+          "command": "/tmp/phase28-v2-runtime/test_generate_phase28_v2_fixtu0/bin/codex",
+          "model": "gpt-5.6-sol",
+          "reasoning_effort": "xhigh",
+          "timeout_minutes": 18,
+          "sandbox": "workspace-write",
+          "approval_policy": "never",
+          "session_id": null
+        }
+      },
+      {
+        "schema_version": 2,
+        "ordinal": 2,
+        "phase_name": "phase-2",
+        "planned_run_id": "fixture-project-74aa2f7cd5ad",
+        "commit_message": null,
+        "plan_prompt": {
+          "plan_repository_path": "docs/plans/sample-plan.md",
+          "prompt_source_repository_path": "docs/plans/prompt_sample-plan.txt",
+          "plan_artifact_path": "entries/02/plan/plan.md",
+          "plan_sha256": "0ba8876fcb7d7e9672095388801988261ba0d998d0233d9c0e71947ba8834bd0",
+          "prompt_artifact_path": "entries/02/prompts/cursor-initial.txt",
+          "prompt_sha256": "cb8104296f15453bbc5287bf7d6037e7bcb68294cd0cffa0621163a7d2ec0cfb"
+        },
+        "effective_config": {
+          "effective_config_artifact_path": "entries/02/effective-config.yaml",
+          "effective_config_sha256": "7e9f75238b2b8612154729a7f0eadaade1d5355b8346881a395f719d37315a29",
+          "source_config_artifact_path": "entries/02/source-config.yaml",
+          "source_config_sha256": "db4f70395a2a1015db7d5f16053538e310de351eae349aafa629de0176395d2a"
+        },
+        "codex": {
+          "review_model": "gpt-6.1-sol",
+          "review_reasoning_effort": "high",
+          "review_model_source": "explicit",
+          "review_reasoning_source": "explicit",
+          "command": "/tmp/phase28-v2-runtime/test_generate_phase28_v2_fixtu0/bin/codex",
+          "review_skill": "review-staged-cursor-execution",
+          "sandbox": "workspace-write",
+          "binding_artifact_path": "entries/02/codex/fresh-reviewer-input.json",
+          "binding_sha256": "e1ba24e84f9aba414f9069bfb6b735a211ed6da3ed5bfa533a5d3561ae3c3b7a"
+        },
+        "cursor": {
+          "command": "/tmp/phase28-v2-runtime/test_generate_phase28_v2_fixtu0/bin/agent",
+          "model": "composer-2.5-fast",
+          "output_format": "stream-json",
+          "force": true,
+          "trust_workspace": true,
+          "sandbox": "disabled"
+        },
+        "workflow": {
+          "max_review_iterations": 3,
+          "stage_mode": "all",
+          "cursor_timeout_minutes": 90,
+          "codex_timeout_minutes": 90,
+          "require_clean_worktree": true
+        },
+        "implementer": {
+          "schema_version": 1,
+          "provider": "cursor",
+          "purpose": "implementer",
+          "command": "/tmp/phase28-v2-runtime/test_generate_phase28_v2_fixtu0/bin/agent",
+          "model": "composer-2.5-fast",
+          "reasoning_effort": null,
+          "timeout_minutes": 90,
+          "sandbox": "disabled",
+          "approval_policy": null,
+          "session_id": null
+        }
+      }
+    ]
+  }
+}

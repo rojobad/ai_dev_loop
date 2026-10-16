@@ -3,10 +3,11 @@
 ## Superficie instalada
 
 `ai_dev_loop dashboard serve --port 8765` sirve el frontend empaquetado y
-`POST /api/dashboard/read` en `127.0.0.1`. La API de integración actual es 1.9 y
-publica `capabilities.dashboard=true`. SQLite schema 16 es el formato aceptado
-actual; el lector abre un snapshot validado de `engine.sqlite3` en modo solo
-lectura y usa los artefactos protegidos como autoridad.
+`POST /api/dashboard/read` en `127.0.0.1`. La API de integración actual es 1.10 y
+publica `capabilities.dashboard=true` y `capabilities.shortNames=true`. SQLite
+schema 17 almacena los nombres cortos; schema 16 sigue siendo legible mediante
+fallback sin migración ni escritura. El lector abre un snapshot validado de
+`engine.sqlite3` en modo solo lectura y usa los artefactos protegidos como autoridad.
 
 Las operaciones HTTP allowlisted son:
 
@@ -40,6 +41,11 @@ crear chats, preflight y probes no cuenta. Proyecto, provider y linaje salen de
 campos autoritativos. Provider histórico ausente significa Cursor.
 `implementer_retry` es una generación de reemplazo enlazada por los campos de
 secuencia; nunca se infiere del ID del run.
+
+El mapa prefiere `shortName`/`sequenceShortName` en ejes y etiquetas. Conserva
+el nombre original y los IDs completos en detalles/tooltips, y selecciona por
+`runId`/`sequenceId`; aliases duplicados no colapsan runs. Las etiquetas se
+tratan como texto no confiable y se escapan antes de cualquier tooltip HTML.
 
 Cada respuesta incluye `observedAt`. Las consultas de scope incluyen
 `coverage.dataState`, conteos de lanzamientos/duraciones ausentes, clases de

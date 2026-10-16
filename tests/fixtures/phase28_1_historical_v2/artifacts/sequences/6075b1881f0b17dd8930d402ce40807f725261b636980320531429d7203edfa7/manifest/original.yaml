@@ -1,0 +1,21 @@
+schema_version: 2
+name: dual-provider-smoke
+phases:
+- name: phase-1
+  plan_path: docs/plans/sample-plan.md
+  prompt_source_path: docs/plans/prompt_sample-plan.txt
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: high
+  commit_message: accepted checkpoint 1
+  implementer:
+    provider: codex
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
+    timeout_minutes: 18
+- name: phase-2
+  plan_path: docs/plans/sample-plan.md
+  prompt_source_path: docs/plans/prompt_sample-plan.txt
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: high

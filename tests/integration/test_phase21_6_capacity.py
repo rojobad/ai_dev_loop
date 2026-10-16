@@ -70,7 +70,7 @@ def test_c01_cli_available_capacity_with_fake_app_server(
     monkeypatch.setenv("FAKE_CODEX_CAPACITY_SHAPE", "primary_only")
     code, payload, stderr = _invoke(["integration", "codex-capacity"])
     assert code == 0
-    assert payload["apiVersion"] == {"major": 1, "minor": 9}
+    assert payload["apiVersion"] == {"major": 1, "minor": 10}
     data = payload["data"]
     assert data["status"] == "available"
     assert data["reason"] is None
@@ -154,6 +154,7 @@ def test_c02_capacity_cli_does_not_mutate_scheduler_ledger(
     monkeypatch.setenv("XDG_CACHE_HOME", str(isolated_xdg / "cache"))
     prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
     options = SubmitOptions(
+        short_name="Test run",
         repo_path=git_repo,
         plan_path=Path("docs/plans/sample-plan.md"),
         prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
@@ -396,6 +397,7 @@ def test_c05_scheduler_waiting_uses_frozen_codex_not_path_default(
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "usage_limit")
     prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
     options = SubmitOptions(
+        short_name="Test run",
         repo_path=git_repo,
         plan_path=Path("docs/plans/sample-plan.md"),
         prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),

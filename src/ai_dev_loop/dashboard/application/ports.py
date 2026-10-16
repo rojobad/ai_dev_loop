@@ -48,6 +48,7 @@ class SequenceBindingObservation:
     generation: int
     attempt_kind: str
     source_run_id: str | None
+    sequence_short_name: str = "sequence"
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ class RunObservation:
     state: str
     submitted_at: datetime
     sequence_binding: SequenceBindingObservation | None
+    short_name: str = "run"
 
 
 @dataclass(frozen=True)

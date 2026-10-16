@@ -61,7 +61,7 @@ if TYPE_CHECKING:
         | AwaitingFinalizationSequenceState
     )
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 SEQUENCE_SCHEMA_VERSION = 5
 REVIEW_RETRY_SCHEMA_VERSION = 6
 SEQUENCE_RUN_LINEAGE_SCHEMA_VERSION = 9
@@ -82,6 +82,7 @@ MIGRATION_V13_NAME = "0013_sequence_cursor_replacement"
 MIGRATION_V14_NAME = "0014_codex_implementer_attempts"
 MIGRATION_V15_NAME = "0015_codex_implementer_recovery"
 MIGRATION_V16_NAME = "0016_sequence_implementer_replacement"
+MIGRATION_V17_NAME = "0017_presentation_short_names"
 SEQUENCE_REVIEW_RECOVERY_SCHEMA_VERSION = 11
 CURSOR_INITIAL_RECOVERY_SCHEMA_VERSION = 12
 CURSOR_SEQUENCE_REPLACEMENT_SCHEMA_VERSION = 13
@@ -112,9 +113,17 @@ REQUIRED_TABLES = frozenset(
         "scheduler_sequence_cursor_replacements",
         "scheduler_codex_implementer_recoveries",
         "scheduler_sequence_implementer_replacements",
+        "scheduler_run_presentation",
+        "scheduler_sequence_presentation",
+        "scheduler_planned_run_presentation",
     }
 )
-REQUIRED_TABLES_V15 = REQUIRED_TABLES - {"scheduler_sequence_implementer_replacements"}
+REQUIRED_TABLES_V16 = REQUIRED_TABLES - {
+    "scheduler_run_presentation",
+    "scheduler_sequence_presentation",
+    "scheduler_planned_run_presentation",
+}
+REQUIRED_TABLES_V15 = REQUIRED_TABLES_V16 - {"scheduler_sequence_implementer_replacements"}
 REQUIRED_TABLES_V14 = REQUIRED_TABLES_V15 - {"scheduler_codex_implementer_recoveries"}
 REQUIRED_TABLES_V13 = REQUIRED_TABLES_V14
 REQUIRED_TABLES_V12 = REQUIRED_TABLES_V13 - {"scheduler_sequence_cursor_replacements"}
@@ -315,6 +324,10 @@ def _migration_v16_sql() -> str:
     return _migration_sql("0016_sequence_implementer_replacement.sql")
 
 
+def _migration_v17_sql() -> str:
+    return _migration_sql("0017_presentation_short_names.sql")
+
+
 def _split_sql_statements(sql: str) -> list[str]:
     statements: list[str] = []
     for chunk in sql.split(";"):
@@ -363,6 +376,8 @@ def migration_checksum(version: int) -> str:
         return hashlib.sha256(_migration_v15_sql().encode("utf-8")).hexdigest()
     if version == 16:
         return hashlib.sha256(_migration_v16_sql().encode("utf-8")).hexdigest()
+    if version == 17:
+        return hashlib.sha256(_migration_v17_sql().encode("utf-8")).hexdigest()
     raise ValueError(f"unsupported migration version {version}")
 
 
@@ -581,6 +596,10 @@ class SqliteSchedulerStore:
                 for migration_version in range(1, 16):
                     self._verify_migration_checksum(conn, migration_version)
                 self._migrate_v15_to_v16(conn)
+            elif version == 16:
+                for migration_version in range(1, 17):
+                    self._verify_migration_checksum(conn, migration_version)
+                self._migrate_v16_to_v17(conn)
             else:
                 self._verify_current_schema(conn)
             self._apply_database_permissions(self.db_path)
@@ -999,25 +1018,51 @@ class SqliteSchedulerStore:
         self._migrate_v15_to_v16(conn)
 
     def _migrate_v15_to_v16(self, conn: sqlite3.Connection) -> None:
-        if self._user_version(conn) >= 16:
+        if self._user_version(conn) < 16:
+            for migration_version in range(1, 16):
+                self._verify_migration_checksum(conn, migration_version)
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                for statement in _split_sql_statements(_migration_v16_sql()):
+                    self._fault_maybe_raise_migration(statement)
+                    conn.execute(statement)
+                applied_at = encode_utc_instant(datetime.now(tz=UTC))
+                conn.execute(
+                    """
+                    INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (16, MIGRATION_V16_NAME, migration_checksum(16), applied_at),
+                )
+                conn.execute("PRAGMA user_version = 16")
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            self._apply_database_permissions(self.db_path)
+        self._migrate_v16_to_v17(conn)
+
+    def _migrate_v16_to_v17(self, conn: sqlite3.Connection) -> None:
+        if self._user_version(conn) >= 17:
             self._verify_current_schema(conn)
             return
-        for migration_version in range(1, 16):
+        for migration_version in range(1, 17):
             self._verify_migration_checksum(conn, migration_version)
         try:
             conn.execute("BEGIN IMMEDIATE")
-            for statement in _split_sql_statements(_migration_v16_sql()):
+            for statement in _split_sql_statements(_migration_v17_sql()):
                 self._fault_maybe_raise_migration(statement)
                 conn.execute(statement)
             applied_at = encode_utc_instant(datetime.now(tz=UTC))
+            self.backfill_presentation_short_names(conn, now_text=applied_at)
             conn.execute(
                 """
                 INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
                 VALUES (?, ?, ?, ?)
                 """,
-                (16, MIGRATION_V16_NAME, migration_checksum(16), applied_at),
+                (17, MIGRATION_V17_NAME, migration_checksum(17), applied_at),
             )
-            conn.execute("PRAGMA user_version = 16")
+            conn.execute("PRAGMA user_version = 17")
             conn.commit()
         except Exception:
             conn.rollback()
@@ -1062,6 +1107,9 @@ class SqliteSchedulerStore:
             self._verify_migration_checksum(conn, migration_version)
         if target >= SCHEMA_VERSION:
             tables = REQUIRED_TABLES
+            indexes = REQUIRED_INDEXES
+        elif target >= 16:
+            tables = REQUIRED_TABLES_V16
             indexes = REQUIRED_INDEXES
         elif target >= 15:
             tables = REQUIRED_TABLES_V15
@@ -1113,6 +1161,309 @@ class SqliteSchedulerStore:
                 SchedulerEngineErrorKind.SCHEMA,
                 "prepared sequences require scheduler schema version 5",
             )
+
+    def schema_supports_presentation_names(self, conn: sqlite3.Connection) -> bool:
+        return self._user_version(conn) >= 17 and self.schema_has_table(
+            conn, "scheduler_run_presentation"
+        )
+
+    @staticmethod
+    def _validate_stored_short_name(value: object) -> str:
+        from ai_dev_loop.errors import ValidationError
+        from ai_dev_loop.scheduler.domain.presentation import require_short_name
+
+        try:
+            return require_short_name(value, field_name="stored short name")
+        except ValidationError as exc:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                "scheduler presentation metadata is invalid",
+            ) from exc
+
+    def backfill_presentation_short_names(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        now_text: str,
+    ) -> None:
+        """Populate missing v17 metadata without overwriting later edits."""
+
+        from ai_dev_loop.scheduler.domain.presentation import legacy_short_name
+
+        sequence_rows = conn.execute(
+            "SELECT sequence_id, name FROM scheduler_sequences ORDER BY sequence_id"
+        ).fetchall()
+        for row in sequence_rows:
+            sequence_id = str(row["sequence_id"])
+            conn.execute(
+                """
+                INSERT INTO scheduler_sequence_presentation(
+                    sequence_id, short_name, created_at, updated_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(sequence_id) DO NOTHING
+                """,
+                (
+                    sequence_id,
+                    legacy_short_name(row["name"], fallback_id=sequence_id),
+                    now_text,
+                    now_text,
+                ),
+            )
+
+        entry_rows = conn.execute(
+            """
+            SELECT sequence_id, ordinal, phase_name, planned_run_id
+            FROM scheduler_sequence_entries
+            ORDER BY sequence_id, ordinal
+            """
+        ).fetchall()
+        phase_by_run_id: dict[str, str] = {}
+        for row in entry_rows:
+            planned_run_id = str(row["planned_run_id"])
+            phase_name = str(row["phase_name"])
+            phase_by_run_id[planned_run_id] = phase_name
+            conn.execute(
+                """
+                INSERT INTO scheduler_planned_run_presentation(
+                    planned_run_id, sequence_id, ordinal, short_name, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(planned_run_id) DO NOTHING
+                """,
+                (
+                    planned_run_id,
+                    str(row["sequence_id"]),
+                    int(row["ordinal"]),
+                    legacy_short_name(phase_name, fallback_id=planned_run_id),
+                    now_text,
+                    now_text,
+                ),
+            )
+
+        lineage_rows = conn.execute(
+            """
+            SELECT attempt.run_id, entry.phase_name
+            FROM scheduler_sequence_run_attempts AS attempt
+            JOIN scheduler_sequence_entries AS entry
+              ON entry.sequence_id = attempt.sequence_id AND entry.ordinal = attempt.ordinal
+            ORDER BY attempt.sequence_id, attempt.ordinal, attempt.generation
+            """
+        ).fetchall()
+        for row in lineage_rows:
+            phase_by_run_id[str(row["run_id"])] = str(row["phase_name"])
+
+        run_rows = conn.execute("SELECT run_id FROM scheduler_runs ORDER BY run_id").fetchall()
+        for row in run_rows:
+            run_id = str(row["run_id"])
+            conn.execute(
+                """
+                INSERT INTO scheduler_run_presentation(
+                    run_id, short_name, created_at, updated_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(run_id) DO NOTHING
+                """,
+                (
+                    run_id,
+                    legacy_short_name(phase_by_run_id.get(run_id), fallback_id=run_id),
+                    now_text,
+                    now_text,
+                ),
+            )
+
+    def run_short_name(self, conn: sqlite3.Connection, run_id: str) -> str:
+        from ai_dev_loop.scheduler.domain.presentation import legacy_short_name
+
+        if self.schema_supports_presentation_names(conn):
+            row = conn.execute(
+                "SELECT short_name FROM scheduler_run_presentation WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+            if row is not None:
+                return self._validate_stored_short_name(row["short_name"])
+        row = None
+        if self.schema_supports_sequence_run_lineage(conn):
+            row = conn.execute(
+                """
+                SELECT entry.phase_name
+                FROM scheduler_sequence_run_attempts AS attempt
+                JOIN scheduler_sequence_entries AS entry
+                  ON entry.sequence_id = attempt.sequence_id AND entry.ordinal = attempt.ordinal
+                WHERE attempt.run_id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None and self._user_version(conn) >= SEQUENCE_SCHEMA_VERSION:
+            row = conn.execute(
+                "SELECT phase_name FROM scheduler_sequence_entries WHERE planned_run_id = ?",
+                (run_id,),
+            ).fetchone()
+        return legacy_short_name(
+            None if row is None else row["phase_name"],
+            fallback_id=run_id,
+        )
+
+    def sequence_short_name(self, conn: sqlite3.Connection, sequence_id: str) -> str:
+        from ai_dev_loop.scheduler.domain.presentation import legacy_short_name
+
+        if self.schema_supports_presentation_names(conn):
+            row = conn.execute(
+                "SELECT short_name FROM scheduler_sequence_presentation WHERE sequence_id = ?",
+                (sequence_id,),
+            ).fetchone()
+            if row is not None:
+                return self._validate_stored_short_name(row["short_name"])
+        row = conn.execute(
+            "SELECT name FROM scheduler_sequences WHERE sequence_id = ?",
+            (sequence_id,),
+        ).fetchone()
+        return legacy_short_name(None if row is None else row["name"], fallback_id=sequence_id)
+
+    def planned_run_short_name(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        sequence_id: str,
+        ordinal: int,
+        planned_run_id: str,
+    ) -> str:
+        from ai_dev_loop.scheduler.domain.presentation import legacy_short_name
+
+        if self.schema_supports_presentation_names(conn):
+            row = conn.execute(
+                """
+                SELECT short_name FROM scheduler_planned_run_presentation
+                WHERE planned_run_id = ? AND sequence_id = ? AND ordinal = ?
+                """,
+                (planned_run_id, sequence_id, ordinal),
+            ).fetchone()
+            if row is not None:
+                return self._validate_stored_short_name(row["short_name"])
+        row = conn.execute(
+            """
+            SELECT phase_name FROM scheduler_sequence_entries
+            WHERE planned_run_id = ? AND sequence_id = ? AND ordinal = ?
+            """,
+            (planned_run_id, sequence_id, ordinal),
+        ).fetchone()
+        return legacy_short_name(
+            None if row is None else row["phase_name"],
+            fallback_id=planned_run_id,
+        )
+
+    def insert_run_short_name(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        short_name: str,
+        now: datetime,
+        if_absent: bool = False,
+    ) -> None:
+        cleaned = self._validate_stored_short_name(short_name)
+        now_text = encode_utc_instant(now)
+        conflict = "DO NOTHING" if if_absent else (
+            "DO UPDATE SET short_name = excluded.short_name, updated_at = excluded.updated_at"
+        )
+        conn.execute(
+            f"""
+            INSERT INTO scheduler_run_presentation(run_id, short_name, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(run_id) {conflict}
+            """,
+            (run_id, cleaned, now_text, now_text),
+        )
+
+    def insert_sequence_short_name(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        sequence_id: str,
+        short_name: str,
+        now: datetime,
+        if_absent: bool = False,
+    ) -> None:
+        cleaned = self._validate_stored_short_name(short_name)
+        now_text = encode_utc_instant(now)
+        conflict = "DO NOTHING" if if_absent else (
+            "DO UPDATE SET short_name = excluded.short_name, updated_at = excluded.updated_at"
+        )
+        conn.execute(
+            f"""
+            INSERT INTO scheduler_sequence_presentation(
+                sequence_id, short_name, created_at, updated_at
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(sequence_id) {conflict}
+            """,
+            (sequence_id, cleaned, now_text, now_text),
+        )
+
+    def insert_planned_run_short_name(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        sequence_id: str,
+        ordinal: int,
+        planned_run_id: str,
+        short_name: str,
+        now: datetime,
+        if_absent: bool = False,
+    ) -> None:
+        cleaned = self._validate_stored_short_name(short_name)
+        now_text = encode_utc_instant(now)
+        conflict = "DO NOTHING" if if_absent else (
+            "DO UPDATE SET short_name = excluded.short_name, updated_at = excluded.updated_at"
+        )
+        conn.execute(
+            f"""
+            INSERT INTO scheduler_planned_run_presentation(
+                planned_run_id, sequence_id, ordinal, short_name, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(planned_run_id) {conflict}
+            """,
+            (planned_run_id, sequence_id, ordinal, cleaned, now_text, now_text),
+        )
+
+    def copy_run_short_name_if_absent(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_run_id: str,
+        successor_run_id: str,
+        now: datetime,
+    ) -> None:
+        if not self.schema_supports_presentation_names(conn):
+            return
+        self.insert_run_short_name(
+            conn,
+            run_id=successor_run_id,
+            short_name=self.run_short_name(conn, source_run_id),
+            now=now,
+            if_absent=True,
+        )
+
+    def copy_planned_short_name_to_run_if_absent(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        sequence_id: str,
+        ordinal: int,
+        planned_run_id: str,
+        run_id: str,
+        now: datetime,
+    ) -> None:
+        if not self.schema_supports_presentation_names(conn):
+            return
+        self.insert_run_short_name(
+            conn,
+            run_id=run_id,
+            short_name=self.planned_run_short_name(
+                conn,
+                sequence_id=sequence_id,
+                ordinal=ordinal,
+                planned_run_id=planned_run_id,
+            ),
+            now=now,
+            if_absent=True,
+        )
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -1357,7 +1708,10 @@ class SqliteSchedulerStore:
         event_id: str,
         event: SchedulerEvent,
         now: datetime,
+        short_name: str | None = None,
     ) -> None:
+        from ai_dev_loop.scheduler.domain.presentation import legacy_short_name
+
         if state.run_id != run_id:
             raise SchedulerEngineError(
                 SchedulerEngineErrorKind.VALIDATION,
@@ -1391,6 +1745,17 @@ class SqliteSchedulerStore:
                     now_text,
                 ),
             )
+            if self.schema_supports_presentation_names(conn):
+                self.insert_run_short_name(
+                    conn,
+                    run_id=run_id,
+                    short_name=(
+                        legacy_short_name(None, fallback_id=run_id)
+                        if short_name is None
+                        else short_name
+                    ),
+                    now=now,
+                )
             event_kind, event_payload, event_digest = self.dump_event(event)
             conn.execute(
                 """
@@ -1497,6 +1862,20 @@ class SqliteSchedulerStore:
                     now_text,
                     now_text,
                 ),
+            )
+            binding = authorized_state.context.sequence
+            if binding is None:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CORRUPTION,
+                    "materialized sequence run is missing its sequence binding",
+                )
+            self.copy_planned_short_name_to_run_if_absent(
+                conn,
+                sequence_id=binding.sequence_id,
+                ordinal=binding.ordinal,
+                planned_run_id=run_id,
+                run_id=run_id,
+                now=now,
             )
             submitted_kind, submitted_payload, submitted_digest = self.dump_event(submitted_event)
             conn.execute(
@@ -1822,6 +2201,15 @@ class SqliteSchedulerStore:
             submitted_event=submitted_event,
             authorized_event_id=authorized_event_id,
             authorized_event=authorized_event,
+            now=now,
+        )
+        successor_entry = updated_sequence.definition.entries[intent.successor_ordinal - 1]
+        self.copy_planned_short_name_to_run_if_absent(
+            conn,
+            sequence_id=intent.sequence_id,
+            ordinal=intent.successor_ordinal,
+            planned_run_id=successor_entry.planned_run_id,
+            run_id=intent.successor_run_id,
             now=now,
         )
         predecessor_sequence = self.next_event_sequence(conn, intent.predecessor_run_id)
@@ -4802,7 +5190,10 @@ class SqliteSchedulerStore:
         *,
         state: PreparedSequenceState,
         now: datetime,
+        sequence_short_name: str | None = None,
+        planned_short_names: dict[int, str] | None = None,
     ) -> None:
+        from ai_dev_loop.scheduler.domain.presentation import legacy_short_name
         from ai_dev_loop.scheduler.domain.sequence import PreparedSequenceState
 
         if not isinstance(state, PreparedSequenceState):
@@ -4843,6 +5234,18 @@ class SqliteSchedulerStore:
                 SchedulerEngineErrorKind.CONFLICT,
                 "prepared sequence identity already exists",
             ) from exc
+        supports_presentation_names = self.schema_supports_presentation_names(conn)
+        if supports_presentation_names:
+            self.insert_sequence_short_name(
+                conn,
+                sequence_id=state.sequence_id,
+                short_name=(
+                    legacy_short_name(definition.name, fallback_id=state.sequence_id)
+                    if sequence_short_name is None
+                    else sequence_short_name
+                ),
+                now=now,
+            )
         for entry in definition.entries:
             entry_payload, entry_digest = self.dump_sequence_entry(entry)
             conn.execute(
@@ -4861,6 +5264,20 @@ class SqliteSchedulerStore:
                     entry_digest,
                 ),
             )
+            short_name = None if planned_short_names is None else planned_short_names.get(entry.ordinal)
+            if supports_presentation_names:
+                self.insert_planned_run_short_name(
+                    conn,
+                    sequence_id=state.sequence_id,
+                    ordinal=entry.ordinal,
+                    planned_run_id=entry.planned_run_id,
+                    short_name=(
+                        legacy_short_name(entry.phase_name, fallback_id=entry.planned_run_id)
+                        if short_name is None
+                        else short_name
+                    ),
+                    now=now,
+                )
 
     def compare_and_swap_sequence_state(
         self,

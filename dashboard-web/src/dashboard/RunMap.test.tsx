@@ -61,6 +61,7 @@ function run(
 ): DashboardRunItem {
   return {
     runId,
+    shortName: runId,
     projectName: "project-a",
     implementerProvider: index % 2 ? "codex" : "cursor",
     state: index % 3 ? "completed" : "waiting_codex_capacity",
@@ -73,6 +74,7 @@ function run(
 const replacementBinding = {
   sequenceId: "sequence-authority",
   sequenceName: "Authoritative sequence",
+  sequenceShortName: "Authority",
   ordinal: 2,
   phaseName: "implementation",
   generation: 1,
@@ -180,6 +182,8 @@ describe("C264-1 authoritative paged run map", () => {
   it("groups only authoritative bindings and never derives lineage from run names", () => {
     const groups = groupRunMapItems(allRuns.slice(0, 3));
     expect(groups[0].key).toBe("sequence-authority");
+    expect(groups[0].label).toBe("Authority");
+    expect(groups[0].details).toContain("Authoritative sequence");
     expect(groups[0].items.map((item) => item.runId)).toEqual([
       "old-replacement",
       "new-replacement",
@@ -189,6 +193,24 @@ describe("C264-1 authoritative paged run map", () => {
       "old-replacement",
     );
     expect(runIdFromChartEvent({ name: "new-replacement" })).toBeNull();
+  });
+
+  it("escapes malicious aliases while duplicate aliases retain exact run IDs", () => {
+    const malicious = '<img src=x onerror="boom">';
+    const first = { ...run("exact-a", 1), shortName: malicious };
+    const second = { ...run("exact-b", 2), shortName: malicious };
+    const option = runMapOption([first, second]);
+    const formatter = (option.tooltip as { formatter: (value: unknown) => string }).formatter;
+    const series = option.series as Array<{
+      data: Array<{ runId: string; shortName: string }>;
+    }>;
+    expect(series[0].data.map((item) => item.runId)).toEqual(["exact-a", "exact-b"]);
+    expect(runIdFromChartEvent({ data: series[0].data[0] })).toBe("exact-a");
+    expect(runIdFromChartEvent({ data: series[0].data[1] })).toBe("exact-b");
+    expect(formatter({ data: series[0].data[0] })).toContain(
+      "&lt;img src=x onerror=&quot;boom&quot;&gt;",
+    );
+    expect(formatter({ data: series[0].data[0] })).not.toContain(malicious);
   });
 
   it("keeps one timestamp per retained page across repeated first-page refreshes", async () => {

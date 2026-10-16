@@ -53,6 +53,7 @@ Opciones principales:
 
 ```text
 --config-path PATH
+--short-name TEXT             (obligatorio; 1..35 code points Unicode tras trim)
 --project-name TEXT
 --repo-path PATH
 --plan-path PATH
@@ -99,7 +100,7 @@ reviewer. `--implementer-command` default `codex` y `--implementer-timeout-minut
 default 90. Esos campos se rechazan si el proveedor es Cursor. Los flags
 `--cursor-*` se rechazan cuando la selección es Codex. El sandbox del implementer
 Codex es `workspace-write` y la política de aprobación no interactiva es explícita
-(`never`); no hay bypass. En un run standalone o una hoja de secuencia v2, los ticks ejecutan la
+(`never`); no hay bypass. En un run standalone o una hoja con definición congelada v2, los ticks ejecutan la
 implementación inicial, normalizan staging, crean un reviewer B independiente y
 reanudan la sesión implementer exacta para correcciones. Una cuota detectada por
 evidencia estructurada/provider, o por un probe post-fallo `EXHAUSTED` con identidad
@@ -118,6 +119,7 @@ Ejemplo:
 
 ```bash
 ai_dev_loop scheduler submit \
+  --short-name "Mi cambio" \
   --repo-path /path/al/repo \
   --plan-path docs/plans/mi-plan.md \
   --prompt-source-path docs/plans/prompt_mi-plan.txt \
@@ -136,13 +138,16 @@ ai_dev_loop scheduler sequence status <sequence-id> [--output text|json]
 ai_dev_loop scheduler sequence abort <sequence-id> [--output text|json]
 ```
 
-Manifest v2 selecciona el implementer por fase. Ejemplo completo de dos fases:
+Todo prepare nuevo exige manifest v3. Conserva la selección de implementer de v2
+y añade un `short_name` explícito para la secuencia y para cada fase:
 
 ```yaml
-schema_version: 2
+schema_version: 3
 name: codex-then-cursor
+short_name: Entrega autenticada
 phases:
   - name: implementation
+    short_name: Implementación
     plan_path: docs/plans/implementation.md
     prompt_source_path: docs/plans/prompt_implementation.txt
     commit_message: "checkpoint: implementation accepted"
@@ -155,6 +160,7 @@ phases:
       review_model: gpt-6.1-sol
       review_reasoning_effort: high
   - name: final-validation
+    short_name: Validación final
     plan_path: docs/plans/final-validation.md
     prompt_source_path: docs/plans/prompt_final-validation.txt
     cursor:
@@ -163,6 +169,25 @@ phases:
       review_model: gpt-6.1-sol
       review_reasoning_effort: high
 ```
+
+Los `short_name` se recortan en los extremos, deben tener 1..35 code points
+Unicode y no admiten controles. No tienen que ser únicos. Manifest v1/v2 nuevo
+falla indicando el upgrade antes de publicar una secuencia; una preparación
+v1/v2 ya aceptada se puede repetir exactamente y materializar sin reescribir sus
+bytes, hashes, identidades ni un alias editado posteriormente.
+
+Los nombres de presentación se editan localmente, fuera de los inputs
+congelados:
+
+```bash
+ai_dev_loop scheduler run set-short-name <run-id> --short-name "Nombre corto"
+ai_dev_loop scheduler sequence set-short-name <sequence-id> --short-name "Nombre corto"
+```
+
+Ambos comandos aceptan records preparados o terminales y cambian solo metadata;
+no reservan, autorizan, despachan ni reinician trabajo. Una hoja planificada
+hereda su alias al materializarse y cada sucesor de recovery lo copia una sola
+vez, por lo que replay/restart no pisa una edición manual.
 
 ```bash
 ai_dev_loop scheduler sequence prepare --repo-path /path/al/repo --manifest /path/to/sequence.yaml
@@ -676,6 +701,7 @@ La accion segura para trabajo nuevo es `scheduler submit` + `scheduler start` + 
 
 ```bash
 ai_dev_loop scheduler submit \
+  --short-name "Implementación con Codex" \
   --repo-path /path/al/repo \
   --plan-path docs/plans/implementation.md \
   --prompt-source-path docs/plans/prompt_implementation.txt \

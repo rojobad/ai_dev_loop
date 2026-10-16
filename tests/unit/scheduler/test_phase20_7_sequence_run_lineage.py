@@ -145,9 +145,12 @@ def _prepare_sequence_without_migration(
         manifest_file,
         _manifest_yaml(
             name=manifest_name,
+            schema_version=3,
+            short_name=manifest_name,
             phases=[
                 {
                     "name": "phase-one",
+                    "short_name": "phase-one",
                     "plan_path": "docs/plans/sample-plan.md",
                     "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
                     "commit_message": "checkpoint after phase one",
@@ -158,6 +161,7 @@ def _prepare_sequence_without_migration(
                 },
                 {
                     "name": "phase-two",
+                    "short_name": "phase-two",
                     "plan_path": "docs/plans/sample-plan.md",
                     "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
                     "codex": {

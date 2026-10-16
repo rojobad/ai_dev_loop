@@ -5,7 +5,7 @@ futuro supervise el scheduler local sin acceder a SQLite ni rutas privadas.
 
 ## Versión del contrato
 
-- Versión actual de la API: **1.9** (`apiVersion.major` / `apiVersion.minor`).
+- Versión actual de la API: **1.10** (`apiVersion.major` / `apiVersion.minor`).
 - Misma major: compatible; campos desconocidos se ignoran en consumidores.
 - Major distinta: el consumidor debe detenerse con `UPDATE_REQUIRED` y no emitir
   más peticiones de recursos.
@@ -18,7 +18,7 @@ Todas las órdenes bajo `integration` escriben **un único documento JSON** en s
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 9 },
+  "apiVersion": { "major": 1, "minor": 10 },
   "ok": true,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": {},
@@ -30,7 +30,7 @@ Error:
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 9 },
+  "apiVersion": { "major": 1, "minor": 10 },
   "ok": false,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": null,
@@ -63,8 +63,8 @@ ai_dev_loop integration info [--output json]
 - No requiere ledger del scheduler, no crea directorios XDG y no sondea Codex.
 - `data.aiDevLoopVersion` es la versión del paquete instalado.
 - `data.capabilities` declara de forma honesta qué lecturas existen en esta
-  versión. En **1.9**, `runs`, `sequences`, `reviewInspection`, `processOutput`,
-  `codexCapacity` y `dashboard` son `true`.
+  versión. En **1.10**, `runs`, `sequences`, `reviewInspection`, `processOutput`,
+  `codexCapacity`, `dashboard` y `shortNames` son `true`.
 
 ## Capacidad Codex local (API 1.5)
 
@@ -185,7 +185,7 @@ ai_dev_loop integration run output RUN_ID --attempt ATTEMPT_ID --stream stdout|s
 
 Los esquemas empaquetados viven en `src/ai_dev_loop/schemas/integration-api-*.json`.
 
-## Consultas compartidas del dashboard (API 1.9)
+## Consultas compartidas del dashboard (API 1.9+)
 
 ```bash
 ai_dev_loop integration dashboard projects [--offset N --limit N]
@@ -221,6 +221,14 @@ ai_dev_loop integration dashboard activity --from UTC --to UTC --metric submissi
   soportados, corrupción y fallos de lectura usan los códigos seguros existentes.
 - La consulta no incluye prompts, salida de procesos, sesiones, rutas privadas ni
   capacidad Codex actual. Esos contenidos conservan sus interfaces explícitas.
+
+API 1.10 añade `shortName` a las proyecciones de run, secuencia, fase e intento
+materializado, y `sequenceShortName` donde existe binding de secuencia. Son
+campos aditivos; los esquemas v1 siguen validando fixtures históricos sin esos
+campos. El productor actual siempre devuelve un valor no vacío mediante metadata
+schema 17 o el fallback de solo lectura para schema 16. Los nombres son solo
+presentación: IDs, estado, provider, proyecto y linaje siguen saliendo de campos
+autoritativos.
 
 ## Implementer, capacidad y timeout por rol (API 1.7+)
 

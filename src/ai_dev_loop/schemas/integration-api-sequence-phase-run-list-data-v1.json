@@ -7,6 +7,8 @@
   "required": ["sequenceId", "ordinal", "items", "page", "runCount"],
   "properties": {
     "sequenceId": { "type": "string", "minLength": 1 },
+    "sequenceShortName": { "type": "string", "minLength": 1, "maxLength": 35 },
+    "phaseShortName": { "type": "string", "minLength": 1, "maxLength": 35 },
     "ordinal": { "type": "integer", "minimum": 1 },
     "items": {
       "type": "array",

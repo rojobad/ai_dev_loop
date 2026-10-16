@@ -36,6 +36,7 @@ def test_scheduler_submit_freezes_reviewer_without_session(
     with patch("sys.stdin", StringIO(prompt)):
         result = submit_run(
             SubmitOptions(
+                short_name="Test run",
                 repo_path=git_repo,
                 plan_path=Path("docs/plans/sample-plan.md"),
                 prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),

@@ -290,8 +290,8 @@ def test_c267_3_docs_and_handoff_match_public_contract() -> None:
     assert "PHASE26_NODE_BIN" in operator_doc
     historical_tooling_marker = "phase" + "263"
     assert historical_tooling_marker not in operator_doc
-    assert "API de integración actual es 1.9" in reference_doc
-    assert "SQLite schema 16" in reference_doc
+    assert "API de integración actual es 1.10" in reference_doc
+    assert "SQLite\nschema 17" in reference_doc
     assert "codex.implementer_resume" in reference_doc
     assert "MANUAL_PENDING" in walkthrough
     assert "fixture-project" in walkthrough

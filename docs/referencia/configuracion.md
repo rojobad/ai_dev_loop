@@ -12,9 +12,9 @@ Version soportada:
 version: 1
 ```
 
-El flujo soportado usa `scheduler submit` con `--codex-review-model` y
-`--codex-review-reasoning-effort` obligatorios en CLI. `--controller-session-id`
-es opcional para proveniencia y lookup controller A.
+El flujo soportado usa `scheduler submit` con `--short-name`,
+`--codex-review-model` y `--codex-review-reasoning-effort` obligatorios en CLI.
+`--controller-session-id` es opcional para proveniencia y lookup controller A.
 Esos valores se congelan en el ledger central; no se capturan de la sesion Codex
 durante submit ni se infieren de `config.toml` o defaults de Codex CLI.
 
@@ -212,9 +212,12 @@ ai_dev_loop config validate --repo /path/al/repo
 ai_dev_loop config validate --repo /path/al/repo --output json
 ```
 
-## Manifest de secuencia v2
+## Manifests de secuencia v2 y v3
 
 `schema_version: 2` permite `implementer` por fase, con los campos anteriores.
+Permanece aceptado para replay y materialización de secuencias ya preparadas.
+Una preparación nueva usa `schema_version: 3`, conserva esos mismos campos de
+implementer y requiere `short_name` tanto en la secuencia como en cada fase.
 Omitir la sección o su provider selecciona Cursor, incluso si YAML seleccionaba
 Codex. Para `provider: codex`, los campos de fase prevalecen sobre defaults YAML
 del mismo provider; el modelo y effort deben quedar explícitamente resueltos.
@@ -228,5 +231,5 @@ Prepare congela ejecutables, configuración, prompts y hashes independientes por
 ordinal sin ejecutar Git/agentes. Los cambios posteriores en YAML o manifest no
 alteran esa definición preparada. Un prepare con inputs distintos crea una nueva
 definición; no reemplaza la anterior. Manifest v1 y sus entradas congeladas
-históricas conservan Cursor y hashes, sin migración a Codex. Un prepare v1 nuevo
-rechaza defaults YAML que seleccionen Codex; usa manifest v2 para esa selección.
+históricas conservan Cursor y hashes, sin migración a Codex. Preparaciones nuevas
+con manifest v1/v2 se rechazan con una indicación de actualización a v3.

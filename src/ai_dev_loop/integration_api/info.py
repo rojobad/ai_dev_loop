@@ -20,6 +20,7 @@ def build_integration_info_data() -> IntegrationInfoData:
                 "mixedImplementerSequences": True,
                 "codexImplementerManualRecovery": True,
                 "dashboard": True,
+                "shortNames": True,
             },
         }
     )

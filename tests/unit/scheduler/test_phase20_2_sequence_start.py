@@ -302,6 +302,7 @@ def test_sequence_start_reservation_conflict_leaves_sequence_prepared(
     )
     prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
     options = SubmitOptions(
+        short_name="Test run",
         repo_path=git_repo,
         plan_path=Path("docs/plans/sample-plan.md"),
         prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),

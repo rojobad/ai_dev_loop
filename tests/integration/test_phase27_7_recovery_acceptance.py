@@ -259,6 +259,8 @@ def _submit_standalone(runner: CliRunner, repo: Path, *, prompt: str) -> str:
         [
             "scheduler",
             "submit",
+            "--short-name",
+            "Recovery acceptance",
             "--repo-path",
             str(repo),
             "--plan-path",
@@ -294,11 +296,13 @@ def _prepare_sequence(runner: CliRunner, repo: Path) -> tuple[str, str]:
     manifest.write_text(
         yaml.safe_dump(
             {
-                "schema_version": 2,
+                "schema_version": 3,
                 "name": "phase27-7-recovery-acceptance",
+                "short_name": "Recovery acceptance",
                 "phases": [
                     {
                         "name": "codex-recovery",
+                        "short_name": "Codex recovery",
                         "plan_path": "docs/plans/sample-plan.md",
                         "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
                         "commit_message": "accepted recovery checkpoint",
@@ -316,6 +320,7 @@ def _prepare_sequence(runner: CliRunner, repo: Path) -> tuple[str, str]:
                     },
                     {
                         "name": "cursor-final",
+                        "short_name": "Cursor final",
                         "plan_path": "docs/plans/sample-plan.md",
                         "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
                         "codex": {

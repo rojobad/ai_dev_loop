@@ -1177,6 +1177,12 @@ def materialize_review_recovery_successor(
             event=event,
             now=now,
         )
+        store.copy_run_short_name_if_absent(
+            conn,
+            source_run_id=source_run_id,
+            successor_run_id=successor_run_id,
+            now=now,
+        )
         inserted = store.insert_review_recovery_successor(
             conn,
             source_run_id=source_run_id,

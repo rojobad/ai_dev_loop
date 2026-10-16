@@ -61,9 +61,9 @@ const projects: DashboardProjectSummary[] = [
 ];
 
 const workload: DashboardWorkloadItem[] = [
-  { projectName: "alpha", sequenceId: "seq-a", sequenceName: "Sequence A", runCount: 3 },
-  { projectName: "alpha", sequenceId: null, sequenceName: null, runCount: 2 },
-  { projectName: "beta", sequenceId: "seq-b", sequenceName: "Sequence B", runCount: 5 },
+  { projectName: "alpha", sequenceId: "seq-a", sequenceName: "Sequence A", sequenceShortName: "A", runCount: 3 },
+  { projectName: "alpha", sequenceId: null, sequenceName: null, sequenceShortName: null, runCount: 2 },
+  { projectName: "beta", sequenceId: "seq-b", sequenceName: "Sequence B", sequenceShortName: "B", runCount: 5 },
 ];
 
 describe("chart projections", () => {
@@ -106,15 +106,35 @@ describe("chart projections", () => {
         projectName: "alpha",
         value: 5,
         children: [
-          { name: "Sequence A", projectName: "alpha", value: 3 },
-          { name: "Standalone", projectName: "alpha", value: 2 },
+          {
+            name: "A",
+            projectName: "alpha",
+            sequenceId: "seq-a",
+            sequenceName: "Sequence A",
+            value: 3,
+          },
+          {
+            name: "Standalone",
+            projectName: "alpha",
+            sequenceId: null,
+            sequenceName: null,
+            value: 2,
+          },
         ],
       },
       {
         name: "beta",
         projectName: "beta",
         value: 5,
-        children: [{ name: "Sequence B", projectName: "beta", value: 5 }],
+        children: [
+          {
+            name: "B",
+            projectName: "beta",
+            sequenceId: "seq-b",
+            sequenceName: "Sequence B",
+            value: 5,
+          },
+        ],
       },
     ]);
   });
@@ -142,11 +162,13 @@ describe("chart projections", () => {
     );
 
     const maliciousSequence = '<script>alert("leaf")</script> & sequence';
+    const maliciousShortName = '<b onmouseover="boom">short</b>';
     const workloadOptionValue = workloadOption([
       {
         projectName: maliciousProject,
         sequenceId: "seq-malicious",
         sequenceName: maliciousSequence,
+        sequenceShortName: maliciousShortName,
         runCount: 4,
       },
     ]);
@@ -160,7 +182,7 @@ describe("chart projections", () => {
         data: leaf,
       }),
     ).toBe(
-      "<strong>&lt;img src=x onerror=&quot;boom&quot;&gt; &amp; project</strong><br>&lt;script&gt;alert(&quot;leaf&quot;)&lt;/script&gt; &amp; sequence: 4 runs",
+      "<strong>&lt;img src=x onerror=&quot;boom&quot;&gt; &amp; project</strong><br>&lt;b onmouseover=&quot;boom&quot;&gt;short&lt;/b&gt;: 4 runs<br>&lt;script&gt;alert(&quot;leaf&quot;)&lt;/script&gt; &amp; sequence · seq-malicious",
     );
   });
 
