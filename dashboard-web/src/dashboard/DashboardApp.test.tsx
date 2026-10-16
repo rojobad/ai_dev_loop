@@ -6,6 +6,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AttemptTimelineData,
   CodexCapacityData,
+  DashboardActivityData,
+  DashboardActivityMetric,
   DashboardDataSource,
   DashboardFilters,
   DashboardProjectsData,
@@ -101,6 +103,29 @@ class DeferredDataSource implements DashboardDataSource {
     });
   }
 
+  async activity(
+    filters: DashboardFilters,
+    metric: DashboardActivityMetric,
+    _signal: AbortSignal,
+  ): Promise<SourceObservation<DashboardActivityData>> {
+    return observation({
+      observedAt: "2026-01-03T00:00:00Z",
+      filters: { ...filters, projectName: filters.projectName ?? null },
+      coverage: {
+        dataState: "empty",
+        unstartedRuns: 0,
+        missingLaunchTimes: 0,
+        unknownExecutionKinds: 0,
+        missingDurationAttempts: 0,
+        warnings: [],
+      },
+      metric,
+      unit: metric === "process-hours" ? "process-seconds" : "count",
+      days: [],
+      total: 0,
+    });
+  }
+
   async runInspect(
     _runId: string,
     _signal: AbortSignal,
@@ -163,7 +188,7 @@ describe("C263 overview shell", () => {
   it("retires old replies and leaves an invalid draft uncommitted", async () => {
     const dataSource = new DeferredDataSource();
     render(<DashboardApp dataSource={dataSource} />);
-    expect(dataSource.requests).toHaveLength(1);
+    await waitFor(() => expect(dataSource.requests).toHaveLength(1));
 
     fireEvent.change(screen.getByLabelText("IANA time zone"), { target: { value: "UTC" } });
     fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-01-01T00:00" } });
@@ -171,7 +196,7 @@ describe("C263 overview shell", () => {
       target: { value: "2026-01-03T00:00" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-    expect(dataSource.requests).toHaveLength(2);
+    await waitFor(() => expect(dataSource.requests).toHaveLength(2));
 
     await act(async () => dataSource.requests[1].resolve(observation(summaryData(7))));
     expect(await screen.findByLabelText("Runs started: 7")).toBeInTheDocument();

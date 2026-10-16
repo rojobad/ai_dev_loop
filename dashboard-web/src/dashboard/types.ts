@@ -119,6 +119,23 @@ export interface DashboardRunsData {
   totalCount: number;
 }
 
+export type DashboardActivityMetric = "submissions" | "review-rounds" | "process-hours";
+
+export interface DashboardActivityDay {
+  date: string;
+  value: number;
+}
+
+export interface DashboardActivityData {
+  observedAt: string;
+  filters: DashboardFilterEcho;
+  coverage: DashboardCoverage;
+  metric: DashboardActivityMetric;
+  unit: "count" | "process-seconds";
+  days: DashboardActivityDay[];
+  total: number;
+}
+
 export interface IntegrationReviewBudget {
   completed: number;
   max: number;
@@ -297,6 +314,11 @@ export interface DashboardDataSource {
     page: { offset: number; limit: number },
     signal: AbortSignal,
   ): Promise<SourceObservation<DashboardRunsData>>;
+  activity(
+    filters: DashboardFilters,
+    metric: DashboardActivityMetric,
+    signal: AbortSignal,
+  ): Promise<SourceObservation<DashboardActivityData>>;
   runInspect(
     runId: string,
     signal: AbortSignal,

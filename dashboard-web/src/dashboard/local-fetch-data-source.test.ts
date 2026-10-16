@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { LocalFetchDashboardDataSource } from "./local-fetch-data-source";
-import { summaryData } from "./test-fixtures";
+import { activityData, summaryData } from "./test-fixtures";
 
 describe("local fetch transport", () => {
   it("owns the fixed same-origin route and source/received metadata", async () => {
@@ -57,6 +57,37 @@ describe("local fetch transport", () => {
     await expect(
       new LocalFetchDashboardDataSource().capacity(new AbortController().signal),
     ).rejects.toMatchObject({ code: "UPDATE_REQUIRED" });
+  });
+
+  it("dispatches the selected activity metric through the typed operation", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          apiVersion: { major: 1, minor: 9 },
+          ok: true,
+          observedAt: "2026-01-03T00:00:00Z",
+          data: activityData("review-rounds"),
+          error: null,
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const filters = {
+      fromUtc: "2026-01-01T00:00:00Z",
+      toUtc: "2026-01-03T00:00:00Z",
+      timeZone: "UTC",
+    };
+    const result = await new LocalFetchDashboardDataSource().activity(
+      filters,
+      "review-rounds",
+      new AbortController().signal,
+    );
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      operation: "dashboard.activity",
+      parameters: { ...filters, metric: "review-rounds" },
+    });
+    expect(result.data.metric).toBe("review-rounds");
   });
 
   it("classifies HTTP 503 as transient local service saturation", async () => {

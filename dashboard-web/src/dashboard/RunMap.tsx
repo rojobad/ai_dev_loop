@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { DashboardChart } from "./DashboardChart";
 import { escapeHtml } from "./charts";
+import { SUMMARY_REFRESH_MS, RefreshCoordinator, canonicalReadKey } from "./refreshCoordinator";
 import type {
   DashboardCoverage,
   DashboardDataSource,
@@ -22,13 +23,22 @@ interface RunMapState {
   totalCount: number;
   coverage?: DashboardCoverage;
   page?: DashboardPage;
-  observations: string[];
+  firstPage?: DashboardPage;
+  observations: PageObservation[];
   loading: boolean;
   error: string | null;
+  firstPageIds: string[];
+}
+
+interface PageObservation {
+  offset: number;
+  observedAt: string;
+  receivedAt: string;
 }
 
 export interface RunMapProps {
   dataSource: DashboardDataSource;
+  coordinator: RefreshCoordinator;
   filters: DashboardFilters;
   datasetKey: string;
   selectedRunId: string | null;
@@ -44,6 +54,13 @@ interface RunMapGroup {
 
 function safeError(error: unknown): string {
   return error instanceof Error ? error.message : "The run map read failed.";
+}
+
+function observationAge(receivedAt: string): string {
+  const milliseconds = Math.max(0, Date.now() - Date.parse(receivedAt));
+  if (milliseconds < 60_000) return `${Math.floor(milliseconds / 1000)}s old`;
+  if (milliseconds < 3_600_000) return `${Math.floor(milliseconds / 60_000)}m old`;
+  return `${Math.floor(milliseconds / 3_600_000)}h old`;
 }
 
 function sameFilterEcho(filters: DashboardFilters, observation: SourceObservation<unknown> & {
@@ -63,6 +80,17 @@ function mergeRuns(current: DashboardRunItem[], incoming: DashboardRunItem[]): D
   const byId = new Map(current.map((item) => [item.runId, item]));
   for (const item of incoming) byId.set(item.runId, item);
   return [...byId.values()];
+}
+
+function recordPageObservation(
+  current: PageObservation[],
+  offset: number,
+  observation: SourceObservation<unknown>,
+): PageObservation[] {
+  return [
+    ...current.filter((item) => item.offset !== offset),
+    { offset, observedAt: observation.observedAt, receivedAt: observation.receivedAt },
+  ].sort((left, right) => left.offset - right.offset);
 }
 
 export function groupRunMapItems(items: DashboardRunItem[]): RunMapGroup[] {
@@ -201,6 +229,7 @@ export function runIdFromChartEvent(value: unknown): string | null {
 
 export function RunMap({
   dataSource,
+  coordinator,
   filters,
   datasetKey,
   selectedRunId,
@@ -213,20 +242,21 @@ export function RunMap({
     observations: [],
     loading: true,
     error: null,
+    firstPageIds: [],
   });
   const generation = useRef(0);
-  const activeController = useRef<AbortController | null>(null);
+  const pageController = useRef<AbortController | null>(null);
   const rowButtons = useRef(new Map<string, HTMLButtonElement>());
 
-  async function loadPage(offset: number, replace: boolean, requestGeneration: number) {
-    activeController.current?.abort();
+  async function loadPage(offset: number, requestGeneration: number) {
+    pageController.current?.abort();
     const controller = new AbortController();
-    activeController.current = controller;
+    pageController.current = controller;
     setState((current) => ({ ...current, loading: true, error: null }));
     try {
-      const observation = await dataSource.runs(
-        filters,
-        { offset, limit: RUN_PAGE_SIZE },
+      const observation = await coordinator.request(
+        canonicalReadKey("dashboard.runs.page", { datasetKey, offset, limit: RUN_PAGE_SIZE }),
+        (signal) => dataSource.runs(filters, { offset, limit: RUN_PAGE_SIZE }, signal),
         controller.signal,
       );
       if (controller.signal.aborted || requestGeneration !== generation.current) return;
@@ -234,37 +264,114 @@ export function RunMap({
         throw new Error("The run map response did not match the applied filter scope.");
       }
       setState((current) => ({
-        items: replace ? mergeRuns([], observation.data.items) : mergeRuns(current.items, observation.data.items),
+        items: mergeRuns(current.items, observation.data.items),
         totalCount: observation.data.totalCount,
         coverage: observation.data.coverage,
         page: observation.data.page,
-        observations: replace
-          ? [observation.observedAt]
-          : [...current.observations, observation.observedAt],
+        firstPage: current.firstPage,
+        observations: recordPageObservation(current.observations, offset, observation),
         loading: false,
         error: null,
+        firstPageIds: current.firstPageIds,
       }));
     } catch (error) {
       if (!controller.signal.aborted && requestGeneration === generation.current) {
         setState((current) => ({ ...current, loading: false, error: safeError(error) }));
       }
+    } finally {
+      if (pageController.current === controller) pageController.current = null;
     }
   }
 
+  const scopeKey = useMemo(
+    () =>
+      canonicalReadKey("dashboard.runs.scope", {
+        fromUtc: new Date(filters.fromUtc).toISOString(),
+        toUtc: new Date(filters.toUtc).toISOString(),
+        timeZone: filters.timeZone,
+        projectName: filters.projectName ?? null,
+      }),
+    [filters],
+  );
+  const previousScopeKey = useRef<string | null>(null);
+
   useEffect(() => {
     const requestGeneration = ++generation.current;
-    setState({
-      items: [],
-      totalCount: 0,
-      observations: [],
-      loading: true,
-      error: null,
+    pageController.current?.abort();
+    pageController.current = null;
+    const compatibleScope = previousScopeKey.current === scopeKey;
+    previousScopeKey.current = scopeKey;
+    setState((current) => {
+      if (!compatibleScope) {
+        return {
+          items: [],
+          totalCount: 0,
+          observations: [],
+          loading: true,
+          error: null,
+          firstPageIds: [],
+        };
+      }
+      const firstPageIds = new Set(current.firstPageIds);
+      return {
+        ...current,
+        items: current.items.filter((item) => firstPageIds.has(item.runId)),
+        page: current.firstPage,
+        observations: current.observations.filter((item) => item.offset === 0),
+        loading: true,
+        error: null,
+      };
     });
-    void loadPage(0, true, requestGeneration);
-    return () => activeController.current?.abort();
-    // datasetKey deliberately represents Apply/Refresh ownership.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataSource, datasetKey]);
+    const retire = coordinator.observe({
+      key: canonicalReadKey("dashboard.runs", { datasetKey, offset: 0, limit: RUN_PAGE_SIZE }),
+      cadenceMs: SUMMARY_REFRESH_MS,
+      read: (signal) => dataSource.runs(filters, { offset: 0, limit: RUN_PAGE_SIZE }, signal),
+      onSuccess: (observation) => {
+        if (requestGeneration !== generation.current) return;
+        if (!sameFilterEcho(filters, observation)) {
+          setState((current) => ({
+            ...current,
+            loading: false,
+            error: "The run map response did not match the applied filter scope.",
+          }));
+          return;
+        }
+        setState((current) => {
+          const previousFirstPage = new Set(current.firstPageIds);
+          const retainedHistoricPages = current.items.filter(
+            (item) => !previousFirstPage.has(item.runId),
+          );
+          const firstPageIds = observation.data.items.map((item) => item.runId);
+          return {
+            items: mergeRuns(observation.data.items, retainedHistoricPages),
+            totalCount: observation.data.totalCount,
+            coverage: observation.data.coverage,
+            page:
+              current.page && current.page.offset > 0
+                ? current.page
+                : observation.data.page,
+            firstPage: observation.data.page,
+            observations: recordPageObservation(current.observations, 0, observation),
+            loading: false,
+            error: null,
+            firstPageIds,
+          };
+        });
+      },
+      onError: (error) => {
+        if (requestGeneration === generation.current) {
+          setState((current) => ({ ...current, loading: false, error: safeError(error) }));
+        }
+      },
+    });
+    return () => {
+      retire();
+      pageController.current?.abort();
+      pageController.current = null;
+    };
+  }, [coordinator, dataSource, datasetKey, filters, scopeKey]);
+
+  useEffect(() => () => pageController.current?.abort(), []);
 
   const groups = useMemo(() => groupRunMapItems(state.items), [state.items]);
   const option = useMemo(() => runMapOption(state.items), [state.items]);
@@ -287,7 +394,7 @@ export function RunMap({
       requestAnimationFrame(() => {
         const button = rowButtons.current.get(runId);
         button?.focus({ preventScroll: true });
-        button?.scrollIntoView({ block: "nearest" });
+        button?.scrollIntoView?.({ block: "nearest" });
       });
     }
   };
@@ -323,10 +430,19 @@ export function RunMap({
       ) : null}
       {state.observations.length ? (
         <p className="observation-line">
-          Page observations: {state.observations.join(" · ")} (fresh offset pages; not one atomic snapshot)
+          Page observations: {state.observations.map((item) =>
+            `offset ${item.offset} · ${item.observedAt} received ${item.receivedAt} (${observationAge(item.receivedAt)})`
+          ).join(" · ")} (fresh offset pages; not one atomic snapshot)
         </p>
       ) : null}
-      {state.error ? <p className="error-banner" role="alert">Run map: {state.error}</p> : null}
+      {state.error ? (
+        <p className="error-banner" role="alert">
+          Run map: {state.error}
+          {state.observations.length
+            ? ` · showing the last successful visible pages (${observationAge(state.observations[0].receivedAt)})`
+            : ""}
+        </p>
+      ) : null}
       {state.items.length ? (
         <>
           <div className="run-map-chart-scroll">
@@ -375,15 +491,17 @@ export function RunMap({
             ))}
           </div>
         </>
-      ) : !state.loading ? (
+      ) : !state.loading && (state.observations.length > 0 || !state.error) ? (
         <div className="empty-state">No started runs match the applied scope.</div>
+      ) : !state.loading ? (
+        <div className="empty-state">Run data is unavailable until a successful read.</div>
       ) : null}
       {state.loading ? <p className="loading-line">Reading authoritative run page…</p> : null}
       {state.page?.hasMore && state.page.nextOffset !== null ? (
         <button
           type="button"
           disabled={state.loading}
-          onClick={() => void loadPage(state.page!.nextOffset!, false, generation.current)}
+          onClick={() => void loadPage(state.page!.nextOffset!, generation.current)}
         >
           Load more runs
         </button>

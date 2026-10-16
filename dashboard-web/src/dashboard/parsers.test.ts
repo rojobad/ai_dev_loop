@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { parseCapacityData, parseSummaryData } from "./parsers";
-import { capacityData, summaryData } from "./test-fixtures";
+import { parseActivityData, parseCapacityData, parseSummaryData } from "./parsers";
+import { activityData, capacityData, summaryData } from "./test-fixtures";
 
 describe("explicit public DTO parsers", () => {
   it("accepts additive fields while preserving open labels and exact aggregate counts", () => {
@@ -36,5 +36,16 @@ describe("explicit public DTO parsers", () => {
         limits: [{ ...capacityData.limits[0], remainingPercent: undefined }],
       }),
     ).toThrow("remainingPercent");
+  });
+
+  it("keeps activity seconds typed and rejects metric/unit drift", () => {
+    const input = activityData("process-hours");
+    expect(parseActivityData(input).days[0].value).toBe(5400);
+    expect(() => parseActivityData({ ...input, unit: "count" })).toThrow(
+      "unit does not match",
+    );
+    expect(() => parseActivityData({ ...input, total: input.total + 1 })).toThrow(
+      "must equal returned daily values",
+    );
   });
 });

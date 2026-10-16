@@ -564,16 +564,44 @@ button:disabled {
   font-size: 0.8rem;
 }
 
-.placeholder-grid {
+.activity-panel {
   margin-top: 0.85rem;
 }
 
-.placeholder {
-  min-height: 130px;
-  border-style: dashed;
+.activity-heading label {
+  display: grid;
+  min-width: 190px;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
 }
 
-.placeholder p {
+.activity-total {
+  margin: 0.75rem 0;
+}
+
+.activity-days {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.4rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activity-days li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  padding: 0.5rem 0.65rem;
+}
+
+.activity-days time,
+.refresh-status {
   color: var(--muted);
 }
 
@@ -607,7 +635,7 @@ button:disabled {
 
   .filter-grid,
   .kpi-grid,
-  .placeholder-grid,
+  .activity-days,
   .run-metadata,
   .attempt-modal-metadata,
   .content-metadata,

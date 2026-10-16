@@ -1,9 +1,11 @@
-import { BarChart, CustomChart, GaugeChart, TreemapChart } from "echarts/charts";
+import { BarChart, CustomChart, GaugeChart, HeatmapChart, TreemapChart } from "echarts/charts";
 import {
+  CalendarComponent,
   GridComponent,
   LegendComponent,
   TitleComponent,
   TooltipComponent,
+  VisualMapComponent,
 } from "echarts/components";
 import * as echarts from "echarts/core";
 import type { EChartsCoreOption, EChartsType } from "echarts/core";
@@ -15,11 +17,14 @@ echarts.use([
   BarChart,
   CustomChart,
   GaugeChart,
+  HeatmapChart,
   TreemapChart,
+  CalendarComponent,
   GridComponent,
   LegendComponent,
   TitleComponent,
   TooltipComponent,
+  VisualMapComponent,
   CanvasRenderer,
 ]);
 

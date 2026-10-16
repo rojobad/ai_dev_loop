@@ -4,6 +4,12 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AttemptModal } from "./AttemptModal";
 import { DashboardChart } from "./DashboardChart";
 import { escapeHtml } from "./charts";
+import { CoordinatedDashboardDataSource } from "./coordinated-data-source";
+import {
+  SELECTED_RUN_REFRESH_MS,
+  RefreshCoordinator,
+  canonicalReadKey,
+} from "./refreshCoordinator";
 import type {
   AttemptTimelineItem,
   DashboardDataSource,
@@ -12,10 +18,8 @@ import type {
   RunInspectData,
   SourceObservation,
 } from "./types";
-import { DashboardDataSourceError } from "./types";
 
 const TIMELINE_PAGE_SIZE = 25;
-const SELECTION_SATURATION_RETRY_DELAYS_MS = [100, 200, 400, 800, 1600] as const;
 
 export type AttemptRole =
   | "Cursor implementer"
@@ -37,13 +41,21 @@ export interface TimelineVisualRow {
 interface TimelineState {
   items: AttemptTimelineItem[];
   page?: DashboardPage;
-  observations: string[];
+  observations: TimelinePageObservation[];
   loading: boolean;
   error: string | null;
+  firstPageIds: string[];
+}
+
+interface TimelinePageObservation {
+  offset: number;
+  observedAt: string;
+  receivedAt: string;
 }
 
 export interface AttemptTimelineProps {
   dataSource: DashboardDataSource;
+  coordinator: RefreshCoordinator;
   selectedRun: DashboardRunItem | null;
   theme: "light" | "dark";
 }
@@ -52,45 +64,22 @@ function safeError(error: unknown): string {
   return error instanceof Error ? error.message : "The selected run read failed.";
 }
 
-function cancellableDelay(delayMs: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(signal.reason ?? new DOMException("The request was aborted.", "AbortError"));
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      signal.removeEventListener("abort", abort);
-      resolve();
-    }, delayMs);
-    const abort = () => {
-      window.clearTimeout(timer);
-      reject(signal.reason ?? new DOMException("The request was aborted.", "AbortError"));
-    };
-    signal.addEventListener("abort", abort, { once: true });
-  });
+function observationAge(receivedAt: string): string {
+  const milliseconds = Math.max(0, Date.now() - Date.parse(receivedAt));
+  if (milliseconds < 60_000) return `${Math.floor(milliseconds / 1000)}s old`;
+  if (milliseconds < 3_600_000) return `${Math.floor(milliseconds / 60_000)}m old`;
+  return `${Math.floor(milliseconds / 3_600_000)}h old`;
 }
 
-async function readCurrentSelection<T>(
-  read: () => Promise<T>,
-  signal: AbortSignal,
-): Promise<T> {
-  for (let retry = 0; ; retry += 1) {
-    try {
-      return await read();
-    } catch (error) {
-      if (signal.aborted) throw error;
-      const saturated =
-        error instanceof DashboardDataSourceError && error.code === "SERVICE_UNAVAILABLE";
-      if (!saturated) throw error;
-      if (retry >= SELECTION_SATURATION_RETRY_DELAYS_MS.length) {
-        throw new DashboardDataSourceError(
-          "SERVICE_UNAVAILABLE",
-          "The local dashboard remained saturated after bounded selected-run retries.",
-        );
-      }
-      await cancellableDelay(SELECTION_SATURATION_RETRY_DELAYS_MS[retry], signal);
-    }
-  }
+function recordPageObservation(
+  current: TimelinePageObservation[],
+  offset: number,
+  observation: SourceObservation<unknown>,
+): TimelinePageObservation[] {
+  return [
+    ...current.filter((item) => item.offset !== offset),
+    { offset, observedAt: observation.observedAt, receivedAt: observation.receivedAt },
+  ].sort((left, right) => left.offset - right.offset);
 }
 
 export function attemptRole(attempt: AttemptTimelineItem): AttemptRole {
@@ -245,6 +234,7 @@ function formatOptional(value: string | null): string {
 
 export function AttemptTimeline({
   dataSource,
+  coordinator,
   selectedRun,
   theme,
 }: AttemptTimelineProps): React.JSX.Element {
@@ -258,17 +248,16 @@ export function AttemptTimeline({
     observations: [],
     loading: false,
     error: null,
+    firstPageIds: [],
   });
   const [selectedAttemptId, setSelectedAttemptId] = useState<string | null>(null);
   const generation = useRef(0);
-  const inspectController = useRef<AbortController | null>(null);
-  const timelineController = useRef<AbortController | null>(null);
+  const pageController = useRef<AbortController | null>(null);
   const attemptButtons = useRef(new Map<string, HTMLButtonElement>());
 
   useEffect(() => {
     const requestGeneration = ++generation.current;
-    inspectController.current?.abort();
-    timelineController.current?.abort();
+    pageController.current?.abort();
     setSelectedAttemptId(null);
     setInspect({ loading: selectedRun !== null, error: null });
     setTimeline({
@@ -276,76 +265,99 @@ export function AttemptTimeline({
       observations: [],
       loading: selectedRun !== null,
       error: null,
+      firstPageIds: [],
     });
     if (selectedRun === null) return;
     const runId = selectedRun.runId;
-    const metadataController = new AbortController();
-    const pageController = new AbortController();
-    inspectController.current = metadataController;
-    timelineController.current = pageController;
-    void readCurrentSelection(
-      () => dataSource.runInspect(runId, metadataController.signal),
-      metadataController.signal,
-    )
-      .then((observation) => {
-        if (metadataController.signal.aborted || requestGeneration !== generation.current) return;
+    const retireInspect = coordinator.observe({
+      key: canonicalReadKey("run.inspect", { runId }),
+      cadenceMs: SELECTED_RUN_REFRESH_MS,
+      read: (signal) => dataSource.runInspect(runId, signal),
+      onSuccess: (observation) => {
+        if (requestGeneration !== generation.current) return;
         if (observation.data.runId !== runId) {
-          throw new Error("The run metadata response did not match the selected run ID.");
+          setInspect({
+            loading: false,
+            error: "The run metadata response did not match the selected run ID.",
+          });
+          return;
         }
         setInspect({ loading: false, error: null, observation });
-      })
-      .catch((error) => {
-        if (!metadataController.signal.aborted && requestGeneration === generation.current) {
-          setInspect({ loading: false, error: safeError(error) });
+      },
+      onError: (error) => {
+        if (requestGeneration === generation.current) {
+          setInspect((current) => ({
+            loading: false,
+            error: safeError(error),
+            observation: current.observation,
+          }));
         }
-      });
-    void readCurrentSelection(
-      () =>
-        dataSource.runTimeline(
-          runId,
-          { offset: 0, limit: TIMELINE_PAGE_SIZE },
-          pageController.signal,
-        ),
-      pageController.signal,
-    )
-      .then((observation) => {
-        if (pageController.signal.aborted || requestGeneration !== generation.current) return;
+      },
+    });
+    const retireTimeline = coordinator.observe({
+      key: canonicalReadKey("run.timeline", { runId, offset: 0, limit: TIMELINE_PAGE_SIZE }),
+      cadenceMs: SELECTED_RUN_REFRESH_MS,
+      read: (signal) =>
+        dataSource.runTimeline(runId, { offset: 0, limit: TIMELINE_PAGE_SIZE }, signal),
+      onSuccess: (observation) => {
+        if (requestGeneration !== generation.current) return;
         if (observation.data.runId !== runId) {
-          throw new Error("The timeline response did not match the selected run ID.");
+          setTimeline((current) => ({
+            ...current,
+            loading: false,
+            error: "The timeline response did not match the selected run ID.",
+          }));
+          return;
         }
-        setTimeline({
-          items: mergeAttempts([], observation.data.items),
-          page: observation.data.page,
-          observations: [observation.observedAt],
-          loading: false,
-          error: null,
+        setTimeline((current) => {
+          const previousFirstPage = new Set(current.firstPageIds);
+          const retainedHistoricPages = current.items.filter(
+            (item) => !previousFirstPage.has(item.attemptId),
+          );
+          return {
+            items: mergeAttempts(observation.data.items, retainedHistoricPages),
+            page:
+              current.page && current.page.offset > 0
+                ? current.page
+                : observation.data.page,
+            observations: recordPageObservation(current.observations, 0, observation),
+            loading: false,
+            error: null,
+            firstPageIds: observation.data.items.map((item) => item.attemptId),
+          };
         });
-      })
-      .catch((error) => {
-        if (!pageController.signal.aborted && requestGeneration === generation.current) {
+      },
+      onError: (error) => {
+        if (requestGeneration === generation.current) {
           setTimeline((current) => ({ ...current, loading: false, error: safeError(error) }));
         }
-      });
+      },
+    });
     return () => {
-      metadataController.abort();
-      pageController.abort();
+      retireInspect();
+      retireTimeline();
     };
-  }, [dataSource, selectedRun]);
+  }, [coordinator, dataSource, selectedRun]);
 
   async function loadMore(offset: number) {
     if (selectedRun === null) return;
     const requestGeneration = generation.current;
-    timelineController.current?.abort();
+    pageController.current?.abort();
     const controller = new AbortController();
-    timelineController.current = controller;
+    pageController.current = controller;
     setTimeline((current) => ({ ...current, loading: true, error: null }));
     try {
-      const observation = await readCurrentSelection(
-        () =>
+      const observation = await coordinator.request(
+        canonicalReadKey("run.timeline.page", {
+          runId: selectedRun.runId,
+          offset,
+          limit: TIMELINE_PAGE_SIZE,
+        }),
+        (signal) =>
           dataSource.runTimeline(
             selectedRun.runId,
             { offset, limit: TIMELINE_PAGE_SIZE },
-            controller.signal,
+            signal,
           ),
         controller.signal,
       );
@@ -356,9 +368,10 @@ export function AttemptTimeline({
       setTimeline((current) => ({
         items: mergeAttempts(current.items, observation.data.items),
         page: observation.data.page,
-        observations: [...current.observations, observation.observedAt],
+        observations: recordPageObservation(current.observations, offset, observation),
         loading: false,
         error: null,
+        firstPageIds: current.firstPageIds,
       }));
     } catch (error) {
       if (!controller.signal.aborted && requestGeneration === generation.current) {
@@ -367,8 +380,23 @@ export function AttemptTimeline({
     }
   }
 
+  useEffect(() => () => pageController.current?.abort(), []);
+
+  useEffect(() => {
+    if (
+      selectedAttemptId !== null &&
+      !timeline.items.some((item) => item.attemptId === selectedAttemptId)
+    ) {
+      setSelectedAttemptId(null);
+    }
+  }, [selectedAttemptId, timeline.items]);
+
   const rows = useMemo(() => buildTimelineRows(timeline.items), [timeline.items]);
   const option = useMemo(() => attemptTimelineOption(timeline.items), [timeline.items]);
+  const contentDataSource = useMemo(
+    () => new CoordinatedDashboardDataSource(dataSource, coordinator),
+    [coordinator, dataSource],
+  );
 
   const selectAttempt = (attemptId: string, focusCompanion: boolean) => {
     if (!timeline.items.some((item) => item.attemptId === attemptId)) return;
@@ -376,7 +404,7 @@ export function AttemptTimeline({
     if (focusCompanion) {
       requestAnimationFrame(() => {
         const button = attemptButtons.current.get(attemptId);
-        button?.scrollIntoView({ block: "nearest" });
+        button?.scrollIntoView?.({ block: "nearest" });
       });
     }
   };
@@ -423,7 +451,14 @@ export function AttemptTimeline({
         </div>
         <span>{timeline.items.length} loaded / {metadata?.attemptCount ?? "?"} recorded attempts</span>
       </div>
-      {inspect.error ? <p className="error-banner" role="alert">Run metadata: {inspect.error}</p> : null}
+      {inspect.error ? (
+        <p className="error-banner" role="alert">
+          Run metadata: {inspect.error}
+          {inspect.observation
+            ? ` · showing last success (${observationAge(inspect.observation.receivedAt)})`
+            : ""}
+        </p>
+      ) : null}
       {metadata ? (
         <dl className="run-metadata">
           <div><dt>Project</dt><dd>{metadata.projectName}</dd></div>
@@ -443,10 +478,19 @@ export function AttemptTimeline({
           {selectedRun.sequenceBinding.sourceRunId ? ` · replaces ${selectedRun.sequenceBinding.sourceRunId}` : ""}
         </p>
       ) : <p className="lineage-line">Standalone run</p>}
-      {timeline.error ? <p className="error-banner" role="alert">Timeline: {timeline.error}</p> : null}
+      {timeline.error ? (
+        <p className="error-banner" role="alert">
+          Timeline: {timeline.error}
+          {timeline.observations.length
+            ? ` · showing last success (${observationAge(timeline.observations[0].receivedAt)})`
+            : ""}
+        </p>
+      ) : null}
       {timeline.observations.length ? (
         <p className="observation-line">
-          Timeline page observations: {timeline.observations.join(" · ")} (page exhaustion does not complete an attempt)
+          Timeline page observations: {timeline.observations.map((item) =>
+            `offset ${item.offset} · ${item.observedAt} received ${item.receivedAt} (${observationAge(item.receivedAt)})`
+          ).join(" · ")} (page exhaustion does not complete an attempt)
         </p>
       ) : null}
       {timeline.items.length ? (
@@ -492,7 +536,7 @@ export function AttemptTimeline({
               <AttemptModal
                 key={`${selectedRun.runId}:${selectedAttempt.attemptId}`}
                 attempt={selectedAttempt}
-                dataSource={dataSource}
+                dataSource={contentDataSource}
                 runId={selectedRun.runId}
                 onClose={closeAttempt}
               />

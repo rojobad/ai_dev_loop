@@ -4,6 +4,8 @@ import type {
   ArtifactContentChunk,
   CapacityLimit,
   CodexCapacityData,
+  DashboardActivityData,
+  DashboardActivityMetric,
   DashboardCoverage,
   DashboardFilterEcho,
   DashboardPage,
@@ -340,6 +342,50 @@ export function parseRunsData(value: unknown): DashboardRunsData {
     items: array(data.items, "items").map(dashboardRun),
     page: page(data.page),
     totalCount: integer(data.totalCount, "totalCount"),
+  };
+}
+
+export function parseActivityData(value: unknown): DashboardActivityData {
+  const data = record(value, "dashboard.activity data");
+  const metric = text(data.metric, "metric");
+  if (!new Set(["submissions", "review-rounds", "process-hours"]).has(metric)) {
+    throw new TypeError("metric is unsupported.");
+  }
+  const unit = text(data.unit, "unit");
+  const expectedUnit = metric === "process-hours" ? "process-seconds" : "count";
+  if (unit !== expectedUnit) throw new TypeError("activity unit does not match metric.");
+  const days = array(data.days, "days").map((value, index) => {
+    const item = record(value, `days[${index}]`);
+    const date = text(item.date, `days[${index}].date`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new TypeError(`days[${index}].date must be a calendar date.`);
+    }
+    const valueNumber = finiteNumber(item.value, `days[${index}].value`);
+    if (unit === "count" && !Number.isInteger(valueNumber)) {
+      throw new TypeError(`days[${index}].value must be an integer count.`);
+    }
+    return { date, value: valueNumber };
+  });
+  const dates = days.map((item) => item.date);
+  if (dates.some((date, index) => index > 0 && date <= dates[index - 1])) {
+    throw new TypeError("activity days must be unique and chronological.");
+  }
+  const total = finiteNumber(data.total, "total");
+  if (unit === "count" && !Number.isInteger(total)) {
+    throw new TypeError("activity total must be an integer count.");
+  }
+  const dayTotal = days.reduce((sum, item) => sum + item.value, 0);
+  if (Math.abs(total - dayTotal) > 0.000001) {
+    throw new TypeError("activity total must equal returned daily values.");
+  }
+  return {
+    observedAt: utcInstant(data.observedAt, "observedAt"),
+    filters: filters(data.filters),
+    coverage: coverage(data.coverage),
+    metric: metric as DashboardActivityMetric,
+    unit: unit as DashboardActivityData["unit"],
+    days,
+    total,
   };
 }
 

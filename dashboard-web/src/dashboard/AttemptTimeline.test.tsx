@@ -1,5 +1,5 @@
 import React from "react";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -11,6 +11,7 @@ import type {
   SourceObservation,
 } from "./types";
 import { DashboardDataSourceError } from "./types";
+import { RefreshCoordinator } from "./refreshCoordinator";
 import {
   ImmediateDataSource,
   inspectData,
@@ -145,13 +146,13 @@ describe("C264-2 selected run ownership and race fencing", () => {
   it("aborts the old run, targets exact IDs, and ignores held late replies", async () => {
     const dataSource = new HeldSelectionDataSource();
     const view = render(
-      <AttemptTimeline dataSource={dataSource} selectedRun={olderRun} theme="light" />,
+      <AttemptTimeline coordinator={new RefreshCoordinator()} dataSource={dataSource} selectedRun={olderRun} theme="light" />,
     );
     expect(dataSource.inspectRequests.has("older-replacement")).toBe(true);
     expect(dataSource.timelineRequests.has("older-replacement")).toBe(true);
 
     view.rerender(
-      <AttemptTimeline dataSource={dataSource} selectedRun={currentRun} theme="light" />,
+      <AttemptTimeline coordinator={new RefreshCoordinator()} dataSource={dataSource} selectedRun={currentRun} theme="light" />,
     );
     expect(dataSource.aborted.get("inspect:older-replacement")?.aborted).toBe(true);
     expect(dataSource.inspectRequests.has("current-replacement")).toBe(true);
@@ -217,6 +218,7 @@ describe("C264-2 selected run ownership and race fencing", () => {
 
     render(
       <AttemptTimeline
+        coordinator={new RefreshCoordinator()}
         dataSource={new IndependentReadDataSource()}
         selectedRun={standaloneRun}
         theme="light"
@@ -224,7 +226,7 @@ describe("C264-2 selected run ownership and race fencing", () => {
     );
     await user.click(await screen.findByRole("button", { name: "Load more attempts" }));
     expect(timelineSignals).toHaveLength(2);
-    expect(timelineSignals[0].aborted).toBe(true);
+    expect(timelineSignals[0].aborted).toBe(false);
     expect(metadataSignal?.aborted).toBe(false);
 
     await act(async () => {
@@ -242,6 +244,7 @@ describe("C264-2 selected run ownership and race fencing", () => {
 
     render(
       <AttemptTimeline
+        coordinator={new RefreshCoordinator()}
         dataSource={new MismatchedMetadataDataSource()}
         selectedRun={standaloneRun}
         theme="light"
@@ -252,7 +255,7 @@ describe("C264-2 selected run ownership and race fencing", () => {
     );
   });
 
-  it("retries transient service saturation for the current exact run", async () => {
+  it("retries transient service saturation for the current exact run at normal cadence", async () => {
     vi.useFakeTimers();
     class SaturatedThenReadyDataSource extends ImmediateDataSource {
       inspectCalls = 0;
@@ -283,11 +286,11 @@ describe("C264-2 selected run ownership and race fencing", () => {
 
     const dataSource = new SaturatedThenReadyDataSource();
     const view = render(
-      <AttemptTimeline dataSource={dataSource} selectedRun={standaloneRun} theme="light" />,
+      <AttemptTimeline coordinator={new RefreshCoordinator()} dataSource={dataSource} selectedRun={standaloneRun} theme="light" />,
     );
     try {
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(100);
+        await vi.advanceTimersByTimeAsync(10_000);
       });
       expect(dataSource.inspectCalls).toBe(2);
       expect(dataSource.timelineCalls).toBe(2);
@@ -330,14 +333,14 @@ describe("C264-2 selected run ownership and race fencing", () => {
 
     const dataSource = new SaturatedOldDataSource();
     const view = render(
-      <AttemptTimeline dataSource={dataSource} selectedRun={olderRun} theme="light" />,
+      <AttemptTimeline coordinator={new RefreshCoordinator()} dataSource={dataSource} selectedRun={olderRun} theme="light" />,
     );
     try {
       await act(async () => {
         await Promise.resolve();
       });
       view.rerender(
-        <AttemptTimeline dataSource={dataSource} selectedRun={currentRun} theme="light" />,
+        <AttemptTimeline coordinator={new RefreshCoordinator()} dataSource={dataSource} selectedRun={currentRun} theme="light" />,
       );
       await act(async () => {
         await vi.advanceTimersByTimeAsync(500);
@@ -355,21 +358,28 @@ describe("C264-2 selected run ownership and race fencing", () => {
     }
   });
 
-  it("reports explicit errors after bounded saturation recovery is exhausted", async () => {
+  it("reports an explicit saturation error without an immediate retry loop", async () => {
     vi.useFakeTimers();
     class AlwaysSaturatedDataSource extends ImmediateDataSource {
+      inspectCalls = 0;
+      timelineCalls = 0;
+
       override async runInspect(): Promise<SourceObservation<RunInspectData>> {
+        this.inspectCalls += 1;
         throw new DashboardDataSourceError("SERVICE_UNAVAILABLE", "busy");
       }
 
       override async runTimeline(): Promise<SourceObservation<AttemptTimelineData>> {
+        this.timelineCalls += 1;
         throw new DashboardDataSourceError("SERVICE_UNAVAILABLE", "busy");
       }
     }
 
+    const dataSource = new AlwaysSaturatedDataSource();
     const view = render(
       <AttemptTimeline
-        dataSource={new AlwaysSaturatedDataSource()}
+        coordinator={new RefreshCoordinator()}
+        dataSource={dataSource}
         selectedRun={standaloneRun}
         theme="light"
       />,
@@ -378,12 +388,10 @@ describe("C264-2 selected run ownership and race fencing", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(3_101);
       });
-      expect(screen.getByText(/Run metadata:/)).toHaveTextContent(
-        "remained saturated after bounded selected-run retries",
-      );
-      expect(screen.getByText(/Timeline:/)).toHaveTextContent(
-        "remained saturated after bounded selected-run retries",
-      );
+      expect(screen.getByText(/Run metadata:/)).toHaveTextContent("busy");
+      expect(screen.getByText(/Timeline:/)).toHaveTextContent("busy");
+      expect(dataSource.inspectCalls).toBe(1);
+      expect(dataSource.timelineCalls).toBe(1);
     } finally {
       view.unmount();
       vi.useRealTimers();
@@ -393,6 +401,7 @@ describe("C264-2 selected run ownership and race fencing", () => {
 
 class PagedTimelineDataSource extends ImmediateDataSource {
   readonly calls: Array<{ runId: string; offset: number }> = [];
+  firstPageReads = 0;
 
   override async runInspect(runId: string): Promise<SourceObservation<RunInspectData>> {
     return observation({
@@ -413,6 +422,7 @@ class PagedTimelineDataSource extends ImmediateDataSource {
     page: { offset: number; limit: number },
   ): Promise<SourceObservation<AttemptTimelineData>> {
     this.calls.push({ runId, offset: page.offset });
+    if (page.offset === 0) this.firstPageReads += 1;
     const fillers = Array.from({ length: 20 }, (_, index) =>
       attempt(`other-${index}`, "cursor", "cursor.create_chat", null, null, index + 4),
     );
@@ -425,13 +435,22 @@ class PagedTimelineDataSource extends ImmediateDataSource {
       "2026-01-01T07:15:00Z",
       2,
     );
-    return observation({
+    const result = observation({
       runId,
       items: page.offset === 0 ? firstPage : [reviewRetry],
       page: page.offset === 0
         ? { offset: 0, limit: 25, nextOffset: 25, hasMore: true }
         : { offset: 25, limit: 25, nextOffset: null, hasMore: false },
     });
+    return {
+      ...result,
+      observedAt: page.offset === 0
+        ? `2026-01-03T00:0${this.firstPageReads - 1}:00Z`
+        : "2026-01-03T00:00:25Z",
+      receivedAt: page.offset === 0
+        ? `2026-01-03T00:0${this.firstPageReads - 1}:01Z`
+        : "2026-01-03T00:00:26Z",
+    };
   }
 }
 
@@ -491,7 +510,7 @@ describe("C264-3 attempt timeline semantics", () => {
   it("loads explicit pages and selects the same typed IDs through rows and chart", async () => {
     const user = userEvent.setup();
     const dataSource = new PagedTimelineDataSource();
-    render(<AttemptTimeline dataSource={dataSource} selectedRun={standaloneRun} theme="light" />);
+    render(<AttemptTimeline coordinator={new RefreshCoordinator()} dataSource={dataSource} selectedRun={standaloneRun} theme="light" />);
     expect(await screen.findByText("Codex implementer · active")).toBeInTheDocument();
     expect(screen.getByText(/Launched 2026-01-01T06:00:00Z; no observed end/)).toBeInTheDocument();
     expect(screen.getAllByText(/Created 2026-01-01T00:00:00Z; not launched/)).toHaveLength(21);
@@ -514,5 +533,33 @@ describe("C264-3 attempt timeline semantics", () => {
       "No content was loaded",
     );
     expect(screen.getByText(/page exhaustion does not complete an attempt/)).toBeInTheDocument();
+  });
+
+  it("retains historic-page dates without polling that page on first-page refresh", async () => {
+    const user = userEvent.setup();
+    const dataSource = new PagedTimelineDataSource();
+    const coordinator = new RefreshCoordinator();
+    render(
+      <AttemptTimeline
+        coordinator={coordinator}
+        dataSource={dataSource}
+        selectedRun={standaloneRun}
+        theme="light"
+      />,
+    );
+    await user.click(await screen.findByRole("button", { name: "Load more attempts" }));
+    expect(await screen.findByText("review-retry")).toBeInTheDocument();
+
+    for (let refresh = 0; refresh < 4; refresh += 1) {
+      coordinator.refreshAll();
+      await waitFor(() => expect(dataSource.firstPageReads).toBe(refresh + 2));
+    }
+
+    expect(dataSource.calls.map((call) => call.offset)).toEqual([0, 25, 0, 0, 0, 0]);
+    expect(screen.getByText("review-retry")).toBeInTheDocument();
+    const observations = screen.getByText(/Timeline page observations:/);
+    expect(observations).toHaveTextContent("offset 0 · 2026-01-03T00:04:00Z");
+    expect(observations).toHaveTextContent("offset 25 · 2026-01-03T00:00:25Z");
+    expect(observations).not.toHaveTextContent("offset 0 · 2026-01-03T00:00:00Z");
   });
 });

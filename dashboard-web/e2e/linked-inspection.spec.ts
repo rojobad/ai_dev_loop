@@ -162,9 +162,10 @@ test("C264-1..3 real chart selects authoritative replacement cells and pages", a
   ).toBe(false);
 });
 
-test("F-03 retries the exact current selection after held service jobs release", async ({
+test("F-03 refreshes the exact current selection at the normal cadence after saturation", async ({
   page,
 }) => {
+  await page.clock.install({ time: new Date("2026-01-05T12:00:00Z") });
   const control = (name: string) => join(stateRoot, name);
   for (const name of [
     "hold-service-jobs",
@@ -209,7 +210,10 @@ test("F-03 retries the exact current selection after held service jobs release",
           ).length,
       )
       .toBeGreaterThanOrEqual(2);
+    await expect(page.getByText(/Run metadata:/)).toBeVisible();
+    await expect(page.getByText(/Timeline:/)).toBeVisible();
     writeFileSync(control("release-service-jobs"), "release\n", "utf-8");
+    await page.clock.runFor(10_000);
 
     await expect(page.getByText(/Selected run:/)).toContainText("current-map-run");
     await expect(page.getByText("attempt-current-map-run-execution")).toBeVisible();

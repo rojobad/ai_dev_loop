@@ -633,7 +633,12 @@ daemon, abrir el navegador ni habilitar acceso LAN.
 
 La ruta `/` sirve el frontend React/ECharts empaquetado: filtros aplicados,
 resumen por proyecto/estado, workload por secuencia o standalone y capacidad
-Codex actual. Los assets son same-origin y no usan CDN; Node solo interviene al
+Codex actual, mapa/timeline enlazados y calendario de actividad seleccionable.
+El cliente refresca solo widgets visibles con cadencias acotadas (30 segundos
+para summary/map/activity, 10 para el run seleccionado y 60 para capacidad), un
+máximo de dos lecturas activas, Pause/Resume, cancelación por visibilidad y
+`Refresh applied scope` explícito incluso durante Pause. Nunca refresca contenido
+sensible automáticamente. Los assets son same-origin y no usan CDN; Node solo interviene al
 construir o probar el frontend. `POST /api/dashboard/read` expone únicamente las
 operaciones tipadas y allowlisted documentadas en la [API de integración
 local](integration-api.md). El proceso no inicia, aborta, reintenta ni repara

@@ -1,8 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { ActivityCalendar } from "./ActivityCalendar";
 import { AttemptTimeline } from "./AttemptTimeline";
 import { DashboardChart } from "./DashboardChart";
 import { RunMap } from "./RunMap";
+import {
+  CAPACITY_REFRESH_MS,
+  SUMMARY_REFRESH_MS,
+  RefreshCoordinator,
+  canonicalReadKey,
+} from "./refreshCoordinator";
 import {
   capacityOption,
   projectFromChartEvent,
@@ -50,12 +57,19 @@ function formatTime(value: string): string {
   return Number.isFinite(date.getTime()) ? date.toISOString().replace(".000Z", "Z") : "Unavailable";
 }
 
+function formatAge(value: string): string {
+  const milliseconds = Math.max(0, Date.now() - Date.parse(value));
+  if (milliseconds < 60_000) return `${Math.floor(milliseconds / 1000)}s old`;
+  if (milliseconds < 3_600_000) return `${Math.floor(milliseconds / 60_000)}m old`;
+  return `${Math.floor(milliseconds / 3_600_000)}h old`;
+}
+
 function ObservationLine({ observation }: { observation: SourceObservation<unknown> }) {
   return (
     <p className="observation-line">
       Local read · source observed {formatTime(observation.observedAt)} · received {formatTime(
         observation.receivedAt,
-      )}
+      )} · {formatAge(observation.receivedAt)}
     </p>
   );
 }
@@ -115,7 +129,14 @@ function CapacityPanel({
           <p>Current local observation · independent of project and historical range</p>
         </div>
       </div>
-      {state.error ? <p className="error-banner">{state.error}</p> : null}
+      {state.error ? (
+        <p className="error-banner">
+          {state.error}
+          {state.observation
+            ? ` · showing the last successful observation (${formatAge(state.observation.receivedAt)})`
+            : ""}
+        </p>
+      ) : null}
       {state.loading && !state.observation ? <p>Observing current capacity…</p> : null}
       {state.observation ? (
         <>
@@ -276,6 +297,10 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
   const [appliedFilters, setAppliedFilters] = useState(initial.filters);
   const appliedRef = useRef(appliedFilters);
   const [revision, setRevision] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const [coordinator] = useState(
+    () => new RefreshCoordinator({ visible: document.visibilityState !== "hidden" }),
+  );
   const [validationError, setValidationError] = useState<string | null>(null);
   const [projects, setProjects] = useState<string[]>([]);
   const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -292,6 +317,17 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
   const [selectedRun, setSelectedRun] = useState<DashboardRunItem | null>(null);
   const summaryGeneration = useRef(0);
   const previousFilterKey = useRef("");
+  const datasetKey = useMemo(
+    () =>
+      canonicalReadKey("dashboard.dataset", {
+        fromUtc: appliedFilters.fromUtc,
+        toUtc: appliedFilters.toUtc,
+        timeZone: appliedFilters.timeZone,
+        projectName: appliedFilters.projectName ?? null,
+        revision,
+      }),
+    [appliedFilters, revision],
+  );
 
   useEffect(() => {
     draftRef.current = draft;
@@ -311,6 +347,13 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
   }, [theme]);
 
   useEffect(() => {
+    const updateVisibility = () => coordinator.setVisible(document.visibilityState !== "hidden");
+    document.addEventListener("visibilitychange", updateVisibility);
+    updateVisibility();
+    return () => document.removeEventListener("visibilitychange", updateVisibility);
+  }, [coordinator]);
+
+  useEffect(() => {
     const controller = new AbortController();
     let current = true;
     async function loadCatalog() {
@@ -318,7 +361,11 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
       const seen = new Set<string>();
       let offset = 0;
       do {
-        const observation = await dataSource.projects({ offset, limit: 100 }, controller.signal);
+        const observation = await coordinator.request(
+          canonicalReadKey("dashboard.projects", { offset, limit: 100 }),
+          (signal) => dataSource.projects({ offset, limit: 100 }, signal),
+          controller.signal,
+        );
         for (const item of observation.data.items) {
           if (!seen.has(item.projectName)) {
             seen.add(item.projectName);
@@ -347,10 +394,9 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
       current = false;
       controller.abort();
     };
-  }, [dataSource]);
+  }, [coordinator, dataSource]);
 
   useEffect(() => {
-    const controller = new AbortController();
     const generation = ++summaryGeneration.current;
     const key = JSON.stringify(appliedFilters);
     const changedScope = previousFilterKey.current !== key;
@@ -360,24 +406,32 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
       error: null,
       observation: changedScope ? undefined : current.observation,
     }));
-    void dataSource
-      .summary(appliedFilters, controller.signal)
-      .then((observation) => {
-        if (!controller.signal.aborted && generation === summaryGeneration.current) {
+    return coordinator.observe({
+      key: canonicalReadKey("dashboard.summary", {
+        fromUtc: appliedFilters.fromUtc,
+        toUtc: appliedFilters.toUtc,
+        timeZone: appliedFilters.timeZone,
+        projectName: appliedFilters.projectName ?? null,
+        datasetKey,
+      }),
+      cadenceMs: SUMMARY_REFRESH_MS,
+      read: (signal) => dataSource.summary(appliedFilters, signal),
+      onSuccess: (observation) => {
+        if (generation === summaryGeneration.current) {
           setSummary({ loading: false, error: null, observation });
         }
-      })
-      .catch((error) => {
-        if (!controller.signal.aborted && generation === summaryGeneration.current) {
+      },
+      onError: (error) => {
+        if (generation === summaryGeneration.current) {
           setSummary((current) => ({
             loading: false,
             error: safeError(error),
             observation: current.observation,
           }));
         }
-      });
-    return () => controller.abort();
-  }, [appliedFilters, dataSource, revision]);
+      },
+    });
+  }, [appliedFilters, coordinator, dataSource, datasetKey]);
 
   useEffect(() => {
     setSelectedRun(null);
@@ -385,21 +439,19 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
 
   useEffect(() => {
     if (!catalogSettled) return;
-    const controller = new AbortController();
-    void dataSource
-      .capacity(controller.signal)
-      .then((observation) => {
-        if (!controller.signal.aborted) {
-          setCapacity({ loading: false, error: null, observation });
-        }
-      })
-      .catch((error) => {
-        if (!controller.signal.aborted) {
-          setCapacity({ loading: false, error: safeError(error) });
-        }
-      });
-    return () => controller.abort();
-  }, [catalogSettled, dataSource]);
+    return coordinator.observe({
+      key: "machine.codex-capacity",
+      cadenceMs: CAPACITY_REFRESH_MS,
+      read: (signal) => dataSource.capacity(signal),
+      onSuccess: (observation) => setCapacity({ loading: false, error: null, observation }),
+      onError: (error) =>
+        setCapacity((current) => ({
+          loading: false,
+          error: safeError(error),
+          observation: current.observation,
+        })),
+    });
+  }, [catalogSettled, coordinator, dataSource]);
 
   const applyDraft = useCallback(() => {
     try {
@@ -427,6 +479,12 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
     } catch (error) {
       setValidationError(safeError(error));
     }
+  };
+
+  const togglePause = () => {
+    const next = !paused;
+    coordinator.setPaused(next);
+    setPaused(next);
   };
 
   return (
@@ -519,8 +577,14 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
             <button type="button" onClick={() => setRevision((value) => value + 1)}>
               Refresh applied scope
             </button>
+            <button type="button" aria-pressed={paused} onClick={togglePause}>
+              {paused ? "Resume automatic refresh" : "Pause automatic refresh"}
+            </button>
             <span>
               Applied: {appliedFilters.projectName ?? "All projects"} · {appliedFilters.timeZone}
+            </span>
+            <span className="refresh-status" aria-live="polite">
+              Automatic refresh: {paused ? "paused" : "running"}
             </span>
           </div>
           {validationError ? (
@@ -552,11 +616,12 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
         <CapacityPanel state={capacity} theme={theme} />
 
         <div className="linked-inspection-grid">
-          {catalogSettled && !capacity.loading ? (
+          {catalogSettled ? (
             <RunMap
               dataSource={dataSource}
+              coordinator={coordinator}
               filters={appliedFilters}
-              datasetKey={`${JSON.stringify(appliedFilters)}:${revision}`}
+              datasetKey={datasetKey}
               selectedRunId={selectedRun?.runId ?? null}
               onSelectRun={setSelectedRun}
               theme={theme}
@@ -567,15 +632,21 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
               <p>Settling bounded supporting reads before reading matching runs…</p>
             </section>
           )}
-          <AttemptTimeline dataSource={dataSource} selectedRun={selectedRun} theme={theme} />
+          <AttemptTimeline
+            coordinator={coordinator}
+            dataSource={dataSource}
+            selectedRun={selectedRun}
+            theme={theme}
+          />
         </div>
 
-        <div className="placeholder-grid">
-          <section className="panel placeholder" aria-labelledby="activity-heading">
-            <h2 id="activity-heading">Activity calendar</h2>
-            <p>Selectable activity metrics and visible refresh arrive in Phase 26.6.</p>
-          </section>
-        </div>
+        <ActivityCalendar
+          coordinator={coordinator}
+          dataSource={dataSource}
+          datasetKey={datasetKey}
+          filters={appliedFilters}
+          theme={theme}
+        />
       </main>
     </div>
   );

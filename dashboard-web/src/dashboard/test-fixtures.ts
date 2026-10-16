@@ -1,6 +1,8 @@
 import type {
   AttemptTimelineData,
   CodexCapacityData,
+  DashboardActivityData,
+  DashboardActivityMetric,
   DashboardCoverage,
   DashboardDataSource,
   DashboardFilters,
@@ -26,6 +28,40 @@ export const completeCoverage: DashboardCoverage = {
   missingDurationAttempts: 0,
   warnings: [],
 };
+
+export function activityData(
+  metric: DashboardActivityMetric = "submissions",
+  filters: DashboardFilters = {
+    fromUtc: "2026-01-01T00:00:00Z",
+    toUtc: "2026-01-03T00:00:00Z",
+    timeZone: "UTC",
+  },
+): DashboardActivityData {
+  const process = metric === "process-hours";
+  const days = process
+    ? [
+        { date: "2026-01-01", value: 5400 },
+        { date: "2026-01-02", value: 1800 },
+      ]
+    : [
+        { date: "2026-01-01", value: metric === "review-rounds" ? 2 : 3 },
+        { date: "2026-01-02", value: 1 },
+      ];
+  return {
+    observedAt: "2026-01-03T00:00:00Z",
+    filters: {
+      fromUtc: filters.fromUtc,
+      toUtc: filters.toUtc,
+      timeZone: filters.timeZone,
+      projectName: filters.projectName ?? null,
+    },
+    coverage: completeCoverage,
+    metric,
+    unit: process ? "process-seconds" : "count",
+    days,
+    total: days.reduce((sum, item) => sum + item.value, 0),
+  };
+}
 
 export function summaryData(
   runsStarted = 7,
@@ -299,6 +335,14 @@ export class ImmediateDataSource implements DashboardDataSource {
       page: { offset: page.offset, limit: page.limit, nextOffset: null, hasMore: false },
       totalCount: items.length,
     });
+  }
+
+  async activity(
+    filters: DashboardFilters,
+    metric: DashboardActivityMetric,
+    _signal: AbortSignal,
+  ): Promise<SourceObservation<DashboardActivityData>> {
+    return observation(activityData(metric, filters));
   }
 
   async runInspect(

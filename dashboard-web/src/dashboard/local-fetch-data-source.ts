@@ -1,5 +1,6 @@
 import {
   parseAttemptTimelineData,
+  parseActivityData,
   parseCapacityData,
   parseFrozenPromptChunk,
   parseProcessOutputChunk,
@@ -15,6 +16,8 @@ import {
   DashboardDataSourceError,
   type AttemptTimelineData,
   type CodexCapacityData,
+  type DashboardActivityData,
+  type DashboardActivityMetric,
   type DashboardDataSource,
   type DashboardFilters,
   type DashboardProjectsData,
@@ -145,6 +148,19 @@ export class LocalFetchDashboardDataSource implements DashboardDataSource {
     signal: AbortSignal,
   ): Promise<SourceObservation<DashboardRunsData>> {
     return this.read("dashboard.runs", { ...filters, ...page }, parseRunsData, signal);
+  }
+
+  activity(
+    filters: DashboardFilters,
+    metric: DashboardActivityMetric,
+    signal: AbortSignal,
+  ): Promise<SourceObservation<DashboardActivityData>> {
+    return this.read(
+      "dashboard.activity",
+      { ...filters, metric },
+      parseActivityData,
+      signal,
+    );
   }
 
   runInspect(

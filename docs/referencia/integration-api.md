@@ -291,3 +291,30 @@ y representa intentos sin lanzamiento o sin fin observado sin inventar duración
 Cambiar de run o de filtros cancela y retira respuestas anteriores. Estas vistas
 no solicitan prompt, review-content ni output; ese contenido sigue requiriendo
 una acción deliberada en su superficie asignada.
+
+### Ciclo de refresco visible
+
+El frontend local coordina todas las lecturas en memoria con un máximo de dos
+requests activos y timeout acotado. No solapa una clave idéntica ni intenta
+«ponerse al día» con ráfagas si una lectura tarda más que su cadencia. Resumen,
+primera página visible del mapa y actividad usan 30 segundos; metadata y primera
+página de timeline del run seleccionado usan 10 segundos; capacidad actual usa
+60 segundos. Las páginas históricas agregadas con `Load more` no se convierten en
+claves periódicas.
+
+`Pause automatic refresh`, una pestaña oculta, el retiro del último widget y la
+salida de la ruta cancelan trabajo periódico propio. `Resume` hace una lectura
+nueva por clave visible sin replay de intervalos perdidos. `Refresh applied
+scope` funciona durante Pause y reinicia el mapa en la primera página; no carga
+contenido sensible. Al reiniciar descarta las páginas agregadas, pero una falla
+conserva como último éxito la primera página del mismo filtro real, con sus
+fechas originales. Cada página histórica retenida conserva una sola observación
+fechada y no se vuelve una clave de polling. La lectura independiente de
+capacidad no bloquea el inicio ni el Refresh del mapa. Prompt, review-content y
+stdout/stderr siguen siendo lecturas deliberadas, paginadas y nunca periódicas.
+
+Ante un fallo se conserva solamente la última observación exitosa en memoria,
+con sus fechas originales, edad y error visibles. Un filtro, métrica o selección
+nuevos usan otra generación y no heredan datos del scope anterior. No existe
+cache durable, service worker, telemetría ni reconstrucción de una lectura en
+vuelo después de reiniciar el servidor o el navegador.

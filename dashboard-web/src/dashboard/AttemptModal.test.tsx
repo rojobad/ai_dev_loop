@@ -11,6 +11,7 @@ vi.mock("./DashboardChart", () => ({
 
 import { AttemptModal } from "./AttemptModal";
 import { AttemptTimeline } from "./AttemptTimeline";
+import { RefreshCoordinator } from "./refreshCoordinator";
 import { ImmediateDataSource, observation, standaloneRun } from "./test-fixtures";
 import type {
   AttemptTimelineItem,
@@ -280,7 +281,7 @@ describe("C265-3 modal accessibility and focus ownership", () => {
   it("traps focus, closes with Escape, and restores the exact companion row", async () => {
     const user = userEvent.setup();
     const dataSource = new ModalDataSource();
-    render(<AttemptTimeline dataSource={dataSource} selectedRun={standaloneRun} theme="light" />);
+    render(<AttemptTimeline coordinator={new RefreshCoordinator()} dataSource={dataSource} selectedRun={standaloneRun} theme="light" />);
     const row = await screen.findByRole("button", { name: /^attempt-cursor Cursor implementer/ });
     await user.click(row);
     const close = screen.getByRole("button", { name: "Close attempt details" });
