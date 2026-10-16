@@ -1,6 +1,7 @@
 import type { CustomSeriesRenderItem, EChartsCoreOption } from "echarts";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
+import { AttemptModal } from "./AttemptModal";
 import { DashboardChart } from "./DashboardChart";
 import { escapeHtml } from "./charts";
 import type {
@@ -375,8 +376,17 @@ export function AttemptTimeline({
     if (focusCompanion) {
       requestAnimationFrame(() => {
         const button = attemptButtons.current.get(attemptId);
-        button?.focus({ preventScroll: true });
         button?.scrollIntoView({ block: "nearest" });
+      });
+    }
+  };
+
+  const closeAttempt = () => {
+    const attemptId = selectedAttemptId;
+    setSelectedAttemptId(null);
+    if (attemptId !== null) {
+      requestAnimationFrame(() => {
+        attemptButtons.current.get(attemptId)?.focus({ preventScroll: true });
       });
     }
   };
@@ -475,9 +485,18 @@ export function AttemptTimeline({
             ))}
           </div>
           {selectedAttempt ? (
-            <p className="selected-attempt" aria-live="polite">
-              Selected attempt {selectedAttempt.attemptId}; metadata selection is ready. No content was loaded.
-            </p>
+            <>
+              <p className="selected-attempt" aria-live="polite">
+                Selected attempt {selectedAttempt.attemptId}; metadata modal is open. No content was loaded; inspection still requires a deliberate control.
+              </p>
+              <AttemptModal
+                key={`${selectedRun.runId}:${selectedAttempt.attemptId}`}
+                attempt={selectedAttempt}
+                dataSource={dataSource}
+                runId={selectedRun.runId}
+                onClose={closeAttempt}
+              />
+            </>
           ) : null}
         </>
       ) : !timeline.loading ? <div className="empty-state">No recorded attempts for this run.</div> : null}

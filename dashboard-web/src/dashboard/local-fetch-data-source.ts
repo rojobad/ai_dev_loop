@@ -1,7 +1,11 @@
 import {
   parseAttemptTimelineData,
   parseCapacityData,
+  parseFrozenPromptChunk,
+  parseProcessOutputChunk,
   parseProjectsData,
+  parseReviewContentChunk,
+  parseReviewDetailData,
   parseRunInspectData,
   parseRunsData,
   parseSummaryData,
@@ -16,6 +20,12 @@ import {
   type DashboardProjectsData,
   type DashboardRunsData,
   type DashboardSummaryData,
+  type FrozenPromptChunk,
+  type ProcessOutputChunk,
+  type ProcessStream,
+  type ReviewContentChunk,
+  type ReviewContentKind,
+  type ReviewDetailData,
   type RunInspectData,
   type SourceObservation,
 } from "./types";
@@ -153,6 +163,52 @@ export class LocalFetchDashboardDataSource implements DashboardDataSource {
       "run.timeline",
       { runId, ...page },
       parseAttemptTimelineData,
+      signal,
+    );
+  }
+
+  initialPrompt(
+    runId: string,
+    read: { byteOffset: number; limit: number },
+    signal: AbortSignal,
+  ): Promise<SourceObservation<FrozenPromptChunk>> {
+    return this.read("run.initial-prompt", { runId, ...read }, parseFrozenPromptChunk, signal);
+  }
+
+  review(
+    runId: string,
+    attemptId: string,
+    signal: AbortSignal,
+  ): Promise<SourceObservation<ReviewDetailData>> {
+    return this.read("run.review", { runId, attemptId }, parseReviewDetailData, signal);
+  }
+
+  reviewContent(
+    runId: string,
+    attemptId: string,
+    kind: ReviewContentKind,
+    read: { byteOffset: number; limit: number },
+    signal: AbortSignal,
+  ): Promise<SourceObservation<ReviewContentChunk>> {
+    return this.read(
+      "run.review-content",
+      { runId, attemptId, kind, ...read },
+      parseReviewContentChunk,
+      signal,
+    );
+  }
+
+  runOutput(
+    runId: string,
+    attemptId: string,
+    stream: ProcessStream,
+    read: { byteOffset: number; limit: number },
+    signal: AbortSignal,
+  ): Promise<SourceObservation<ProcessOutputChunk>> {
+    return this.read(
+      "run.output",
+      { runId, attemptId, stream, ...read },
+      parseProcessOutputChunk,
       signal,
     );
   }

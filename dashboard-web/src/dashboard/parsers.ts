@@ -1,6 +1,7 @@
 import type {
   AttemptTimelineData,
   AttemptTimelineItem,
+  ArtifactContentChunk,
   CapacityLimit,
   CodexCapacityData,
   DashboardCoverage,
@@ -18,6 +19,14 @@ import type {
   DashboardWorkloadItem,
   IntegrationRunSequenceBinding,
   IntegrationSafeNextAction,
+  FrozenPromptChunk,
+  ProcessOutputAvailability,
+  ProcessOutputChunk,
+  ProcessStream,
+  ReviewContentAvailability,
+  ReviewContentChunk,
+  ReviewContentKind,
+  ReviewDetailData,
   RunInspectData,
 } from "./types";
 
@@ -432,6 +441,174 @@ export function parseAttemptTimelineData(value: unknown): AttemptTimelineData {
     runId: text(data.runId, "runId"),
     items: array(data.items, "items").map(timelineItem),
     page: page(data.page),
+  };
+}
+
+function contentAvailability(value: unknown, context: string) {
+  const item = record(value, context);
+  const available = boolean(item.available, `${context}.available`);
+  const reason = nullableText(item.reason, `${context}.reason`);
+  if (available === (reason !== null)) {
+    throw new TypeError(`${context} availability and reason are inconsistent.`);
+  }
+  return { available, reason };
+}
+
+function reviewContentAvailability(value: unknown): ReviewContentAvailability {
+  const item = record(value, "content");
+  return {
+    prompt: contentAvailability(item.prompt, "content.prompt"),
+    response: contentAvailability(item.response, "content.response"),
+    reviewMarkdown: contentAvailability(item.reviewMarkdown, "content.reviewMarkdown"),
+    cursorFixPrompt: contentAvailability(item.cursorFixPrompt, "content.cursorFixPrompt"),
+  };
+}
+
+function processStreamAvailability(value: unknown, context: string) {
+  const item = record(value, context);
+  const stream = text(item.stream, `${context}.stream`);
+  if (stream !== "stdout" && stream !== "stderr") {
+    throw new TypeError(`${context}.stream is unsupported.`);
+  }
+  return {
+    stream: stream as ProcessStream,
+    ...contentAvailability(item, context),
+  };
+}
+
+function processOutputAvailability(value: unknown): ProcessOutputAvailability {
+  const item = record(value, "processOutput");
+  return {
+    stdout: processStreamAvailability(item.stdout, "processOutput.stdout"),
+    stderr: processStreamAvailability(item.stderr, "processOutput.stderr"),
+  };
+}
+
+export function parseReviewDetailData(value: unknown): ReviewDetailData {
+  const data = record(value, "run.review data");
+  return {
+    runId: text(data.runId, "runId"),
+    attemptId: text(data.attemptId, "attemptId"),
+    iteration: integer(data.iteration, "iteration", 1),
+    phaseAttempt: integer(data.phaseAttempt, "phaseAttempt", 1),
+    status: text(data.status, "status"),
+    reviewMode: text(data.reviewMode, "reviewMode"),
+    createdAt: utcInstant(data.createdAt, "createdAt"),
+    launchRequestedAt: nullableUtcInstant(data.launchRequestedAt, "launchRequestedAt"),
+    completedAt: nullableUtcInstant(data.completedAt, "completedAt"),
+    resultState: text(data.resultState, "resultState"),
+    content: reviewContentAvailability(data.content),
+    processOutput: processOutputAvailability(data.processOutput),
+  };
+}
+
+function artifactChunk(value: unknown, context: string): ArtifactContentChunk {
+  const data = record(value, context);
+  const available = boolean(data.available, `${context}.available`);
+  const reason = nullableText(data.reason, `${context}.reason`);
+  const encoding = text(data.encoding, `${context}.encoding`);
+  if (encoding !== "base64") throw new TypeError(`${context}.encoding is unsupported.`);
+  const byteOffset = integer(data.byteOffset, `${context}.byteOffset`);
+  const returnedBytes = integer(data.returnedBytes, `${context}.returnedBytes`);
+  const nextOffset = data.nextOffset === null
+    ? null
+    : integer(data.nextOffset, `${context}.nextOffset`);
+  const availableBytes = data.availableBytes === null
+    ? null
+    : integer(data.availableBytes, `${context}.availableBytes`);
+  const hasMore = boolean(data.hasMore, `${context}.hasMore`);
+  const contentBase64 = text(data.contentBase64, `${context}.contentBase64`, true);
+  const sha256 = nullableText(data.sha256, `${context}.sha256`);
+  if (available) {
+    if (
+      reason !== null || availableBytes === null ||
+      byteOffset + returnedBytes > availableBytes
+    ) {
+      throw new TypeError(`${context} available metadata is inconsistent.`);
+    }
+    if (hasMore && nextOffset === null) throw new TypeError(`${context} continuation is missing.`);
+  } else if (
+    reason === null || returnedBytes !== 0 || contentBase64.length > 0 ||
+    nextOffset !== null || availableBytes !== null || hasMore
+  ) {
+    throw new TypeError(`${context} unavailable metadata is inconsistent.`);
+  }
+  return {
+    available,
+    reason,
+    encoding: "base64",
+    mediaType: nullableText(data.mediaType, `${context}.mediaType`),
+    byteOffset,
+    returnedBytes,
+    nextOffset,
+    availableBytes,
+    hasMore,
+    contentBase64,
+    sha256,
+  };
+}
+
+export function parseFrozenPromptChunk(value: unknown): FrozenPromptChunk {
+  const data = record(value, "run.initial-prompt data");
+  const chunk = artifactChunk(data, "run.initial-prompt data");
+  if (chunk.hasMore !== (chunk.nextOffset !== null)) {
+    throw new TypeError("run.initial-prompt continuation metadata is inconsistent.");
+  }
+  return {
+    ...chunk,
+    runId: text(data.runId, "runId"),
+    artifactKind: text(data.artifactKind, "artifactKind"),
+  };
+}
+
+const REVIEW_CONTENT_KINDS = new Set<ReviewContentKind>([
+  "prompt",
+  "response",
+  "review-markdown",
+  "cursor-fix-prompt",
+]);
+
+export function parseReviewContentChunk(value: unknown): ReviewContentChunk {
+  const data = record(value, "run.review-content data");
+  const kind = text(data.contentKind, "contentKind") as ReviewContentKind;
+  if (!REVIEW_CONTENT_KINDS.has(kind)) throw new TypeError("contentKind is unsupported.");
+  const chunk = artifactChunk(data, "run.review-content data");
+  if (chunk.hasMore !== (chunk.nextOffset !== null)) {
+    throw new TypeError("run.review-content continuation metadata is inconsistent.");
+  }
+  return {
+    ...chunk,
+    runId: text(data.runId, "runId"),
+    attemptId: text(data.attemptId, "attemptId"),
+    contentKind: kind,
+  };
+}
+
+export function parseProcessOutputChunk(value: unknown): ProcessOutputChunk {
+  const data = record(value, "run.output data");
+  const stream = text(data.stream, "stream");
+  if (stream !== "stdout" && stream !== "stderr") {
+    throw new TypeError("stream is unsupported.");
+  }
+  const chunk = artifactChunk(data, "run.output data");
+  const complete = boolean(data.complete, "complete");
+  if (chunk.available && !chunk.hasMore && complete && chunk.nextOffset !== null) {
+    throw new TypeError("Completed output must not expose a continuation offset at EOF.");
+  }
+  if (chunk.available && !chunk.hasMore && !complete && chunk.nextOffset === null) {
+    throw new TypeError("Active output must expose its observed EOF offset.");
+  }
+  return {
+    ...chunk,
+    runId: text(data.runId, "runId"),
+    attemptId: text(data.attemptId, "attemptId"),
+    component: text(data.component, "component"),
+    stream: stream as ProcessStream,
+    format: text(data.format, "format"),
+    processState: text(data.processState, "processState"),
+    complete,
+    truncatedAtSource: optionalNullableBoolean(data.truncatedAtSource, "truncatedAtSource"),
+    storedBytes: optionalNullableInteger(data.storedBytes, "storedBytes"),
   };
 }
 

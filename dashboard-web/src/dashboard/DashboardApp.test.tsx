@@ -11,6 +11,12 @@ import type {
   DashboardProjectsData,
   DashboardRunsData,
   DashboardSummaryData,
+  FrozenPromptChunk,
+  ProcessOutputChunk,
+  ProcessStream,
+  ReviewContentChunk,
+  ReviewContentKind,
+  ReviewDetailData,
   RunInspectData,
   SourceObservation,
 } from "./types";
@@ -107,6 +113,42 @@ class DeferredDataSource implements DashboardDataSource {
     _page: { offset: number; limit: number },
     _signal: AbortSignal,
   ): Promise<SourceObservation<AttemptTimelineData>> {
+    throw new Error("No run is selectable in this fixture.");
+  }
+
+  async initialPrompt(
+    _runId: string,
+    _read: { byteOffset: number; limit: number },
+    _signal: AbortSignal,
+  ): Promise<SourceObservation<FrozenPromptChunk>> {
+    throw new Error("No run is selectable in this fixture.");
+  }
+
+  async review(
+    _runId: string,
+    _attemptId: string,
+    _signal: AbortSignal,
+  ): Promise<SourceObservation<ReviewDetailData>> {
+    throw new Error("No run is selectable in this fixture.");
+  }
+
+  async reviewContent(
+    _runId: string,
+    _attemptId: string,
+    _kind: ReviewContentKind,
+    _read: { byteOffset: number; limit: number },
+    _signal: AbortSignal,
+  ): Promise<SourceObservation<ReviewContentChunk>> {
+    throw new Error("No run is selectable in this fixture.");
+  }
+
+  async runOutput(
+    _runId: string,
+    _attemptId: string,
+    _stream: ProcessStream,
+    _read: { byteOffset: number; limit: number },
+    _signal: AbortSignal,
+  ): Promise<SourceObservation<ProcessOutputChunk>> {
     throw new Error("No run is selectable in this fixture.");
   }
 

@@ -180,6 +180,87 @@ export interface AttemptTimelineData {
   page: DashboardPage;
 }
 
+export type ReviewContentKind =
+  | "prompt"
+  | "response"
+  | "review-markdown"
+  | "cursor-fix-prompt";
+
+export type ProcessStream = "stdout" | "stderr";
+
+export interface ContentAvailability {
+  available: boolean;
+  reason: string | null;
+}
+
+export interface ReviewContentAvailability {
+  prompt: ContentAvailability;
+  response: ContentAvailability;
+  reviewMarkdown: ContentAvailability;
+  cursorFixPrompt: ContentAvailability;
+}
+
+export interface ProcessStreamAvailability extends ContentAvailability {
+  stream: ProcessStream;
+}
+
+export interface ProcessOutputAvailability {
+  stdout: ProcessStreamAvailability;
+  stderr: ProcessStreamAvailability;
+}
+
+export interface ReviewDetailData {
+  runId: string;
+  attemptId: string;
+  iteration: number;
+  phaseAttempt: number;
+  status: string;
+  reviewMode: string;
+  createdAt: string;
+  launchRequestedAt: string | null;
+  completedAt: string | null;
+  resultState: string;
+  content: ReviewContentAvailability;
+  processOutput: ProcessOutputAvailability;
+}
+
+export interface ArtifactContentChunk {
+  available: boolean;
+  reason: string | null;
+  encoding: "base64";
+  mediaType: string | null;
+  byteOffset: number;
+  returnedBytes: number;
+  nextOffset: number | null;
+  availableBytes: number | null;
+  hasMore: boolean;
+  contentBase64: string;
+  sha256: string | null;
+}
+
+export interface FrozenPromptChunk extends ArtifactContentChunk {
+  runId: string;
+  artifactKind: string;
+}
+
+export interface ReviewContentChunk extends ArtifactContentChunk {
+  runId: string;
+  attemptId: string;
+  contentKind: ReviewContentKind;
+}
+
+export interface ProcessOutputChunk extends ArtifactContentChunk {
+  runId: string;
+  attemptId: string;
+  component: string;
+  stream: ProcessStream;
+  format: string;
+  processState: string;
+  complete: boolean;
+  truncatedAtSource: boolean | null;
+  storedBytes: number | null;
+}
+
 export interface CapacityLimit {
   id: string;
   window: string;
@@ -225,6 +306,30 @@ export interface DashboardDataSource {
     page: { offset: number; limit: number },
     signal: AbortSignal,
   ): Promise<SourceObservation<AttemptTimelineData>>;
+  initialPrompt(
+    runId: string,
+    read: { byteOffset: number; limit: number },
+    signal: AbortSignal,
+  ): Promise<SourceObservation<FrozenPromptChunk>>;
+  review(
+    runId: string,
+    attemptId: string,
+    signal: AbortSignal,
+  ): Promise<SourceObservation<ReviewDetailData>>;
+  reviewContent(
+    runId: string,
+    attemptId: string,
+    kind: ReviewContentKind,
+    read: { byteOffset: number; limit: number },
+    signal: AbortSignal,
+  ): Promise<SourceObservation<ReviewContentChunk>>;
+  runOutput(
+    runId: string,
+    attemptId: string,
+    stream: ProcessStream,
+    read: { byteOffset: number; limit: number },
+    signal: AbortSignal,
+  ): Promise<SourceObservation<ProcessOutputChunk>>;
   capacity(signal: AbortSignal): Promise<SourceObservation<CodexCapacityData>>;
 }
 

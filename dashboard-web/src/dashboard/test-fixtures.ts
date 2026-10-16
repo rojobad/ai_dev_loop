@@ -8,6 +8,12 @@ import type {
   DashboardRunItem,
   DashboardRunsData,
   DashboardSummaryData,
+  FrozenPromptChunk,
+  ProcessOutputChunk,
+  ProcessStream,
+  ReviewContentChunk,
+  ReviewContentKind,
+  ReviewDetailData,
   RunInspectData,
   SourceObservation,
 } from "./types";
@@ -313,6 +319,42 @@ export class ImmediateDataSource implements DashboardDataSource {
       items: page.offset === 0 ? oneAttempt.items : [],
       page: { offset: page.offset, limit: page.limit, nextOffset: null, hasMore: false },
     });
+  }
+
+  async initialPrompt(
+    _runId: string,
+    _read: { byteOffset: number; limit: number },
+    _signal: AbortSignal,
+  ): Promise<SourceObservation<FrozenPromptChunk>> {
+    throw new Error("Content is not configured in this fixture.");
+  }
+
+  async review(
+    _runId: string,
+    _attemptId: string,
+    _signal: AbortSignal,
+  ): Promise<SourceObservation<ReviewDetailData>> {
+    throw new Error("Review content is not configured in this fixture.");
+  }
+
+  async reviewContent(
+    _runId: string,
+    _attemptId: string,
+    _kind: ReviewContentKind,
+    _read: { byteOffset: number; limit: number },
+    _signal: AbortSignal,
+  ): Promise<SourceObservation<ReviewContentChunk>> {
+    throw new Error("Review content is not configured in this fixture.");
+  }
+
+  async runOutput(
+    _runId: string,
+    _attemptId: string,
+    _stream: ProcessStream,
+    _read: { byteOffset: number; limit: number },
+    _signal: AbortSignal,
+  ): Promise<SourceObservation<ProcessOutputChunk>> {
+    throw new Error("Process output is not configured in this fixture.");
   }
 
   async capacity(_signal: AbortSignal): Promise<SourceObservation<CodexCapacityData>> {

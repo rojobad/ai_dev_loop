@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import sys
 import time
 from dataclasses import replace
@@ -28,9 +30,18 @@ from ai_dev_loop.dashboard.adapters.http import (  # noqa: E402
     default_http_service_factories,
 )
 from ai_dev_loop.dashboard.server import DashboardServer  # noqa: E402
+from ai_dev_loop.integration_api.errors import IntegrationApiError  # noqa: E402
 from ai_dev_loop.integration_api.models import (  # noqa: E402
     IntegrationCodexCapacityData,
     IntegrationCodexCapacityLimit,
+    IntegrationContentAvailability,
+    IntegrationFrozenArtifactChunk,
+    IntegrationProcessOutputAvailability,
+    IntegrationProcessOutputChunk,
+    IntegrationProcessStreamAvailability,
+    IntegrationReviewContentAvailability,
+    IntegrationReviewContentChunk,
+    IntegrationReviewDetailData,
 )
 from ai_dev_loop.integration_api.run_service import IntegrationRunReadService  # noqa: E402
 from ai_dev_loop.scheduler.application.sequence_materializer import (  # noqa: E402
@@ -83,6 +94,189 @@ class HoldingRunReadService:
     def list_timeline(self, run_id: str, *, offset: int, limit: int):  # type: ignore[no-untyped-def]
         self._hold("timeline", run_id)
         return self._delegate.list_timeline(run_id, offset=offset, limit=limit)
+
+    def read_initial_prompt_chunk(
+        self,
+        run_id: str,
+        *,
+        byte_offset: int,
+        limit: int,
+    ) -> IntegrationFrozenArtifactChunk:
+        content = b"fixture initial run prompt (context only)\n"
+        if byte_offset > len(content):
+            raise IntegrationApiError.invalid_argument("byteOffset is beyond the artifact size.")
+        chunk = content[byte_offset : byte_offset + limit]
+        end = byte_offset + len(chunk)
+        has_more = end < len(content)
+        return IntegrationFrozenArtifactChunk(
+            available=True,
+            reason=None,
+            media_type="text/plain",
+            byte_offset=byte_offset,
+            returned_bytes=len(chunk),
+            next_offset=end if has_more else None,
+            available_bytes=len(content),
+            has_more=has_more,
+            content_base64=base64.b64encode(chunk).decode("ascii"),
+            sha256=hashlib.sha256(content).hexdigest(),
+            run_id=run_id,
+            artifact_kind="initial_prompt",
+            source_repository_path="archive/fixture/prompt.txt",
+        )
+
+
+class FixtureReviewReadService:
+    """Typed reviewer-only fixture; implementer attempts are rejected."""
+
+    @staticmethod
+    def _require_reviewer(run_id: str, attempt_id: str) -> None:
+        if run_id != "older-map-run" or attempt_id != "attempt-older-map-run-review-retry":
+            raise IntegrationApiError.invalid_argument("Attempt is not a Codex review.")
+
+    def inspect_review(self, run_id: str, *, attempt_id: str) -> IntegrationReviewDetailData:
+        self._require_reviewer(run_id, attempt_id)
+        available = IntegrationContentAvailability(available=True, reason=None)
+        streams = IntegrationProcessOutputAvailability(
+            stdout=IntegrationProcessStreamAvailability(
+                stream="stdout", available=True, reason=None
+            ),
+            stderr=IntegrationProcessStreamAvailability(
+                stream="stderr", available=True, reason=None
+            ),
+        )
+        return IntegrationReviewDetailData(
+            run_id=run_id,
+            attempt_id=attempt_id,
+            iteration=1,
+            phase_attempt=1,
+            status="completed",
+            review_mode="resume",
+            review_model="gpt-6.1-sol",
+            reasoning_effort="high",
+            created_at="2026-01-03T04:00:00Z",
+            launch_requested_at="2026-01-03T04:00:00Z",
+            completed_at="2026-01-03T04:15:00Z",
+            findings_count=1,
+            highest_severity="P1",
+            tests_status="passed",
+            reviewer_session_ref="reviewer-fixture",
+            result_state="valid",
+            response=None,
+            content=IntegrationReviewContentAvailability(
+                prompt=available,
+                response=available,
+                review_markdown=available,
+                cursor_fix_prompt=available,
+            ),
+            process_output=streams,
+        )
+
+    def read_review_content(
+        self,
+        run_id: str,
+        *,
+        attempt_id: str,
+        content_kind: str,
+        byte_offset: int,
+        limit: int,
+    ) -> IntegrationReviewContentChunk:
+        self._require_reviewer(run_id, attempt_id)
+        values = {
+            "prompt": b"exact reviewer prompt sentinel\n",
+            "cursor-fix-prompt": b"review-owned fix prompt sentinel\n",
+            "response": b"review response sentinel\n",
+            "review-markdown": b"review markdown sentinel\n",
+        }
+        content = values[content_kind]
+        chunk = content[byte_offset : byte_offset + limit]
+        end = byte_offset + len(chunk)
+        has_more = end < len(content)
+        return IntegrationReviewContentChunk(
+            available=True,
+            reason=None,
+            media_type="text/plain",
+            byte_offset=byte_offset,
+            returned_bytes=len(chunk),
+            next_offset=end if has_more else None,
+            available_bytes=len(content),
+            has_more=has_more,
+            content_base64=base64.b64encode(chunk).decode("ascii"),
+            sha256=hashlib.sha256(content).hexdigest(),
+            run_id=run_id,
+            attempt_id=attempt_id,
+            content_kind=content_kind,
+        )
+
+
+class FixtureProcessOutputReadService:
+    """Bounded fake provider output behind the real HTTP adapter."""
+
+    def __init__(self, control_root: Path) -> None:
+        self._control_root = control_root
+
+    def read_process_output(
+        self,
+        run_id: str,
+        *,
+        attempt_id: str,
+        stream: str,
+        byte_offset: int,
+        limit: int,
+    ) -> IntegrationProcessOutputChunk:
+        if (self._control_root / "hold-content-response").exists():
+            (self._control_root / "content-response-started").write_text(
+                "started\n", encoding="utf-8"
+            )
+            deadline = time.monotonic() + 10
+            while not (self._control_root / "release-content-response").exists():
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("fixture content hold was not released")
+                time.sleep(0.01)
+        if byte_offset > 0 and (self._control_root / "hold-paging-response").exists():
+            (self._control_root / "paging-response-started").write_text(
+                "started\n", encoding="utf-8"
+            )
+            deadline = time.monotonic() + 10
+            while not (self._control_root / "release-paging-response").exists():
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("fixture paging hold was not released")
+                time.sleep(0.01)
+        component = (
+            "codex"
+            if attempt_id == "attempt-older-map-run-review-retry"
+            else "codex_implementer"
+            if "execution" in attempt_id or "active-correction" in attempt_id
+            else "cursor"
+        )
+        if (self._control_root / "paged-content").exists():
+            content = b"x" * 65_536 + b"terminal page sentinel\n"
+        else:
+            content = f"{stream} sentinel for {attempt_id}\n".encode()
+        chunk = content[byte_offset : byte_offset + limit]
+        end = byte_offset + len(chunk)
+        has_more = end < len(content)
+        active = "active-correction" in attempt_id
+        return IntegrationProcessOutputChunk(
+            available=True,
+            reason=None,
+            media_type="application/x-ndjson" if stream == "stdout" else "text/plain",
+            byte_offset=byte_offset,
+            returned_bytes=len(chunk),
+            next_offset=end if has_more or active else None,
+            available_bytes=len(content),
+            has_more=has_more,
+            content_base64=base64.b64encode(chunk).decode("ascii"),
+            sha256=None,
+            run_id=run_id,
+            attempt_id=attempt_id,
+            component=component,
+            stream=stream,
+            stream_format="jsonl" if stream == "stdout" else "text",
+            process_state="active" if active else "completed",
+            complete=not active,
+            truncated_at_source=None if active else False,
+            stored_bytes=None if active else len(content),
+        )
 
 
 def _codex_implementer() -> ImplementerBinding:
@@ -369,6 +563,8 @@ def main() -> None:
     factories = replace(
         default_http_service_factories(db_path=db_path, artifact_root=artifact_root),
         capacity=lambda: FixtureCapacityService(),
+        review=lambda: FixtureReviewReadService(),
+        process_output=lambda: FixtureProcessOutputReadService(args.state_root),
     )
     base_run_factory = factories.run
     factories = replace(
