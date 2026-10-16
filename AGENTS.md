@@ -117,3 +117,16 @@ user-systemd scheduler timer in WSL, follow
 `docs/operacion/timer-systemd-wsl.md`. Treat timer and WSL lingering changes as
 explicit operator actions; do not perform them during implementation or tests
 unless the active phase and user explicitly authorize real workstation work.
+
+## Chosen short names for named preparation
+
+Phase 28 introduces scheduler-owned presentation names. Once the installed CLI
+supports named preparation, every new standalone submission must explicitly
+supply --short-name, and every new sequence must use manifest v3 with short_name
+on the sequence and each planned phase. Choose meaningful names of at most 35
+Unicode code points after trimming; do not derive new names by truncating IDs.
+IDs retain identity. Historical already-prepared v1/v2 sequences remain valid;
+never rewrite frozen inputs or install changing code into a live self-hosted
+sequence to add labels. Only the explicit metadata command renames existing
+records; a Dashboard read never does. Do not send unsupported flags to older
+installed drivers. See archive/implementation-history/plans/phase-28-dashboard-refinements.md.
