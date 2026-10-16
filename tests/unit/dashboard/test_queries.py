@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+from copy import deepcopy
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
+
+import pytest
+from pydantic import ValidationError
 
 from ai_dev_loop.dashboard.application.ports import (
     AttemptObservation,
@@ -16,6 +21,11 @@ from ai_dev_loop.dashboard.domain.filters import (
     DashboardFilterError,
     DashboardFilters,
     DashboardPage,
+)
+from ai_dev_loop.integration_api.dashboard_models import DashboardSummaryData
+from ai_dev_loop.integration_api.schemas import (
+    DASHBOARD_SUMMARY_DATA_SCHEMA,
+    validate_integration_instance,
 )
 
 BASE = datetime(2026, 1, 1, tzinfo=UTC)
@@ -34,8 +44,12 @@ class FakeRepository:
         counts: dict[str, int] = {}
         for run in self.runs:
             counts[run.project_name] = counts.get(run.project_name, 0) + 1
-        items = tuple(ProjectCountObservation(name, count) for name, count in sorted(counts.items()))
-        return ProjectCatalogObservation(items=items[offset : offset + limit], total_count=len(items))
+        items = tuple(
+            ProjectCountObservation(name, count) for name, count in sorted(counts.items())
+        )
+        return ProjectCatalogObservation(
+            items=items[offset : offset + limit], total_count=len(items)
+        )
 
     def read_observations(self, scope: DashboardReadScope) -> DashboardObservationSet:
         runs = tuple(
@@ -254,8 +268,41 @@ def test_unknown_project_is_complete_empty_and_catalog_is_authoritative() -> Non
         time_zone="UTC",
     )
     summary = query.summary(unknown)
-    assert [(item.project_name, item.run_count) for item in catalog.items] == [
-        ("project-a", 1)
-    ]
+    assert [(item.project_name, item.run_count) for item in catalog.items] == [("project-a", 1)]
     assert summary.totals.runs_started == 0
     assert summary.coverage.data_state == "empty"
+
+
+def test_c264_4_summary_produces_exact_raw_other_states_and_schema_rejects_bad_sum() -> None:
+    malicious = '<future-state onmouseover="window.bad=1">'
+    runs = (
+        _run("unknown-a", state=malicious),
+        _run("unknown-b", state="future_state"),
+        _run("known", state="completed"),
+    )
+    attempts = tuple(
+        _attempt(run.run_id, BASE + timedelta(hours=index + 1)) for index, run in enumerate(runs)
+    )
+    summary = DashboardQueries(
+        FakeRepository(runs, attempts),
+        now=lambda: BASE,
+    ).summary(_filters())
+    public = DashboardSummaryData.model_validate(asdict(summary))
+    wire = public.model_dump(mode="json", by_alias=True)
+
+    assert wire["projects"][0]["stateCounts"]["other"] == 2
+    assert wire["projects"][0]["otherStates"] == [
+        {"state": malicious, "count": 1},
+        {"state": "future_state", "count": 1},
+    ]
+    assert sum(item["count"] for item in wire["projects"][0]["otherStates"]) == 2
+    validate_integration_instance(wire, DASHBOARD_SUMMARY_DATA_SCHEMA)
+
+    inconsistent = deepcopy(asdict(summary))
+    inconsistent_project = inconsistent["projects"][0]
+    inconsistent_project["other_states"] = (
+        {"state": malicious, "count": 2},
+        {"state": "future_state", "count": 1},
+    )
+    with pytest.raises(ValidationError, match="otherStates counts"):
+        DashboardSummaryData.model_validate(inconsistent)

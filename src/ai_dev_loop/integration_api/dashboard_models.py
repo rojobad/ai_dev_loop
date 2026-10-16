@@ -77,10 +77,25 @@ class DashboardSummaryTotals(PublicWireModel):
     waiting_blocked: StrictInt = Field(alias="waitingBlocked", ge=0)
 
 
+class DashboardOtherState(PublicWireModel):
+    state: str = Field(min_length=1)
+    count: StrictInt = Field(ge=1)
+
+
 class DashboardProjectSummary(PublicWireModel):
     project_name: str = Field(alias="projectName", min_length=1)
     total: StrictInt = Field(ge=0)
     state_counts: DashboardStateCounts = Field(alias="stateCounts")
+    other_states: tuple[DashboardOtherState, ...] = Field(alias="otherStates")
+
+    @model_validator(mode="after")
+    def _other_state_invariants(self) -> DashboardProjectSummary:
+        raw_states = [item.state for item in self.other_states]
+        if raw_states != sorted(set(raw_states)):
+            raise ValueError("otherStates must be unique and sorted by raw state")
+        if sum(item.count for item in self.other_states) != self.state_counts.other:
+            raise ValueError("otherStates counts must sum to stateCounts.other")
+        return self
 
 
 class DashboardWorkloadItem(PublicWireModel):
@@ -102,17 +117,20 @@ class DashboardSummaryData(PublicWireModel):
     def _summary_totals(self) -> DashboardSummaryData:
         for project in self.projects:
             counts = project.state_counts
-            if sum(
-                (
-                    counts.completed,
-                    counts.residual_risk,
-                    counts.running,
-                    counts.waiting,
-                    counts.blocked,
-                    counts.aborted,
-                    counts.other,
+            if (
+                sum(
+                    (
+                        counts.completed,
+                        counts.residual_risk,
+                        counts.running,
+                        counts.waiting,
+                        counts.blocked,
+                        counts.aborted,
+                        counts.other,
+                    )
                 )
-            ) != project.total:
+                != project.total
+            ):
                 raise ValueError("project stateCounts must sum to total")
         if sum(project.total for project in self.projects) != self.totals.runs_started:
             raise ValueError("project totals must sum to runsStarted")
@@ -126,10 +144,13 @@ class DashboardSummaryData(PublicWireModel):
             self.totals.residual_risk
         ):
             raise ValueError("project residualRisk counts must match totals")
-        if sum(
-            project.state_counts.waiting + project.state_counts.blocked
-            for project in self.projects
-        ) != self.totals.waiting_blocked:
+        if (
+            sum(
+                project.state_counts.waiting + project.state_counts.blocked
+                for project in self.projects
+            )
+            != self.totals.waiting_blocked
+        ):
             raise ValueError("project waiting/blocked counts must match totals")
         return self
 

@@ -1,4 +1,4 @@
-import { BarChart, GaugeChart, TreemapChart } from "echarts/charts";
+import { BarChart, CustomChart, GaugeChart, TreemapChart } from "echarts/charts";
 import {
   GridComponent,
   LegendComponent,
@@ -13,6 +13,7 @@ import ReactEChartsCore from "echarts-for-react/lib/core";
 
 echarts.use([
   BarChart,
+  CustomChart,
   GaugeChart,
   TreemapChart,
   GridComponent,
@@ -27,6 +28,7 @@ export interface DashboardChartProps {
   height: number;
   onEvents?: Record<string, (parameters: unknown) => void>;
   option: EChartsCoreOption;
+  ownershipKey?: string;
   theme: "light" | "dark";
 }
 
@@ -35,6 +37,7 @@ export function DashboardChart({
   height,
   onEvents,
   option,
+  ownershipKey = "shared",
   theme,
 }: DashboardChartProps): React.JSX.Element {
   const wrapper = useRef<HTMLDivElement>(null);
@@ -52,12 +55,12 @@ export function DashboardChart({
       observer.disconnect();
       if (!instance.isDisposed()) instance.dispose();
     };
-  }, [theme]);
+  }, [ownershipKey, theme]);
 
   return (
     <div ref={wrapper} className="chart-frame" role="img" aria-label={ariaLabel}>
       <ReactEChartsCore
-        key={theme}
+        key={`${theme}:${ownershipKey}`}
         ref={component}
         echarts={echarts}
         option={option}

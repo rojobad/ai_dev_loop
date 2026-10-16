@@ -9,7 +9,16 @@ describe("explicit public DTO parsers", () => {
     const result = parseSummaryData(input);
     expect(result.projects[0].projectName).toContain("<script>");
     expect(result.projects[0].stateCounts.other).toBe(1);
+    expect(result.projects[0].otherStates).toEqual([
+      { state: '<future-state onmouseover="bad">', count: 1 },
+    ]);
     expect(result.totals.runsStarted).toBe(7);
+  });
+
+  it("rejects raw Other aggregates that do not equal stateCounts.other", () => {
+    const input = summaryData();
+    input.projects[0].otherStates[0].count = 2;
+    expect(() => parseSummaryData(input)).toThrow("otherStates");
   });
 
   it("rejects aggregate payloads whose state groups contradict the KPI authority", () => {

@@ -51,8 +51,23 @@ export function projectStateOption(projects: DashboardProjectSummary[]): ECharts
         const rows = items
           .map((item) => {
             const label = typeof item.seriesName === "string" ? item.seriesName : "State";
-            const count = typeof item.value === "number" ? item.value : 0;
-            return `${escapeHtml(label)}: ${count}`;
+            const data = eventRecord(item.data);
+            const count = typeof item.value === "number"
+              ? item.value
+              : typeof data.value === "number"
+                ? data.value
+                : 0;
+            const otherStates = Array.isArray(data.otherStates)
+              ? data.otherStates
+                  .map((entry) => {
+                    const state = eventRecord(entry);
+                    return typeof state.state === "string" && typeof state.count === "number"
+                      ? `${escapeHtml(state.state)} (${state.count})`
+                      : null;
+                  })
+                  .filter((entry): entry is string => entry !== null)
+              : [];
+            return `${escapeHtml(label)}: ${count}${otherStates.length ? `<br>${otherStates.join("<br>")}` : ""}`;
           })
           .join("<br>");
         return `<strong>${escapeHtml(project)}</strong><br>${rows}`;
@@ -70,7 +85,11 @@ export function projectStateOption(projects: DashboardProjectSummary[]): ECharts
       stack: "state",
       emphasis: { focus: "series" },
       itemStyle: { color },
-      data: projects.map((project) => project.stateCounts[key]),
+      data: projects.map((project) =>
+        key === "other"
+          ? { value: project.stateCounts[key], otherStates: project.otherStates }
+          : project.stateCounts[key],
+      ),
     })),
   };
 }

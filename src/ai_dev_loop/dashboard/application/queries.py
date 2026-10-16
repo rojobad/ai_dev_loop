@@ -82,6 +82,12 @@ class StateCountsResult:
 
 
 @dataclass(frozen=True)
+class OtherStateResult:
+    state: str
+    count: int
+
+
+@dataclass(frozen=True)
 class SummaryTotalsResult:
     runs_started: int
     completed: int
@@ -94,6 +100,7 @@ class ProjectSummaryResult:
     project_name: str
     total: int
     state_counts: StateCountsResult
+    other_states: tuple[OtherStateResult, ...]
 
 
 @dataclass(frozen=True)
@@ -192,8 +199,7 @@ def _coverage(
     include_launch_issues: bool = True,
 ) -> CoverageResult:
     partial = duration_partial or (
-        include_launch_issues
-        and (counts.partial_evidence or counts.missing_launch_times > 0)
+        include_launch_issues and (counts.partial_evidence or counts.missing_launch_times > 0)
     )
     warnings: list[str] = []
     if include_launch_issues and counts.missing_launch_times:
@@ -223,6 +229,13 @@ def _state_counts(runs: list[RunObservation]) -> StateCountsResult:
         blocked=counts["blocked"],
         aborted=counts["aborted"],
         other=counts["other"],
+    )
+
+
+def _other_states(runs: list[RunObservation]) -> tuple[OtherStateResult, ...]:
+    counts = Counter(run.state for run in runs if state_group(run.state) == "other")
+    return tuple(
+        OtherStateResult(state=state, count=count) for state, count in sorted(counts.items())
     )
 
 
@@ -318,6 +331,7 @@ class DashboardQueries:
                     project_name=project_name,
                     total=len(project_runs),
                     state_counts=_state_counts(project_runs),
+                    other_states=_other_states(project_runs),
                 )
                 for project_name, project_runs in sorted(by_project.items())
             ),
@@ -409,9 +423,7 @@ class DashboardQueries:
                 )
             for launched_at in rounds.values():
                 if filters.contains(launched_at):
-                    round_values[
-                        launched_at.astimezone(filters.zone).date().isoformat()
-                    ] += 1
+                    round_values[launched_at.astimezone(filters.zone).date().isoformat()] += 1
             values = dict(round_values)
             unit = "count"
         else:

@@ -66,6 +66,12 @@ export interface DashboardProjectSummary {
   projectName: string;
   total: number;
   stateCounts: DashboardStateCounts;
+  otherStates: DashboardOtherState[];
+}
+
+export interface DashboardOtherState {
+  state: string;
+  count: number;
 }
 
 export interface DashboardWorkloadItem {
@@ -82,6 +88,96 @@ export interface DashboardSummaryData {
   totals: DashboardSummaryTotals;
   projects: DashboardProjectSummary[];
   workload: DashboardWorkloadItem[];
+}
+
+export interface DashboardSequenceBinding {
+  sequenceId: string;
+  sequenceName: string;
+  ordinal: number;
+  phaseName: string;
+  generation: number;
+  attemptKind: string;
+  sourceRunId: string | null;
+}
+
+export interface DashboardRunItem {
+  runId: string;
+  projectName: string;
+  implementerProvider: "cursor" | "codex";
+  state: string;
+  submittedAt: string;
+  firstExecutionLaunchAt: string;
+  sequenceBinding: DashboardSequenceBinding | null;
+}
+
+export interface DashboardRunsData {
+  observedAt: string;
+  filters: DashboardFilterEcho;
+  coverage: DashboardCoverage;
+  items: DashboardRunItem[];
+  page: DashboardPage;
+  totalCount: number;
+}
+
+export interface IntegrationReviewBudget {
+  completed: number;
+  max: number;
+  submittedMax: number | null;
+}
+
+export interface IntegrationRunSequenceBinding {
+  sequenceId: string;
+  ordinal: number;
+  phaseCount: number;
+}
+
+export interface IntegrationSafeNextAction {
+  kind: string;
+  runId: string | null;
+  sequenceId: string | null;
+  waitUntil: string | null;
+}
+
+export interface RunInspectData {
+  implementerProvider: "cursor" | "codex";
+  codexPendingRole: string | null;
+  codexPendingTurn: string | null;
+  codexCapacityReason: string | null;
+  runId: string;
+  projectName: string;
+  repositoryRoot: string;
+  state: string;
+  submittedAt: string;
+  updatedAt: string;
+  reviewBudget: IntegrationReviewBudget;
+  sequenceBinding: IntegrationRunSequenceBinding | null;
+  residualRisk: boolean | null;
+  blockReason: string | null;
+  cursorWaitUntil: string | null;
+  implementerRetryWaitUntil: string | null;
+  implementerTimeoutAutomaticRetries: number | null;
+  implementerTimeoutRetryLimit: number | null;
+  safeNextAction: IntegrationSafeNextAction;
+  attemptCount: number;
+}
+
+export interface AttemptTimelineItem {
+  attemptId: string;
+  component: string;
+  effectKind: string | null;
+  iteration: number;
+  phaseAttempt: number;
+  status: string;
+  createdAt: string;
+  launchRequestedAt: string | null;
+  completedAt: string | null;
+  observedDurationSeconds: number | null;
+}
+
+export interface AttemptTimelineData {
+  runId: string;
+  items: AttemptTimelineItem[];
+  page: DashboardPage;
 }
 
 export interface CapacityLimit {
@@ -115,6 +211,20 @@ export interface DashboardDataSource {
     filters: DashboardFilters,
     signal: AbortSignal,
   ): Promise<SourceObservation<DashboardSummaryData>>;
+  runs(
+    filters: DashboardFilters,
+    page: { offset: number; limit: number },
+    signal: AbortSignal,
+  ): Promise<SourceObservation<DashboardRunsData>>;
+  runInspect(
+    runId: string,
+    signal: AbortSignal,
+  ): Promise<SourceObservation<RunInspectData>>;
+  runTimeline(
+    runId: string,
+    page: { offset: number; limit: number },
+    signal: AbortSignal,
+  ): Promise<SourceObservation<AttemptTimelineData>>;
   capacity(signal: AbortSignal): Promise<SourceObservation<CodexCapacityData>>;
 }
 

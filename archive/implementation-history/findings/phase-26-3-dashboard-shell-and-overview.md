@@ -1,7 +1,9 @@
 # Phase 26.3 dashboard shell and overview findings
 
-Status: **BLOCKED_CONTRACT** (informational implementation label only; not a
-scheduler state, human acceptance, commit, or deployment authorization).
+Status at the Phase 26.3 boundary: **BLOCKED_CONTRACT** (informational
+implementation label only; not a scheduler state, human acceptance, commit, or
+deployment authorization). Follow-up: **F-02 CLOSED BY PHASE 26.4** after the
+operator authorized the additive summary aggregate described below.
 
 Implementation worktree: `/home/rojobad/Projects/ai_dev_loop`, branch
 `codex/phase-26-local-dashboard`, starting HEAD
@@ -77,7 +79,8 @@ downloaded as Ubuntu packages and extracted, not installed, below
   confirmed the production implementations; no production source or built asset
   changed. Final correction evidence is **6 files / 17 tests passed**, TypeScript
   passed, and the real-server browser smoke passed **1/1**.
-- **F-02 — BLOCKED.** The accepted public `DashboardSummaryData` producer in
+- **F-02 — CLOSED BY PHASE 26.4 (historical Phase 26.3 blocker).** At the 26.3
+  boundary, the accepted public `DashboardSummaryData` producer in
   `integration_api/dashboard_models.py` and its schemas exposes only the integer
   `projects[].stateCounts.other`; it does not expose the raw state strings or
   per-raw-state counts required to make exact unknown values visible under Other.
@@ -87,19 +90,21 @@ downloaded as Ubuntu packages and extracted, not installed, below
   violate the shared refresh rule against silently scanning every historical
   page. Private SQLite/artifact inspection, guessed labels and partial-page labels
   are not authoritative alternatives. Dependent raw-state display work therefore
-  stopped. An external scope decision is required: either (a) authorize an
-  additive aggregate such as `otherStates[{state,count}]` in the Phase 26.1
-  summary producer/public DTO/schema and then consume/test it here, or (b)
-  explicitly amend/defer the requirement so Phase 26.3 promises only the
-  authoritative aggregate Other count and raw states remain in the explicitly
-  paged Phase 26.4 run map. No scheduler control was invoked.
+  stopped. Phase 26.4 received the required operator decision and implemented
+  option (a): the summary producer/public DTO/schema now emits additive
+  `otherStates[{state,count}]`, validates that the exact raw-state counts sum to
+  `stateCounts.other`, and the Phase 26.3 parser/chart/UI surfaces consume it as
+  literal React text or escaped tooltip HTML. The Phase 26.4 producer, parser,
+  UI and real-server evidence is recorded in
+  `phase-26-4-linked-run-map-and-timeline.md`. No paged `dashboard.runs` scan or
+  private store read was added to the overview.
 
 ## Contract evidence
 
 | ID | Production entry and caller | Independent test/assertion | Exact result |
 | --- | --- | --- | --- |
 | C263-1 | package `web_dist/index.html` -> `main.tsx` -> `DashboardApp` -> `DashboardDataSource` -> `LocalFetchDashboardDataSource` -> same-origin `POST /api/dashboard/read`; `time.ts` owns named-zone draft conversion and Apply/Refresh; `DashboardApp` owns catalog paging, AbortController and generation retirement | `DashboardApp.test.tsx` resolves two summary calls in reverse order and proves the retired reply cannot restore the old scope; an invalid reversed range issues no read and retains the prior observation. `time.test.ts` independently covers default/presets, DST nonexistent/ambiguous rejection, explicit-offset resolution and range bounds. `local-fetch-data-source.test.ts` asserts exact same-origin operations/envelopes, received time and safe failures. `overview.spec.ts` launches the real production server over a temporary fixture ledger and observes an independently expected three-run UTC cohort after editing/applying the project/range controls. | Frontend unit selection: **6 files / 17 tests passed in 2.30s**. Real browser: **1 passed in 2.7s**. Affected Python producer/server selection: **65 passed in 38.57s**. |
-| C263-2 | accepted `dashboard.summary` DTO -> `parseSummaryData` consistency checks -> `SummaryPanels` -> four KPIs, `projectStateOption`, `workloadOption` and global `selectProject` | `DashboardApp.test.tsx` independently asserts 7 started, 2 completed, 1 residual-risk and visible aggregate Other count, then proves keyboard and chart activation each apply `project-b`. `charts.test.ts` invokes production projections and asserts every expected state series, exact sequence/Standalone leaves and counts, both actual tooltip formatter boundaries with malicious labels, and production event mapping. Parser tests reject internally inconsistent project/workload/KPI totals rather than charting partial page-derived values. The real-server fixture includes accepted Cursor and Codex-implementer attempts, while the rendered cohort count remains run-based and no reviewer-content call exists. | Aggregate/count/chart behavior is **17/17 frontend, 1/1 browser and 65/65 Python pass**. Exact raw unknown state labels are **BLOCKED** because the accepted summary DTO supplies only `other`; C263-2 is not fully complete pending the F-02 scope decision. |
+| C263-2 | accepted `dashboard.summary` DTO -> `parseSummaryData` consistency checks -> `SummaryPanels` -> four KPIs, `projectStateOption`, `workloadOption` and global `selectProject` | `DashboardApp.test.tsx` independently asserts 7 started, 2 completed, 1 residual-risk and visible aggregate Other count, then proves keyboard and chart activation each apply `project-b`. `charts.test.ts` invokes production projections and asserts every expected state series, exact sequence/Standalone leaves and counts, both actual tooltip formatter boundaries with malicious labels, and production event mapping. Parser tests reject internally inconsistent project/workload/KPI totals rather than charting partial page-derived values. The real-server fixture includes accepted Cursor and Codex-implementer attempts, while the rendered cohort count remains run-based and no reviewer-content call exists. | At the 26.3 boundary aggregate/count/chart behavior was **17/17 frontend, 1/1 browser and 65/65 Python pass**, while exact raw labels were blocked. Phase 26.4 closes that remainder through C264-4 with the authorized additive producer/DTO/schema and independent producer/parser/UI assertions. |
 | C263-3 | `DashboardApp` starts `DashboardDataSource.capacity` once after initial catalog settlement -> existing `machine.codex-capacity` service -> `CapacityPanel`/`capacityOption`; the call has no project/time parameters or summary refresh dependency | `DashboardApp.test.tsx` asserts both returned windows, exact 64/36 and 27/73 remaining/used values, explicit unavailable reset, one capacity call after filter selection and summary Refresh, and unavailable status without synthetic zero. `local-fetch-data-source.test.ts` asserts the capacity request has `{}` parameters. `overview.spec.ts` uses a typed fake service through the real dispatcher/server and observes both windows without a model/account process. | Included in final frontend **17/17 pass** and browser **1/1 pass** results; no real capacity probe was executed. |
 | C263-4 | Vite fixed-output build -> package-owned manifest `/`, `/assets/dashboard.js`, `/assets/dashboard.css`; modular ECharts registrations -> `DashboardChart` ResizeObserver/disposal; React text plus escaped HTML-mode tooltips; responsive CSS and theme-only localStorage | `DashboardChart.test.tsx` drives the production observer callbacks, verifies the current instance resizes, then proves theme replacement disconnects/disposes the retired ownership and unmount retires the replacement. `charts.test.ts` invokes both production tooltip formatters with malicious projected project/sequence labels and asserts exact escaping. `test_server_policy.py` fetches the real built JS/CSS with exact MIME/policy behavior. `overview.spec.ts` proves zero external requests, literal malicious content without image/script effects, theme switching and no 390px horizontal overflow. | Corrected frontend assertions: **17/17 pass**. Build remains **exit 0**, 648 modules, HTML 0.45 kB (0.27 gzip), CSS 4.56 kB (1.57 gzip), JS 762.17 kB (257.28 gzip), 4.51s Vite / 4.98s wall. Corrected browser: **1/1 pass**. No production source changed, so packaged assets were not regenerated. |
 
@@ -263,11 +268,9 @@ The requested protected inputs retain their prior SHA-256 values:
 - `ai_dev_loop.yaml`:
   `33cd5c07ca3eafb640200df788ee7027eee728192d1e1fa9521d5a45dbe9f187`
 
-One mandatory C263-2 behavior is unfinished: exact raw unknown state values
-cannot be displayed under Other from the accepted summary producer. F-02 records
-the missing field, the unsuitable paged alternative and the external decision
-needed; this implementation therefore remains **BLOCKED_CONTRACT** even though
-all implemented focused checks pass. The repository-wide pytest suite, final
+The previously unfinished exact raw-state portion of C263-2 is closed by Phase
+26.4 C264-4 without changing the historical Phase 26.3 boundary result. The
+repository-wide pytest suite, final
 sdist/wheel build and isolated installed-wheel browser acceptance, real account
 capacity observation, operator walkthrough and human visual acceptance were
 deliberately **not executed**. The approved plan assigns those combined

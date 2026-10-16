@@ -4,11 +4,14 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
+  AttemptTimelineData,
   CodexCapacityData,
   DashboardDataSource,
   DashboardFilters,
   DashboardProjectsData,
+  DashboardRunsData,
   DashboardSummaryData,
+  RunInspectData,
   SourceObservation,
 } from "./types";
 import { capacityData, ImmediateDataSource, observation, summaryData } from "./test-fixtures";
@@ -70,6 +73,43 @@ class DeferredDataSource implements DashboardDataSource {
     return request.promise;
   }
 
+  async runs(
+    filters: DashboardFilters,
+    page: { offset: number; limit: number },
+    _signal: AbortSignal,
+  ): Promise<SourceObservation<DashboardRunsData>> {
+    return observation({
+      observedAt: "2026-01-03T00:00:00Z",
+      filters: { ...filters, projectName: filters.projectName ?? null },
+      coverage: {
+        dataState: "empty",
+        unstartedRuns: 0,
+        missingLaunchTimes: 0,
+        unknownExecutionKinds: 0,
+        missingDurationAttempts: 0,
+        warnings: [],
+      },
+      items: [],
+      page: { offset: page.offset, limit: page.limit, nextOffset: null, hasMore: false },
+      totalCount: 0,
+    });
+  }
+
+  async runInspect(
+    _runId: string,
+    _signal: AbortSignal,
+  ): Promise<SourceObservation<RunInspectData>> {
+    throw new Error("No run is selectable in this fixture.");
+  }
+
+  async runTimeline(
+    _runId: string,
+    _page: { offset: number; limit: number },
+    _signal: AbortSignal,
+  ): Promise<SourceObservation<AttemptTimelineData>> {
+    throw new Error("No run is selectable in this fixture.");
+  }
+
   async capacity(_signal: AbortSignal): Promise<SourceObservation<CodexCapacityData>> {
     return observation(capacityData);
   }
@@ -114,7 +154,9 @@ describe("C263 overview shell", () => {
     expect(await screen.findByLabelText("Runs started: 7")).toBeInTheDocument();
     expect(screen.getByLabelText("Completed: 2")).toBeInTheDocument();
     expect(screen.getByLabelText("Completed with residual risk: 1")).toBeInTheDocument();
-    expect(screen.getByText("Other: 1")).toBeInTheDocument();
+    expect(screen.getByText(/Other: 1/)).toHaveTextContent(
+      'Other: 1 · <future-state onmouseover="bad"> (1)',
+    );
     expect(screen.getAllByText("project-a<script>alert(1)</script>").length).toBeGreaterThan(0);
     expect(document.querySelector("script:not([src])")).toBeNull();
 
@@ -169,5 +211,23 @@ describe("C263 overview shell", () => {
     render(<DashboardApp dataSource={new UnavailableDataSource()} />);
     expect(await screen.findByText("Capacity unavailable · timeout")).toBeInTheDocument();
     expect(screen.queryByText(/0% remaining/)).not.toBeInTheDocument();
+  });
+
+  it("clears exact run and attempt ownership when Apply changes the scope", async () => {
+    const user = userEvent.setup();
+    const dataSource = new ImmediateDataSource();
+    render(<DashboardApp dataSource={dataSource} />);
+    await user.click(await screen.findByRole("button", { name: /standalone-run/ }));
+    expect(await screen.findByText(/Selected run:/)).toHaveTextContent("standalone-run");
+    expect(await screen.findByText("attempt-cursor")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Project"), "project-b");
+    await user.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() =>
+      expect(screen.queryByText(/Selected run:/)).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByText("Select an exact run cell or companion row to inspect it."),
+    ).toBeInTheDocument();
   });
 });

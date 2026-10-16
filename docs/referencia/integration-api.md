@@ -207,6 +207,11 @@ ai_dev_loop integration dashboard activity --from UTC --to UTC --metric submissi
   por medianoche en la zona indicada; no inventa duración activa o incierta.
 - Todos los resultados incluyen `observedAt`, filtros canónicos y cobertura
   explícita. Los totales de `summary` no dependen de la página de `runs`.
+- Cada elemento `projects[]` de `summary` incluye `otherStates[]` con el valor
+  crudo exacto de cada estado no reconocido y su `count`. Sus etiquetas son
+  únicas, están ordenadas y la suma de sus conteos coincide exactamente con
+  `stateCounts.other`; el campo evita derivar el agregado desde páginas de
+  `dashboard.runs`.
 - Las lecturas abren un snapshot SQLite validado en modo solo lectura. No migran,
   reparan ni controlan el scheduler. Tienen límites de 10.000 runs relevantes,
   100.000 intentos de ejecución contribuyentes, 5 segundos y 240 KiB; al
@@ -277,3 +282,12 @@ autenticación de output específica para Cursor, implementer Codex y reviewer.
 Prompts y stdout/stderr se cargan solo por selección explícita, paginados y sin
 cache durable del servidor. El servidor mantiene la semántica read-only de los
 servicios existentes y no controla el scheduler.
+
+El mapa local consume páginas explícitas de `dashboard.runs` y conserva cada
+`runId` y binding de secuencia, incluidas generaciones de reemplazo. La línea de
+tiempo seleccionada consume `run.inspect` y páginas de `run.timeline`: clasifica
+por separado turnos implementer Cursor, turnos implementer Codex y reviews Codex,
+y representa intentos sin lanzamiento o sin fin observado sin inventar duración.
+Cambiar de run o de filtros cancela y retira respuestas anteriores. Estas vistas
+no solicitan prompt, review-content ni output; ese contenido sigue requiriendo
+una acción deliberada en su superficie asignada.

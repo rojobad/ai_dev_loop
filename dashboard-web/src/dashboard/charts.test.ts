@@ -12,7 +12,7 @@ interface TooltipOption {
 }
 
 interface StateSeries {
-  data: number[];
+  data: Array<number | { value: number; otherStates: Array<{ state: string; count: number }> }>;
   name: string;
   stack: string;
   type: string;
@@ -42,6 +42,7 @@ const projects: DashboardProjectSummary[] = [
       aborted: 0,
       other: 0,
     },
+    otherStates: [],
   },
   {
     projectName: "beta",
@@ -55,6 +56,7 @@ const projects: DashboardProjectSummary[] = [
       aborted: 3,
       other: 1,
     },
+    otherStates: [{ state: '<future onerror="boom">', count: 1 }],
   },
 ];
 
@@ -81,7 +83,15 @@ describe("chart projections", () => {
         expect.objectContaining({ name: "Waiting", type: "bar", stack: "state", data: [0, 1] }),
         expect.objectContaining({ name: "Blocked", type: "bar", stack: "state", data: [1, 0] }),
         expect.objectContaining({ name: "Aborted", type: "bar", stack: "state", data: [0, 3] }),
-        expect.objectContaining({ name: "Other", type: "bar", stack: "state", data: [0, 1] }),
+        expect.objectContaining({
+          name: "Other",
+          type: "bar",
+          stack: "state",
+          data: [
+            { value: 0, otherStates: [] },
+            { value: 1, otherStates: [{ state: '<future onerror="boom">', count: 1 }] },
+          ],
+        }),
       ]),
     );
     expect(option.series).toHaveLength(7);
@@ -117,10 +127,18 @@ describe("chart projections", () => {
     expect(
       stateFormatter([
         { name: maliciousProject, seriesName: "Completed", value: 1 },
-        { name: maliciousProject, seriesName: "Other", value: 2 },
+        {
+          name: maliciousProject,
+          seriesName: "Other",
+          value: 2,
+          data: {
+            value: 2,
+            otherStates: [{ state: '<future onerror="boom">', count: 2 }],
+          },
+        },
       ]),
     ).toBe(
-      "<strong>&lt;img src=x onerror=&quot;boom&quot;&gt; &amp; project</strong><br>Completed: 1<br>Other: 2",
+      "<strong>&lt;img src=x onerror=&quot;boom&quot;&gt; &amp; project</strong><br>Completed: 1<br>Other: 2<br>&lt;future onerror=&quot;boom&quot;&gt; (2)",
     );
 
     const maliciousSequence = '<script>alert("leaf")</script> & sequence';

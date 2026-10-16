@@ -1,4 +1,6 @@
 import type {
+  AttemptTimelineData,
+  AttemptTimelineItem,
   CapacityLimit,
   CodexCapacityData,
   DashboardCoverage,
@@ -7,10 +9,16 @@ import type {
   DashboardProjectItem,
   DashboardProjectSummary,
   DashboardProjectsData,
+  DashboardRunItem,
+  DashboardRunsData,
+  DashboardSequenceBinding,
   DashboardStateCounts,
   DashboardSummaryData,
   DashboardSummaryTotals,
   DashboardWorkloadItem,
+  IntegrationRunSequenceBinding,
+  IntegrationSafeNextAction,
+  RunInspectData,
 } from "./types";
 
 type JsonRecord = Record<string, unknown>;
@@ -38,6 +46,10 @@ function text(value: unknown, context: string, allowEmpty = false): string {
 
 function nullableText(value: unknown, context: string): string | null {
   return value === null ? null : text(value, context);
+}
+
+function optionalNullableText(value: unknown, context: string): string | null {
+  return value === undefined || value === null ? null : text(value, context);
 }
 
 function utcInstant(value: unknown, context: string): string {
@@ -76,6 +88,18 @@ function boolean(value: unknown, context: string): boolean {
 
 function nullableInteger(value: unknown, context: string): number | null {
   return value === null ? null : integer(value, context, 1);
+}
+
+function optionalNullableInteger(
+  value: unknown,
+  context: string,
+  minimum = 0,
+): number | null {
+  return value === undefined || value === null ? null : integer(value, context, minimum);
+}
+
+function optionalNullableBoolean(value: unknown, context: string): boolean | null {
+  return value === undefined || value === null ? null : boolean(value, context);
 }
 
 function filters(value: unknown): DashboardFilterEcho {
@@ -119,9 +143,14 @@ function page(value: unknown): DashboardPage {
   if (hasMore !== (nextOffset !== null)) {
     throw new TypeError("page.nextOffset presence must match page.hasMore.");
   }
+  const offset = integer(item.offset, "page.offset");
+  const limit = integer(item.limit, "page.limit", 1);
+  if (nextOffset !== null && nextOffset !== offset + limit) {
+    throw new TypeError("page.nextOffset must advance by page.limit.");
+  }
   return {
-    offset: integer(item.offset, "page.offset"),
-    limit: integer(item.limit, "page.limit", 1),
+    offset,
+    limit,
     nextOffset,
     hasMore,
   };
@@ -160,10 +189,24 @@ function stateCounts(value: unknown, context: string): DashboardStateCounts {
 
 function projectSummary(value: unknown, index: number): DashboardProjectSummary {
   const item = record(value, `projects[${index}]`);
+  const otherStates = array(item.otherStates, `projects[${index}].otherStates`).map(
+    (value, otherIndex) => {
+      const other = record(value, `projects[${index}].otherStates[${otherIndex}]`);
+      return {
+        state: text(other.state, `projects[${index}].otherStates[${otherIndex}].state`),
+        count: integer(other.count, `projects[${index}].otherStates[${otherIndex}].count`, 1),
+      };
+    },
+  );
+  const rawStates = otherStates.map((other) => other.state);
+  if (new Set(rawStates).size !== rawStates.length) {
+    throw new TypeError("Project otherStates must contain unique raw state labels.");
+  }
   return {
     projectName: text(item.projectName, `projects[${index}].projectName`),
     total: integer(item.total, `projects[${index}].total`),
     stateCounts: stateCounts(item.stateCounts, `projects[${index}].stateCounts`),
+    otherStates,
   };
 }
 
@@ -215,6 +258,10 @@ export function parseSummaryData(value: unknown): DashboardSummaryData {
     if (total !== project.total) {
       throw new TypeError("Project state counts do not match the project total.");
     }
+    const otherTotal = project.otherStates.reduce((sum, item) => sum + item.count, 0);
+    if (otherTotal !== counts.other) {
+      throw new TypeError("Project otherStates do not match stateCounts.other.");
+    }
   }
   const completed = result.projects.reduce(
     (sum, project) => sum + project.stateCounts.completed,
@@ -236,6 +283,156 @@ export function parseSummaryData(value: unknown): DashboardSummaryData {
     throw new TypeError("Summary state groups do not match the public KPI totals.");
   }
   return result;
+}
+
+function dashboardSequenceBinding(value: unknown, context: string): DashboardSequenceBinding {
+  const item = record(value, context);
+  return {
+    sequenceId: text(item.sequenceId, `${context}.sequenceId`),
+    sequenceName: text(item.sequenceName, `${context}.sequenceName`),
+    ordinal: integer(item.ordinal, `${context}.ordinal`, 1),
+    phaseName: text(item.phaseName, `${context}.phaseName`),
+    generation: integer(item.generation, `${context}.generation`, 1),
+    attemptKind: text(item.attemptKind, `${context}.attemptKind`),
+    sourceRunId: nullableText(item.sourceRunId, `${context}.sourceRunId`),
+  };
+}
+
+function dashboardRun(value: unknown, index: number): DashboardRunItem {
+  const context = `items[${index}]`;
+  const item = record(value, context);
+  const provider = text(item.implementerProvider, `${context}.implementerProvider`);
+  if (provider !== "cursor" && provider !== "codex") {
+    throw new TypeError(`${context}.implementerProvider is unsupported.`);
+  }
+  return {
+    runId: text(item.runId, `${context}.runId`),
+    projectName: text(item.projectName, `${context}.projectName`),
+    implementerProvider: provider,
+    state: text(item.state, `${context}.state`),
+    submittedAt: utcInstant(item.submittedAt, `${context}.submittedAt`),
+    firstExecutionLaunchAt: utcInstant(
+      item.firstExecutionLaunchAt,
+      `${context}.firstExecutionLaunchAt`,
+    ),
+    sequenceBinding:
+      item.sequenceBinding === null
+        ? null
+        : dashboardSequenceBinding(item.sequenceBinding, `${context}.sequenceBinding`),
+  };
+}
+
+export function parseRunsData(value: unknown): DashboardRunsData {
+  const data = record(value, "dashboard.runs data");
+  return {
+    observedAt: utcInstant(data.observedAt, "observedAt"),
+    filters: filters(data.filters),
+    coverage: coverage(data.coverage),
+    items: array(data.items, "items").map(dashboardRun),
+    page: page(data.page),
+    totalCount: integer(data.totalCount, "totalCount"),
+  };
+}
+
+function runSequenceBinding(value: unknown): IntegrationRunSequenceBinding | null {
+  if (value === undefined || value === null) return null;
+  const item = record(value, "sequenceBinding");
+  return {
+    sequenceId: text(item.sequenceId, "sequenceBinding.sequenceId"),
+    ordinal: integer(item.ordinal, "sequenceBinding.ordinal", 1),
+    phaseCount: integer(item.phaseCount, "sequenceBinding.phaseCount", 1),
+  };
+}
+
+function safeNextAction(value: unknown): IntegrationSafeNextAction {
+  const item = record(value, "safeNextAction");
+  return {
+    kind: text(item.kind, "safeNextAction.kind"),
+    runId: optionalNullableText(item.runId, "safeNextAction.runId"),
+    sequenceId: optionalNullableText(item.sequenceId, "safeNextAction.sequenceId"),
+    waitUntil: optionalNullableText(item.waitUntil, "safeNextAction.waitUntil"),
+  };
+}
+
+export function parseRunInspectData(value: unknown): RunInspectData {
+  const data = record(value, "run.inspect data");
+  const provider = data.implementerProvider === undefined
+    ? "cursor"
+    : text(data.implementerProvider, "implementerProvider");
+  if (provider !== "cursor" && provider !== "codex") {
+    throw new TypeError("implementerProvider is unsupported.");
+  }
+  const reviewBudget = record(data.reviewBudget, "reviewBudget");
+  return {
+    implementerProvider: provider,
+    codexPendingRole: optionalNullableText(data.codexPendingRole, "codexPendingRole"),
+    codexPendingTurn: optionalNullableText(data.codexPendingTurn, "codexPendingTurn"),
+    codexCapacityReason: optionalNullableText(data.codexCapacityReason, "codexCapacityReason"),
+    runId: text(data.runId, "runId"),
+    projectName: text(data.projectName, "projectName"),
+    repositoryRoot: text(data.repositoryRoot, "repositoryRoot"),
+    state: text(data.state, "state"),
+    submittedAt: utcInstant(data.submittedAt, "submittedAt"),
+    updatedAt: utcInstant(data.updatedAt, "updatedAt"),
+    reviewBudget: {
+      completed: integer(reviewBudget.completed, "reviewBudget.completed"),
+      max: integer(reviewBudget.max, "reviewBudget.max"),
+      submittedMax: optionalNullableInteger(reviewBudget.submittedMax, "reviewBudget.submittedMax"),
+    },
+    sequenceBinding: runSequenceBinding(data.sequenceBinding),
+    residualRisk: optionalNullableBoolean(data.residualRisk, "residualRisk"),
+    blockReason: optionalNullableText(data.blockReason, "blockReason"),
+    cursorWaitUntil: optionalNullableText(data.cursorWaitUntil, "cursorWaitUntil"),
+    implementerRetryWaitUntil: optionalNullableText(
+      data.implementerRetryWaitUntil,
+      "implementerRetryWaitUntil",
+    ),
+    implementerTimeoutAutomaticRetries: optionalNullableInteger(
+      data.implementerTimeoutAutomaticRetries,
+      "implementerTimeoutAutomaticRetries",
+    ),
+    implementerTimeoutRetryLimit: optionalNullableInteger(
+      data.implementerTimeoutRetryLimit,
+      "implementerTimeoutRetryLimit",
+    ),
+    safeNextAction: safeNextAction(data.safeNextAction),
+    attemptCount: integer(data.attemptCount, "attemptCount"),
+  };
+}
+
+function timelineItem(value: unknown, index: number): AttemptTimelineItem {
+  const context = `items[${index}]`;
+  const item = record(value, context);
+  return {
+    attemptId: text(item.attemptId, `${context}.attemptId`),
+    component: text(item.component, `${context}.component`),
+    effectKind: nullableText(item.effectKind, `${context}.effectKind`),
+    iteration: integer(item.iteration, `${context}.iteration`, 1),
+    phaseAttempt: integer(item.phaseAttempt, `${context}.phaseAttempt`, 1),
+    status: text(item.status, `${context}.status`),
+    createdAt: utcInstant(item.createdAt, `${context}.createdAt`),
+    launchRequestedAt:
+      item.launchRequestedAt === null
+        ? null
+        : utcInstant(item.launchRequestedAt, `${context}.launchRequestedAt`),
+    completedAt:
+      item.completedAt === null
+        ? null
+        : utcInstant(item.completedAt, `${context}.completedAt`),
+    observedDurationSeconds:
+      item.observedDurationSeconds === null
+        ? null
+        : finiteNumber(item.observedDurationSeconds, `${context}.observedDurationSeconds`),
+  };
+}
+
+export function parseAttemptTimelineData(value: unknown): AttemptTimelineData {
+  const data = record(value, "run.timeline data");
+  return {
+    runId: text(data.runId, "runId"),
+    items: array(data.items, "items").map(timelineItem),
+    page: page(data.page),
+  };
 }
 
 function capacityLimit(value: unknown, index: number): CapacityLimit {

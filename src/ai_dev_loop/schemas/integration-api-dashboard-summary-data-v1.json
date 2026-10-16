@@ -29,12 +29,24 @@
       "items": {
         "type": "object",
         "additionalProperties": true,
-        "required": ["projectName", "total", "stateCounts"],
+        "required": ["projectName", "total", "stateCounts", "otherStates"],
         "properties": {
           "projectName": { "type": "string", "minLength": 1 },
           "total": { "type": "integer", "minimum": 0 },
           "stateCounts": {
             "$ref": "https://ai-dev-loop.local/schemas/integration-api-dashboard-shared-v1.json#/$defs/stateCounts"
+          },
+          "otherStates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": ["state", "count"],
+              "properties": {
+                "state": { "type": "string", "minLength": 1 },
+                "count": { "type": "integer", "minimum": 1 }
+              }
+            }
           }
         }
       }

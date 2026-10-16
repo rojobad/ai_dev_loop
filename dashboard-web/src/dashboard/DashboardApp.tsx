@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { AttemptTimeline } from "./AttemptTimeline";
 import { DashboardChart } from "./DashboardChart";
+import { RunMap } from "./RunMap";
 import {
   capacityOption,
   projectFromChartEvent,
@@ -18,6 +20,7 @@ import type {
   DashboardDataSource,
   DashboardFilters,
   DashboardProjectSummary,
+  DashboardRunItem,
   DashboardSummaryData,
   SourceObservation,
 } from "./types";
@@ -87,7 +90,9 @@ function ProjectCompanions({
           <span>{project.projectName}</span>
           <span>{project.total} started</span>
           {project.stateCounts.other > 0 ? (
-            <span className="other-state">Other: {project.stateCounts.other}</span>
+            <span className="other-state">
+              Other: {project.stateCounts.other} · {project.otherStates.map((item) => `${item.state} (${item.count})`).join(", ")}
+            </span>
           ) : null}
         </button>
       ))}
@@ -284,6 +289,7 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
     error: null,
   });
   const [theme, setTheme] = useState<"light" | "dark">(storedTheme);
+  const [selectedRun, setSelectedRun] = useState<DashboardRunItem | null>(null);
   const summaryGeneration = useRef(0);
   const previousFilterKey = useRef("");
 
@@ -372,6 +378,10 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
       });
     return () => controller.abort();
   }, [appliedFilters, dataSource, revision]);
+
+  useEffect(() => {
+    setSelectedRun(null);
+  }, [appliedFilters, revision]);
 
   useEffect(() => {
     if (!catalogSettled) return;
@@ -541,11 +551,26 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
 
         <CapacityPanel state={capacity} theme={theme} />
 
+        <div className="linked-inspection-grid">
+          {catalogSettled && !capacity.loading ? (
+            <RunMap
+              dataSource={dataSource}
+              filters={appliedFilters}
+              datasetKey={`${JSON.stringify(appliedFilters)}:${revision}`}
+              selectedRunId={selectedRun?.runId ?? null}
+              onSelectRun={setSelectedRun}
+              theme={theme}
+            />
+          ) : (
+            <section className="panel" aria-labelledby="run-map-heading">
+              <h2 id="run-map-heading">Linked run map</h2>
+              <p>Settling bounded supporting reads before reading matching runs…</p>
+            </section>
+          )}
+          <AttemptTimeline dataSource={dataSource} selectedRun={selectedRun} theme={theme} />
+        </div>
+
         <div className="placeholder-grid">
-          <section className="panel placeholder" aria-labelledby="map-heading">
-            <h2 id="map-heading">Sequence and run map</h2>
-            <p>Linked authoritative paging and run selection arrive in Phase 26.4.</p>
-          </section>
           <section className="panel placeholder" aria-labelledby="activity-heading">
             <h2 id="activity-heading">Activity calendar</h2>
             <p>Selectable activity metrics and visible refresh arrive in Phase 26.6.</p>

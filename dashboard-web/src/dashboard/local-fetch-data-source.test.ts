@@ -58,4 +58,28 @@ describe("local fetch transport", () => {
       new LocalFetchDashboardDataSource().capacity(new AbortController().signal),
     ).rejects.toMatchObject({ code: "UPDATE_REQUIRED" });
   });
+
+  it("classifies HTTP 503 as transient local service saturation", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            apiVersion: { major: 1, minor: 9 },
+            ok: false,
+            observedAt: null,
+            data: null,
+            error: { code: "INTERNAL_ERROR", message: "Internal error." },
+          }),
+          { status: 503 },
+        ),
+      ),
+    );
+    await expect(
+      new LocalFetchDashboardDataSource().runInspect(
+        "selected-run",
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE" });
+  });
 });

@@ -1,10 +1,14 @@
 import type {
+  AttemptTimelineData,
   CodexCapacityData,
   DashboardCoverage,
   DashboardDataSource,
   DashboardFilters,
   DashboardProjectsData,
+  DashboardRunItem,
+  DashboardRunsData,
   DashboardSummaryData,
+  RunInspectData,
   SourceObservation,
 } from "./types";
 
@@ -45,6 +49,7 @@ export function summaryData(
             aborted: 0,
             other: 0,
           },
+          otherStates: [],
         },
       ],
       workload: [
@@ -87,6 +92,7 @@ export function summaryData(
                 aborted: 0,
                 other: 1,
               },
+              otherStates: [{ state: '<future-state onmouseover="bad">', count: 1 }],
             },
             {
               projectName: "project-b",
@@ -100,6 +106,7 @@ export function summaryData(
                 aborted: 1,
                 other: 0,
               },
+              otherStates: [],
             },
           ]
         : [
@@ -115,6 +122,10 @@ export function summaryData(
                 aborted: 0,
                 other: Math.max(0, runsStarted - 4),
               },
+              otherStates:
+                runsStarted > 4
+                  ? [{ state: "future_state", count: runsStarted - 4 }]
+                  : [],
             },
           ],
     workload:
@@ -182,6 +193,60 @@ export function observation<T>(data: T): SourceObservation<T> {
   };
 }
 
+export const standaloneRun: DashboardRunItem = {
+  runId: "standalone-run",
+  projectName: "project-a",
+  implementerProvider: "cursor",
+  state: "completed",
+  submittedAt: "2026-01-01T00:00:00Z",
+  firstExecutionLaunchAt: "2026-01-01T01:00:00Z",
+  sequenceBinding: null,
+};
+
+export function inspectData(runId: string): RunInspectData {
+  return {
+    implementerProvider: "cursor",
+    codexPendingRole: null,
+    codexPendingTurn: null,
+    codexCapacityReason: null,
+    runId,
+    projectName: "project-a",
+    repositoryRoot: "/fixture/project-a",
+    state: "completed",
+    submittedAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T04:00:00Z",
+    reviewBudget: { completed: 1, max: 3, submittedMax: null },
+    sequenceBinding: null,
+    residualRisk: false,
+    blockReason: null,
+    cursorWaitUntil: null,
+    implementerRetryWaitUntil: null,
+    implementerTimeoutAutomaticRetries: 0,
+    implementerTimeoutRetryLimit: 3,
+    safeNextAction: { kind: "none", runId, sequenceId: null, waitUntil: null },
+    attemptCount: 1,
+  };
+}
+
+export const oneAttempt: AttemptTimelineData = {
+  runId: standaloneRun.runId,
+  items: [
+    {
+      attemptId: "attempt-cursor",
+      component: "cursor",
+      effectKind: "cursor.run_turn",
+      iteration: 1,
+      phaseAttempt: 1,
+      status: "completed",
+      createdAt: "2026-01-01T01:00:00Z",
+      launchRequestedAt: "2026-01-01T01:00:00Z",
+      completedAt: "2026-01-01T02:00:00Z",
+      observedDurationSeconds: 3600,
+    },
+  ],
+  page: { offset: 0, limit: 25, nextOffset: null, hasMore: false },
+};
+
 export class ImmediateDataSource implements DashboardDataSource {
   readonly summaryCalls: DashboardFilters[] = [];
   capacityCalls = 0;
@@ -207,6 +272,47 @@ export class ImmediateDataSource implements DashboardDataSource {
   ): Promise<SourceObservation<DashboardSummaryData>> {
     this.summaryCalls.push(filters);
     return observation(summaryData(filters.projectName === "project-b" ? 3 : 7, filters.projectName ?? null));
+  }
+
+  async runs(
+    filters: DashboardFilters,
+    page: { offset: number; limit: number },
+    _signal: AbortSignal,
+  ): Promise<SourceObservation<DashboardRunsData>> {
+    const items = filters.projectName === "project-b" ? [] : [standaloneRun];
+    return observation({
+      observedAt: "2026-01-03T00:00:00Z",
+      filters: {
+        fromUtc: filters.fromUtc,
+        toUtc: filters.toUtc,
+        timeZone: filters.timeZone,
+        projectName: filters.projectName ?? null,
+      },
+      coverage: completeCoverage,
+      items: page.offset === 0 ? items : [],
+      page: { offset: page.offset, limit: page.limit, nextOffset: null, hasMore: false },
+      totalCount: items.length,
+    });
+  }
+
+  async runInspect(
+    runId: string,
+    _signal: AbortSignal,
+  ): Promise<SourceObservation<RunInspectData>> {
+    return observation(inspectData(runId));
+  }
+
+  async runTimeline(
+    runId: string,
+    page: { offset: number; limit: number },
+    _signal: AbortSignal,
+  ): Promise<SourceObservation<AttemptTimelineData>> {
+    return observation({
+      ...oneAttempt,
+      runId,
+      items: page.offset === 0 ? oneAttempt.items : [],
+      page: { offset: page.offset, limit: page.limit, nextOffset: null, hasMore: false },
+    });
   }
 
   async capacity(_signal: AbortSignal): Promise<SourceObservation<CodexCapacityData>> {

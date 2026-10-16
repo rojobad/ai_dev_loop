@@ -21,7 +21,12 @@ const ownership = vi.hoisted(() => ({
 }));
 
 vi.mock("echarts/core", () => ({ use: vi.fn() }));
-vi.mock("echarts/charts", () => ({ BarChart: {}, GaugeChart: {}, TreemapChart: {} }));
+vi.mock("echarts/charts", () => ({
+  BarChart: {},
+  CustomChart: {},
+  GaugeChart: {},
+  TreemapChart: {},
+}));
 vi.mock("echarts/components", () => ({
   GridComponent: {},
   LegendComponent: {},
@@ -81,7 +86,13 @@ describe("chart ownership", () => {
     expect(ownership.charts[0].resize).toHaveBeenCalledTimes(1);
 
     view.rerender(
-      <DashboardChart ariaLabel="owned chart" height={200} option={{}} theme="dark" />,
+      <DashboardChart
+        ariaLabel="owned chart"
+        height={200}
+        option={{}}
+        ownershipKey="new selection"
+        theme="dark"
+      />,
     );
     expect(ownership.charts).toHaveLength(2);
     expect(ownership.observers).toHaveLength(2);

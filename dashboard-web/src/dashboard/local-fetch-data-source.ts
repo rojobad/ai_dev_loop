@@ -1,12 +1,22 @@
-import { parseCapacityData, parseProjectsData, parseSummaryData } from "./parsers";
+import {
+  parseAttemptTimelineData,
+  parseCapacityData,
+  parseProjectsData,
+  parseRunInspectData,
+  parseRunsData,
+  parseSummaryData,
+} from "./parsers";
 import {
   DASHBOARD_API_MAJOR,
   DashboardDataSourceError,
+  type AttemptTimelineData,
   type CodexCapacityData,
   type DashboardDataSource,
   type DashboardFilters,
   type DashboardProjectsData,
+  type DashboardRunsData,
   type DashboardSummaryData,
+  type RunInspectData,
   type SourceObservation,
 } from "./types";
 
@@ -65,7 +75,11 @@ export class LocalFetchDashboardDataSource implements DashboardDataSource {
     }
     if (!response.ok || payload.ok !== true) {
       const error = object(payload.error);
-      const code = typeof error.code === "string" ? error.code : "INTERNAL_ERROR";
+      const code = response.status === 503
+        ? "SERVICE_UNAVAILABLE"
+        : typeof error.code === "string"
+          ? error.code
+          : "INTERNAL_ERROR";
       const message =
         typeof error.message === "string"
           ? error.message
@@ -113,6 +127,34 @@ export class LocalFetchDashboardDataSource implements DashboardDataSource {
     signal: AbortSignal,
   ): Promise<SourceObservation<DashboardSummaryData>> {
     return this.read("dashboard.summary", { ...filters }, parseSummaryData, signal);
+  }
+
+  runs(
+    filters: DashboardFilters,
+    page: { offset: number; limit: number },
+    signal: AbortSignal,
+  ): Promise<SourceObservation<DashboardRunsData>> {
+    return this.read("dashboard.runs", { ...filters, ...page }, parseRunsData, signal);
+  }
+
+  runInspect(
+    runId: string,
+    signal: AbortSignal,
+  ): Promise<SourceObservation<RunInspectData>> {
+    return this.read("run.inspect", { runId }, parseRunInspectData, signal);
+  }
+
+  runTimeline(
+    runId: string,
+    page: { offset: number; limit: number },
+    signal: AbortSignal,
+  ): Promise<SourceObservation<AttemptTimelineData>> {
+    return this.read(
+      "run.timeline",
+      { runId, ...page },
+      parseAttemptTimelineData,
+      signal,
+    );
   }
 
   capacity(signal: AbortSignal): Promise<SourceObservation<CodexCapacityData>> {
