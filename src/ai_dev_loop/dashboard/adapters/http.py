@@ -256,9 +256,7 @@ class DashboardHttpDispatcher:
     def prepare(self, operation: object, parameters: object) -> PreparedHttpRead:
         if not isinstance(operation, str):
             raise IntegrationApiError.invalid_argument("operation must be a string.")
-        if not isinstance(parameters, dict) or any(
-            not isinstance(key, str) for key in parameters
-        ):
+        if not isinstance(parameters, dict) or any(not isinstance(key, str) for key in parameters):
             raise IntegrationApiError.invalid_argument("parameters must be an object.")
         params = cast(dict[str, object], parameters)
 
@@ -657,11 +655,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 IntegrationApiError.invalid_argument("Invalid HTTP request target.")
             )
             return
-        asset = (
-            None
-            if target.query or target.fragment
-            else self.static_manifest.get(target.path)
-        )
+        asset = None if target.query or target.fragment else self.static_manifest.get(target.path)
         if asset is None:
             self._send_error_envelope(
                 IntegrationApiError.not_found("Static asset not found."),

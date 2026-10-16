@@ -68,10 +68,7 @@ class IntegrationDashboardReadService:
     def _bounded(
         self,
         model: (
-            DashboardProjectsData
-            | DashboardSummaryData
-            | DashboardRunsData
-            | DashboardActivityData
+            DashboardProjectsData | DashboardSummaryData | DashboardRunsData | DashboardActivityData
         ),
         *,
         oversize_message: str = _DASHBOARD_SCOPE_ENVELOPE_MESSAGE,

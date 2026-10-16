@@ -318,3 +318,7 @@ con sus fechas originales, edad y error visibles. Un filtro, métrica o selecci�
 nuevos usan otra generación y no heredan datos del scope anterior. No existe
 cache durable, service worker, telemetría ni reconstrucción de una lectura en
 vuelo después de reiniciar el servidor o el navegador.
+
+La referencia consolidada de filtros, métricas, roles, paginación y límites está
+en [Referencia del dashboard](dashboard.md); la operación del servidor instalado
+está en [Dashboard local](../operacion/dashboard-local.md).

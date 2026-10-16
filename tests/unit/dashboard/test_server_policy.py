@@ -139,7 +139,11 @@ def _request(
     request_headers = {"Host": f"127.0.0.1:{port}", **(headers or {})}
     connection.request(method, path, body=body, headers=request_headers)
     response = connection.getresponse()
-    result = response.status, {key.lower(): value for key, value in response.getheaders()}, response.read()
+    result = (
+        response.status,
+        {key.lower(): value for key, value in response.getheaders()},
+        response.read(),
+    )
     connection.close()
     return result
 

@@ -197,8 +197,7 @@ class SqliteDashboardReadRepository:
                 "Scheduler dashboard data failed integrity validation.",
             )
         if isinstance(state, AuthorizedState) and (
-            state.authorized_controller_session_id
-            != state.context.controller.controller_session_id
+            state.authorized_controller_session_id != state.context.controller.controller_session_id
         ):
             raise DashboardReadError(
                 DashboardReadErrorKind.DATA_INTEGRITY,
@@ -395,10 +394,7 @@ class SqliteDashboardReadRepository:
                     if (
                         run_id not in project_by_run
                         or ingested not in {0, 1}
-                        or (
-                            effect_dispatch_id is not None
-                            and str(row["effect_run_id"]) != run_id
-                        )
+                        or (effect_dispatch_id is not None and str(row["effect_run_id"]) != run_id)
                     ):
                         raise ValueError("invalid attempt ownership")
                     attempts.append(
@@ -407,16 +403,12 @@ class SqliteDashboardReadRepository:
                             project_name=project_by_run[run_id],
                             component=str(row["component"]),
                             effect_kind=(
-                                str(row["effect_kind"])
-                                if row["effect_kind"] is not None
-                                else None
+                                str(row["effect_kind"]) if row["effect_kind"] is not None else None
                             ),
                             iteration=int(row["iteration"]),
                             status=str(row["status"]),
                             launch_requested_at=(
-                                coerce_utc_instant(str(launch))
-                                if launch is not None
-                                else None
+                                coerce_utc_instant(str(launch)) if launch is not None else None
                             ),
                             completed_at=(
                                 coerce_utc_instant(str(completed))
@@ -452,9 +444,7 @@ class SqliteDashboardReadRepository:
             }:
                 launches, _ = first_execution_launches(tuple(runs), tuple(attempts))
                 relevant_run_ids = {
-                    run_id
-                    for run_id, launch in launches.items()
-                    if self._contains(scope, launch)
+                    run_id for run_id, launch in launches.items() if self._contains(scope, launch)
                 }
                 contributing_attempts = sum(
                     1

@@ -9,7 +9,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest",
-    "build": "vite build",
+    "build": "vite build && node scripts/write-build-manifest.mjs",
     "e2e": "playwright test"
   },
   "dependencies": {

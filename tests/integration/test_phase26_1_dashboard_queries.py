@@ -409,12 +409,12 @@ def test_c261_1_real_cli_started_cohort_and_totals_outlive_first_page(
 
     start = "2026-01-01T12:00:00Z"
     end = "2026-01-03T00:00:00Z"
-    summary = _invoke(
-        ["dashboard", "summary", "--from", start, "--to", end, "--time-zone", "UTC"]
-    )["data"]
-    runs = _invoke(
-        ["dashboard", "runs", "--from", start, "--to", end, "--time-zone", "UTC"]
-    )["data"]
+    summary = _invoke(["dashboard", "summary", "--from", start, "--to", end, "--time-zone", "UTC"])[
+        "data"
+    ]
+    runs = _invoke(["dashboard", "runs", "--from", start, "--to", end, "--time-zone", "UTC"])[
+        "data"
+    ]
     assert isinstance(summary, dict) and isinstance(runs, dict)
     assert summary["totals"]["runsStarted"] == 27
     assert summary["projects"][0]["stateCounts"]["waiting"] == 27
@@ -439,9 +439,7 @@ def test_c261_1_real_cli_started_cohort_and_totals_outlive_first_page(
         )["data"]["items"]
     }
     cursor_item = next(item for item in runs["items"] if item["runId"] == "cursor-run")
-    assert cursor_item["firstExecutionLaunchAt"] == encode_utc_instant(
-        FIXED + timedelta(hours=1)
-    )
+    assert cursor_item["firstExecutionLaunchAt"] == encode_utc_instant(FIXED + timedelta(hours=1))
 
 
 def test_c261_1_authoritative_sequence_lineage_keeps_two_replacements(

@@ -60,6 +60,7 @@ class AttemptMetricInput(Protocol):
     @property
     def ingested(self) -> bool: ...
 
+
 EXECUTION_EFFECT_OWNERS: dict[str, tuple[str, ExecutionRole]] = {
     RUN_CURSOR_TURN_EFFECT_KIND: ("cursor", "implementer"),
     BOOTSTRAP_CODEX_IMPLEMENTER_EFFECT_KIND: ("codex_implementer", "implementer"),

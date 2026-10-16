@@ -25,13 +25,16 @@ vi.mock("echarts/charts", () => ({
   BarChart: {},
   CustomChart: {},
   GaugeChart: {},
+  HeatmapChart: {},
   TreemapChart: {},
 }));
 vi.mock("echarts/components", () => ({
+  CalendarComponent: {},
   GridComponent: {},
   LegendComponent: {},
   TitleComponent: {},
   TooltipComponent: {},
+  VisualMapComponent: {},
 }));
 vi.mock("echarts/renderers", () => ({ CanvasRenderer: {} }));
 vi.mock("echarts-for-react/lib/core", () => ({

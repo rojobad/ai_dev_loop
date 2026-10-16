@@ -24,6 +24,7 @@ nav:
       - Confianza de hooks: integraciones/confianza-hooks.md
   - Operación:
       - Ejecutar runs: operacion/prepare-start-resume-abort.md
+      - Dashboard local: operacion/dashboard-local.md
       - Recuperación del implementer Codex: operacion/codex-implementer-recovery.md
       - Timer del scheduler en WSL: operacion/timer-systemd-wsl.md
       - Estado, logs e inspección: operacion/observabilidad.md
@@ -37,6 +38,7 @@ nav:
   - Referencia:
       - CLI: referencia/cli.md
       - API de integración local: referencia/integration-api.md
+      - Dashboard: referencia/dashboard.md
       - Configuración: referencia/configuracion.md
       - Codex Desktop WSL Sessions: referencia/codex-desktop-wsl-sessions.md
       - Trazabilidad de fases: referencia/trazabilidad-fases.md

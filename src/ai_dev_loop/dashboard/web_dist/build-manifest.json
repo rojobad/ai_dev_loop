@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "inputs": {
+    "dashboard-web/index.html": "e01c13869a77c6dc5b432e1064ca9a2e16182953aacacd79489bf3a397bba544",
+    "dashboard-web/package-lock.json": "39fbcebe6bcbe6593aaa287c7538f4fe36e28b877f436f2049e86e6f47e9cd13",
+    "dashboard-web/package.json": "cfaa050bac56776d652ce5935d33aa79c93917346519dfbc2556fc36da242ac4",
+    "dashboard-web/scripts/write-build-manifest.mjs": "a0f7f5b4f4ffa2de764e5e374ced0824867a43955d70f8bb6a8284785a2cfe3d",
+    "dashboard-web/src/dashboard/ActivityCalendar.tsx": "f7a57eaefc6c50ad1e84a0b632ddf9c8121064a3ff53f17bac3b7c8a583ba1fa",
+    "dashboard-web/src/dashboard/AttemptModal.tsx": "adb966eb88b179a111d8e2e3e890d64cb4d266bcc0f11303687b8218fe0317ae",
+    "dashboard-web/src/dashboard/AttemptTimeline.tsx": "1f80c607010d86cc7ca33c170e983c0ad8e289367b66c467275e8f304308ea40",
+    "dashboard-web/src/dashboard/ContentReader.tsx": "a451c84dfb8e0cf75d1c3384f0d506c687761ffae2bfbb16a221499e70a2642f",
+    "dashboard-web/src/dashboard/DashboardApp.tsx": "b6a990846258b5d30778aeb631f8fc2e9633bc478ca8cc9c39fef100d4eb6d46",
+    "dashboard-web/src/dashboard/DashboardChart.tsx": "72dc37b0859a0b7d08829b69f3ce93855fba9818d8939f644f363dc6e6b5c544",
+    "dashboard-web/src/dashboard/RunMap.tsx": "234e49dcc788cddf66e48941d5348fe625ab82a76482b53cdf07cae9f0e518f4",
+    "dashboard-web/src/dashboard/charts.ts": "64a147dd1c358accec8a15db4503114a6c4e88ad621343c63cae5ed777f3eaaf",
+    "dashboard-web/src/dashboard/coordinated-data-source.ts": "a7e79d27975e392be5d3955027a97dba7df55def828a583c246d03ee37873f99",
+    "dashboard-web/src/dashboard/local-fetch-data-source.ts": "afcd8624d6197ba8024e9f2e27f6458ca6d3ed466395cff39c0997ca57e10369",
+    "dashboard-web/src/dashboard/parsers.ts": "a1f34bf3cb4723d834e2c17295fc07d070ce3e63b8f829e41861b1e287e7923f",
+    "dashboard-web/src/dashboard/refreshCoordinator.ts": "142f14edb4582ea9da01511ce6c05b1957f7d0f4bad6600555dc5758a5ab8e14",
+    "dashboard-web/src/dashboard/time.ts": "ee62778515448c12c2c0a3fe6d6d92d67b0d0e06c1ce565025e8d3fdc1668145",
+    "dashboard-web/src/dashboard/types.ts": "571a8e42880aaf7afc3b87d4f4f453eaeaa9bf148573fe1ffe6d73b2b9241de5",
+    "dashboard-web/src/main.tsx": "789172e299060b2876fd614c5327c9e8dfc64bbac1871066232b88e20c7c7e3a",
+    "dashboard-web/src/styles.css": "bc9ba30f1d32b4f40f22368b032ce48777aa52dde552afee5a71d71a550b352b",
+    "dashboard-web/tsconfig.json": "6d00d89c7b11aedea1e8861b32024f3202a95ffda62e506e5ea9c00b22b35891",
+    "dashboard-web/vite.config.ts": "aa460188ccaf49a342a7c3661cc08b63b7acbef596adb2625dfce7b3b75d4afb"
+  },
+  "outputs": {
+    "assets/dashboard.css": {
+      "sha256": "33636aed512ea9b702254b0de1796a1e1dc666ee47bd2253a496ff134bbae923",
+      "size": 8583
+    },
+    "assets/dashboard.js": {
+      "sha256": "1b97de9aeaf2f6b1b2ab256e50d05a13547bf4021f865806baf8ce1821f3f0ed",
+      "size": 893568
+    },
+    "index.html": {
+      "sha256": "4daf46ff9a868dacd44afbce2f2edbd36434b3b0479007d452e2cf13f04cf1c7",
+      "size": 450
+    }
+  }
+}

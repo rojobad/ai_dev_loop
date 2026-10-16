@@ -50,8 +50,12 @@ def test_state_mapping_keeps_reviewed_variants_and_unknown_as_other() -> None:
 
 def test_first_execution_excludes_chat_and_separates_implementer_from_reviewer() -> None:
     runs = (
-        RunObservation("run-a", "project-a", "codex", "completed", _instant("2026-01-01T00:00:00Z"), None),
-        RunObservation("run-b", "project-a", "cursor", "queued", _instant("2026-01-01T00:00:00Z"), None),
+        RunObservation(
+            "run-a", "project-a", "codex", "completed", _instant("2026-01-01T00:00:00Z"), None
+        ),
+        RunObservation(
+            "run-b", "project-a", "cursor", "queued", _instant("2026-01-01T00:00:00Z"), None
+        ),
     )
     attempts = (
         _attempt(effect_kind="cursor.create_chat", launch="2026-01-01T01:00:00Z"),

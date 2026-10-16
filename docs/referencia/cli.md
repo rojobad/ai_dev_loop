@@ -645,6 +645,10 @@ local](integration-api.md). El proceso no inicia, aborta, reintenta ni repara
 trabajo del scheduler. `Ctrl-C` cierra el socket y el trabajo de lectura propio.
 Un puerto inválido u ocupado falla antes de abrir el ledger o crear storage XDG.
 
+La guía [Dashboard local](../operacion/dashboard-local.md) documenta instalación,
+uso y refresco. [Referencia del dashboard](dashboard.md) fija las definiciones
+de cohorte, métricas, cobertura, roles y límites.
+
 ## `integrations sessions`
 
 ```bash

@@ -149,3 +149,10 @@ staged o commits del worktree: ejecuta su versión instalada. No instalar ni
 cambiar timers/linger como efecto de tests o revisión de esta fase. La validación
 repository-wide, build y aceptación de instalación pertenecen al gate separado
 de pipeline/operador. Los tests con fakes no equivalen a aceptación con modelos.
+
+El dashboard instalado es otra proyección de solo lectura sobre esas mismas
+autoridades. `dashboard serve` no crea ni repara `engine.sqlite3`, no migra el
+schema y no cambia archivos bajo `artifacts/`. Prompt, review y output se leen
+por los readers confinados existentes, solo después de una acción deliberada;
+el navegador los conserva únicamente en memoria. Ver [Dashboard
+local](dashboard-local.md).

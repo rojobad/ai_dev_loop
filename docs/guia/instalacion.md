@@ -53,6 +53,19 @@ uv run python -m build
 uv tool install --force dist/ai_dev_loop-0.1.0-py3-none-any.whl
 ```
 
+El wheel incluye el dashboard local y sus assets same-origin. Una instalación
+ordinaria lo sirve sin Node ni checkout:
+
+```bash
+ai_dev_loop dashboard serve --port 8765
+```
+
+Abre `http://127.0.0.1:8765/`. El proceso solo enlaza loopback y corre en primer
+plano; no lo publiques mediante proxy o LAN. Consulta [Dashboard
+local](../operacion/dashboard-local.md). La construcción desde fuentes valida
+que los assets correspondan a las fuentes y al lock del frontend; assets
+ausentes o stale hacen fallar `python -m build`.
+
 `pipx install .` es una alternativa valida si ya usas `pipx`, pero en este proyecto `uv` es la ruta recomendada porque puede administrar Python 3.11+ sin tocar `/usr/bin/python3`.
 
 ## Timer persistente del scheduler en WSL
