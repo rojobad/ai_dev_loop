@@ -25,7 +25,8 @@
         "codexCapacity": { "type": "boolean" },
         "dualImplementers": { "type": "boolean" },
         "mixedImplementerSequences": { "type": "boolean" },
-        "codexImplementerManualRecovery": { "type": "boolean" }
+        "codexImplementerManualRecovery": { "type": "boolean" },
+        "dashboard": { "type": "boolean" }
       }
     }
   }

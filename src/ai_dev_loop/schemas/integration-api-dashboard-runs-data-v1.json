@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-dashboard-runs-data-v1.json",
+  "title": "ai_dev_loop Integration API dashboard run map data v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["observedAt", "filters", "coverage", "items", "page", "totalCount"],
+  "properties": {
+    "observedAt": { "type": "string", "format": "integration-rfc3339-utc" },
+    "filters": {
+      "$ref": "https://ai-dev-loop.local/schemas/integration-api-dashboard-shared-v1.json#/$defs/filters"
+    },
+    "coverage": {
+      "$ref": "https://ai-dev-loop.local/schemas/integration-api-dashboard-shared-v1.json#/$defs/coverage"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "runId",
+          "projectName",
+          "implementerProvider",
+          "state",
+          "submittedAt",
+          "firstExecutionLaunchAt",
+          "sequenceBinding"
+        ],
+        "properties": {
+          "runId": { "type": "string", "minLength": 1 },
+          "projectName": { "type": "string", "minLength": 1 },
+          "implementerProvider": { "enum": ["cursor", "codex"] },
+          "state": { "type": "string", "minLength": 1 },
+          "submittedAt": { "type": "string", "format": "integration-rfc3339-utc" },
+          "firstExecutionLaunchAt": {
+            "type": "string",
+            "format": "integration-rfc3339-utc"
+          },
+          "sequenceBinding": {
+            "oneOf": [
+              {
+                "$ref": "https://ai-dev-loop.local/schemas/integration-api-dashboard-shared-v1.json#/$defs/sequenceBinding"
+              },
+              { "type": "null" }
+            ]
+          }
+        }
+      }
+    },
+    "page": {
+      "$ref": "https://ai-dev-loop.local/schemas/integration-api-dashboard-shared-v1.json#/$defs/page"
+    },
+    "totalCount": { "type": "integer", "minimum": 0 }
+  }
+}

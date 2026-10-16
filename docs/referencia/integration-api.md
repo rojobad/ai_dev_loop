@@ -5,7 +5,7 @@ futuro supervise el scheduler local sin acceder a SQLite ni rutas privadas.
 
 ## Versión del contrato
 
-- Versión actual de la API: **1.8** (`apiVersion.major` / `apiVersion.minor`).
+- Versión actual de la API: **1.9** (`apiVersion.major` / `apiVersion.minor`).
 - Misma major: compatible; campos desconocidos se ignoran en consumidores.
 - Major distinta: el consumidor debe detenerse con `UPDATE_REQUIRED` y no emitir
   más peticiones de recursos.
@@ -18,7 +18,7 @@ Todas las órdenes bajo `integration` escriben **un único documento JSON** en s
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 8 },
+  "apiVersion": { "major": 1, "minor": 9 },
   "ok": true,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": {},
@@ -30,7 +30,7 @@ Error:
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 8 },
+  "apiVersion": { "major": 1, "minor": 9 },
   "ok": false,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": null,
@@ -63,8 +63,8 @@ ai_dev_loop integration info [--output json]
 - No requiere ledger del scheduler, no crea directorios XDG y no sondea Codex.
 - `data.aiDevLoopVersion` es la versión del paquete instalado.
 - `data.capabilities` declara de forma honesta qué lecturas existen en esta
-  versión. En **1.8**, `runs`, `sequences`, `reviewInspection`, `processOutput`
-  y `codexCapacity` son `true`.
+  versión. En **1.9**, `runs`, `sequences`, `reviewInspection`, `processOutput`,
+  `codexCapacity` y `dashboard` son `true`.
 
 ## Capacidad Codex local (API 1.5)
 
@@ -185,6 +185,38 @@ ai_dev_loop integration run output RUN_ID --attempt ATTEMPT_ID --stream stdout|s
 
 Los esquemas empaquetados viven en `src/ai_dev_loop/schemas/integration-api-*.json`.
 
+## Consultas compartidas del dashboard (API 1.9)
+
+```bash
+ai_dev_loop integration dashboard projects [--offset N --limit N]
+ai_dev_loop integration dashboard summary --from UTC --to UTC [--project NAME] [--time-zone IANA]
+ai_dev_loop integration dashboard runs --from UTC --to UTC [--project NAME] [--time-zone IANA] [--offset N --limit N]
+ai_dev_loop integration dashboard activity --from UTC --to UTC --metric submissions|review-rounds|process-hours [--project NAME] [--time-zone IANA]
+```
+
+- `from` es inclusivo y `to` exclusivo; ambos se normalizan a UTC. El rango
+  máximo es 366 días. `timeZone` usa un nombre IANA y por defecto es
+  `America/La_Paz`.
+- `summary` y `runs` usan la cohorte cuyo primer lanzamiento de ejecución está
+  dentro del rango. Incluyen turnos de implementer Cursor/Codex y reviews Codex,
+  pero excluyen creación de chat, preflight y sondas. `runs` conserva provider y
+  linaje de secuencia, incluido `implementer_retry`.
+- `activity` fecha submissions y rounds de review por evento, no por la cohorte
+  iniciada. Cada `(runId, iteration)` aporta como máximo un round. `process-hours`
+  devuelve segundos de procesos resueltos, suma procesos paralelos y los divide
+  por medianoche en la zona indicada; no inventa duración activa o incierta.
+- Todos los resultados incluyen `observedAt`, filtros canónicos y cobertura
+  explícita. Los totales de `summary` no dependen de la página de `runs`.
+- Las lecturas abren un snapshot SQLite validado en modo solo lectura. No migran,
+  reparan ni controlan el scheduler. Tienen límites de 10.000 runs relevantes,
+  100.000 intentos de ejecución contribuyentes, 5 segundos y 240 KiB; al
+  excederlos fallan sin totales parciales. La admisión usa la operación y el rango
+  solicitados sin perder la validación del historial autoritativo leído.
+- Un ledger ausente produce colecciones vacías sin crearlo. Esquemas no
+  soportados, corrupción y fallos de lectura usan los códigos seguros existentes.
+- La consulta no incluye prompts, salida de procesos, sesiones, rutas privadas ni
+  capacidad Codex actual. Esos contenidos conservan sus interfaces explícitas.
+
 ## Implementer, capacidad y timeout por rol (API 1.7+)
 
 Los resúmenes de run incluyen `implementerProvider`; inspect agrega
@@ -200,7 +232,7 @@ Status/history/timeline exponen provider/componente y rol/turno sin prompts,
 respuestas ni IDs completos. El siguiente paso de espera implementer es tick.
 
 Capabilities: `dualImplementers=true`, `mixedImplementerSequences=true`,
-`codexImplementerManualRecovery=true`. API 1.8 la habilita porque `--force` cubre
+`codexImplementerManualRecovery=true`. API 1.8 la habilitó porque `--force` cubre
 standalone y la hoja vigente de secuencia. `phase-runs` expone el intento aditivo
 `implementer_retry`; los consumidores de la misma major deben tolerar este valor
 nuevo. El retry acotado de timeout conserva los campos aditivos introducidos en 1.7.

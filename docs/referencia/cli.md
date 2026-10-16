@@ -591,6 +591,10 @@ ai_dev_loop integration sequence phase-prompt SEQUENCE_ID --ordinal N [--offset 
 ai_dev_loop integration sequence report SEQUENCE_ID [--offset BYTE_OFFSET --limit BYTE_LIMIT]
 ai_dev_loop integration run output RUN_ID --attempt ATTEMPT_ID --stream stdout|stderr [--offset BYTE_OFFSET --limit BYTE_LIMIT]
 ai_dev_loop integration codex-capacity [--output json]
+ai_dev_loop integration dashboard projects [--offset N --limit N]
+ai_dev_loop integration dashboard summary --from UTC --to UTC [--project NAME] [--time-zone IANA]
+ai_dev_loop integration dashboard runs --from UTC --to UTC [--project NAME] [--time-zone IANA] [--offset N --limit N]
+ai_dev_loop integration dashboard activity --from UTC --to UTC --metric submissions|review-rounds|process-hours [--project NAME] [--time-zone IANA]
 ```
 
 Namespace singular para el contrato JSON que consumirá el Bridge futuro. Todas
@@ -598,13 +602,20 @@ las órdenes de este namespace emiten un único documento JSON en stdout; `--hel
 sigue siendo ayuda normal de Typer. El namespace plural `integrations` (instalación
 Codex global) no cambia.
 
-La API **1.5** expone las capacidades `runs`, `sequences`, `reviewInspection`,
-`processOutput` y `codexCapacity`. Las lecturas de runs, secuencias, revisiones y
-salidas de procesos abren el ledger en solo lectura y no migran la base de datos.
+La API actual **1.9** expone además `dashboard`; la ausencia de esa capacidad en un
+payload histórico significa que esas cuatro consultas no están disponibles. Las
+lecturas de runs, secuencias, revisiones, salidas de procesos y dashboard abren el
+ledger en solo lectura y no migran la base de datos.
 `integration info` no requiere ledger. `integration codex-capacity` ejecuta una
 sonda acotada de capacidad sin persistir cuotas en el ledger. El único formato
 admitido es JSON; la presencia obligatoria del flag `--output json` depende del
 subcomando, según su ayuda.
+
+Las consultas dashboard tienen rango `[from,to)`, zona IANA, proyecto exacto
+opcional y páginas de 25 por defecto (máximo 100). `summary`/`runs` usan el primer
+lanzamiento de ejecución; `activity` fecha eventos o intervalos y entrega segundos
+para `process-hours`. Los límites de scope/tiempo/envelope fallan sin resultados
+parciales. Estas órdenes no leen contenido sensible ni observan capacidad actual.
 
 Detalle del sobre, códigos de error, paginación y lecturas sensibles:
 [API de integración local](integration-api.md).

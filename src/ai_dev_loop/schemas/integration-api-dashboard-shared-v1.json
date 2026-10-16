@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-dashboard-shared-v1.json",
+  "title": "ai_dev_loop Integration API shared dashboard shapes v1",
+  "$defs": {
+    "filters": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["fromUtc", "toUtc", "timeZone", "projectName"],
+      "properties": {
+        "fromUtc": { "type": "string", "format": "integration-rfc3339-utc" },
+        "toUtc": { "type": "string", "format": "integration-rfc3339-utc" },
+        "timeZone": { "type": "string", "minLength": 1 },
+        "projectName": { "type": ["string", "null"], "minLength": 1 }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "dataState",
+        "unstartedRuns",
+        "missingLaunchTimes",
+        "unknownExecutionKinds",
+        "missingDurationAttempts",
+        "warnings"
+      ],
+      "properties": {
+        "dataState": { "enum": ["complete", "partial", "empty"] },
+        "unstartedRuns": { "type": "integer", "minimum": 0 },
+        "missingLaunchTimes": { "type": "integer", "minimum": 0 },
+        "unknownExecutionKinds": { "type": "integer", "minimum": 0 },
+        "missingDurationAttempts": { "type": "integer", "minimum": 0 },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "missing_launch_times",
+              "unknown_execution_kinds",
+              "missing_duration_attempts"
+            ]
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["offset", "limit", "nextOffset", "hasMore"],
+      "properties": {
+        "offset": { "type": "integer", "minimum": 0 },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "nextOffset": { "type": ["integer", "null"], "minimum": 0 },
+        "hasMore": { "type": "boolean" }
+      }
+    },
+    "stateCounts": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "completed",
+        "residualRisk",
+        "running",
+        "waiting",
+        "blocked",
+        "aborted",
+        "other"
+      ],
+      "properties": {
+        "completed": { "type": "integer", "minimum": 0 },
+        "residualRisk": { "type": "integer", "minimum": 0 },
+        "running": { "type": "integer", "minimum": 0 },
+        "waiting": { "type": "integer", "minimum": 0 },
+        "blocked": { "type": "integer", "minimum": 0 },
+        "aborted": { "type": "integer", "minimum": 0 },
+        "other": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "sequenceBinding": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "sequenceId",
+        "sequenceName",
+        "ordinal",
+        "phaseName",
+        "generation",
+        "attemptKind",
+        "sourceRunId"
+      ],
+      "properties": {
+        "sequenceId": { "type": "string", "minLength": 1 },
+        "sequenceName": { "type": "string", "minLength": 1 },
+        "ordinal": { "type": "integer", "minimum": 1 },
+        "phaseName": { "type": "string", "minLength": 1 },
+        "generation": { "type": "integer", "minimum": 1 },
+        "attemptKind": {
+          "enum": ["planned_run", "same_reviewer_retry", "cursor_retry", "implementer_retry"]
+        },
+        "sourceRunId": { "type": ["string", "null"], "minLength": 1 }
+      }
+    }
+  }
+}
