@@ -620,6 +620,24 @@ parciales. Estas órdenes no leen contenido sensible ni observan capacidad actua
 Detalle del sobre, códigos de error, paginación y lecturas sensibles:
 [API de integración local](integration-api.md).
 
+## `dashboard serve`
+
+```bash
+ai_dev_loop dashboard serve [--port PORT]
+```
+
+Inicia en primer plano el servidor de lectura local del dashboard. `PORT` es un
+entero entre 1 y 65535 y su valor por defecto es `8765`. El proceso enlaza
+exclusivamente `127.0.0.1`; no existe opción para cambiar host, ejecutarlo como
+daemon, abrir el navegador ni habilitar acceso LAN.
+
+La ruta `/` sirve una página provisional empaquetada que declara que el frontend
+interactivo pertenece a Phase 26.3. `POST /api/dashboard/read` expone solo las
+operaciones tipadas y allowlisted documentadas en la [API de integración
+local](integration-api.md). El proceso no inicia, aborta, reintenta ni repara
+trabajo del scheduler. `Ctrl-C` cierra el socket y el trabajo de lectura propio.
+Un puerto inválido u ocupado falla antes de abrir el ledger o crear storage XDG.
+
 ## `integrations sessions`
 
 ```bash

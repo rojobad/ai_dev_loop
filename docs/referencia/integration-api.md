@@ -242,3 +242,38 @@ completion del rol correcto, paths confinados y hashes capturados cuando existen
 Los bytes son sensibles y se solicitan explícitamente, con los límites/snapshot
 existentes. Metadatos ausentes en intentos históricos dan truncación desconocida;
 no se fabrica contenido. Estas lecturas no migran ni mutan el ledger.
+
+## Adaptador HTTP loopback del dashboard
+
+`ai_dev_loop dashboard serve --port PORT` proyecta las mismas lecturas en proceso,
+sin invocar la CLI como subprocess por petición. Enlaza solamente
+`127.0.0.1:PORT` y acepta la ruta `POST /api/dashboard/read` con cuerpo JSON:
+
+```json
+{"operation":"dashboard.projects","parameters":{"offset":0,"limit":25}}
+```
+
+Las operaciones permitidas son `dashboard.projects`, `dashboard.summary`,
+`dashboard.runs`, `dashboard.activity`, `run.inspect`, `run.timeline`,
+`sequence.inspect`, `sequence.phase-runs`, `machine.codex-capacity`,
+`run.initial-prompt`, `run.review`, `run.review-content` y `run.output`. No existe
+dispatch genérico de comandos, SQL, argv o rutas. Los parámetros de rango usan
+`fromUtc`, `toUtc`, `timeZone` y `projectName`; los identificadores usan `runId`,
+`sequenceId` y `attemptId`. Páginas HTTP usan 25 por defecto y máximo 100. Las
+lecturas de contenido usan `byteOffset` y `limit`, con máximo fijo de 65.536 bytes.
+
+El cliente debe enviar `Host: 127.0.0.1:PORT` y, para la ruta API, el `Origin`
+exacto `http://127.0.0.1:PORT`. No hay CORS wildcard, credenciales, login ni proxy
+trust. El cuerpo de request está limitado a 16 KiB y el sobre de respuesta a
+240 KiB. El servidor admite como máximo cuatro handlers y dos trabajos de
+servicio, con una sola sonda de capacidad; saturación devuelve `503` sin crear una
+cola ilimitada. Las respuestas usan `no-store`, CSP same-origin, `nosniff` y
+`Referrer-Policy: no-referrer`.
+
+`run.review` y `run.review-content` autentican exclusivamente intentos reviewer
+Codex (`component=codex` más efecto de review); un intento
+`codex_implementer` no es contenido reviewer. `run.output` conserva la
+autenticación de output específica para Cursor, implementer Codex y reviewer.
+Prompts y stdout/stderr se cargan solo por selección explícita, paginados y sin
+cache durable del servidor. El servidor mantiene la semántica read-only de los
+servicios existentes y no controla el scheduler.
