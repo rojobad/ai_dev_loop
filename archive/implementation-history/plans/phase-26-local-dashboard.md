@@ -1,6 +1,7 @@
 # Phase 26 — Local dashboard and reusable query API
 
-Status: operator-requested seven-run planning package, authored 2026-10-14.
+Status: operator-requested seven-run planning package, authored 2026-10-14,
+refreshed and replacement launch authorized 2026-10-15.
 Implementation pending. Product scope and per-run model choices come from the
 operator's dashboard discussion; technical defaults are explicit in the shared
 contract for review. This package does not launch or prepare the sequence.
@@ -22,11 +23,12 @@ durable historical telemetry, content downloads or exact missing Cursor prompts.
 
 Seven ordinary sequential implementation runs, each accepted against actual
 predecessor code and focused automated contracts. One final operator walkthrough
-in 26.7. Cursor is `grok-4.7-high` in every run. The operator selected
+in 26.7. Implementer is Codex `gpt-5.6-sol / xhigh` in every run, explicitly
+selected on 2026-10-15. The operator selected
 `gpt-6.1-sol / xhigh` for 26.1, 26.2, 26.7 and `/ high` for 26.3–26.6 on
 2026-10-14. Each manifest entry freezes both reviewer fields explicitly.
 
-| Subphase | Plan / accepted delivery | Cursor prompt | Reviewer |
+| Subphase | Plan / accepted delivery | Implementation prompt | Reviewer |
 | --- | --- | --- | --- |
 | 26.1 | [Shared queries and Integration API](phase-26-1-shared-dashboard-queries.md) | [Prompt](prompt_phase-26-1-shared-dashboard-queries.txt) | gpt-6.1-sol / xhigh |
 | 26.2 | [Local HTTP read server](phase-26-2-loopback-read-server.md) | [Prompt](prompt_phase-26-2-loopback-read-server.txt) | gpt-6.1-sol / xhigh |
@@ -37,8 +39,8 @@ in 26.7. Cursor is `grok-4.7-high` in every run. The operator selected
 | 26.7 | [Installed acceptance and Hub handoff](phase-26-7-installed-dashboard-acceptance.md) | [Prompt](prompt_phase-26-7-installed-dashboard-acceptance.txt) | gpt-6.1-sol / xhigh |
 
 [Sequence manifest](phase-26-sequence.yaml) fixes seven review iterations and
-90-minute Cursor/reviewer budgets per run, matching the actual repo's fixed
-workflow. This does not use the unimplemented Phase 24 adaptive policy. The first
+90-minute implementer/reviewer budgets per run. Native manifest v2 freezes
+the Codex implementer separately; conflicting Cursor phase overrides are omitted. This does not use the unimplemented Phase 24 adaptive policy. The first
 six entries have existing authorized local checkpoint messages; final 26.7 has
 no commit_message. Root ai_dev_loop.yaml remains unchanged.
 
@@ -52,15 +54,16 @@ policies are not modified or treated as accepted implementation.
 
 ## Required Context and baseline
 
-Observed source baseline: main
-`90262eed1af7c76c46139855e249de4ea8ec0d5e` (`fix: make Cursor prompts non-interactive`).
-Phase 23 production is present. Phase 24/25 are planning-only; phase number 26 is
-available and does not imply 24/25 execution. Existing local API is 1.5 with five
-read capabilities; scheduler schema is 13, Python minimum 3.11. There is no
+Refreshed source baseline: main
+`466b8e09724430cebddbdeca6f1961b2d6243531` (merged Phase 27.1–27.7 dual
+implementer/recovery code). Phase 24/25 are planning-only; Phase 26 keeps its
+original product number. Existing local API is 1.8 with eight read capabilities;
+scheduler schema is 16, Python minimum 3.11. There is no
 frontend/HTTP dashboard at this baseline.
 
 Read [shared contract/architecture](phase-26-dashboard-contract.md),
-[source inventory and hashes](phase-26-source-observations.json), and
+[source inventory and hashes](phase-26-source-observations.json),
+[original source observation](phase-26-source-observations-2026-10-14.json), and
 [frozen visual reference](phase-26-reference/README.md). The reference HTML and
 screenshots use synthetic data and are visual guidance only. All seven plans and
 prompts are portable repo files; .gitignore includes a narrow exception for these
@@ -87,7 +90,7 @@ The shared service calculates semantic DTOs; both Integration CLI and local HTTP
 call it in process. SQLite queries live inside ai_dev_loop, use bound params and
 validated state/lineage, and never recreate scheduler transitions. New public
 queries are bounded, major-compatible and capability-gated. API minor advances
-additively from the observed 1.5 baseline, with no dependency on Phase 25 tokens.
+additively to 1.9 from the observed 1.8 baseline, with no dependency on Phase 25 tokens.
 
 Frontend React 18/TypeScript/Vite + ECharts 6/echarts-for-react 3 depends on
 DashboardDataSource. A later Hub adapter can change transport while reusing
@@ -96,9 +99,12 @@ without Node/CDN at runtime. Fixed Host/Origin and explicit ID-based content
 reads preserve local read scope. Runtime UI language is English; current product
 MkDocs documentation remains Spanish.
 
-The started cohort uses first `cursor.run_turn`/Codex-review launch request;
+The started cohort uses first Cursor implementation, Codex implementation or
+Codex-review execution launch request;
 chat creation/preflight/probes are excluded. Project and phase lineage come from
-fields, never slug heuristics. Review retries within run+iteration count once.
+fields, never slug heuristics. Review retries within run+iteration count once; Codex implementation/correction
+attempts do not count as reviewer rounds. Preserve provider/role/retry metadata
+and authoritative implementer_retry phase lineage.
 Parallel recorded process time is summed, clipped and split by named local day;
 missing/active intervals are explicit. Activity dates and started-cohort filters
 are distinct. Current capacity is independent of the historical range.
@@ -107,8 +113,8 @@ The map includes all matching stored run IDs, including replacements and
 standalone runs, through explicit pages; header totals come from aggregate reads.
 Partial evidence/paging/error is visible. Exact attempt selection loads metadata;
 prompt/stdout/stderr require deliberate buttons and verified existing readers.
-No raw content becomes summaries/logs/browser storage. Exact Cursor correction
-prompt linkage is not invented. UI state and last-success observations stay in
+No raw content becomes summaries/logs/browser storage. Exact per-attempt implementer prompt
+linkage is not invented for either provider; run initial prompt is contextual. UI state and last-success observations stay in
 memory; only theme persists. Refresh is bounded and visibility/Pause aware.
 
 ## Implementation Plan and sequence boundaries
@@ -128,17 +134,22 @@ accepted as an unexplained residual risk merely to advance the sequence.
 
 ### Launch condition and self-hosted execution
 
-The operator asked to launch after Hub Phase 15 finishes. Close its actual final
-subphase/walkthrough before separately preparing/starting Phase 26. This package
-adds no watcher/automation and starts nothing. Use a stable installed ai_dev_loop
-scheduler driver while implementing its source, not an editable checkout runtime.
-The source account context owns preparation; disposable test XDG is only for tests.
+The original scheduling preference was after Hub Phase 15. The operator's
+2026-10-15 instruction explicitly authorizes aborting/replacing the old sequence,
+updating these plans, committing pending work, creating `codex/phase-26-local-dashboard`
+and starting this replacement there. The previous sequence
+`ai-dev-loop-seq-c062d0252688` was observed aborted with zero materialized runs and
+all seven future entries cancelled; it cannot run again. No Hub runtime/code or
+its separate manual acceptance is changed by this authorization.
 
-Existing unrelated incident modifications and these planning files mean the
-checkout is not currently clean. Before an authorized launch, preserve/finalize
-operator-owned changes through the normal agreed Git workflow; do not discard or
-silently include incidents in an implementation patch. No worktree or commit is
-created by this planning delivery.
+Use the stable installed ai_dev_loop driver (verified API 1.8/schema 16), not an
+editable changing checkout. Preserve source-user context for preparation/start;
+disposable XDG is only for validation. Planning/review skills and root YAML stay
+unchanged. The operator authorized committing pending incident documents as part
+of leaving this repo clean; preserve their contents in a separate documentation
+commit before creating/starting the Phase 26 branch. No push/PR/public deployment
+is part of this request. Source preparation/start must happen after the clean
+branch/committed-plan state exists, so first admission freezes the intended branch.
 
 ## Testing Criteria
 
@@ -167,6 +178,8 @@ gate. No full historical acceptance-script nesting or full-suite correction loop
 Planning validation is separately recorded in
 [Phase 26 planning validation](../findings/phase-26-planning-validation.md).
 It checks models/files/links/hashes/manifest/diff, not future implementation.
+The [Codex relaunch validation](../findings/phase-26-codex-relaunch-validation.md)
+records the 2026-10-15 manifest/provider refresh and focused producer checks.
 
 ## Risks Or Recovery Notes
 

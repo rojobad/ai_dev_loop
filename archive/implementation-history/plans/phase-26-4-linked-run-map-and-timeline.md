@@ -1,7 +1,7 @@
 # Phase 26.4: Linked sequence/run map and attempt timeline
 
 Status: operator-requested implementation scope; implementation pending.
-Sequence position: 4/7. Cursor: grok-4.7-high.
+Sequence position: 4/7. Implementer: Codex gpt-5.6-sol / xhigh (90 minutes).
 Reviewer: gpt-6.1-sol / high, selected by the operator on 2026-10-14.
 One ordinary automatic run, with accepted predecessor dependency and one final
 operator walkthrough in 26.7. Planning does not prepare/submit/start the sequence.
@@ -24,11 +24,15 @@ Aggregate query semantics, backend transport/framework changes, prompt/output re
 
 ## Required Context
 
-Planning baseline is `main` at `90262eed1af7c76c46139855e249de4ea8ec0d5e`, observed 2026-10-14:
-Phase 23 production plus planning-only Phases 24/25 and the non-interactive prompt
-fix. Neither 24 nor 25 is a dependency. At this planning baseline, SQLite schema
-is 13 and local API is 1.5, before 26.1 adds dashboard capability/additive minor.
-Python >=3.11 and `uv` are the current runtime/tooling.
+Refreshed planning baseline is `main` at `466b8e09724430cebddbdeca6f1961b2d6243531`, observed 2026-10-15:
+Phase 27.1–27.7 dual implementer, role-aware inspection and recovery code is merged.
+Phases 24/25 remain planning-only and are not dependencies. SQLite schema is 16;
+local API is 1.8 before 26.1 adds dashboard capability in compatible minor 1.9.
+Python >=3.11 and `uv` remain the runtime/tooling. The selected implementer is
+Codex `gpt-5.6-sol / xhigh`, independently bound from reviewer B. Manifest v2
+freezes provider/model/effort/90-minute timeout per phase. Existing Phase 27
+findings retain their historical full-suite/build verification limits; this
+phase owns its changed contracts and 26.7 integration gate, not a replay of 27.
 Recheck relevant accepted code once at admission. A future predecessor plan or
 staged patch is not evidence of accepted runtime. If a producer changed, stop
 only dependent work and report its exact incompatible/missing contract.
@@ -47,6 +51,30 @@ plus 26.1 joined dashboard.runs pages. Existing `run.inspect`, `run.timeline`,
 exact lineage/timeline IDs. Inspect accepted parsers and existing phase 21
 attempt paging tests before reuse; source test fixture setup may write its own
 temporary ledger, but the production page reads it only through accepted HTTP.
+
+
+Provider-aware prerequisite: read `scheduler/domain/codex_contract.py`,
+`tests/integration/test_phase27_3_inspection.py` and the accepted Phase 27
+source/inspection DTOs. Execution includes `cursor.run_turn`,
+`codex.implementer_bootstrap`, `codex.implementer_resume`,
+`codex.bootstrap_review` and `codex.resume_review`. Only the final two are
+review rounds. `component=codex_implementer` identifies implementation, while
+`component=codex` plus the review effect allowlist identifies reviewer attempts.
+Preserve implementerProvider, pending role/turn/capacity and retry metadata;
+historical absent provider stays Cursor. An `implementer_retry` replacement is
+authoritative lineage, never a reason to parse run IDs. Existing public process
+output supports both providers; there is no exact per-attempt implementer-prompt
+read contract to invent from private files.
+
+Carried-over F-02 from Phase 26.3 (operator decision 2026-10-16): Phase 26.3 was
+accepted by the operator with every contract complete except F-02 (exact raw
+unknown state visibility under "Other", C263-2 step 4), which is moved into this
+phase as C264-4. The operator explicitly AUTHORIZES the additive change to the
+Phase 26.1 summary producer, public `DashboardSummaryData` DTO and its schemas
+needed to close it (for example an additive `projects[].otherStates[{state,count}]`
+aggregate, consistent with `stateCounts.other`). This is an authorized,
+compatible additive extension, not a prerequisite failure or an OpenQuestion.
+See `archive/implementation-history/findings/phase-26-3-dashboard-shell-and-overview.md`.
 
 ## Cursor Rules And Skills
 
@@ -68,7 +96,7 @@ current source/privacy requirements rather than historical Phase 8 restrictions.
 The separate final reviewer follows
 `.agents/skills/review-staged-ai-dev-loop-execution/SKILL.md`; implementation does
 not invoke or modify it. There is no `.cursor/skills/` directory. Codex authored
-the new dashboard rule/shared contract; Cursor does not change those policies,
+the new dashboard rule/shared contract; the implementer does not change those policies,
 planning/review skills or reviewer/correction/result schemas to pass acceptance.
 
 ## Architecture Guardrails
@@ -110,7 +138,8 @@ from display strings. Any incompatible prerequisite is a dependent-work blocker.
    explicit Load more and dataset observation/coverage. Reset on Apply/Refresh.
 2. Group sequence rows/cells by authoritative sequenceId and phase ordinal/name;
    retain one selectable entity per runId/generation, including initial and later
-   attempts in the same phase. No current-run-only collapse, name-derived lineage
+   attempts in the same phase and authoritative implementer_retry lineage. No
+   current-run-only collapse, name-derived lineage
    or synthesized phase state. Zero-run/planned/out-of-range context is labelled
    nonselectable if shown and contributes no filtered count. Use shared API data
    for phase metadata; any sequence detail is independently timestamped.
@@ -121,7 +150,11 @@ from display strings. Any incompatible prerequisite is a dependent-work blocker.
 4. Build custom Gantt series using observed launch/completion; created-but-not-
    launched attempts have explicit non-duration representation. Preserve gaps,
    ongoing/unknown end, component, iteration, phaseAttempt and raw status;
-   retain non-execution attempts with honest labels. No sum/stack that hides
+   retain non-execution attempts with honest labels. Codex implementer and
+   Codex reviewer have separate role labels/lanes; preserve raw component/effect
+   plus current pending-capacity role/turn and timeout retry metadata.
+   Show observed active attempts independently of a preflight/cursor_ready
+   checkpoint; do not repair upstream status or expose retry/control buttons. No sum/stack that hides
    parallel processes or treats waiting as execution time.
 5. Use typed attempt IDs in chart data, companion rows, labels and selection
    callback for the next modal. Keep timeline paging visible, deduplicate rows,
@@ -129,6 +162,17 @@ from display strings. Any incompatible prerequisite is a dependent-work blocker.
    dispose chart instances on selection changes.
 6. Add production-path selection/page/race browser cases and record
    `archive/implementation-history/findings/phase-26-4-linked-run-map-and-timeline.md`.
+
+7. F-02 carry-over (C264-4, authorized additive DTO/schema change): extend the
+   Phase 26.1 summary producer in `integration_api/dashboard_models.py`, its public
+   `DashboardSummaryData` DTO and schemas with an additive per-project aggregate of
+   raw unknown states and counts (e.g. `otherStates[{state,count}]`) whose counts
+   sum exactly to `stateCounts.other`; keep the field additive/compatible (no
+   removals or renames, compatible API minor). Update the 26.3 summary parser to
+   validate that arithmetic and render the exact raw state strings under "Other"
+   as React text (escaped in chart tooltips). Never page `dashboard.runs`, read
+   private SQLite/artifacts or guess labels to obtain them. Update the 26.3
+   findings/docs reference for F-02 as closed by this phase.
 
 ## Testing Criteria
 
@@ -141,7 +185,8 @@ safety guard. IDs belong to this run and must appear in its completion report.
 | --- | --- | --- | --- |
 | C264-1 | Joined runs page + authoritative lineage -> map | Sequence with two replacement runs in one phase, independent run, queued/out-of-range runs, zero materialized phase and >25 matches. | Exact selected IDs/counts, distinct replacement cells/rows and explicit page coverage; future planned context has no selected run. Catches currentRunId-only or name-derived maps. |
 | C264-2 | Map/keyboard click -> data source -> selected inspect/timeline | Select an older replacement, then another run while first reply is held; change filters to exclude selected run. | Requests/responses target exact clicked IDs; late first result cannot reappear, excluded selection clears, no content endpoint invoked. Catches selected phase opening the latest run instead. |
-| C264-3 | Public timeline pages -> Gantt + attempt selection | Cursor/Codex retry attempts, active/missing launch, parallel intervals, gap and second page. | Positions/IDs/timestamps match an independent expected interval list; unknown durations are honest; same IDs selectable through chart/keyboard. Catches fabricated end times and page-as-complete rendering. |
+| C264-3 | Public timeline pages -> Gantt + attempt selection | Cursor implementer/Codex implementer/Codex reviewer retry attempts, active/missing launch, parallel intervals, gap and second page. | Positions/IDs/timestamps match an independent expected interval list; unknown durations are honest; same IDs selectable through chart/keyboard. Catches fabricated end times and page-as-complete rendering. |
+| C264-4 | Summary producer (additive otherStates) -> DTO/schema -> parseSummaryData -> SummaryPanels/charts | Ledger with two unknown raw states (one malicious string) plus known states in one project. | Producer/schema emit exact raw states and counts summing to stateCounts.other; UI shows exact labels under Other as literal text; inconsistent sums are rejected; schema change is additive only. Catches guessed/partial-page labels and hidden Other values. |
 
 ## Validation
 
@@ -156,7 +201,9 @@ npm run build
 npx playwright test e2e/linked-inspection.spec.ts
 ```
 
-Run affected filter/data-source regressions as needed, plus root
+For C264-4 also run the affected summary producer/schema Python tests (e.g.
+`uv run pytest tests/unit/dashboard -q`) and the 26.3 parser/DashboardApp/charts
+Vitest files. Run affected filter/data-source regressions as needed, plus root
 `uv run mkdocs build --strict` and `git diff --check` for changed docs.
 Browser cases use a real local server with isolated known ledger/lineage and
 fake providers; deterministic response holds prove selection fences. A screenshot

@@ -1,7 +1,7 @@
 # Phase 26.2: Loopback HTTP read server
 
 Status: operator-requested implementation scope; implementation pending.
-Sequence position: 2/7. Cursor: grok-4.7-high.
+Sequence position: 2/7. Implementer: Codex gpt-5.6-sol / xhigh (90 minutes).
 Reviewer: gpt-6.1-sol / xhigh, selected by the operator on 2026-10-14.
 One ordinary automatic run, with accepted predecessor dependency and one final
 operator walkthrough in 26.7. Planning does not prepare/submit/start the sequence.
@@ -24,11 +24,15 @@ Node/frontend, browser polling, scheduler mutation/writer contracts, root YAML, 
 
 ## Required Context
 
-Planning baseline is `main` at `90262eed1af7c76c46139855e249de4ea8ec0d5e`, observed 2026-10-14:
-Phase 23 production plus planning-only Phases 24/25 and the non-interactive prompt
-fix. Neither 24 nor 25 is a dependency. At this planning baseline, SQLite schema
-is 13 and local API is 1.5, before 26.1 adds dashboard capability/additive minor.
-Python >=3.11 and `uv` are the current runtime/tooling.
+Refreshed planning baseline is `main` at `466b8e09724430cebddbdeca6f1961b2d6243531`, observed 2026-10-15:
+Phase 27.1–27.7 dual implementer, role-aware inspection and recovery code is merged.
+Phases 24/25 remain planning-only and are not dependencies. SQLite schema is 16;
+local API is 1.8 before 26.1 adds dashboard capability in compatible minor 1.9.
+Python >=3.11 and `uv` remain the runtime/tooling. The selected implementer is
+Codex `gpt-5.6-sol / xhigh`, independently bound from reviewer B. Manifest v2
+freezes provider/model/effort/90-minute timeout per phase. Existing Phase 27
+findings retain their historical full-suite/build verification limits; this
+phase owns its changed contracts and 26.7 integration gate, not a replay of 27.
 Recheck relevant accepted code once at admission. A future predecessor plan or
 staged patch is not evidence of accepted runtime. If a producer changed, stop
 only dependent work and report its exact incompatible/missing contract.
@@ -47,6 +51,20 @@ for frozen prompts, review detail/content, stdout/stderr and Codex capacity are
 implemented on planning baseline, as are read-only default XDG resolvers. The
 artifact authentication API is about evidence ownership, not user login. Do not
 replace those readers with a raw artifact directory HTTP server.
+
+
+Provider-aware prerequisite: read `scheduler/domain/codex_contract.py`,
+`tests/integration/test_phase27_3_inspection.py` and the accepted Phase 27
+source/inspection DTOs. Execution includes `cursor.run_turn`,
+`codex.implementer_bootstrap`, `codex.implementer_resume`,
+`codex.bootstrap_review` and `codex.resume_review`. Only the final two are
+review rounds. `component=codex_implementer` identifies implementation, while
+`component=codex` plus the review effect allowlist identifies reviewer attempts.
+Preserve implementerProvider, pending role/turn/capacity and retry metadata;
+historical absent provider stays Cursor. An `implementer_retry` replacement is
+authoritative lineage, never a reason to parse run IDs. Existing public process
+output supports both providers; there is no exact per-attempt implementer-prompt
+read contract to invent from private files.
 
 ## Cursor Rules And Skills
 
@@ -68,7 +86,7 @@ current source/privacy requirements rather than historical Phase 8 restrictions.
 The separate final reviewer follows
 `.agents/skills/review-staged-ai-dev-loop-execution/SKILL.md`; implementation does
 not invoke or modify it. There is no `.cursor/skills/` directory. Codex authored
-the new dashboard rule/shared contract; Cursor does not change those policies,
+the new dashboard rule/shared contract; the implementer does not change those policies,
 planning/review skills or reviewer/correction/result schemas to pass acceptance.
 
 ## Architecture Guardrails
@@ -111,7 +129,9 @@ from display strings. Any incompatible prerequisite is a dependent-work blocker.
    slice serves an honest English provisional page from a package-owned asset.
 2. Implement the shared POST read dispatcher using explicit per-operation params
    and DTO projections. Summary operations call 26.1 service directly; exact run,
-   sequence, frozen/review/output/capacity operations call existing services.
+   sequence, frozen/review/output/capacity operations call existing services,
+   including component codex_implementer output with role-specific evidence.
+   No implementer attempt is accepted as reviewer content.
    Permit zero arbitrary path/command/SQL access. Invalid input fails before work.
 3. Enforce exact Host/Origin, request bytes/methods, no-store and response bounds,
    safe errors and static manifest containment. Emit no bodies, query params,
@@ -139,7 +159,7 @@ safety guard. IDs belong to this run and must appear in its completion report.
 | ID | Real producer -> consumer | Input/precondition | Independent expected result / defect caught |
 | --- | --- | --- | --- |
 | C262-1 | CLI -> bound server -> real HTTP client | Valid temporary port, invalid/out-of-range port, occupied port and Ctrl-C/restart with isolated XDG. | Only loopback listens; CLI never accepts remote bind; clean exit releases port, leaves ledger/artifacts byte-for-byte/content metadata unchanged and creates no scheduler work. |
-| C262-2 | Typed HTTP dispatch -> accepted services -> envelope | Same semantic requests through CLI and HTTP, exact owned attempt content with correct and wrong run/attempt IDs; invalid method/Host/Origin/body/op. | HTTP/CLI semantic results match modulo observation times; rejected requests dispatch nothing; wrong ownership fails via existing reader. Catches generic path dispatch and duplicate query logic. |
+| C262-2 | Typed HTTP dispatch -> accepted services -> envelope | Same semantic requests through CLI and HTTP, exact owned Cursor/Codex implementer/reviewer content with correct and wrong run/attempt IDs; invalid method/Host/Origin/body/op. | HTTP/CLI semantic results match modulo observation times; rejected requests dispatch nothing; wrong ownership fails via existing reader. Catches generic path dispatch and duplicate query logic. |
 | C262-3 | Handler admission/deadlines -> read/probe worker -> shutdown | Hold real production readers with synchronization; exceed two service/four handler admission, expire socket/query budget and disconnect. | Bounded counters/threads/child lifetime, safe saturation and released permit; later normal read succeeds. Catches ThreadingMixIn spawning unbounded threads or stuck slot after timeout. |
 | C262-4 | Static manifest and response adapter -> browser-compatible client | Provisional index, owned asset, traversal/encoded traversal/unlisted file, internal service error and sentinel content. | Only manifest assets served; expected headers/no-store; no sentinel/private paths in logs/error. Catches serving artifact roots or exposing tracebacks. |
 

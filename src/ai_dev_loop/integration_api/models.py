@@ -51,6 +51,7 @@ class IntegrationCapabilities(PublicWireModel):
     codex_implementer_manual_recovery: StrictBool = Field(
         False, alias="codexImplementerManualRecovery"
     )
+    dashboard: StrictBool = False
 
 
 class IntegrationInfoData(PublicWireModel):

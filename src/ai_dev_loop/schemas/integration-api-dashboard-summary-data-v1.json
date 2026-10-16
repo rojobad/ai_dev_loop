@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-dashboard-summary-data-v1.json",
+  "title": "ai_dev_loop Integration API dashboard summary data v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["observedAt", "filters", "coverage", "totals", "projects", "workload"],
+  "properties": {
+    "observedAt": { "type": "string", "format": "integration-rfc3339-utc" },
+    "filters": {
+      "$ref": "https://ai-dev-loop.local/schemas/integration-api-dashboard-shared-v1.json#/$defs/filters"
+    },
+    "coverage": {
+      "$ref": "https://ai-dev-loop.local/schemas/integration-api-dashboard-shared-v1.json#/$defs/coverage"
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["runsStarted", "completed", "residualRisk", "waitingBlocked"],
+      "properties": {
+        "runsStarted": { "type": "integer", "minimum": 0 },
+        "completed": { "type": "integer", "minimum": 0 },
+        "residualRisk": { "type": "integer", "minimum": 0 },
+        "waitingBlocked": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "projects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["projectName", "total", "stateCounts", "otherStates"],
+        "properties": {
+          "projectName": { "type": "string", "minLength": 1 },
+          "total": { "type": "integer", "minimum": 0 },
+          "stateCounts": {
+            "$ref": "https://ai-dev-loop.local/schemas/integration-api-dashboard-shared-v1.json#/$defs/stateCounts"
+          },
+          "otherStates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": ["state", "count"],
+              "properties": {
+                "state": { "type": "string", "minLength": 1 },
+                "count": { "type": "integer", "minimum": 1 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "workload": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["projectName", "sequenceId", "sequenceName", "runCount"],
+        "properties": {
+          "projectName": { "type": "string", "minLength": 1 },
+          "sequenceId": { "type": ["string", "null"], "minLength": 1 },
+          "sequenceName": { "type": ["string", "null"], "minLength": 1 },
+          "runCount": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  }
+}

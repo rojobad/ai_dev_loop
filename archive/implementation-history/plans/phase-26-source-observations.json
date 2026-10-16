@@ -1,25 +1,30 @@
 {
-  "observedAt": "2026-10-14",
-  "gitHead": "90262eed1af7c76c46139855e249de4ea8ec0d5e",
+  "observedAt": "2026-10-15",
+  "gitHead": "466b8e09724430cebddbdeca6f1961b2d6243531",
   "method": "read-only source inspection, no live scheduler SQLite or artifact read",
-  "implementedBaseline": "Phase 23 plus non-interactive Cursor prompt fix; 24/25 planning-only",
+  "implementedBaseline": "Merged Phase 27.1\u201327.7 dual-implementer execution, role-aware inspection and recovery; 24/25 planning-only",
   "localApiVersion": {
     "major": 1,
-    "minor": 5
+    "minor": 8
   },
   "existingCapabilities": [
     "runs",
     "sequences",
     "reviewInspection",
     "processOutput",
-    "codexCapacity"
+    "codexCapacity",
+    "dualImplementers",
+    "mixedImplementerSequences",
+    "codexImplementerManualRecovery"
   ],
   "dashboardCapabilityExists": false,
-  "schedulerSchemaVersion": 13,
+  "schedulerSchemaVersion": 16,
   "pythonMinimum": "3.11",
   "readOnlyStore": "SqliteSchedulerStore.open_readonly / begin_read",
   "executionEffectKinds": [
     "cursor.run_turn",
+    "codex.implementer_bootstrap",
+    "codex.implementer_resume",
     "codex.bootstrap_review",
     "codex.resume_review"
   ],
@@ -39,17 +44,43 @@
   ],
   "projectSource": "validated context.project_name -> public projectName",
   "files": {
-    "src/ai_dev_loop/integration_api/version.py": "27642efc918d2eee0c4d99646059306e88130efb38c4aa6f6ea885f021011409",
-    "src/ai_dev_loop/integration_api/info.py": "c4abc333f2a92cd26c56722b7fc228c0aa91a45d03d8d01e3ccc6d3dfa8021b8",
-    "src/ai_dev_loop/integration_api/models.py": "a05f920034cb2c747b2f1c4871f7ec55afd94fad793b1ed177a7fa309755ecf8",
-    "src/ai_dev_loop/integration_api/run_projection.py": "d49ccbd5bd49732a8d9cb5432c89e96c7e4f774d203701f0eadd0c6b12879f0e",
+    "src/ai_dev_loop/integration_api/version.py": "1f31c91e5700f2f26d3e77d662d3d6cd22b0338c34008c095f742c2e9367dca5",
+    "src/ai_dev_loop/integration_api/info.py": "bf7ab31a688ee4979fe7be4c843373f7efe6dd421160304e634c3e86183453fd",
+    "src/ai_dev_loop/integration_api/models.py": "2080ff12679bd8f8f89ea248140a96fdbb3614ab81c60a28a5a25877447c9f29",
+    "src/ai_dev_loop/integration_api/run_projection.py": "e4f18fe49a49a944f15ae34656cf552c56ebe6e29fc3a252174498e499a4e6b1",
     "src/ai_dev_loop/integration_api/process_output_service.py": "a80c308e1e23ea59a6c93fc75524fde19595d83df9696c6f72c8e339dcace877",
-    "src/ai_dev_loop/scheduler/domain/effects.py": "89719b2c66b15ad5cd899c3d7b7e0bb5ea4ba72049ad03af77646fdb87971d8b",
+    "src/ai_dev_loop/scheduler/domain/effects.py": "98152304ed012b6a28358ebdd6d8e1a377fd27b7317cdca5871b304cf20c39ea",
     "src/ai_dev_loop/scheduler/domain/cursor_contract.py": "d1f511a3db3522e92ab87c6729c90d36deb5c30bee92630f66bf2b14c5529ad1",
-    "src/ai_dev_loop/scheduler/domain/codex_contract.py": "4626fd9fbdbe73158631cc3dd1529882a2a8e4bcbdc57ad9120c50ecab515be4",
-    "src/ai_dev_loop/scheduler/domain/sequence.py": "729c282eeb840c8103b876ca911c828b07d03052010d8a4a06bfceb36bfa454d",
-    "src/ai_dev_loop/scheduler/infrastructure/sqlite_store.py": "5b1145c1674fe7b45f3ea874f9754e7d87143d260f7b3055a5c21c4e64964b7f",
+    "src/ai_dev_loop/scheduler/domain/codex_contract.py": "88e85c3439e0c8aa6770f62281759496b01421a02ad19b0a8edd97184266c62a",
+    "src/ai_dev_loop/scheduler/domain/sequence.py": "c31040408fedbbb88875f171a8f20ca315ec2b24701de7cd27edde631fbd03ae",
+    "src/ai_dev_loop/scheduler/infrastructure/sqlite_store.py": "2cc2f85700bdf9229cb08422794526f173f714dcc979c91cf527b42068ccafd7",
     "pyproject.toml": "1616f02623721d9600743ddeb6172191b63f26311aba7ac295dd93304bbebbf2",
-    "ai_dev_loop.yaml": "33cd5c07ca3eafb640200df788ee7027eee728192d1e1fa9521d5a45dbe9f187"
+    "ai_dev_loop.yaml": "33cd5c07ca3eafb640200df788ee7027eee728192d1e1fa9521d5a45dbe9f187",
+    "src/ai_dev_loop/integration_api/process_output_resolution.py": "43f0802697b286b461df78907903df5efcf16f95433d0f3087e4eb57ee1a5c98",
+    "src/ai_dev_loop/integration_api/process_output_auth.py": "6831691c68d43f474cba017e7b567ff68705fd2eb6a7272e5e5ae6df2c8e373d",
+    "src/ai_dev_loop/scheduler/domain/state.py": "09135c874d792193996c16aaaa67fb5236f2463d2d66ce683de19a8255291327"
+  },
+  "sequenceManifestVersion": 2,
+  "selectedImplementer": {
+    "provider": "codex",
+    "model": "gpt-5.6-sol",
+    "reasoningEffort": "xhigh",
+    "timeoutMinutes": 90
+  },
+  "reviewEffectKinds": [
+    "codex.bootstrap_review",
+    "codex.resume_review"
+  ],
+  "attemptComponents": {
+    "cursor": "Cursor implementer",
+    "codex_implementer": "Codex implementer",
+    "codex": "Codex reviewer"
+  },
+  "previousObservation": "phase-26-source-observations-2026-10-14.json",
+  "supersededSequence": {
+    "sequenceId": "ai-dev-loop-seq-c062d0252688",
+    "observedState": "aborted",
+    "materializedRuns": 0,
+    "cancelledPhases": 7
   }
 }

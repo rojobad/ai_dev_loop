@@ -1,7 +1,7 @@
 # Phase 26.7: Installed dashboard acceptance and future Hub handoff
 
 Status: operator-requested implementation scope; implementation pending.
-Sequence position: 7/7. Cursor: grok-4.7-high.
+Sequence position: 7/7. Implementer: Codex gpt-5.6-sol / xhigh (90 minutes).
 Reviewer: gpt-6.1-sol / xhigh, selected by the operator on 2026-10-14.
 One ordinary automatic run, with accepted predecessor dependency and one final
 operator walkthrough in 26.7. Planning does not prepare/submit/start the sequence.
@@ -24,11 +24,15 @@ Root YAML/skills/reviewer contracts, Phase 24/25 implementation, real timers/int
 
 ## Required Context
 
-Planning baseline is `main` at `90262eed1af7c76c46139855e249de4ea8ec0d5e`, observed 2026-10-14:
-Phase 23 production plus planning-only Phases 24/25 and the non-interactive prompt
-fix. Neither 24 nor 25 is a dependency. At this planning baseline, SQLite schema
-is 13 and local API is 1.5, before 26.1 adds dashboard capability/additive minor.
-Python >=3.11 and `uv` are the current runtime/tooling.
+Refreshed planning baseline is `main` at `466b8e09724430cebddbdeca6f1961b2d6243531`, observed 2026-10-15:
+Phase 27.1–27.7 dual implementer, role-aware inspection and recovery code is merged.
+Phases 24/25 remain planning-only and are not dependencies. SQLite schema is 16;
+local API is 1.8 before 26.1 adds dashboard capability in compatible minor 1.9.
+Python >=3.11 and `uv` remain the runtime/tooling. The selected implementer is
+Codex `gpt-5.6-sol / xhigh`, independently bound from reviewer B. Manifest v2
+freezes provider/model/effort/90-minute timeout per phase. Existing Phase 27
+findings retain their historical full-suite/build verification limits; this
+phase owns its changed contracts and 26.7 integration gate, not a replay of 27.
 Recheck relevant accepted code once at admission. A future predecessor plan or
 staged patch is not evidence of accepted runtime. If a producer changed, stop
 only dependent work and report its exact incompatible/missing contract.
@@ -48,6 +52,20 @@ server and browser tooling. This run closes packaging gaps but cannot invent
 missing mandatory predecessor behavior as a residual risk. Hub Phase 15 closure
 is a sequence launch condition recorded in overview, not a dependency on Django
 runtime inside this local dashboard implementation.
+
+
+Provider-aware prerequisite: read `scheduler/domain/codex_contract.py`,
+`tests/integration/test_phase27_3_inspection.py` and the accepted Phase 27
+source/inspection DTOs. Execution includes `cursor.run_turn`,
+`codex.implementer_bootstrap`, `codex.implementer_resume`,
+`codex.bootstrap_review` and `codex.resume_review`. Only the final two are
+review rounds. `component=codex_implementer` identifies implementation, while
+`component=codex` plus the review effect allowlist identifies reviewer attempts.
+Preserve implementerProvider, pending role/turn/capacity and retry metadata;
+historical absent provider stays Cursor. An `implementer_retry` replacement is
+authoritative lineage, never a reason to parse run IDs. Existing public process
+output supports both providers; there is no exact per-attempt implementer-prompt
+read contract to invent from private files.
 
 ## Cursor Rules And Skills
 
@@ -69,7 +87,7 @@ current source/privacy requirements rather than historical Phase 8 restrictions.
 The separate final reviewer follows
 `.agents/skills/review-staged-ai-dev-loop-execution/SKILL.md`; implementation does
 not invoke or modify it. There is no `.cursor/skills/` directory. Codex authored
-the new dashboard rule/shared contract; Cursor does not change those policies,
+the new dashboard rule/shared contract; the implementer does not change those policies,
 planning/review skills or reviewer/correction/result schemas to pass acceptance.
 
 ## Architecture Guardrails
@@ -113,7 +131,7 @@ from display strings. Any incompatible prerequisite is a dependent-work blocker.
    dashboard. Ordinary installed wheel serve needs neither Node/npm nor checkout.
 2. Create `scripts/verify-phase26-dashboard.py` with --list/--case and accept/
    prepare/cleanup modes. Own a temporary wheel-installed venv, isolated XDG,
-   known fixture ledger/artifacts, loopback port and processes in one recorded
+   known mixed historical Cursor/current Codex fixture ledger/artifacts, loopback port and processes in one recorded
    private resource directory; cleanup only those resources with identity checks.
    No user installation/timer action; uncertain cleanup preserves recovery info.
 3. Exercise a wheel-installed CLI and real HTTP/browser path without source
@@ -153,7 +171,7 @@ safety guard. IDs belong to this run and must appear in its completion report.
 
 | ID | Real producer -> consumer | Input/precondition | Independent expected result / defect caught |
 | --- | --- | --- | --- |
-| C267-1 | Built wheel -> isolated installation -> real server/browser | New installed CLI outside source checkout, no Node on runtime PATH, external network blocked, fixture ledger/content and >one map/timeline page. | All seven widgets/drill-down/actions work with known expected data; wheel contains correct schema/assets; no source import fallback or CDN. Catches editable-checkout/dev-server-only acceptance. |
+| C267-1 | Built wheel -> isolated installation -> real server/browser | New installed CLI outside source checkout, no Node on runtime PATH, external network blocked, fixture ledger/content and >one map/timeline page. | All seven widgets/drill-down/actions work with known expected data for both implementer providers and reviewer roles; wheel contains correct schema/assets; no source import fallback or CDN. Catches editable-checkout/dev-server-only acceptance. |
 | C267-2 | Owned harness modes -> processes/files -> cleanup or prepared site | --list, scoped cases, accept, prepare, foreign/uncertain cleanup and actual recorded fixture resource cleanup. | Nonempty inventory, bounded readiness/teardown, refusal preserves foreign resources, prepare usable with manual-pending status. Catches cleanup deleting user state or automatic human acceptance. |
 | C267-3 | Public CLI/HTTP/components -> acceptance evidence/docs/handoff | Real fixture journey, legacy evidence missing, unchanged scheduler supported tests, installed schema/capability and documentation commands. | Independent semantic assertions and successful once-owned integration/package/docs gates; actual version/bounds match handoff; human acceptance explicitly pending. Catches tests replacing producer behavior or future claims presented as current. |
 

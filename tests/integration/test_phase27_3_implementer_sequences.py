@@ -14,7 +14,7 @@ from pydantic import ValidationError as ModelValidationError
 from referencing import Registry, Resource
 
 from ai_dev_loop.errors import ValidationError
-from ai_dev_loop.paths import schema_path
+from ai_dev_loop.paths import DIR_MODE, SENSITIVE_FILE_MODE, schema_path
 from ai_dev_loop.scheduler.application.abort import SchedulerAbortService
 from ai_dev_loop.scheduler.application.fake_attempt_backend import (
     FakeAgentProcessBackend,
@@ -459,6 +459,10 @@ def test_genuine_accepted_v1_frozen_fixture_preserves_hashes_and_materializes(tm
     assert [frozen_entry_hash(e) for e in state.definition.entries] == original_hashes
     root = tmp_path / "artifacts"
     shutil.copytree(fixture / "artifacts", root)
+    # Git records executable bits, not the private 0700/0600 modes of the
+    # accepted protected-artifact capture. Restore those modes on the owned copy.
+    for path in root.rglob("*"):
+        path.chmod(DIR_MODE if path.is_dir() else SENSITIVE_FILE_MODE)
     artifacts = ProtectedArtifactStore(root)
     artifacts.verify_prepared_sequence_artifacts(state.sequence_id, state.definition)
     materializer = SequenceRunMaterializer(artifacts)

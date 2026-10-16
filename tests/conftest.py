@@ -304,8 +304,8 @@ def write_session_rollout(
     return path
 
 
-@pytest.fixture
-def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
+def create_fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
+    """Create the hermetic fake provider CLIs for tests and acceptance harnesses."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     agent_log = tmp_path / "agent.log"
@@ -1313,6 +1313,11 @@ def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path
         "agent_models_file": agent_models_file,
         "codex_models_file": codex_models_file,
     }
+
+
+@pytest.fixture
+def fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
+    return create_fake_clis(tmp_path, monkeypatch)
 
 
 @pytest.fixture

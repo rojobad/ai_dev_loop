@@ -88,6 +88,21 @@ sustituye la política de espera del scheduler. **Gate A** valida con
 fakes/process boundaries; **Gate B** es
 aceptacion live pendiente hasta completar el ciclo controlado en parish360-poc.
 
+El servidor `dashboard serve` es una superficie local sin login: enlaza únicamente
+IPv4 `127.0.0.1` y exige Host/Origin same-origin exactos. No debe publicarse mediante
+un proxy ni exponerse a LAN. Solo sirve un manifiesto de assets empaquetados y un
+dispatcher de lecturas tipadas; no admite rutas de filesystem, SQL, comandos ni
+acciones del scheduler. Los contenidos sensibles (`initial-prompt`, review y
+stdout/stderr) conservan autenticación por run/attempt, paginación y carga
+deliberada. No se registran cuerpos, parámetros, query strings, paths privados ni
+stderr upstream, y las respuestas indican `no-store`.
+
+El frontend instalado usa únicamente assets same-origin empaquetados: no carga
+CDN, no registra service worker y no persiste consultas ni contenido. Solo el
+tema visual puede guardarse en `localStorage`. Cambiar scope o intento cancela y
+retira el contenido sensible en memoria; la evidencia ausente no se reconstruye.
+Consulta [Dashboard local](dashboard-local.md) para el procedimiento seguro.
+
 ### Opcional: conservar la llave SSH durante la sesion WSL
 
 Si la llave SSH tiene passphrase, se puede usar `keychain` para cargarla una vez

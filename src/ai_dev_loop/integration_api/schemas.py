@@ -31,6 +31,11 @@ FROZEN_SEQUENCE_ARTIFACT_CHUNK_SCHEMA = "integration-api-frozen-sequence-artifac
 SEQUENCE_REPORT_CHUNK_SCHEMA = "integration-api-sequence-report-chunk-v1.json"
 PROCESS_OUTPUT_CHUNK_SCHEMA = "integration-api-process-output-chunk-v1.json"
 CODEX_CAPACITY_DATA_SCHEMA = "integration-api-codex-capacity-data-v1.json"
+DASHBOARD_SHARED_SCHEMA = "integration-api-dashboard-shared-v1.json"
+DASHBOARD_PROJECTS_DATA_SCHEMA = "integration-api-dashboard-projects-data-v1.json"
+DASHBOARD_SUMMARY_DATA_SCHEMA = "integration-api-dashboard-summary-data-v1.json"
+DASHBOARD_RUNS_DATA_SCHEMA = "integration-api-dashboard-runs-data-v1.json"
+DASHBOARD_ACTIVITY_DATA_SCHEMA = "integration-api-dashboard-activity-data-v1.json"
 
 
 def load_integration_schema(name: str) -> dict[str, object]:
@@ -60,6 +65,11 @@ def integration_schema_names() -> tuple[str, ...]:
         SEQUENCE_REPORT_CHUNK_SCHEMA,
         PROCESS_OUTPUT_CHUNK_SCHEMA,
         CODEX_CAPACITY_DATA_SCHEMA,
+        DASHBOARD_SHARED_SCHEMA,
+        DASHBOARD_PROJECTS_DATA_SCHEMA,
+        DASHBOARD_SUMMARY_DATA_SCHEMA,
+        DASHBOARD_RUNS_DATA_SCHEMA,
+        DASHBOARD_ACTIVITY_DATA_SCHEMA,
     )
 
 

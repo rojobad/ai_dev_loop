@@ -1,5 +1,10 @@
 # Phase 26 planning validation
 
+> Historical authoring evidence from 2026-10-14. The operator-selected Codex
+> replacement and current API/schema baseline are recorded in
+> [2026-10-15 relaunch validation](phase-26-codex-relaunch-validation.md).
+> The validator now checks that refreshed manifest/source inventory.
+
 Date: 2026-10-14. Planning baseline: main
 `90262eed1af7c76c46139855e249de4ea8ec0d5e`.
 Implementation, scheduler launch and operator manual acceptance: pending.

@@ -36,7 +36,11 @@ ai_dev_loop = "ai_dev_loop.cli:main"
 packages = ["src/ai_dev_loop"]
 
 [tool.hatch.build.targets.sdist]
-only-include = ["src/ai_dev_loop", "tests", "scripts", "README.md", "LICENSE"]
+only-include = ["src/ai_dev_loop", "dashboard-web", "tests", "scripts", "README.md", "LICENSE"]
+exclude = ["/tests/fixtures"]
+
+[tool.hatch.build.hooks.custom]
+path = "scripts/hatch_build.py"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

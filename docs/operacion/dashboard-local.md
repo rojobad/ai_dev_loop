@@ -1,0 +1,118 @@
+# Dashboard local
+
+El dashboard es una vista de solo lectura del ledger central y de sus artefactos
+protegidos. Se entrega dentro del wheel de `ai_dev_loop`: para usar una
+instalación validada no se necesita Node, un checkout del repositorio ni un
+servidor de desarrollo.
+
+## Iniciar y detener
+
+```bash
+ai_dev_loop dashboard serve --port 8765
+```
+
+Abre `http://127.0.0.1:8765/`. El proceso corre en primer plano y solo enlaza
+IPv4 `127.0.0.1`; `Ctrl-C` cierra el socket y cancela sus lecturas. El puerto
+puede ser cualquier entero libre entre 1 y 65535.
+
+El comando usa el mismo estado XDG que el scheduler instalado. Si se ejecuta con
+otro `XDG_STATE_HOME`, mostrará ese otro ledger. Un ledger ausente se representa
+como datos vacíos y no se crea. El dashboard no inicia, reintenta, aborta, migra
+ni repara runs, tampoco modifica reservas, Git, timers o artefactos.
+
+No publiques este puerto mediante un proxy, túnel o interfaz LAN. El servidor no
+tiene login: su límite de seguridad es el loopback local, además de validar
+`Host` y `Origin` same-origin.
+
+## Aplicar una vista
+
+La barra superior permite elegir proyecto, instante inicial, instante final
+exclusivo y zona IANA. Las horas se interpretan en esa zona y el rango máximo es
+366 días. `Apply` crea un scope nuevo; los resultados tardíos del scope anterior
+se descartan.
+
+La vista reúne:
+
+- KPIs y estados por proyecto para runs cuyo primer lanzamiento de ejecución cae
+  en `[from,to)`;
+- workload por secuencia o standalone;
+- capacidad Codex actual, observada independientemente del rango histórico;
+- mapa paginado de runs con provider Cursor/Codex y linaje de secuencia, incluido
+  `implementer_retry`;
+- timeline paginado del run seleccionado;
+- detalle del intento con contenido disponible bajo carga deliberada;
+- actividad diaria por submissions, rounds de review o process hours.
+
+Los indicadores de cobertura distinguen datos completos, parciales y vacíos. Un
+run sin lanzamiento no entra en la cohorte. Un intento sin duración resuelta no
+recibe una duración inventada.
+
+## Refresco y contenido sensible
+
+El refresco automático usa como máximo dos lecturas activas. Summary, primera
+página visible del mapa y actividad usan 30 segundos; el run/timeline
+seleccionado usa 10 segundos; capacidad usa 60 segundos. Las páginas añadidas
+con `Load more` no se convierten en polling periódico.
+
+`Pause automatic refresh` cancela trabajo periódico propio. `Resume` hace una
+lectura fresca por clave visible, sin reproducir intervalos perdidos.
+`Refresh applied scope` funciona incluso durante Pause, vuelve el mapa a su
+primera página y no abre contenido sensible. Ocultar la pestaña también retira
+el trabajo periódico; al volver visible se leen de nuevo las claves visibles.
+Ante un error se conserva solamente el último éxito compatible en memoria, con
+sus fechas originales y el error visible.
+
+El prompt inicial, el contenido de review y stdout/stderr se leen solamente al
+presionar su acción en el modal. Se autentican por run, intento, componente y
+rol; un intento de implementer Codex nunca se acepta como review. El contenido
+es paginado, permanece en memoria y se retira al cerrar/cambiar selección o
+scope. La evidencia histórica ausente se muestra como `not_recorded`; no se
+reconstruye. No existe contrato público para mostrar el prompt exacto de cada
+intento de implementer.
+
+La única preferencia durable del navegador es el tema visual. No hay service
+worker, telemetría ni cache durable de consultas o contenido.
+
+## Construir desde fuentes
+
+Node.js 24 LTS se usa solo para construir y probar el frontend:
+
+```bash
+cd dashboard-web
+npm ci
+npm run typecheck
+npm test -- --run
+npm run build
+cd ..
+uv run python -m build
+```
+
+El build escribe assets same-origin y su manifiesto bajo
+`src/ai_dev_loop/dashboard/web_dist`. La construcción del paquete falla si el
+manifiesto falta, si los inputs cambiaron o si el inventario de assets no
+coincide. El wheel no incluye `node_modules`, source maps, ledgers, artefactos ni
+capturas de tests.
+
+La aceptación reproducible del checkout usa recursos temporales propios,
+providers fake y una instalación aislada del wheel:
+
+```bash
+uv run python scripts/verify-phase26-dashboard.py --list
+uv run python scripts/verify-phase26-dashboard.py accept --python /ruta/a/python3.11
+```
+
+`--python` selecciona explícitamente el runtime `>=3.11` de la instalación
+aislada. Para cubrir la matriz soportada se repite `accept` con el Python de
+desarrollo más reciente disponible. El harness descubre `node`, `npm` y `npx`
+desde `PATH`, o acepta su directorio mediante `PHASE26_NODE_BIN`. Playwright
+respeta `PLAYWRIGHT_BROWSERS_PATH` y las librerías existentes en
+`LD_LIBRARY_PATH`; no depende de rutas históricas bajo `/tmp`.
+
+`prepare` deja un sitio fixture y un registro privado para un walkthrough;
+`cleanup` es una acción separada y solo elimina el recurso si uid, token, PID,
+inicio de proceso, comando y grupo siguen coincidiendo. Esos modos son para la
+aceptación desde fuentes, no para controlar el scheduler del operador.
+
+Consulta [Referencia del dashboard](../referencia/dashboard.md) para las
+definiciones y límites, y [Seguridad y privacidad](seguridad-privacidad.md) para
+la frontera de exposición local.

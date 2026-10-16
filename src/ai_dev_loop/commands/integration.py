@@ -11,6 +11,7 @@ from typer import _click as click
 from typer.core import TyperCommand, TyperGroup
 
 from ai_dev_loop.integration_api.capacity_service import default_capacity_read_service
+from ai_dev_loop.integration_api.dashboard_service import default_dashboard_read_service
 from ai_dev_loop.integration_api.envelope import emit_failure, emit_success
 from ai_dev_loop.integration_api.errors import IntegrationApiError, IntegrationErrorCode
 from ai_dev_loop.integration_api.info import build_integration_info_data
@@ -178,10 +179,20 @@ sequence_app = typer.Typer(
     cls=IntegrationTyperGroup,
 )
 
+dashboard_app = typer.Typer(
+    help="Shared local dashboard queries.",
+    no_args_is_help=False,
+    add_completion=False,
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+    cls=IntegrationTyperGroup,
+)
+
 integration_app.add_typer(runs_app, name="runs")
 integration_app.add_typer(run_app, name="run")
 integration_app.add_typer(sequences_app, name="sequences")
 integration_app.add_typer(sequence_app, name="sequence")
+integration_app.add_typer(dashboard_app, name="dashboard")
 
 OrdinalOption = Annotated[
     int,
@@ -213,6 +224,31 @@ ByteLimitOption = Annotated[
     typer.Option("--limit", help="Artifact byte limit (default 65536, max 262144)."),
 ]
 
+DashboardFromOption = Annotated[
+    str,
+    typer.Option("--from", help="Inclusive RFC3339 range start."),
+]
+
+DashboardToOption = Annotated[
+    str,
+    typer.Option("--to", help="Exclusive RFC3339 range end."),
+]
+
+DashboardProjectOption = Annotated[
+    str | None,
+    typer.Option("--project", help="Exact project name."),
+]
+
+DashboardTimeZoneOption = Annotated[
+    str,
+    typer.Option("--time-zone", help="IANA time zone name."),
+]
+
+DashboardLimitOption = Annotated[
+    int,
+    typer.Option("--limit", help="Dashboard page size (default 25, max 100)."),
+]
+
 
 @integration_app.callback(invoke_without_command=True)
 def integration_root(ctx: typer.Context) -> None:
@@ -240,6 +276,101 @@ def integration_codex_capacity_command(
     service = default_capacity_read_service()
     data = service.observe()
     emit_success(data.model_dump(by_alias=True))
+
+
+@dashboard_app.callback(invoke_without_command=True)
+def integration_dashboard_root(ctx: typer.Context) -> None:
+    """Query dashboard summaries without scheduler side effects."""
+    if ctx.invoked_subcommand is None:
+        raise IntegrationApiError.invalid_argument("Missing dashboard command.")
+
+
+@dashboard_app.command("projects")
+def integration_dashboard_projects_command(
+    output: IntegrationOutputOption = "json",
+    offset: OffsetOption = 0,
+    limit: DashboardLimitOption = 25,
+) -> None:
+    """List retained projects and materialized run counts."""
+    _require_json_output(output)
+    service = default_dashboard_read_service()
+    data = service.projects(offset=offset, limit=limit)
+    emit_success(data.model_dump(mode="json", by_alias=True))
+
+
+@dashboard_app.command("summary")
+def integration_dashboard_summary_command(
+    from_utc: DashboardFromOption,
+    to_utc: DashboardToOption,
+    output: IntegrationOutputOption = "json",
+    project_name: DashboardProjectOption = None,
+    time_zone: DashboardTimeZoneOption = "America/La_Paz",
+) -> None:
+    """Return started-cohort totals, state groups, and workload."""
+    _require_json_output(output)
+    service = default_dashboard_read_service()
+    kwargs: dict[str, object] = {
+        "from_value": from_utc,
+        "to_value": to_utc,
+        "time_zone": time_zone,
+    }
+    if project_name is not None:
+        kwargs["project_name"] = project_name
+    data = service.summary(**kwargs)
+    emit_success(data.model_dump(mode="json", by_alias=True))
+
+
+@dashboard_app.command("runs")
+def integration_dashboard_runs_command(
+    from_utc: DashboardFromOption,
+    to_utc: DashboardToOption,
+    output: IntegrationOutputOption = "json",
+    project_name: DashboardProjectOption = None,
+    time_zone: DashboardTimeZoneOption = "America/La_Paz",
+    offset: OffsetOption = 0,
+    limit: DashboardLimitOption = 25,
+) -> None:
+    """Return one authoritative started-run map page."""
+    _require_json_output(output)
+    service = default_dashboard_read_service()
+    kwargs: dict[str, object] = {
+        "from_value": from_utc,
+        "to_value": to_utc,
+        "time_zone": time_zone,
+        "offset": offset,
+        "limit": limit,
+    }
+    if project_name is not None:
+        kwargs["project_name"] = project_name
+    data = service.runs(**kwargs)
+    emit_success(data.model_dump(mode="json", by_alias=True))
+
+
+@dashboard_app.command("activity")
+def integration_dashboard_activity_command(
+    from_utc: DashboardFromOption,
+    to_utc: DashboardToOption,
+    metric: Annotated[
+        str,
+        typer.Option("--metric", help="submissions, review-rounds, or process-hours."),
+    ],
+    output: IntegrationOutputOption = "json",
+    project_name: DashboardProjectOption = None,
+    time_zone: DashboardTimeZoneOption = "America/La_Paz",
+) -> None:
+    """Return event-date submission/review counts or process seconds."""
+    _require_json_output(output)
+    service = default_dashboard_read_service()
+    kwargs: dict[str, object] = {
+        "from_value": from_utc,
+        "to_value": to_utc,
+        "metric": metric,
+        "time_zone": time_zone,
+    }
+    if project_name is not None:
+        kwargs["project_name"] = project_name
+    data = service.activity(**kwargs)
+    emit_success(data.model_dump(mode="json", by_alias=True))
 
 
 @runs_app.command("list")

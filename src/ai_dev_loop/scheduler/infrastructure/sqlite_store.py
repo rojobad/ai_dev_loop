@@ -444,7 +444,15 @@ class SqliteSchedulerStore:
                     SchedulerEngineErrorKind.SCHEMA,
                     f"unsupported schema version {version}",
                 )
-            store._verify_current_schema(conn, expected_version=version)
+            try:
+                store._verify_current_schema(conn, expected_version=version)
+            except SchedulerEngineError as exc:
+                if exc.kind is SchedulerEngineErrorKind.SCHEMA:
+                    raise SchedulerEngineError(
+                        SchedulerEngineErrorKind.CORRUPTION,
+                        "scheduler schema integrity validation failed",
+                    ) from exc
+                raise
         return store
 
     def bootstrap(self) -> None:

@@ -1,7 +1,8 @@
 # Phase 26 dashboard contract and architecture
 
 Status: implementation design for the operator-requested Phase 26 planning package,
-2026-10-14. None of these new dashboard commands, schemas or UI paths exists at
+2026-10-14, refreshed 2026-10-15 after accepted Phase 27. None of these new
+dashboard commands, schemas or UI paths exists at
 planning time. The seven plans implement this contract incrementally. This document
 is the shared design, not evidence of runtime acceptance.
 
@@ -91,12 +92,21 @@ not claim pages observed at different times are one stable historic snapshot.
 ## Execution attempts and metric semantics
 
 Use explicit effect kinds: execution starts/seconds include `cursor.run_turn`,
+`codex.implementer_bootstrap`, `codex.implementer_resume`,
 `codex.bootstrap_review`, `codex.resume_review`; exclude `cursor.create_chat`,
 preflight, probes, staging/ingestion, fake and unknown effects. Do not use the
 broader CURSOR_ATTEMPT_EFFECT_KINDS set unchanged: it includes chat creation.
 Missing/unknown effect ownership is reported in coverage and excluded from
 execution metrics. Timeline inspection may still display those other attempts,
 with clear labels; their existence does not make a run count as executed.
+Codex implementer attempts have component `codex_implementer`; Codex reviewer
+attempts have component `codex` and a review effect. Derive role/provider from
+these authoritative component/effect pairs, never from the word Codex, model
+name, or iteration. Distinct implementer/reviewer sessions remain private and
+cannot be merged for counting. Preserve current implementerProvider in map/
+selected run data and default only absent historical provider to Cursor. Preserve
+pending role/turn/capacity and implementer retry wait/counters from current inspect
+DTOs, without interpreting a displayed safe action as scheduler authority.
 
 **Started cohort:** a run's `firstExecutionLaunchAt` is the minimum valid
 launchRequestedAt over its owned execution attempts. It is an observed launch
@@ -119,7 +129,9 @@ KPI is the sum of its two groups, not a guess from safe-action text.
 including queued runs; sequence preparation is not a run submission.
 
 **Review rounds:** count each `(runId, iteration)` once, dated at its first valid
-Codex review launch. Multiple phaseAttempt retries in one iteration are one round.
+Codex reviewer launch (`codex.bootstrap_review` or `codex.resume_review`,
+component `codex`). Codex implementer turns never count as review rounds.
+Multiple phaseAttempt retries in one iteration are one round.
 Count launched rounds regardless of their eventual outcome; this is distinct
 from authenticated completed review-budget counters. Separate successor runs
 remain distinct run IDs, including same-reviewer recovery; do not deduplicate
@@ -155,10 +167,11 @@ coverage yields explicit zero days. Do not interpret missing launch as no work.
 
 ## Public Integration API: Phase 26.1 additions
 
-On the planning baseline API is 1.5. Add compatible minor 1.6 and capability
+On the refreshed planning baseline API is 1.8 and scheduler schema is 16.
+Add compatible minor 1.9 and capability
 `dashboard` (strict bool, absent defaults false). All four handlers below must
 exist before advertising true. Recheck once at admission; if an intervening
-accepted change already uses minor 1.6, use the next additive minor consistently
+accepted change already uses minor 1.9, use the next additive minor consistently
 and record it rather than downgrade. Major-only gates and existing commands stay
 compatible; lack of dashboard capability prevents future consumers dispatching it.
 
@@ -166,7 +179,7 @@ compatible; lack of dashboard capability prevents future consumers dispatching i
 | --- | --- | --- |
 | `integration dashboard projects --offset N --limit N` | Local installation project catalog, all retained materialized runs | `items[{projectName, runCount}]`, `page`, `totalCount`; sorted projectName, no slug deduction. |
 | `integration dashboard summary --from UTC --to UTC [--project NAME] [--time-zone IANA]` | Started cohort | `filters`, `coverage`, `totals{runsStarted,completed,residualRisk,waitingBlocked}`, `projects[{projectName,total,stateCounts}]`, `workload[{projectName,sequenceId|null,sequenceName|null,runCount}]`. |
-| `integration dashboard runs --from UTC --to UTC [--project NAME] [--time-zone IANA] [--offset N --limit N]` | Started cohort map page | `filters`, `coverage`, `items[{runId,projectName,state,submittedAt,firstExecutionLaunchAt,sequenceBinding|null}]`, `page`, `totalCount`; binding contains sequenceId/name, ordinal/phaseName, generation, attemptKind and sourceRunId when authoritatively recorded. |
+| `integration dashboard runs --from UTC --to UTC [--project NAME] [--time-zone IANA] [--offset N --limit N]` | Started cohort map page | `filters`, `coverage`, `items[{runId,projectName,implementerProvider,state,submittedAt,firstExecutionLaunchAt,sequenceBinding|null}]`, `page`, `totalCount`; binding contains sequenceId/name, ordinal/phaseName, generation, attemptKind and sourceRunId when authoritatively recorded. |
 | `integration dashboard activity --from UTC --to UTC [--project NAME] [--time-zone IANA] --metric submissions|review-rounds|process-hours` | Event-date activity | `filters`, `coverage`, `metric`, `unit` count/process-seconds, chronological `days[{date,value}]`, `total`; seconds stay numeric and finite. |
 
 All use existing success/failure envelopes, exit codes and `--output json`.
@@ -263,9 +276,13 @@ loading/absent/changed/error/active/truncated states. Close/reselect/filter/rout
 retirement aborts requests, increments generation and releases buffered bytes.
 Content is not polled and never enters summary DTOs or screenshots.
 
-Reviewer prompt is exact per attempt when public evidence exists. Initial Cursor
-prompt is labelled run context, not exact captured execution envelope. Correction
-attempt prompt is unavailable without an authoritative public per-attempt binding;
+Reviewer prompt is exact per attempt when public review evidence exists and the
+selected component/effect identifies a reviewer. An initial frozen run prompt is
+labelled run context for both Cursor and Codex implementers, not the exact captured
+execution envelope. Codex implementer stdout/stderr already use run.output with
+provider-specific evidence authentication; never send an implementer attempt to
+run.review/review-content. Exact implementer attempt prompts (including corrections)
+are unavailable without an authoritative public per-attempt binding;
 do not guess the preceding review ID or browse files to invent that link. Existing
 review cursor-fix-prompt can be explicitly inspected for its own review attempt,
 with that ownership visible. Missing historical prompt remains not_recorded.
@@ -296,4 +313,22 @@ Root ai_dev_loop.yaml, review/correction schemas, planning/review skills, Phase
 24/25 plans and runtime drivers are unchanged. Use a stable installed execution
 driver while the self-hosted source is changing. Planning does not prepare/start
 this sequence, commit/push, install a package, activate services or authorize
-human acceptance. Close Hub Phase 15 before separately preparing this sequence.
+human acceptance. The operator explicitly authorized this replacement preparation/start on
+2026-10-15; its source baseline is independent of Hub Phase 15 acceptance. This
+launch does not declare Hub manual acceptance or modify the Hub worktree.
+
+## Phase 27 execution baseline
+
+Use manifest v2 with per-phase implementer provider=codex, command=codex,
+model=gpt-5.6-sol, reasoning_effort=xhigh, timeout_minutes=90. Keep reviewers
+independent: gpt-6.1-sol xhigh for 26.1/26.2/26.7 and high for 26.3–26.6, with
+90-minute reviewer timeout and seven reviews. Do not include phase cursor fields
+or workflow.cursor_timeout_minutes with the Codex provider. Root YAML remains
+at its supported defaults; every selected implementer value is in the manifest.
+Phase 27.1–27.7 production is implemented; Phase 24/25 remain unexecuted planning.
+Use accepted role-aware readers, output resolution and implementer_retry lineage.
+Do not introduce SDK/token dependencies or change recovery/state transitions.
+Current Phase 27 findings retain historical full-suite/build verification limits;
+26.7 owns the Dashboard integration gate. The known active-attempt/status-action
+incident remains upstream inspection context: expose raw checkpoint plus observed
+attempt status independently, not a fabricated scheduler state or retry button.

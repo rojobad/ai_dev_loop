@@ -149,7 +149,12 @@ class IntegrationProcessOutputReadService:
             raise _map_engine_error(exc) from exc
 
 
-def default_process_output_read_service() -> IntegrationProcessOutputReadService:
+def default_process_output_read_service(
+    *,
+    db_path: Path | None = None,
+    artifact_root: Path | None = None,
+) -> IntegrationProcessOutputReadService:
     return IntegrationProcessOutputReadService(
-        SqliteSchedulerStore.open_readonly(default_engine_db_path())
+        SqliteSchedulerStore.open_readonly(db_path or default_engine_db_path()),
+        artifact_root=artifact_root,
     )

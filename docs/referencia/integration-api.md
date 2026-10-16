@@ -5,7 +5,7 @@ futuro supervise el scheduler local sin acceder a SQLite ni rutas privadas.
 
 ## Versión del contrato
 
-- Versión actual de la API: **1.8** (`apiVersion.major` / `apiVersion.minor`).
+- Versión actual de la API: **1.9** (`apiVersion.major` / `apiVersion.minor`).
 - Misma major: compatible; campos desconocidos se ignoran en consumidores.
 - Major distinta: el consumidor debe detenerse con `UPDATE_REQUIRED` y no emitir
   más peticiones de recursos.
@@ -18,7 +18,7 @@ Todas las órdenes bajo `integration` escriben **un único documento JSON** en s
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 8 },
+  "apiVersion": { "major": 1, "minor": 9 },
   "ok": true,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": {},
@@ -30,7 +30,7 @@ Error:
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 8 },
+  "apiVersion": { "major": 1, "minor": 9 },
   "ok": false,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": null,
@@ -63,8 +63,8 @@ ai_dev_loop integration info [--output json]
 - No requiere ledger del scheduler, no crea directorios XDG y no sondea Codex.
 - `data.aiDevLoopVersion` es la versión del paquete instalado.
 - `data.capabilities` declara de forma honesta qué lecturas existen en esta
-  versión. En **1.8**, `runs`, `sequences`, `reviewInspection`, `processOutput`
-  y `codexCapacity` son `true`.
+  versión. En **1.9**, `runs`, `sequences`, `reviewInspection`, `processOutput`,
+  `codexCapacity` y `dashboard` son `true`.
 
 ## Capacidad Codex local (API 1.5)
 
@@ -185,6 +185,43 @@ ai_dev_loop integration run output RUN_ID --attempt ATTEMPT_ID --stream stdout|s
 
 Los esquemas empaquetados viven en `src/ai_dev_loop/schemas/integration-api-*.json`.
 
+## Consultas compartidas del dashboard (API 1.9)
+
+```bash
+ai_dev_loop integration dashboard projects [--offset N --limit N]
+ai_dev_loop integration dashboard summary --from UTC --to UTC [--project NAME] [--time-zone IANA]
+ai_dev_loop integration dashboard runs --from UTC --to UTC [--project NAME] [--time-zone IANA] [--offset N --limit N]
+ai_dev_loop integration dashboard activity --from UTC --to UTC --metric submissions|review-rounds|process-hours [--project NAME] [--time-zone IANA]
+```
+
+- `from` es inclusivo y `to` exclusivo; ambos se normalizan a UTC. El rango
+  máximo es 366 días. `timeZone` usa un nombre IANA y por defecto es
+  `America/La_Paz`.
+- `summary` y `runs` usan la cohorte cuyo primer lanzamiento de ejecución está
+  dentro del rango. Incluyen turnos de implementer Cursor/Codex y reviews Codex,
+  pero excluyen creación de chat, preflight y sondas. `runs` conserva provider y
+  linaje de secuencia, incluido `implementer_retry`.
+- `activity` fecha submissions y rounds de review por evento, no por la cohorte
+  iniciada. Cada `(runId, iteration)` aporta como máximo un round. `process-hours`
+  devuelve segundos de procesos resueltos, suma procesos paralelos y los divide
+  por medianoche en la zona indicada; no inventa duración activa o incierta.
+- Todos los resultados incluyen `observedAt`, filtros canónicos y cobertura
+  explícita. Los totales de `summary` no dependen de la página de `runs`.
+- Cada elemento `projects[]` de `summary` incluye `otherStates[]` con el valor
+  crudo exacto de cada estado no reconocido y su `count`. Sus etiquetas son
+  únicas, están ordenadas y la suma de sus conteos coincide exactamente con
+  `stateCounts.other`; el campo evita derivar el agregado desde páginas de
+  `dashboard.runs`.
+- Las lecturas abren un snapshot SQLite validado en modo solo lectura. No migran,
+  reparan ni controlan el scheduler. Tienen límites de 10.000 runs relevantes,
+  100.000 intentos de ejecución contribuyentes, 5 segundos y 240 KiB; al
+  excederlos fallan sin totales parciales. La admisión usa la operación y el rango
+  solicitados sin perder la validación del historial autoritativo leído.
+- Un ledger ausente produce colecciones vacías sin crearlo. Esquemas no
+  soportados, corrupción y fallos de lectura usan los códigos seguros existentes.
+- La consulta no incluye prompts, salida de procesos, sesiones, rutas privadas ni
+  capacidad Codex actual. Esos contenidos conservan sus interfaces explícitas.
+
 ## Implementer, capacidad y timeout por rol (API 1.7+)
 
 Los resúmenes de run incluyen `implementerProvider`; inspect agrega
@@ -200,7 +237,7 @@ Status/history/timeline exponen provider/componente y rol/turno sin prompts,
 respuestas ni IDs completos. El siguiente paso de espera implementer es tick.
 
 Capabilities: `dualImplementers=true`, `mixedImplementerSequences=true`,
-`codexImplementerManualRecovery=true`. API 1.8 la habilita porque `--force` cubre
+`codexImplementerManualRecovery=true`. API 1.8 la habilitó porque `--force` cubre
 standalone y la hoja vigente de secuencia. `phase-runs` expone el intento aditivo
 `implementer_retry`; los consumidores de la misma major deben tolerar este valor
 nuevo. El retry acotado de timeout conserva los campos aditivos introducidos en 1.7.
@@ -210,3 +247,78 @@ completion del rol correcto, paths confinados y hashes capturados cuando existen
 Los bytes son sensibles y se solicitan explícitamente, con los límites/snapshot
 existentes. Metadatos ausentes en intentos históricos dan truncación desconocida;
 no se fabrica contenido. Estas lecturas no migran ni mutan el ledger.
+
+## Adaptador HTTP loopback del dashboard
+
+`ai_dev_loop dashboard serve --port PORT` proyecta las mismas lecturas en proceso,
+sin invocar la CLI como subprocess por petición. Enlaza solamente
+`127.0.0.1:PORT` y acepta la ruta `POST /api/dashboard/read` con cuerpo JSON:
+
+```json
+{"operation":"dashboard.projects","parameters":{"offset":0,"limit":25}}
+```
+
+Las operaciones permitidas son `dashboard.projects`, `dashboard.summary`,
+`dashboard.runs`, `dashboard.activity`, `run.inspect`, `run.timeline`,
+`sequence.inspect`, `sequence.phase-runs`, `machine.codex-capacity`,
+`run.initial-prompt`, `run.review`, `run.review-content` y `run.output`. No existe
+dispatch genérico de comandos, SQL, argv o rutas. Los parámetros de rango usan
+`fromUtc`, `toUtc`, `timeZone` y `projectName`; los identificadores usan `runId`,
+`sequenceId` y `attemptId`. Páginas HTTP usan 25 por defecto y máximo 100. Las
+lecturas de contenido usan `byteOffset` y `limit`, con máximo fijo de 65.536 bytes.
+
+El cliente debe enviar `Host: 127.0.0.1:PORT` y, para la ruta API, el `Origin`
+exacto `http://127.0.0.1:PORT`. No hay CORS wildcard, credenciales, login ni proxy
+trust. El cuerpo de request está limitado a 16 KiB y el sobre de respuesta a
+240 KiB. El servidor admite como máximo cuatro handlers y dos trabajos de
+servicio, con una sola sonda de capacidad; saturación devuelve `503` sin crear una
+cola ilimitada. Las respuestas usan `no-store`, CSP same-origin, `nosniff` y
+`Referrer-Policy: no-referrer`.
+
+`run.review` y `run.review-content` autentican exclusivamente intentos reviewer
+Codex (`component=codex` más efecto de review); un intento
+`codex_implementer` no es contenido reviewer. `run.output` conserva la
+autenticación de output específica para Cursor, implementer Codex y reviewer.
+Prompts y stdout/stderr se cargan solo por selección explícita, paginados y sin
+cache durable del servidor. El servidor mantiene la semántica read-only de los
+servicios existentes y no controla el scheduler.
+
+El mapa local consume páginas explícitas de `dashboard.runs` y conserva cada
+`runId` y binding de secuencia, incluidas generaciones de reemplazo. La línea de
+tiempo seleccionada consume `run.inspect` y páginas de `run.timeline`: clasifica
+por separado turnos implementer Cursor, turnos implementer Codex y reviews Codex,
+y representa intentos sin lanzamiento o sin fin observado sin inventar duración.
+Cambiar de run o de filtros cancela y retira respuestas anteriores. Estas vistas
+no solicitan prompt, review-content ni output; ese contenido sigue requiriendo
+una acción deliberada en su superficie asignada.
+
+### Ciclo de refresco visible
+
+El frontend local coordina todas las lecturas en memoria con un máximo de dos
+requests activos y timeout acotado. No solapa una clave idéntica ni intenta
+«ponerse al día» con ráfagas si una lectura tarda más que su cadencia. Resumen,
+primera página visible del mapa y actividad usan 30 segundos; metadata y primera
+página de timeline del run seleccionado usan 10 segundos; capacidad actual usa
+60 segundos. Las páginas históricas agregadas con `Load more` no se convierten en
+claves periódicas.
+
+`Pause automatic refresh`, una pestaña oculta, el retiro del último widget y la
+salida de la ruta cancelan trabajo periódico propio. `Resume` hace una lectura
+nueva por clave visible sin replay de intervalos perdidos. `Refresh applied
+scope` funciona durante Pause y reinicia el mapa en la primera página; no carga
+contenido sensible. Al reiniciar descarta las páginas agregadas, pero una falla
+conserva como último éxito la primera página del mismo filtro real, con sus
+fechas originales. Cada página histórica retenida conserva una sola observación
+fechada y no se vuelve una clave de polling. La lectura independiente de
+capacidad no bloquea el inicio ni el Refresh del mapa. Prompt, review-content y
+stdout/stderr siguen siendo lecturas deliberadas, paginadas y nunca periódicas.
+
+Ante un fallo se conserva solamente la última observación exitosa en memoria,
+con sus fechas originales, edad y error visibles. Un filtro, métrica o selección
+nuevos usan otra generación y no heredan datos del scope anterior. No existe
+cache durable, service worker, telemetría ni reconstrucción de una lectura en
+vuelo después de reiniciar el servidor o el navegador.
+
+La referencia consolidada de filtros, métricas, roles, paginación y límites está
+en [Referencia del dashboard](dashboard.md); la operación del servidor instalado
+está en [Dashboard local](../operacion/dashboard-local.md).
