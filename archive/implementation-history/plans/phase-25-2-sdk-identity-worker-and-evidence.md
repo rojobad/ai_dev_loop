@@ -26,6 +26,13 @@ identity changes, metrics presentation, provider switching and skill edits.
 
 ## Required Context
 
+Use the replanned overview baseline (`558b799`, implemented Phases 26–28),
+not the original Phase 23-only checkout. Preserve Codex implementation/recovery,
+role-specific capacity and reviewer identities, manifest v3 short names, SQLite
+schema-17 presentation metadata and Integration API 1.11/Dashboard reads. The
+installed driver executes this slice with Codex `gpt-5.6-sol` / `xhigh`; project
+Cursor SDK model settings describe the feature being built, not this execution.
+
 Read [the overview](phase-25-cursor-sdk-and-token-usage.md), accepted
 [25.1](phase-25-1-sdk-foundation-and-configuration.md) findings and
 [POC](../findings/phase-25-sdk-poc/README.md). Verify F-01–F-04 in the checkout.
@@ -35,11 +42,13 @@ recovery records; application `submission.py`, `sequence_prepare.py`,
 `cursor_workflow_service.py`, `cursor_evidence.py`, `run_state_bridge.py`,
 `systemd_backend.py`, `attempt_envelope.py`; `cursor_attempt_runner.py`,
 `process.py`, infrastructure paths/SQLite/protected artifacts and Integration API
-process-output readers. Keep the Codex worker/builders as reviewer authority.
+process-output readers. Inspect `codex_implementer_attempt_runner.py`,
+`application/codex_evidence.py`, role dispatch/preflight and Dashboard observation
+queries. Codex implementer and reviewer retain their distinct workers/bindings.
 
 ## Cursor Rules And Skills
 
-Follow `AGENTS.md` and the eight `.cursor/rules/` listed by the overview. Read
+Follow `AGENTS.md` and the ten `.cursor/rules/` listed by the overview. Read
 `.agents/skills/create-cursor-plan/SKILL.md`; preserve it and the separate
 read-only `.agents/skills/review-staged-ai-dev-loop-execution/SKILL.md`.
 No `.cursor/skills/` exists. Update affected rule statements about positional CLI
@@ -51,10 +60,13 @@ prompts/chat UUIDs only when their SDK replacements are implemented and tested.
   Cursor-specific IDs accept exact observed agent-prefixed/bare UUID and native
   run-prefixed UUID forms. Codex UUID validation remains unchanged.
 - Introduce distinct SDK context/state/event/sequence/invocation schema versions
-  using the next free version for each changed contract. Record those versions
+  using the next free version for each changed contract (submitted contexts above
+  v6; frozen SDK definitions/entries above v2; SDK manifest v4 extends named v3).
+  Record those versions
   and canonical fields in findings. Frozen SDK objects are discriminated by
-  runtime/version and required non-null fields; old missing fields retain their
-  historical CLI meaning. Do not broadly relax old UUID or extra-key validators.
+  runtime/version and required non-null fields; old missing SDK fields retain the
+  effective provider's historical runtime (Cursor CLI or Codex CLI). Do not
+  broadly relax old UUID or extra-key validators.
 - New runtime binding includes conversation_owner_run_id, conversation_key,
   exact agent_id and a typed optional native_run_id only before send confirmation;
   native_run_id is mandatory in confirmed running/terminal evidence. SDK ID null
@@ -79,10 +91,15 @@ prompts/chat UUIDs only when their SDK replacements are implemented and tested.
 
 **W-01 — Frozen inputs and versioned identity.** Replace 25.1's submit/prepare
 guard with actual SDK bindings. Propagate the complete selection through lazy
-sequence materialization and context-copy callers. Add new manifest shapes for
-SDK overrides while retaining old schema readers. Update SQLite filters that
-hard-code context schema 4 for sequences to recognize semantic sequence binding
-across versions. Prove hashes/idempotency differ when authority-bearing inputs
+sequence materialization and context-copy callers. Add SDK manifest v4 overrides
+by extending v3 short-name validation and
+independent implementer/reviewer settings. Keep installed v3 Codex preparations
+and genuine accepted v1/v2/v3 replay intact. Update all SQLite/content/Dashboard
+version allowlists to recognize validated sequence/provider semantics across
+versions, including existing contexts v5/v6. Preserve short-name copy-once
+materialization/recovery and later manual renames; do not put aliases into new
+execution bindings or recompute accepted identity hashes. Prove hashes/idempotency
+differ when authority-bearing inputs
 change and later YAML changes do not alter a frozen definition.
 
 **W-02 — Durable creation and send correlation.** Persist authenticated creation
@@ -110,8 +127,11 @@ summary surfaces must not leak raw content/keys/full identities.
 Cover normal bridge closure and timeout/abort stopping the **entire owned tree**.
 Unproved termination holds the reservation and reports reconciliation pending.
 No retry is dispatched in this slice for SDK failures; put an explicit temporary
-runtime-specific guard on automatic timeout/capacity continuation and cursor
-recovery eligibility. Historical CLI retry semantics remain intermediate-only.
+runtime-specific guard on automatic timeout/capacity continuation and Cursor
+recovery eligibility, including the Cursor branch of public `implementer-retry`.
+Codex continuation, role-bound waits, timeout/force recovery and held abort
+remain enabled and independently tested. Historical Cursor CLI retry semantics
+remain intermediate-only.
 
 **W-04 — Normal production workflow.** Drive submit/start/tick -> SDK initial
 implementation -> existing staging -> Codex bootstrap -> exact fix -> same SDK
@@ -119,7 +139,12 @@ agent correction -> exact Codex resume -> accepted result. Wire normal sequence
 non-final checkpoint and next-phase handoff, preserving independent agents per
 new conversation and existing final staging behavior. Cancellation suppresses
 late completion and later agent/staging/review work. Verify all changed reader
-and content-auth callers, not only the SDK runner.
+and content-auth callers, not only the SDK runner. Also prove existing
+Codex-only initial/correction acceptance and a mixed Cursor-SDK/Codex sequence
+with distinct role identities. The SDK initial/correction effects must remain
+recognized execution effects for Dashboard cohorts/activity; agent creation,
+probes and reconciliation-only reads/cancels cannot become inference or reviews.
+Preserve bounded reads, aliases, filters/paging and explicit content protections.
 
 Boundary: queued frozen SDK context -> existing admission/reservation -> persisted
 create intent -> exact durable agent binding -> persisted send intent -> native
@@ -136,7 +161,9 @@ Add `tests/unit/scheduler/test_phase25_2_sdk_contracts.py`,
 `tests/integration/test_phase25_2_sdk_workflow.py`. Capture genuine pre-25 fixture
 contexts, states, manifests, events/invocations and ledger rows with baseline
 provenance under `tests/fixtures/phase25_historical/`; reuse valid existing Phase
-21/22/23 fixtures. Capture from old writers before replacing them, without live
+21/22/23 fixtures and accepted Phase 27/28 fixtures (v5/v6 contexts, v2
+implementer definitions, named v3 inputs and schema-16/17 read behavior). Capture
+from old writers before replacing them, without live
 agents or editing old bytes to add SDK fields. Use fake bridge child trees, fake
 SDK events and fake Codex; temporary homes/keys are synthetic.
 
@@ -145,7 +172,7 @@ SDK events and fake Codex; temporary homes/keys are synthetic.
 | W-01 | CLI submit/sequence prepare, store reload/materialization and sequence listing preserve SDK fields/override precedence; old hashes/readers remain valid; malformed IDs cannot relax B identity. |
 | W-02 | Barriers prove agent binding precedes send, send intent precedes inference and returned run ID is journaled. Lost create/send result produces uncertainty, zero automatic redispatch and no released reservation. |
 | W-03 | Actual worker/backend stops bridge and descendant tool on timeout/abort; launcher-only kill is insufficient. Partial/bounded capture and secret sentinels are retained/redacted correctly; explicit content reads authenticate SDK artifacts. |
-| W-04 | Real scheduler loop accepts normal implementation/correction and two-phase sequence with fake SDK/Codex; exact prompts/B are preserved, only non-final checkpoint commits occur, abort prevents late adoption. |
+| W-04 | Real scheduler loop accepts SDK and Codex initial/correction plus mixed named sequence with fake providers; independent role identities/prompts and Dashboard effect classification are preserved; only non-final checkpoints occur and abort prevents late adoption. |
 
 The temporary retry guard must be tested through automatic tick and public
 cursor-retry check/mutation callers. Do not defer termination safety, historical
@@ -154,7 +181,7 @@ reader compatibility or normal workflow wiring to later acceptance.
 ## Validation
 
 ```bash
-TMPDIR=/tmp TMP=/tmp TEMP=/tmp .venv/bin/python -m pytest -q tests/unit/scheduler/test_phase25_2_sdk_contracts.py tests/unit/scheduler/test_phase25_2_sdk_worker.py tests/integration/test_phase25_2_sdk_workflow.py tests/unit/scheduler/test_schema.py tests/unit/scheduler/test_schema_readonly_historical.py tests/integration/test_phase17_4_cursor_workflow.py tests/integration/test_phase17_5_scheduler_review_loop.py tests/unit/scheduler/test_attempt_executor.py tests/integration/test_phase20_1_sequence_prepare.py tests/integration/test_phase20_3_sequence_handoff.py
+TMPDIR=/tmp TMP=/tmp TEMP=/tmp .venv/bin/python -m pytest -q tests/unit/scheduler/test_phase25_2_sdk_contracts.py tests/unit/scheduler/test_phase25_2_sdk_worker.py tests/integration/test_phase25_2_sdk_workflow.py tests/unit/scheduler/test_schema.py tests/unit/scheduler/test_schema_readonly_historical.py tests/integration/test_phase17_4_cursor_workflow.py tests/integration/test_phase17_5_scheduler_review_loop.py tests/unit/scheduler/test_attempt_executor.py tests/integration/test_phase20_1_sequence_prepare.py tests/integration/test_phase20_3_sequence_handoff.py tests/unit/scheduler/test_phase27_1_implementer_inputs.py tests/unit/scheduler/test_phase27_2_codex_implementer.py tests/integration/test_phase27_3_implementer_sequences.py tests/integration/test_phase28_short_names.py tests/unit/dashboard/test_metrics.py tests/integration/test_phase26_1_dashboard_queries.py
 .venv/bin/python -m ruff format --check .
 .venv/bin/python -m ruff check .
 .venv/bin/python -m mypy src/ai_dev_loop

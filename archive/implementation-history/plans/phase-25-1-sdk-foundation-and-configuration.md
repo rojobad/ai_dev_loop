@@ -16,8 +16,9 @@ timeouts or installing the SDK into the live workstation.
 
 Packaging extra, SDK integration port/infrastructure, version-2 config parser,
 safe credential/store path helpers, isolated bridge lifecycle, offline tests,
-affected reference docs and project rules. New SDK input is explicitly guarded
-at submit/sequence-prepare until 25.2 supplies its durable bindings.
+affected reference docs and project rules. New Cursor SDK input is explicitly guarded
+at submit/sequence-prepare until 25.2 supplies its durable bindings; Codex
+implementation, including v2 source config with Codex selected, stays usable.
 
 ## Out of Scope
 
@@ -26,6 +27,13 @@ metric projections, historical execution, Phase 24, real credentials/model calls
 timer/installation actions, planning/review skills and unrelated Git mutations.
 
 ## Required Context
+
+Use the replanned overview baseline (`558b799`, implemented Phases 26–28),
+not the original Phase 23-only checkout. Preserve Codex implementation/recovery,
+role-specific capacity and reviewer identities, manifest v3 short names, SQLite
+schema-17 presentation metadata and Integration API 1.11/Dashboard reads. The
+installed driver executes this slice with Codex `gpt-5.6-sol` / `xhigh`; project
+Cursor SDK model settings describe the feature being built, not this execution.
 
 Read [the Phase 25 overview](phase-25-cursor-sdk-and-token-usage.md), its approved
 configuration/storage contracts and [POC index](../findings/phase-25-sdk-poc/README.md).
@@ -38,9 +46,9 @@ under `src/ai_dev_loop/` and `tests/` before editing.
 
 ## Cursor Rules And Skills
 
-Follow `AGENTS.md` and all eight `.cursor/rules/*.mdc` listed in the overview:
+Follow `AGENTS.md` and all ten `.cursor/rules/*.mdc` listed in the overview:
 governance, orchestrator, state/schema, loop/resume, abort, Codex review,
-docs/acceptance and global integrations. Read
+docs/acceptance, global integrations, Dashboard and Dashboard refinements. Read
 `.agents/skills/create-cursor-plan/SKILL.md`; preserve that skill and
 `.agents/skills/review-staged-ai-dev-loop-execution/SKILL.md`. No `.cursor/skills/`
 exists. Correct directly affected rules/docs without advertising later dispatch.
@@ -53,6 +61,10 @@ exists. Correct directly affected rules/docs without advertising later dispatch.
 - Pin `cursor-sdk==1.0.37` in optional extra `cursor-sdk`; do not upgrade Python,
   alter system packages or require external Node. Package selection is an
   infrastructure dependency, not provider switching configuration.
+- Preserve Phase 27 implementer selection/serialization/overrides and independent
+  Codex model/effort/timeout. Codex-provider v1/v2 admissions must not import, probe
+  or authenticate Cursor. Add negative-dependency tests with no Cursor executable,
+  extra or key; temporary SDK guards cannot intercept that provider.
 - Follow the overview's explicit v2 shape. Strict booleans for `fast`, strings
   for `context`/`reasoning_effort`; allow other catalog parameters as nonempty
   strings or strict booleans. Canonical parameters are sorted by key; convert
@@ -89,8 +101,13 @@ work; raising the project's minimum needs a new explicit decision.
 model selection. Freeze-ready canonical values must preserve `fast: false` and
 catalog parameter identity. V1 remains parseable with its original semantics.
 Reject incomplete or CLI-only SDK fields. Existing submit/sequence preparation
-must reject v2 at the temporary boundary before freezing a false CLI binding or
-performing any agent/network call. 25.2 replaces this guard with real freeze.
+must reject Cursor-selected v2 at the temporary boundary before freezing a false
+CLI binding or performing any agent/network call. Codex-selected v1/v2 must
+retain normal frozen implementer/reviewer settings and require no Cursor runtime.
+Resolve version-specific defaults before merging; never inject CLI command/model
+fields into SDK config. Preserve explicit provider changes between config layers
+and the old omission/null rules without changing providers within a run. 25.2
+replaces this guard with real freeze.
 Do not remove active CLI execution at this checkpoint.
 
 **F-03 — Credential/store adapter boundaries.** Implement safe reference resolution
@@ -127,7 +144,7 @@ recorded POC facts into independent expected assertions. No real keys/models.
 | Contract | Acceptance scenario and production path |
 | --- | --- |
 | F-01 | Actual built package/extra on Python 3.11 runs health/version; base package without SDK imports help and historical readers; no global package changes. |
-| F-02 | Actual config loader handles v1/v2, explicit false, null/absent/type/unknown-key cases; CLI submit and sequence prepare reject v2 at the documented temporary boundary with zero agent calls. |
+| F-02 | Actual config loader handles v1/v2 and provider/default precedence, explicit false, null/absent/type/unknown-key cases; named submit/v3 prepare reject Cursor SDK dispatch only, while Codex v1/v2 succeeds without Cursor dependencies and freezes independent role settings. |
 | F-03 | Adapter receives exact key/options, bridge/tool environments and captured logs omit key sentinels; unsafe refs/modes/overlap fail; separate client/store roots remain distinct. |
 | F-04 | Simulated 401/429/timeout/busy/feature errors have exact safe classifications and zero mutating retries; public replay works despite unreliable supports flag; no private attributes used. |
 
@@ -138,7 +155,7 @@ environment, not rely on monkeypatching an already imported SDK module.
 ## Validation
 
 ```bash
-TMPDIR=/tmp TMP=/tmp TEMP=/tmp .venv/bin/python -m pytest -q tests/unit/test_phase25_1_sdk_config.py tests/unit/test_phase25_1_sdk_adapter.py tests/integration/test_phase25_1_sdk_packaging.py tests/unit/test_config.py tests/unit/test_cursor_runner.py
+TMPDIR=/tmp TMP=/tmp TEMP=/tmp .venv/bin/python -m pytest -q tests/unit/test_phase25_1_sdk_config.py tests/unit/test_phase25_1_sdk_adapter.py tests/integration/test_phase25_1_sdk_packaging.py tests/unit/test_config.py tests/unit/test_cursor_runner.py tests/unit/scheduler/test_phase27_1_implementer_inputs.py tests/integration/test_phase28_short_names.py
 .venv/bin/python -m ruff format --check .
 .venv/bin/python -m ruff check .
 .venv/bin/python -m mypy src/ai_dev_loop

@@ -15,7 +15,8 @@ native-store repairs, SDK force expiration, activity timeouts or parallel agents
 ## Scope
 
 Native-run reconciliation, process-tree termination proof, error classification,
-automatic timeout/capacity and explicit cursor-retry contracts, Phase 23 successor
+automatic timeout/capacity, the Cursor branch of implementer-retry and explicit
+cursor-retry contracts, Phase 23/27 successor
 lineage, correction/review budgets, sequence replacement, cancellation races,
 affected schemas/readers/docs and production-path tests.
 
@@ -27,20 +28,30 @@ agent activity, package installation and planning/review skill changes.
 
 ## Required Context
 
+Use the replanned overview baseline (`558b799`, implemented Phases 26–28),
+not the original Phase 23-only checkout. Preserve Codex implementation/recovery,
+role-specific capacity and reviewer identities, manifest v3 short names, SQLite
+schema-17 presentation metadata and Integration API 1.11/Dashboard reads. The
+installed driver executes this slice with Codex `gpt-5.6-sol` / `xhigh`; project
+Cursor SDK model settings describe the feature being built, not this execution.
+
 Read [the overview](phase-25-cursor-sdk-and-token-usage.md), accepted
 [25.2](phase-25-2-sdk-identity-worker-and-evidence.md) contracts/findings and
 [POC crash/cancel evidence](../findings/phase-25-sdk-poc/README.md). Verify W-01–W-04
 and temporary guard locations. Inspect current application Cursor timeout/retry,
 recovery check, initial/correction/sequence recovery services and evidence,
 restart reconciler, abort services, attempt_service/systemd_backend; domain
-recovery records, state/events/lineage and actual public CLI callers. Native
+recovery records, state/events/lineage and actual public CLI callers. Read
+`implementer_timeout_retry.py`, `implementer_failure_recovery.py`,
+`sequence_implementer_recovery.py`, Phase 27.4–27.7 acceptance and presentation
+metadata copying; the Codex branches must remain operational. Native
 runtime death in the POC left a tool alive and a stale `running` run. Registered
 get-run -> cancel -> confirm -> exact-agent resume succeeded after termination;
 detached cancellation failed. These facts define mandatory regression coverage.
 
 ## Cursor Rules And Skills
 
-Follow `AGENTS.md` and all eight overview `.cursor/rules/`. Read
+Follow `AGENTS.md` and all ten overview `.cursor/rules/`. Read
 `.agents/skills/create-cursor-plan/SKILL.md`; preserve it and
 `.agents/skills/review-staged-ai-dev-loop-execution/SKILL.md`. No `.cursor/skills/`
 exists. Update directly affected loop/abort/state rules to the implemented native
@@ -65,8 +76,11 @@ identity and recovery path, keeping reviewer B and Git authority intact.
   For terminal runs, read/replay without cancel; do not trust supports flags over
   actual state/operation contracts. No `SendOptions.local.force` fallback.
 - Keep current fixed-timeout automatic retry count/delay, capacity policy and
-  manual `scheduler cursor-retry`, `--check`, `--force`, review retry/extend
-  semantics. `cursor-retry --force` is scheduler authority, not an SDK flag.
+  manual `scheduler implementer-retry` delegation to Cursor and compatible
+  `scheduler cursor-retry`, `--check`, `--force`, review retry/extend semantics.
+  Keep Codex timeout/generic-failure recovery, pending-role capacity and exact
+  session/retry consumption unchanged. SDK guards must never block those roles.
+  `cursor-retry --force` is scheduler authority, not an SDK flag.
 - Do not turn a generic `InternalServerError` or a transient network timeout
   into usage-limit evidence. Honor safe structured codes, retry_after, native
   status and the authenticated attempt that actually failed.
@@ -86,7 +100,10 @@ unfinished work to reconcile, not permission to expire it or create a new agent.
 sequence leaf failures and repeated successors. Inherit stable conversation
 owner/store/options and exact B, prompt/fix evidence, ceiling/counters. Retain
 source immutability and the existing publish/adopt/cancellation transaction and
-sequence relation. Reject a stale sequence leaf lacking its current relation.
+sequence relation. Copy source short names once on successor publication and
+never overwrite an operator rename on replay. Reject a stale sequence leaf
+lacking its current relation. Preserve distinct `cursor_retry` versus
+`implementer_retry` ancestry and both paths in mixed-provider sequences.
 SDK get-run operations remain observations/cancellations until the scheduler
 durably publishes authorization for the successor's prompt.
 
@@ -140,7 +157,7 @@ authentic schema-conforming findings and completed reviews.
 | Contract | Independent production-path acceptance |
 | --- | --- |
 | R-01 | Timeout/capacity tick flows prove dead tools, get exact stale run, cancel/confirm and continue same agent once; limits/delays and unknown observation holds remain unchanged. |
-| R-02 | Actual cursor-retry check/force, initial/correction successor and sequence replacement keep source bytes, conversation/store/B/budgets; stale leaf is rejected and accepted leaf advances normally. |
+| R-02 | Actual Cursor implementer-retry/cursor-retry check/force, initial/correction successor and mixed sequence replacement keep source bytes, store/B/budgets/names; Codex recovery still works, stale leaf is rejected and accepted leaf advances normally. |
 | R-03 | Kill between native send and ID publication: unique authenticated run is adopted, multiple/missing runs block with zero resend. Lost terminal envelope is recovered without inference; lost create identity never creates a replacement. |
 | R-04 | Launcher-only death and runtime death with live tools retain ownership; eventual proved cleanup converges. Abort races reject late results/prompts/checkpoints while preserving worktree/artifacts. |
 
@@ -152,7 +169,7 @@ the pinned SDK's generic server errors and contradictory capability flags.
 ## Validation
 
 ```bash
-TMPDIR=/tmp TMP=/tmp TEMP=/tmp .venv/bin/python -m pytest -q tests/unit/scheduler/test_phase25_3_sdk_recovery.py tests/unit/scheduler/test_phase25_3_sdk_dispatch_uncertainty.py tests/integration/test_phase25_3_sdk_recovery.py tests/integration/test_cursor_timeout_retry.py tests/integration/test_phase23_1_cursor_recovery_check.py tests/integration/test_phase23_2_initial_recovery.py tests/integration/test_phase23_3_correction_recovery.py tests/integration/test_phase23_4_sequence_recovery.py tests/integration/test_phase17_6_abort_lifecycle.py tests/integration/test_phase17_6_restart_reconcile.py
+TMPDIR=/tmp TMP=/tmp TEMP=/tmp .venv/bin/python -m pytest -q tests/unit/scheduler/test_phase25_3_sdk_recovery.py tests/unit/scheduler/test_phase25_3_sdk_dispatch_uncertainty.py tests/integration/test_phase25_3_sdk_recovery.py tests/integration/test_cursor_timeout_retry.py tests/integration/test_phase23_1_cursor_recovery_check.py tests/integration/test_phase23_2_initial_recovery.py tests/integration/test_phase23_3_correction_recovery.py tests/integration/test_phase23_4_sequence_recovery.py tests/integration/test_phase17_6_abort_lifecycle.py tests/integration/test_phase17_6_restart_reconcile.py tests/unit/scheduler/test_phase27_4_implementer_timeout_retry.py tests/unit/scheduler/test_phase27_5_implementer_failure_recovery.py tests/unit/scheduler/test_phase27_6_sequence_implementer_recovery.py tests/integration/test_phase27_7_recovery_acceptance.py tests/integration/test_phase28_short_names.py
 .venv/bin/python -m ruff format --check .
 .venv/bin/python -m ruff check .
 .venv/bin/python -m mypy src/ai_dev_loop
