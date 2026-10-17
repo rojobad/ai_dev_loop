@@ -45,8 +45,8 @@ async function waitForServer(url: string): Promise<void> {
 async function applyMapScope(page: Page): Promise<void> {
   await page.locator(".filters select").selectOption("map-project");
   await page.getByLabel("IANA time zone").fill("UTC");
-  await page.getByLabel("From").fill("2026-01-01T00:00");
-  await page.getByLabel("Until (exclusive)").fill("2026-01-05T00:00");
+  await page.getByLabel("From").fill("01/01/2026 00:00");
+  await page.getByLabel("Until (exclusive)").fill("05/01/2026 00:00");
   await page.getByRole("button", { name: "Apply" }).click();
   await expect(page.getByText(/Loaded 25 of 28 started runs/)).toBeVisible();
 }
@@ -361,9 +361,9 @@ test("C266-3 failure recovery and filter retirement keep only current memory own
   await expect(page.getByText("Submissions total:")).toBeVisible();
   await expect(page.getByText("29", { exact: true }).last()).toBeVisible();
 
-  await page.getByRole("button", { name: /^current-map-run codex/ }).click();
+  await page.getByLabel("Select loaded run").selectOption("current-map-run");
   await expect(page.getByText(/Selected run:/)).toContainText("current-map-run");
-  await page.getByRole("button", { name: /^attempt-current-map-run-execution Codex implementer/ }).click();
+  await page.getByRole("button", { name: /Attempt ID: attempt-current-map-run-execution/ }).click();
   const control = (name: string) => join(stateRoot, name);
   for (const name of ["hold-content-response", "release-content-response", "content-response-started"]) {
     rmSync(control(name), { force: true });
@@ -378,7 +378,7 @@ test("C266-3 failure recovery and filter retirement keep only current memory own
   // Dispatch to the real Apply handler so this test can exercise an external
   // scope change while that old sensitive reply is still in flight.
   await page.getByRole("button", { name: "Apply" }).dispatchEvent("click");
-  await expect(page.getByText("Select an exact run cell or companion row to inspect it.")).toBeVisible();
+  await expect(page.getByText("Select an exact run cell or the loaded-run control to inspect it.")).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   writeFileSync(control("release-content-response"), "release\n", "utf-8");
   await page.clock.runFor(1_000);

@@ -7,6 +7,12 @@ import {
   RefreshCoordinator,
   canonicalReadKey,
 } from "./refreshCoordinator";
+import {
+  formatAge,
+  formatCalendarDay,
+  formatDuration,
+  formatInstant,
+} from "./time";
 import type {
   DashboardActivityData,
   DashboardActivityMetric,
@@ -67,7 +73,7 @@ export function activityDisplayValue(
 
 function formatValue(metric: DashboardActivityMetric, value: number): string {
   if (metric !== "process-hours") return `${value}`;
-  return `${Number(activityDisplayValue(metric, value).toFixed(3))} hours`;
+  return formatDuration(value);
 }
 
 export function activityCalendarOption(data: DashboardActivityData): EChartsCoreOption {
@@ -81,15 +87,17 @@ export function activityCalendarOption(data: DashboardActivityData): EChartsCore
     tooltip: {
       position: "top",
       renderMode: "html",
-      formatter: (value: unknown) => {
-        const item = typeof value === "object" && value !== null
-          ? (value as Record<string, unknown>)
+      formatter: (eventValue: unknown) => {
+        const item = typeof eventValue === "object" && eventValue !== null
+          ? (eventValue as Record<string, unknown>)
           : {};
         const raw = Array.isArray(item.value) ? item.value : [];
         const date = typeof raw[0] === "string" ? raw[0] : "Unknown date";
-        const amount = typeof raw[1] === "number" ? raw[1] : 0;
-        return `<strong>${date}</strong><br>${amount} ${
-          data.metric === "process-hours" ? "hours" : "events"
+        const day = data.days.find((candidate) => candidate.date === date);
+        const value = day?.value ?? 0;
+        const amount = formatValue(data.metric, value);
+        return `<strong>${formatCalendarDay(date)}</strong><br>${amount}${
+          data.metric === "process-hours" ? "" : " events"
         }`;
       },
     },
@@ -125,13 +133,6 @@ function sameFilter(data: DashboardActivityData, filters: DashboardFilters): boo
     data.filters.timeZone === filters.timeZone &&
     data.filters.projectName === (filters.projectName ?? null)
   );
-}
-
-function observationAge(receivedAt: string): string {
-  const milliseconds = Math.max(0, Date.now() - Date.parse(receivedAt));
-  if (milliseconds < 60_000) return `${Math.floor(milliseconds / 1000)}s old`;
-  if (milliseconds < 3_600_000) return `${Math.floor(milliseconds / 60_000)}m old`;
-  return `${Math.floor(milliseconds / 3_600_000)}h old`;
 }
 
 export function ActivityCalendar({
@@ -232,7 +233,7 @@ export function ActivityCalendar({
         <p className="error-banner" role="alert">
           Activity refresh: {state.error}
           {state.observation
-            ? ` · showing the last successful observation (${observationAge(state.observation.receivedAt)})`
+            ? ` · showing the last successful observation (${formatAge(state.observation.receivedAt)})`
             : ""}
         </p>
       ) : null}
@@ -240,8 +241,8 @@ export function ActivityCalendar({
       {state.observation && data ? (
         <>
           <p className="observation-line">
-            Last success · source observed {data.observedAt} · received {state.observation.receivedAt}
-            {` · ${observationAge(state.observation.receivedAt)}`}
+            Last success · source observed {formatInstant(data.observedAt, filters.timeZone)} · received {formatInstant(state.observation.receivedAt, filters.timeZone)}
+            {` · ${formatAge(state.observation.receivedAt)}`}
           </p>
           <p className={`coverage coverage-${data.coverage.dataState}`}>
             Coverage: {data.coverage.dataState}. {partial
@@ -271,7 +272,7 @@ export function ActivityCalendar({
           <ol className="activity-days" aria-label={`${METRIC_LABELS[data.metric]} daily values`}>
             {data.days.map((day) => (
               <li key={day.date}>
-                <time dateTime={day.date}>{day.date}</time>
+                <time dateTime={day.date}>{formatCalendarDay(day.date)}</time>
                 <span>{formatValue(data.metric, day.value)}</span>
               </li>
             ))}

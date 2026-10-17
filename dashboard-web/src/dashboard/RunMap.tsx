@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { DashboardChart } from "./DashboardChart";
 import { escapeHtml } from "./charts";
 import { SUMMARY_REFRESH_MS, RefreshCoordinator, canonicalReadKey } from "./refreshCoordinator";
+import { formatAge, formatInstant } from "./time";
 import type {
   DashboardCoverage,
   DashboardDataSource,
@@ -42,7 +43,7 @@ export interface RunMapProps {
   filters: DashboardFilters;
   datasetKey: string;
   selectedRunId: string | null;
-  onSelectRun: (run: DashboardRunItem) => void;
+  onSelectRun: (run: DashboardRunItem | null) => void;
   theme: "light" | "dark";
 }
 
@@ -55,13 +56,6 @@ interface RunMapGroup {
 
 function safeError(error: unknown): string {
   return error instanceof Error ? error.message : "The run map read failed.";
-}
-
-function observationAge(receivedAt: string): string {
-  const milliseconds = Math.max(0, Date.now() - Date.parse(receivedAt));
-  if (milliseconds < 60_000) return `${Math.floor(milliseconds / 1000)}s old`;
-  if (milliseconds < 3_600_000) return `${Math.floor(milliseconds / 60_000)}m old`;
-  return `${Math.floor(milliseconds / 3_600_000)}h old`;
 }
 
 function sameFilterEcho(filters: DashboardFilters, observation: SourceObservation<unknown> & {
@@ -157,7 +151,10 @@ const renderRunCell: CustomSeriesRenderItem = (_params, api) => {
   };
 };
 
-export function runMapOption(items: DashboardRunItem[]): EChartsCoreOption {
+export function runMapOption(
+  items: DashboardRunItem[],
+  timeZone = "UTC",
+): EChartsCoreOption {
   const groups = groupRunMapItems(items);
   const groupIndex = new Map(groups.map((group, index) => [group.key, index]));
   const positionByRunId = new Map<string, number>();
@@ -174,6 +171,8 @@ export function runMapOption(items: DashboardRunItem[]): EChartsCoreOption {
       runId: item.runId,
       shortName: item.shortName,
       projectName: item.projectName,
+      submittedAt: formatInstant(item.submittedAt, timeZone),
+      firstExecutionLaunchAt: formatInstant(item.firstExecutionLaunchAt, timeZone),
       state: item.state,
       provider: item.implementerProvider,
       phase: binding ? `${binding.ordinal}. ${binding.phaseName}` : "Standalone",
@@ -205,14 +204,19 @@ export function runMapOption(items: DashboardRunItem[]): EChartsCoreOption {
         const runId = typeof item.runId === "string" ? item.runId : "Run";
         const shortName = typeof item.shortName === "string" ? item.shortName : "Run";
         const phase = typeof item.phase === "string" ? item.phase : "Unknown phase";
+        const projectName = typeof item.projectName === "string" ? item.projectName : "Unknown project";
+        const submittedAt = typeof item.submittedAt === "string" ? item.submittedAt : "Unavailable";
+        const launchedAt = typeof item.firstExecutionLaunchAt === "string"
+          ? item.firstExecutionLaunchAt
+          : "Unavailable";
         const sequenceName = typeof item.sequenceName === "string" ? item.sequenceName : null;
         const sequenceId = typeof item.sequenceId === "string" ? item.sequenceId : null;
         const state = typeof item.state === "string" ? item.state : "unknown";
         const provider = typeof item.provider === "string" ? item.provider : "unknown";
         const sequence = sequenceName && sequenceId
-          ? `<br>${escapeHtml(sequenceName)} · ${escapeHtml(sequenceId)}`
+          ? `<br>${escapeHtml(sequenceName)}<br>Sequence ID: ${escapeHtml(sequenceId)}`
           : "";
-        return `<strong>${escapeHtml(shortName)}</strong><br>Run ID: ${escapeHtml(runId)}${sequence}<br>${escapeHtml(phase)}<br>${escapeHtml(provider)} · ${escapeHtml(state)}`;
+        return `<strong>${escapeHtml(shortName)}</strong><br>${escapeHtml(projectName)} · ${escapeHtml(provider)} · ${escapeHtml(state)}<br>Submitted: ${escapeHtml(submittedAt)}<br>First launch: ${escapeHtml(launchedAt)}<br>${escapeHtml(phase)}${sequence}<br>Run ID: ${escapeHtml(runId)}`;
       },
     },
     xAxis: {
@@ -258,7 +262,6 @@ export function RunMap({
   });
   const generation = useRef(0);
   const pageController = useRef<AbortController | null>(null);
-  const rowButtons = useRef(new Map<string, HTMLButtonElement>());
 
   async function loadPage(offset: number, requestGeneration: number) {
     pageController.current?.abort();
@@ -386,7 +389,10 @@ export function RunMap({
   useEffect(() => () => pageController.current?.abort(), []);
 
   const groups = useMemo(() => groupRunMapItems(state.items), [state.items]);
-  const option = useMemo(() => runMapOption(state.items), [state.items]);
+  const option = useMemo(
+    () => runMapOption(state.items, filters.timeZone),
+    [filters.timeZone, state.items],
+  );
   const chartMinWidth = useMemo(
     () =>
       Math.max(
@@ -398,24 +404,21 @@ export function RunMap({
     [groups],
   );
 
-  const select = (runId: string, focusCompanion: boolean) => {
+  const select = (runId: string) => {
+    if (runId === "") {
+      onSelectRun(null);
+      return;
+    }
     const run = state.items.find((item) => item.runId === runId);
     if (!run) return;
     onSelectRun(run);
-    if (focusCompanion) {
-      requestAnimationFrame(() => {
-        const button = rowButtons.current.get(runId);
-        button?.focus({ preventScroll: true });
-        button?.scrollIntoView?.({ block: "nearest" });
-      });
-    }
   };
 
   const chartEvents = useMemo(
     () => ({
       click: (event: unknown) => {
         const runId = runIdFromChartEvent(event);
-        if (runId) select(runId, true);
+        if (runId) select(runId);
       },
     }),
     // The item list is replaced on each page response; exact IDs fence selection.
@@ -443,7 +446,7 @@ export function RunMap({
       {state.observations.length ? (
         <p className="observation-line">
           Page observations: {state.observations.map((item) =>
-            `offset ${item.offset} · ${item.observedAt} received ${item.receivedAt} (${observationAge(item.receivedAt)})`
+            `offset ${item.offset} · ${formatInstant(item.observedAt, filters.timeZone)} observed · ${formatInstant(item.receivedAt, filters.timeZone)} received (${formatAge(item.receivedAt)})`
           ).join(" · ")} (fresh offset pages; not one atomic snapshot)
         </p>
       ) : null}
@@ -451,7 +454,7 @@ export function RunMap({
         <p className="error-banner" role="alert">
           Run map: {state.error}
           {state.observations.length
-            ? ` · showing the last successful visible pages (${observationAge(state.observations[0].receivedAt)})`
+            ? ` · showing the last successful visible pages (${formatAge(state.observations[0].receivedAt)})`
             : ""}
         </p>
       ) : null}
@@ -469,41 +472,21 @@ export function RunMap({
               />
             </div>
           </div>
-          <div className="run-map-groups" aria-label="Keyboard-selectable run map rows">
-            {groups.map((group) => (
-              <section key={group.key} className="run-map-group" aria-label={group.label}>
-                <h3>{group.label}</h3>
-                {group.details ? <p className="field-help">{group.details}</p> : null}
-                <div className="run-map-rows">
-                  {group.items.map((run) => {
-                    const binding = run.sequenceBinding;
-                    return (
-                      <button
-                        type="button"
-                        key={run.runId}
-                        ref={(node) => {
-                          if (node) rowButtons.current.set(run.runId, node);
-                          else rowButtons.current.delete(run.runId);
-                        }}
-                        aria-pressed={selectedRunId === run.runId}
-                        onClick={() => select(run.runId, false)}
-                      >
-                        <span className="run-row-title">{run.shortName}</span>
-                        <span>{run.implementerProvider} implementer · {run.state}</span>
-                        <span>Run ID: {run.runId}</span>
-                        <span>
-                          {binding
-                            ? `Phase ${binding.ordinal} ${binding.phaseName} · generation ${binding.generation} · ${binding.attemptKind}`
-                            : "Standalone"}
-                        </span>
-                        {binding?.sourceRunId ? <span>Replaces {binding.sourceRunId}</span> : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
-            ))}
-          </div>
+          <label className="run-map-selector">
+            Inspect one loaded run
+            <select
+              aria-label="Select loaded run"
+              value={selectedRunId ?? ""}
+              onChange={(event) => select(event.target.value)}
+            >
+              <option value="">No run selected</option>
+              {groups.flatMap((group) => group.items.map((run) => (
+                <option key={run.runId} value={run.runId}>
+                  {group.label} · {run.shortName} · {run.implementerProvider} · {run.runId}
+                </option>
+              )))}
+            </select>
+          </label>
         </>
       ) : !state.loading && (state.observations.length > 0 || !state.error) ? (
         <div className="empty-state">No started runs match the applied scope.</div>

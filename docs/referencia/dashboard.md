@@ -35,6 +35,11 @@ componentes y opciones ECharts no forman parte del contrato de transporte.
 `projectName` es exacto o `null`. El servicio devuelve los filtros canónicos.
 El rango debe ser positivo y no puede superar 366 días.
 
+El frontend edita los límites como `DD/MM/yyyy HH:mm` en la zona IANA elegida y
+solo transporta instantes UTC después de validarlos. Una hora local inexistente
+se rechaza; una hora ambigua por cambio DST exige añadir `Z` o un offset
+`±HH:mm` que coincida con esa zona. El límite final conserva semántica exclusiva.
+
 `summary` y `runs` incluyen cada run cuyo primer lanzamiento de ejecución cae
 en el rango. El primer lanzamiento es la primera petición de ejecución owned;
 crear chats, preflight y probes no cuenta. Proyecto, provider y linaje salen de
@@ -46,6 +51,23 @@ El mapa prefiere `shortName`/`sequenceShortName` en ejes y etiquetas. Conserva
 el nombre original y los IDs completos en detalles/tooltips, y selecciona por
 `runId`/`sequenceId`; aliases duplicados no colapsan runs. Las etiquetas se
 tratan como texto no confiable y se escapan antes de cualquier tooltip HTML.
+Sin selección no aparece metadata de run. Un click de celda o el selector
+compacto accesible muestra exactamente un run y reemplaza la selección anterior,
+sin enfocar una tarjeta distante ni desplazar la página.
+
+El timeline numera todos los intentos por el orden cronológico autoritativo y el
+offset de página: `N - Iteration I - Implementer|Reviewer|Unclassified`. El mismo
+título aparece en el eje, control accesible y modal. Provider/componente/efecto
+siguen visibles como metadata secundaria y el `attemptId` no determina el rol.
+Los IDs exactos permanecen como claves de selección y aparecen al final de la
+metadata humana.
+
+Los instantes visibles usan la zona IANA seleccionada y formato
+`DD/MM/yyyy HH:mm`; los buckets diarios conservan su día ya zonificado y se
+muestran como `DD/MM/yyyy`. Duraciones resueltas se truncan a minutos:
+`00 h 00 m`, `<1 m` o `02 h 35 m`; las desconocidas permanecen no disponibles y
+las horas pueden superar 99. Esta presentación no altera timestamps almacenados,
+offsets, segundos de métricas ni cálculos del productor.
 
 Cada respuesta incluye `observedAt`. Las consultas de scope incluyen
 `coverage.dataState`, conteos de lanzamientos/duraciones ausentes, clases de

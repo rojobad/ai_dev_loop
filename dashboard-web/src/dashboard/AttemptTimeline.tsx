@@ -10,6 +10,12 @@ import {
   RefreshCoordinator,
   canonicalReadKey,
 } from "./refreshCoordinator";
+import {
+  formatAge,
+  formatAxisInstant,
+  formatDuration,
+  formatInstant,
+} from "./time";
 import type {
   AttemptTimelineItem,
   DashboardDataSource,
@@ -25,14 +31,15 @@ export type AttemptRole =
   | "Cursor implementer"
   | "Codex implementer"
   | "Codex reviewer"
-  | "Non-execution / unclassified";
+  | "Unclassified";
 
 export type TimelineShape = "interval" | "launch-marker" | "created-marker";
 
 export interface TimelineVisualRow {
   attempt: AttemptTimelineItem;
+  ordinal: number;
   role: AttemptRole;
-  label: string;
+  caption: string;
   startMs: number;
   endMs: number | null;
   shape: TimelineShape;
@@ -58,17 +65,11 @@ export interface AttemptTimelineProps {
   coordinator: RefreshCoordinator;
   selectedRun: DashboardRunItem | null;
   theme: "light" | "dark";
+  timeZone?: string;
 }
 
 function safeError(error: unknown): string {
   return error instanceof Error ? error.message : "The selected run read failed.";
-}
-
-function observationAge(receivedAt: string): string {
-  const milliseconds = Math.max(0, Date.now() - Date.parse(receivedAt));
-  if (milliseconds < 60_000) return `${Math.floor(milliseconds / 1000)}s old`;
-  if (milliseconds < 3_600_000) return `${Math.floor(milliseconds / 60_000)}m old`;
-  return `${Math.floor(milliseconds / 3_600_000)}h old`;
 }
 
 function recordPageObservation(
@@ -100,20 +101,32 @@ export function attemptRole(attempt: AttemptTimelineItem): AttemptRole {
   ) {
     return "Codex reviewer";
   }
-  return "Non-execution / unclassified";
+  return "Unclassified";
+}
+
+export function attemptCaption(attempt: AttemptTimelineItem, ordinal: number): string {
+  const role = attemptRole(attempt);
+  const captionRole = role === "Codex reviewer"
+    ? "Reviewer"
+    : role === "Unclassified"
+      ? "Unclassified"
+      : "Implementer";
+  return `${ordinal} - Iteration ${attempt.iteration} - ${captionRole}`;
 }
 
 export function buildTimelineRows(items: AttemptTimelineItem[]): TimelineVisualRow[] {
-  return items.map((attempt) => {
+  return items.map((attempt, index) => {
     const launch = attempt.launchRequestedAt === null ? null : Date.parse(attempt.launchRequestedAt);
     const completed = attempt.completedAt === null ? null : Date.parse(attempt.completedAt);
     const created = Date.parse(attempt.createdAt);
     const hasValidInterval = launch !== null && completed !== null && completed >= launch;
     const role = attemptRole(attempt);
+    const ordinal = index + 1;
     return {
       attempt,
+      ordinal,
       role,
-      label: `${role} · iteration ${attempt.iteration} · attempt ${attempt.phaseAttempt}`,
+      caption: attemptCaption(attempt, ordinal),
       startMs: launch ?? created,
       endMs: hasValidInterval ? completed : null,
       shape: hasValidInterval ? "interval" : launch === null ? "created-marker" : "launch-marker",
@@ -162,7 +175,10 @@ const renderAttempt: CustomSeriesRenderItem = (_params, api) => {
   };
 };
 
-export function attemptTimelineOption(items: AttemptTimelineItem[]): EChartsCoreOption {
+export function attemptTimelineOption(
+  items: AttemptTimelineItem[],
+  timeZone = "UTC",
+): EChartsCoreOption {
   const rows = buildTimelineRows(items);
   return {
     animation: false,
@@ -178,15 +194,23 @@ export function attemptTimelineOption(items: AttemptTimelineItem[]): EChartsCore
           : {};
         const line = (key: string, fallback: string) =>
           escapeHtml(typeof data[key] === "string" ? (data[key] as string) : fallback);
-        const endLabel = data.shape === "interval" ? line("completedAt", "unknown") : "No observed duration";
-        return `<strong>${line("attemptId", "Attempt")}</strong><br>${line("role", "Unclassified")}<br>${line("component", "unknown")} · ${line("effectKind", "no effect")}<br>${line("status", "unknown")}<br>${line("startAt", "unknown")} → ${endLabel}`;
+        const endLabel = data.shape === "interval"
+          ? line("completedAt", "Unavailable")
+          : "No observed duration";
+        return `<strong>${line("caption", "Attempt")}</strong><br>${line("role", "Unclassified")}<br>${line("component", "unknown")} · ${line("effectKind", "no effect")}<br>${line("status", "unknown")}<br>${line("startAt", "Unavailable")} → ${endLabel}<br>Duration: ${line("duration", "Unavailable")}<br>Attempt ID: ${line("attemptId", "Unavailable")}`;
       },
     },
-    xAxis: { type: "time", name: "Observed scheduler timestamps" },
+    xAxis: {
+      type: "time",
+      name: `Observed scheduler timestamps · ${timeZone}`,
+      axisLabel: {
+        formatter: (value: number) => formatAxisInstant(value, timeZone),
+      },
+    },
     yAxis: {
       type: "category",
       inverse: true,
-      data: rows.map((row) => row.label),
+      data: rows.map((row) => row.caption),
       axisLabel: { width: 210, overflow: "truncate" },
     },
     series: [
@@ -197,12 +221,19 @@ export function attemptTimelineOption(items: AttemptTimelineItem[]): EChartsCore
         data: rows.map((row, index) => ({
           value: [row.startMs, row.endMs ?? row.startMs, index, row.shape === "interval" ? 0 : row.shape === "launch-marker" ? 1 : 2],
           attemptId: row.attempt.attemptId,
+          caption: row.caption,
           role: row.role,
           component: row.attempt.component,
           effectKind: row.attempt.effectKind,
           status: row.attempt.status,
-          startAt: row.attempt.launchRequestedAt ?? row.attempt.createdAt,
-          completedAt: row.attempt.completedAt,
+          startAt: formatInstant(
+            row.attempt.launchRequestedAt ?? row.attempt.createdAt,
+            timeZone,
+          ),
+          completedAt: row.attempt.completedAt === null
+            ? null
+            : formatInstant(row.attempt.completedAt, timeZone),
+          duration: formatDuration(row.attempt.observedDurationSeconds),
           shape: row.shape,
           itemStyle: { color: colorForRole(row.role) },
         })),
@@ -237,6 +268,7 @@ export function AttemptTimeline({
   coordinator,
   selectedRun,
   theme,
+  timeZone = "UTC",
 }: AttemptTimelineProps): React.JSX.Element {
   const [inspect, setInspect] = useState<{
     loading: boolean;
@@ -392,21 +424,18 @@ export function AttemptTimeline({
   }, [selectedAttemptId, timeline.items]);
 
   const rows = useMemo(() => buildTimelineRows(timeline.items), [timeline.items]);
-  const option = useMemo(() => attemptTimelineOption(timeline.items), [timeline.items]);
+  const option = useMemo(
+    () => attemptTimelineOption(timeline.items, timeZone),
+    [timeline.items, timeZone],
+  );
   const contentDataSource = useMemo(
     () => new CoordinatedDashboardDataSource(dataSource, coordinator),
     [coordinator, dataSource],
   );
 
-  const selectAttempt = (attemptId: string, focusCompanion: boolean) => {
+  const selectAttempt = (attemptId: string) => {
     if (!timeline.items.some((item) => item.attemptId === attemptId)) return;
     setSelectedAttemptId(attemptId);
-    if (focusCompanion) {
-      requestAnimationFrame(() => {
-        const button = attemptButtons.current.get(attemptId);
-        button?.scrollIntoView?.({ block: "nearest" });
-      });
-    }
   };
 
   const closeAttempt = () => {
@@ -423,7 +452,7 @@ export function AttemptTimeline({
     () => ({
       click: (event: unknown) => {
         const attemptId = attemptIdFromChartEvent(event);
-        if (attemptId) selectAttempt(attemptId, true);
+        if (attemptId) selectAttempt(attemptId);
       },
     }),
     // Exact attempt IDs are regenerated only from the current selected run pages.
@@ -435,7 +464,7 @@ export function AttemptTimeline({
     return (
       <section className="panel attempt-timeline-panel" aria-labelledby="timeline-heading">
         <h2 id="timeline-heading">Attempt timeline</h2>
-        <div className="empty-state">Select an exact run cell or companion row to inspect it.</div>
+        <div className="empty-state">Select an exact run cell or the loaded-run control to inspect it.</div>
       </section>
     );
   }
@@ -447,7 +476,7 @@ export function AttemptTimeline({
       <div className="panel-heading">
         <div>
           <h2 id="timeline-heading">Attempt timeline</h2>
-          <p>Selected run: <strong>{selectedRun.shortName}</strong> · {selectedRun.runId}</p>
+          <p>Selected run: <strong>{selectedRun.shortName}</strong> · Run ID: {selectedRun.runId}</p>
         </div>
         <span>{timeline.items.length} loaded / {metadata?.attemptCount ?? "?"} recorded attempts</span>
       </div>
@@ -455,22 +484,25 @@ export function AttemptTimeline({
         <p className="error-banner" role="alert">
           Run metadata: {inspect.error}
           {inspect.observation
-            ? ` · showing last success (${observationAge(inspect.observation.receivedAt)})`
+            ? ` · showing last success (${formatAge(inspect.observation.receivedAt)})`
             : ""}
         </p>
       ) : null}
       {metadata ? (
         <dl className="run-metadata">
-          <div><dt>Run ID</dt><dd>{metadata.runId}</dd></div>
+          <div><dt>Short name</dt><dd>{metadata.shortName}</dd></div>
           <div><dt>Project</dt><dd>{metadata.projectName}</dd></div>
           <div><dt>Raw state</dt><dd>{metadata.state}</dd></div>
           <div><dt>Implementer</dt><dd>{metadata.implementerProvider}</dd></div>
+          <div><dt>Submitted</dt><dd>{formatInstant(metadata.submittedAt, timeZone)}</dd></div>
+          <div><dt>Updated</dt><dd>{formatInstant(metadata.updatedAt, timeZone)}</dd></div>
           <div><dt>Review budget</dt><dd>{metadata.reviewBudget.completed} / {metadata.reviewBudget.max}</dd></div>
           <div><dt>Pending Codex role / turn</dt><dd>{formatOptional(metadata.codexPendingRole)} / {formatOptional(metadata.codexPendingTurn)}</dd></div>
           <div><dt>Capacity reason</dt><dd>{formatOptional(metadata.codexCapacityReason)}</dd></div>
-          <div><dt>Implementer retry wait</dt><dd>{formatOptional(metadata.implementerRetryWaitUntil)}</dd></div>
+          <div><dt>Implementer retry wait</dt><dd>{metadata.implementerRetryWaitUntil === null ? "not recorded" : formatInstant(metadata.implementerRetryWaitUntil, timeZone)}</dd></div>
           <div><dt>Timeout retries</dt><dd>{metadata.implementerTimeoutAutomaticRetries ?? "not recorded"} / {metadata.implementerTimeoutRetryLimit ?? "not recorded"}</dd></div>
           <div><dt>Recorded next action</dt><dd>{metadata.safeNextAction.kind}</dd></div>
+          <div><dt>Run ID</dt><dd>{metadata.runId}</dd></div>
         </dl>
       ) : inspect.loading ? <p className="loading-line">Reading selected run metadata…</p> : null}
       {selectedRun.sequenceBinding ? (
@@ -483,14 +515,14 @@ export function AttemptTimeline({
         <p className="error-banner" role="alert">
           Timeline: {timeline.error}
           {timeline.observations.length
-            ? ` · showing last success (${observationAge(timeline.observations[0].receivedAt)})`
+            ? ` · showing last success (${formatAge(timeline.observations[0].receivedAt)})`
             : ""}
         </p>
       ) : null}
       {timeline.observations.length ? (
         <p className="observation-line">
           Timeline page observations: {timeline.observations.map((item) =>
-            `offset ${item.offset} · ${item.observedAt} received ${item.receivedAt} (${observationAge(item.receivedAt)})`
+            `offset ${item.offset} · ${formatInstant(item.observedAt, timeZone)} observed · ${formatInstant(item.receivedAt, timeZone)} received (${formatAge(item.receivedAt)})`
           ).join(" · ")} (page exhaustion does not complete an attempt)
         </p>
       ) : null}
@@ -514,32 +546,38 @@ export function AttemptTimeline({
                   else attemptButtons.current.delete(row.attempt.attemptId);
                 }}
                 aria-pressed={selectedAttemptId === row.attempt.attemptId}
-                onClick={() => selectAttempt(row.attempt.attemptId, false)}
+                onClick={() => selectAttempt(row.attempt.attemptId)}
               >
-                <span className="run-row-title">{row.attempt.attemptId}</span>
+                <span className="run-row-title">{row.caption}</span>
                 <span>{row.role} · {row.attempt.status}</span>
                 <span>{row.attempt.component} · {row.attempt.effectKind ?? "no recorded effect"}</span>
                 <span>
                   {row.shape === "interval"
-                    ? `${row.attempt.launchRequestedAt} → ${row.attempt.completedAt}`
+                    ? `${formatInstant(row.attempt.launchRequestedAt!, timeZone)} → ${formatInstant(row.attempt.completedAt!, timeZone)} · ${formatDuration(row.attempt.observedDurationSeconds)}`
                     : row.shape === "launch-marker"
-                      ? `Launched ${row.attempt.launchRequestedAt}; no observed end`
-                      : `Created ${row.attempt.createdAt}; not launched`}
+                      ? `Launched ${formatInstant(row.attempt.launchRequestedAt!, timeZone)}; no observed end`
+                      : `Created ${formatInstant(row.attempt.createdAt, timeZone)}; not launched`}
                 </span>
+                <span>Attempt ID: {row.attempt.attemptId}</span>
               </button>
             ))}
           </div>
           {selectedAttempt ? (
             <>
               <p className="selected-attempt" aria-live="polite">
-                Selected attempt {selectedAttempt.attemptId}; metadata modal is open. No content was loaded; inspection still requires a deliberate control.
+                Selected {attemptCaption(selectedAttempt, timeline.items.indexOf(selectedAttempt) + 1)}; metadata modal is open. No content was loaded; inspection still requires a deliberate control.
               </p>
               <AttemptModal
                 key={`${selectedRun.runId}:${selectedAttempt.attemptId}`}
                 attempt={selectedAttempt}
+                caption={attemptCaption(
+                  selectedAttempt,
+                  timeline.items.indexOf(selectedAttempt) + 1,
+                )}
                 dataSource={contentDataSource}
                 runId={selectedRun.runId}
                 onClose={closeAttempt}
+                timeZone={timeZone}
               />
             </>
           ) : null}

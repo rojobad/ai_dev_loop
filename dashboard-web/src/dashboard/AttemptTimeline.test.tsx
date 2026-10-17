@@ -38,8 +38,10 @@ vi.mock("./DashboardChart", () => ({
 }));
 
 import {
+  attemptCaption,
   attemptIdFromChartEvent,
   attemptRole,
+  attemptTimelineOption,
   AttemptTimeline,
   buildTimelineRows,
 } from "./AttemptTimeline";
@@ -171,7 +173,7 @@ describe("C264-2 selected run ownership and race fencing", () => {
       );
     });
     expect(await screen.findByText(/Selected run:/)).toHaveTextContent("current-replacement");
-    expect(screen.getByText("cursor-implementer")).toBeInTheDocument();
+    expect(screen.getByText("Attempt ID: cursor-implementer")).toBeInTheDocument();
 
     await act(async () => {
       dataSource.inspectRequests.get("older-replacement")?.resolve(
@@ -294,7 +296,7 @@ describe("C264-2 selected run ownership and race fencing", () => {
       });
       expect(dataSource.inspectCalls).toBe(2);
       expect(dataSource.timelineCalls).toBe(2);
-      expect(screen.getByText("cursor-implementer")).toBeInTheDocument();
+      expect(screen.getByText("Attempt ID: cursor-implementer")).toBeInTheDocument();
       expect(screen.getByText("project-a")).toBeInTheDocument();
     } finally {
       view.unmount();
@@ -350,7 +352,7 @@ describe("C264-2 selected run ownership and race fencing", () => {
       expect(dataSource.inspectCalls.get(currentRun.runId)).toBe(1);
       expect(dataSource.timelineCalls.get(currentRun.runId)).toBe(1);
       expect(screen.getByText(/Selected run:/)).toHaveTextContent(currentRun.runId);
-      expect(screen.getByText("cursor-implementer")).toBeInTheDocument();
+      expect(screen.getByText("Attempt ID: cursor-implementer")).toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     } finally {
       view.unmount();
@@ -501,7 +503,25 @@ describe("C264-3 attempt timeline semantics", () => {
       },
     ]);
     expect(attemptRole(attempt("not-review", "codex", "codex.implementer_resume", null, null)))
-      .toBe("Non-execution / unclassified");
+      .toBe("Unclassified");
+    expect(attemptCaption(semanticAttempts[2], 3)).toBe("3 - Iteration 1 - Reviewer");
+    const option = attemptTimelineOption(semanticAttempts, "America/La_Paz");
+    expect((option.yAxis as { data: string[] }).data).toEqual([
+      "1 - Iteration 1 - Implementer",
+      "2 - Iteration 1 - Implementer",
+      "3 - Iteration 1 - Reviewer",
+      "4 - Iteration 1 - Implementer",
+      "5 - Iteration 1 - Implementer",
+    ]);
+    const chartData = (option.series as Array<{ data: Array<Record<string, unknown>> }>)[0].data;
+    expect(chartData[2]).toMatchObject({
+      caption: "3 - Iteration 1 - Reviewer",
+      role: "Codex reviewer",
+      attemptId: "codex-reviewer",
+      startAt: "01/01/2026 00:00",
+      completedAt: "01/01/2026 00:30",
+      duration: "00 h 30 m",
+    });
     expect(attemptIdFromChartEvent({ data: { attemptId: "codex-reviewer" } })).toBe(
       "codex-reviewer",
     );
@@ -512,27 +532,86 @@ describe("C264-3 attempt timeline semantics", () => {
     const dataSource = new PagedTimelineDataSource();
     render(<AttemptTimeline coordinator={new RefreshCoordinator()} dataSource={dataSource} selectedRun={standaloneRun} theme="light" />);
     expect(await screen.findByText("Codex implementer · active")).toBeInTheDocument();
-    expect(screen.getByText(/Launched 2026-01-01T06:00:00Z; no observed end/)).toBeInTheDocument();
-    expect(screen.getAllByText(/Created 2026-01-01T00:00:00Z; not launched/)).toHaveLength(21);
+    expect(screen.getByText(/Launched 01\/01\/2026 06:00; no observed end/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Created 01\/01\/2026 00:00; not launched/)).toHaveLength(21);
     expect(screen.getByText("implementer / correction")).toBeInTheDocument();
     expect(dataSource.calls).toEqual([{ runId: "standalone-run", offset: 0 }]);
 
-    await user.click(screen.getByRole("button", { name: /^codex-implementer Codex/ }));
-    expect(screen.getByText(/Selected attempt codex-implementer/)).toHaveTextContent(
+    await user.click(screen.getByRole("button", { name: /^2 - Iteration 1 - Implementer/ }));
+    expect(screen.getByText(/Selected 2 - Iteration 1 - Implementer/)).toHaveTextContent(
       "No content was loaded",
     );
+    expect(screen.getByRole("heading", { name: "2 - Iteration 1 - Implementer" }))
+      .toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close attempt details" }));
 
     await user.click(screen.getByRole("button", { name: "Load more attempts" }));
-    expect(await screen.findByText("review-retry")).toBeInTheDocument();
+    expect(await screen.findByText("Attempt ID: review-retry")).toBeInTheDocument();
     expect(dataSource.calls).toEqual([
       { runId: "standalone-run", offset: 0 },
       { runId: "standalone-run", offset: 25 },
     ]);
     await user.click(screen.getByRole("button", { name: "Gantt timeline for standalone-run" }));
-    expect(screen.getByText(/Selected attempt review-retry/)).toHaveTextContent(
+    expect(screen.getByText(/Selected 26 - Iteration 1 - Reviewer/)).toHaveTextContent(
       "No content was loaded",
     );
+    expect(screen.getByRole("heading", { name: "26 - Iteration 1 - Reviewer" }))
+      .toBeInTheDocument();
     expect(screen.getByText(/page exhaustion does not complete an attempt/)).toBeInTheDocument();
+  });
+
+  it("keeps chart-opened modal focus inside after animation frames and restores the exact row without scrolling", async () => {
+    const user = userEvent.setup();
+    const frames: FrameRequestCallback[] = [];
+    const requestFrame = vi.spyOn(window, "requestAnimationFrame").mockImplementation(
+      (callback) => {
+        frames.push(callback);
+        return frames.length;
+      },
+    );
+    const flushFrames = async () => {
+      const pending = frames.splice(0);
+      await act(async () => {
+        pending.forEach((callback) => callback(performance.now()));
+      });
+    };
+
+    try {
+      render(
+        <AttemptTimeline
+          coordinator={new RefreshCoordinator()}
+          dataSource={new PagedTimelineDataSource()}
+          selectedRun={standaloneRun}
+          theme="light"
+        />,
+      );
+      await user.click(await screen.findByRole("button", { name: "Load more attempts" }));
+      const row = await screen.findByRole("button", {
+        name: /^26 - Iteration 1 - Reviewer.*Attempt ID: review-retry/,
+      });
+      const rowFocus = vi.spyOn(row, "focus");
+      const scrollBeforeOpen = window.scrollY;
+
+      await user.click(screen.getByRole("button", { name: "Gantt timeline for standalone-run" }));
+      const dialog = screen.getByRole("dialog");
+      const close = screen.getByRole("button", { name: "Close attempt details" });
+      expect(close).toHaveFocus();
+
+      await flushFrames();
+      expect(dialog).toContainElement(document.activeElement as HTMLElement);
+      expect(close).toHaveFocus();
+      expect(rowFocus).not.toHaveBeenCalled();
+      expect(window.scrollY).toBe(scrollBeforeOpen);
+
+      await user.click(close);
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      await flushFrames();
+      expect(row).toHaveFocus();
+      expect(rowFocus).toHaveBeenCalledWith({ preventScroll: true });
+      expect(window.scrollY).toBe(scrollBeforeOpen);
+    } finally {
+      requestFrame.mockRestore();
+    }
   });
 
   it("retains historic-page dates without polling that page on first-page refresh", async () => {
@@ -548,7 +627,7 @@ describe("C264-3 attempt timeline semantics", () => {
       />,
     );
     await user.click(await screen.findByRole("button", { name: "Load more attempts" }));
-    expect(await screen.findByText("review-retry")).toBeInTheDocument();
+    expect(await screen.findByText("Attempt ID: review-retry")).toBeInTheDocument();
 
     for (let refresh = 0; refresh < 4; refresh += 1) {
       coordinator.refreshAll();
@@ -556,10 +635,11 @@ describe("C264-3 attempt timeline semantics", () => {
     }
 
     expect(dataSource.calls.map((call) => call.offset)).toEqual([0, 25, 0, 0, 0, 0]);
-    expect(screen.getByText("review-retry")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^26 - Iteration 1 - Reviewer.*Attempt ID: review-retry/ }),
+    ).toBeInTheDocument();
     const observations = screen.getByText(/Timeline page observations:/);
-    expect(observations).toHaveTextContent("offset 0 · 2026-01-03T00:04:00Z");
-    expect(observations).toHaveTextContent("offset 25 · 2026-01-03T00:00:25Z");
-    expect(observations).not.toHaveTextContent("offset 0 · 2026-01-03T00:00:00Z");
+    expect(observations).toHaveTextContent("offset 0 · 03/01/2026 00:04 observed");
+    expect(observations).toHaveTextContent("offset 25 · 03/01/2026 00:00 observed");
   });
 });

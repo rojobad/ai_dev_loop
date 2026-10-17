@@ -138,8 +138,8 @@ class PagedDataSource extends ImmediateDataSource {
   }
 }
 
-describe("C264-1 authoritative paged run map", () => {
-  it("keeps replacement generations distinct, exposes total vs loaded, and selects exact IDs", async () => {
+describe("C282-1 compact authoritative run map", () => {
+  it("starts without visible run cards, keeps generations distinct, and selects exact IDs", async () => {
     const user = userEvent.setup();
     const dataSource = new PagedDataSource();
     const select = vi.fn();
@@ -156,12 +156,11 @@ describe("C264-1 authoritative paged run map", () => {
     );
 
     expect(await screen.findByText("Loaded 25 of 28 started runs")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^old-replacement cursor/ })).toHaveTextContent(
-      "generation 1 · planned_run",
-    );
-    expect(screen.getByRole("button", { name: /^new-replacement codex/ })).toHaveTextContent(
-      "generation 2 · implementer_retry",
-    );
+    expect(document.querySelector(".run-map-rows")).toBeNull();
+    expect(screen.getByRole("option", { name: /old-replacement · cursor · old-replacement/ }))
+      .toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /new-replacement · codex · new-replacement/ }))
+      .toBeInTheDocument();
     expect(screen.getByText(/Page observations:/)).toHaveTextContent(
       "not one atomic snapshot",
     );
@@ -171,12 +170,14 @@ describe("C264-1 authoritative paged run map", () => {
     expect(await screen.findByText("Loaded 28 of 28 started runs")).toBeInTheDocument();
     expect(dataSource.runCalls.map((call) => call.offset)).toEqual([0, 25]);
 
-    await user.click(screen.getByRole("button", { name: /^new-replacement codex/ }));
+    await user.selectOptions(screen.getByLabelText("Select loaded run"), "new-replacement");
     expect(select).toHaveBeenLastCalledWith(expect.objectContaining({ runId: "new-replacement" }));
     await user.click(
       screen.getByRole("button", { name: "Selectable chart cells for authoritative run IDs" }),
     );
     expect(select).toHaveBeenLastCalledWith(expect.objectContaining({ runId: "old-replacement" }));
+    await user.selectOptions(screen.getByLabelText("Select loaded run"), "");
+    expect(select).toHaveBeenLastCalledWith(null);
   });
 
   it("groups only authoritative bindings and never derives lineage from run names", () => {
@@ -237,11 +238,11 @@ describe("C264-1 authoritative paged run map", () => {
     }
 
     expect(dataSource.runCalls.map((call) => call.offset)).toEqual([0, 25, 0, 0, 0, 0]);
-    expect(screen.getByRole("button", { name: /^standalone-25 codex/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /standalone-25 · codex · standalone-25/ }))
+      .toBeInTheDocument();
     const observations = screen.getByText(/Page observations:/);
-    expect(observations).toHaveTextContent("offset 0 · 2026-01-03T00:04:00Z");
-    expect(observations).toHaveTextContent("offset 25 · 2026-01-03T00:00:25Z");
-    expect(observations).not.toHaveTextContent("offset 0 · 2026-01-03T00:00:00Z");
+    expect(observations).toHaveTextContent("offset 0 · 03/01/2026 00:04 observed");
+    expect(observations).toHaveTextContent("offset 25 · 03/01/2026 00:00 observed");
   });
 
   it("aborts an appended page when the dataset retires and fences its late reply", async () => {
@@ -295,7 +296,7 @@ describe("C264-1 authoritative paged run map", () => {
 
     view.rerender(<RunMap {...props} datasetKey="revision-2" />);
     expect(dataSource.pageSignal?.aborted).toBe(true);
-    expect(await screen.findByRole("button", { name: /^current-first-page codex/ })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: /current-first-page · codex/ })).toBeInTheDocument();
     await waitFor(() => expect(coordinator.activeCount()).toBe(0));
 
     await act(async () => {
@@ -314,7 +315,7 @@ describe("C264-1 authoritative paged run map", () => {
       }));
     });
     expect(screen.queryByText("late-old-page")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^current-first-page codex/ })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /current-first-page · codex/ })).toBeInTheDocument();
   });
 
   it("clears an incompatible first-page success and never labels a failed scope as empty", async () => {
@@ -356,7 +357,7 @@ describe("C264-1 authoritative paged run map", () => {
     const view = render(
       <RunMap {...props} filters={filters} datasetKey="old-scope" />,
     );
-    expect(await screen.findByRole("button", { name: /^old-scope-run codex/ })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: /old-scope-run · codex/ })).toBeInTheDocument();
 
     view.rerender(
       <RunMap

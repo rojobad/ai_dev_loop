@@ -191,14 +191,23 @@ describe("C265-1 attempt metadata and deliberate ownership", () => {
     render(
       <AttemptModal
         attempt={reviewerAttempt}
+        caption="1 - Iteration 1 - Reviewer"
         dataSource={dataSource}
         runId="run-review"
+        timeZone="America/La_Paz"
         onClose={() => undefined}
       />,
     );
 
     expect(screen.getByRole("dialog")).toHaveTextContent("attempt-reviewer");
     expect(screen.getByRole("dialog")).toHaveTextContent("codex.bootstrap_review");
+    expect(screen.getByRole("heading", { name: "1 - Iteration 1 - Reviewer" }))
+      .toBeInTheDocument();
+    expect(screen.getAllByText("31/12/2025 21:00")).toHaveLength(2);
+    expect(screen.getByText("31/12/2025 21:01")).toBeInTheDocument();
+    expect(screen.getByText("<1 m")).toBeInTheDocument();
+    expect([...screen.getByRole("dialog").querySelectorAll("dt")].slice(-2).map((item) => item.textContent))
+      .toEqual(["Run ID", "Attempt ID"]);
     expect(dataSource.contentCalls).toEqual([]);
 
     await user.click(screen.getByRole("button", { name: "Load exact review prompt" }));
@@ -222,8 +231,10 @@ describe("C265-1 attempt metadata and deliberate ownership", () => {
     const view = render(
       <AttemptModal
         attempt={implementerAttempt}
+        caption="1 - Iteration 1 - Implementer"
         dataSource={dataSource}
         runId="run-implementer"
+        timeZone="America/La_Paz"
         onClose={() => undefined}
       />,
     );
@@ -235,8 +246,10 @@ describe("C265-1 attempt metadata and deliberate ownership", () => {
     view.rerender(
       <AttemptModal
         attempt={correctionAttempt}
+        caption="1 - Iteration 2 - Implementer"
         dataSource={dataSource}
         runId="run-implementer"
+        timeZone="America/La_Paz"
         onClose={() => undefined}
       />,
     );
@@ -266,8 +279,10 @@ describe("C265-1 attempt metadata and deliberate ownership", () => {
     render(
       <AttemptModal
         attempt={reviewerAttempt}
+        caption="1 - Iteration 1 - Reviewer"
         dataSource={dataSource}
         runId="historical-run"
+        timeZone="America/La_Paz"
         onClose={() => undefined}
       />,
     );
@@ -282,7 +297,7 @@ describe("C265-3 modal accessibility and focus ownership", () => {
     const user = userEvent.setup();
     const dataSource = new ModalDataSource();
     render(<AttemptTimeline coordinator={new RefreshCoordinator()} dataSource={dataSource} selectedRun={standaloneRun} theme="light" />);
-    const row = await screen.findByRole("button", { name: /^attempt-cursor Cursor implementer/ });
+    const row = await screen.findByRole("button", { name: /^1 - Iteration 1 - Implementer/ });
     await user.click(row);
     const close = screen.getByRole("button", { name: "Close attempt details" });
     await waitFor(() => expect(close).toHaveFocus());

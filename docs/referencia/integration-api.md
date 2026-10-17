@@ -296,6 +296,11 @@ El mapa local consume páginas explícitas de `dashboard.runs` y conserva cada
 tiempo seleccionada consume `run.inspect` y páginas de `run.timeline`: clasifica
 por separado turnos implementer Cursor, turnos implementer Codex y reviews Codex,
 y representa intentos sin lanzamiento o sin fin observado sin inventar duración.
+El frontend usa el orden cronológico/tie-breaker del productor y el offset de la
+página para títulos ordinales estables; no infiere intentos ausentes, rol ni
+provider desde IDs. La selección compacta conserva el ID exacto y solo muestra
+metadata de un run a la vez. Fechas y duraciones se formatean en presentación con
+la zona IANA seleccionada; los instantes y segundos transportados no cambian.
 Cambiar de run o de filtros cancela y retira respuestas anteriores. Estas vistas
 no solicitan prompt, review-content ni output; ese contenido sigue requiriendo
 una acción deliberada en su superficie asignada.

@@ -28,8 +28,10 @@ tiene login: su límite de seguridad es el loopback local, además de validar
 
 La barra superior permite elegir proyecto, instante inicial, instante final
 exclusivo y zona IANA. Las horas se interpretan en esa zona y el rango máximo es
-366 días. `Apply` crea un scope nuevo; los resultados tardíos del scope anterior
-se descartan.
+366 días. Escribe cada instante como `DD/MM/yyyy HH:mm`. Si un cambio DST vuelve
+ambigua la hora, añade `Z` o el offset `±HH:mm` correspondiente; horas ambiguas o
+inexistentes no se envían como UTC adivinado. `Apply` crea un scope nuevo; los
+resultados tardíos del scope anterior se descartan.
 
 La vista reúne:
 
@@ -38,14 +40,21 @@ La vista reúne:
 - workload por secuencia o standalone;
 - capacidad Codex actual, observada independientemente del rango histórico;
 - mapa paginado de runs con provider Cursor/Codex y linaje de secuencia, incluido
-  `implementer_retry`;
-- timeline paginado del run seleccionado;
+  `implementer_retry`; empieza sin detalle y un click o selector accesible muestra
+  exactamente un run sin salto de página;
+- timeline paginado con ordinal estable por run y títulos compartidos entre
+  gráfico, controles accesibles y modal;
 - detalle del intento con contenido disponible bajo carga deliberada;
 - actividad diaria por submissions, rounds de review o process hours.
 
 Los indicadores de cobertura distinguen datos completos, parciales y vacíos. Un
 run sin lanzamiento no entra en la cohorte. Un intento sin duración resuelta no
 recibe una duración inventada.
+
+Los instantes se muestran como `DD/MM/yyyy HH:mm` en la zona elegida, los días
+como `DD/MM/yyyy` y las duraciones resueltas como horas/minutos (`<1 m` cuando
+son positivas pero menores a un minuto). Los valores UTC y segundos del API no se
+reescriben.
 
 ## Refresco y contenido sensible
 

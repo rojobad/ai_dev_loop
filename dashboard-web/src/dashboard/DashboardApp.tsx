@@ -18,6 +18,9 @@ import {
 } from "./charts";
 import {
   commitFilterDraft,
+  formatAge,
+  formatDuration,
+  formatInstant,
   initialFilterDraft,
   presetDraft,
   type FilterDraft,
@@ -52,23 +55,18 @@ function safeError(error: unknown): string {
   return error instanceof Error ? error.message : "The local dashboard read failed.";
 }
 
-function formatTime(value: string): string {
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date.toISOString().replace(".000Z", "Z") : "Unavailable";
-}
-
-function formatAge(value: string): string {
-  const milliseconds = Math.max(0, Date.now() - Date.parse(value));
-  if (milliseconds < 60_000) return `${Math.floor(milliseconds / 1000)}s old`;
-  if (milliseconds < 3_600_000) return `${Math.floor(milliseconds / 60_000)}m old`;
-  return `${Math.floor(milliseconds / 3_600_000)}h old`;
-}
-
-function ObservationLine({ observation }: { observation: SourceObservation<unknown> }) {
+function ObservationLine({
+  observation,
+  timeZone,
+}: {
+  observation: SourceObservation<unknown>;
+  timeZone: string;
+}) {
   return (
     <p className="observation-line">
-      Local read · source observed {formatTime(observation.observedAt)} · received {formatTime(
+      Local read · source observed {formatInstant(observation.observedAt, timeZone)} · received {formatInstant(
         observation.receivedAt,
+        timeZone,
       )} · {formatAge(observation.receivedAt)}
     </p>
   );
@@ -117,9 +115,11 @@ function ProjectCompanions({
 function CapacityPanel({
   state,
   theme,
+  timeZone,
 }: {
   state: AsyncObservation<CodexCapacityData>;
   theme: "light" | "dark";
+  timeZone: string;
 }) {
   return (
     <section className="panel" aria-labelledby="capacity-heading">
@@ -140,7 +140,7 @@ function CapacityPanel({
       {state.loading && !state.observation ? <p>Observing current capacity…</p> : null}
       {state.observation ? (
         <>
-          <ObservationLine observation={state.observation} />
+          <ObservationLine observation={state.observation} timeZone={timeZone} />
           {state.observation.data.status === "unavailable" ? (
             <div className="empty-state">
               Capacity unavailable
@@ -163,10 +163,12 @@ function CapacityPanel({
                     {limit.remainingPercent}% remaining · {limit.usedPercent}% used
                   </p>
                   <p>
-                    {limit.resetsAt ? `Resets ${formatTime(limit.resetsAt)}` : "Reset unavailable"}
+                    {limit.resetsAt
+                      ? `Resets ${formatInstant(limit.resetsAt, timeZone)}`
+                      : "Reset unavailable"}
                   </p>
                   {limit.windowDurationMinutes ? (
-                    <p>{limit.windowDurationMinutes} minute window</p>
+                    <p>{formatDuration(limit.windowDurationMinutes * 60)} window</p>
                   ) : null}
                 </article>
               ))}
@@ -183,11 +185,13 @@ function SummaryPanels({
   selectedProject,
   selectProject,
   theme,
+  timeZone,
 }: {
   observation: SourceObservation<DashboardSummaryData>;
   selectedProject?: string;
   selectProject: (project: string) => void;
   theme: "light" | "dark";
+  timeZone: string;
 }) {
   const summary = observation.data;
   const stateOption = useMemo(() => projectStateOption(summary.projects), [summary.projects]);
@@ -204,7 +208,7 @@ function SummaryPanels({
 
   return (
     <>
-      <ObservationLine observation={observation} />
+      <ObservationLine observation={observation} timeZone={timeZone} />
       <p className={`coverage coverage-${summary.coverage.dataState}`}>
         Coverage: {summary.coverage.dataState}
         {summary.coverage.warnings.length
@@ -568,7 +572,8 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
             </label>
           </div>
           <p id="date-format-help" className="field-help">
-            Local format: YYYY-MM-DDTHH:mm. For ambiguous clock times, include an RFC3339 offset.
+            Local format: DD/MM/yyyy HH:mm in the selected IANA zone. For an ambiguous
+            clock time, append Z or an explicit ±HH:mm offset; nonexistent local times are rejected.
           </p>
           <div className="filter-actions">
             <button className="primary" type="button" onClick={applyDraft}>
@@ -608,12 +613,17 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
             selectedProject={appliedFilters.projectName}
             selectProject={selectProject}
             theme={theme}
+            timeZone={appliedFilters.timeZone}
           />
         ) : !summary.loading ? (
           <div className="empty-state">No overview observation is available.</div>
         ) : null}
 
-        <CapacityPanel state={capacity} theme={theme} />
+        <CapacityPanel
+          state={capacity}
+          theme={theme}
+          timeZone={appliedFilters.timeZone}
+        />
 
         <div className="linked-inspection-grid">
           {catalogSettled ? (
@@ -637,6 +647,7 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
             dataSource={dataSource}
             selectedRun={selectedRun}
             theme={theme}
+            timeZone={appliedFilters.timeZone}
           />
         </div>
 

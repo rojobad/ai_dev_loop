@@ -8,9 +8,9 @@ export interface FilterDraft {
 }
 
 const LOCAL_PATTERN =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/;
+  /^(\d{2})\/(\d{2})\/(\d{4})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/;
 const OFFSET_PATTERN =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?(Z|[+-]\d{2}:\d{2})$/;
+  /^(\d{2})\/(\d{2})\/(\d{4})[ T](\d{2}):(\d{2})(?::(\d{2}))?(Z|[+-]\d{2}:\d{2})$/;
 
 interface Parts {
   year: number;
@@ -23,9 +23,9 @@ interface Parts {
 
 function parseParts(match: RegExpMatchArray): Parts {
   return {
-    year: Number(match[1]),
+    year: Number(match[3]),
     month: Number(match[2]),
-    day: Number(match[3]),
+    day: Number(match[1]),
     hour: Number(match[4]),
     minute: Number(match[5]),
     second: Number(match[6] ?? "0"),
@@ -94,7 +94,10 @@ export function localDraftToUtc(value: string, timeZone: string): string {
     if (!validCalendarParts(expected)) {
       throw new Error("Date and time are invalid.");
     }
-    const instant = new Date(value);
+    const pad = (part: string | undefined) => part ?? "00";
+    const instant = new Date(
+      `${offsetMatch[3]}-${offsetMatch[2]}-${offsetMatch[1]}T${offsetMatch[4]}:${offsetMatch[5]}:${pad(offsetMatch[6])}${offsetMatch[7]}`,
+    );
     if (!Number.isFinite(instant.getTime()) || !equalParts(partsAt(instant, timeZone), expected)) {
       throw new Error("Explicit offset does not match the selected time zone.");
     }
@@ -103,7 +106,9 @@ export function localDraftToUtc(value: string, timeZone: string): string {
 
   const localMatch = value.match(LOCAL_PATTERN);
   if (!localMatch) {
-    throw new Error("Use YYYY-MM-DDTHH:mm or an RFC3339 value with an explicit offset.");
+    throw new Error(
+      "Use DD/MM/yyyy HH:mm, adding Z or an explicit ±HH:mm offset when required.",
+    );
   }
   const expected = parseParts(localMatch);
   if (!validCalendarParts(expected)) {
@@ -129,7 +134,7 @@ export function localDraftToUtc(value: string, timeZone: string): string {
     throw new Error("This local time does not exist in the selected time zone.");
   }
   if (unique.length > 1) {
-    throw new Error("This local time is ambiguous; enter an RFC3339 value with an offset.");
+    throw new Error("This local time is ambiguous; add an explicit ±HH:mm offset.");
   }
   return new Date(unique[0]).toISOString();
 }
@@ -137,9 +142,50 @@ export function localDraftToUtc(value: string, timeZone: string): string {
 export function formatLocalDraft(instant: Date, timeZone: string): string {
   const parts = partsAt(instant, timeZone);
   const pad = (value: number) => String(value).padStart(2, "0");
-  return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}T${pad(parts.hour)}:${pad(
+  return `${pad(parts.day)}/${pad(parts.month)}/${parts.year} ${pad(parts.hour)}:${pad(
     parts.minute,
-  )}:${pad(parts.second)}`;
+  )}`;
+}
+
+export function formatInstant(value: string | number | Date, timeZone: string): string {
+  const instant = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(instant.getTime())) return "Unavailable";
+  const parts = partsAt(instant, timeZone);
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${pad(parts.day)}/${pad(parts.month)}/${parts.year} ${pad(parts.hour)}:${pad(
+    parts.minute,
+  )}`;
+}
+
+export function formatAxisInstant(value: string | number | Date, timeZone: string): string {
+  const instant = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(instant.getTime())) return "Unavailable";
+  const parts = partsAt(instant, timeZone);
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${pad(parts.day)}/${pad(parts.month)} ${pad(parts.hour)}:${pad(parts.minute)}`;
+}
+
+export function formatCalendarDay(value: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : "Unavailable";
+}
+
+export function formatDuration(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds < 0) {
+    return "Unavailable";
+  }
+  if (seconds === 0) return "00 h 00 m";
+  if (seconds < 60) return "<1 m";
+  const wholeMinutes = Math.floor(seconds / 60);
+  const hours = Math.floor(wholeMinutes / 60);
+  const minutes = wholeMinutes % 60;
+  return `${String(hours).padStart(2, "0")} h ${String(minutes).padStart(2, "0")} m`;
+}
+
+export function formatAge(value: string, now = new Date()): string {
+  const then = Date.parse(value);
+  if (!Number.isFinite(then)) return "Unavailable";
+  return `${formatDuration(Math.max(0, now.getTime() - then) / 1000)} old`;
 }
 
 export function presetDraft(
@@ -151,9 +197,9 @@ export function presetDraft(
   const startDay = new Date(Date.UTC(today.year, today.month - 1, today.day - (days - 1)));
   const pad = (value: number) => String(value).padStart(2, "0");
   return {
-    fromLocal: `${startDay.getUTCFullYear()}-${pad(startDay.getUTCMonth() + 1)}-${pad(
-      startDay.getUTCDate(),
-    )}T00:00:00`,
+    fromLocal: `${pad(startDay.getUTCDate())}/${pad(
+      startDay.getUTCMonth() + 1,
+    )}/${startDay.getUTCFullYear()} 00:00`,
     untilLocal: formatLocalDraft(now, timeZone),
     timeZone,
   };

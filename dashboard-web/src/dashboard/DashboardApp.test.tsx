@@ -191,9 +191,9 @@ describe("C263 overview shell", () => {
     await waitFor(() => expect(dataSource.requests).toHaveLength(1));
 
     fireEvent.change(screen.getByLabelText("IANA time zone"), { target: { value: "UTC" } });
-    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-01-01T00:00" } });
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "01/01/2026 00:00" } });
     fireEvent.change(screen.getByLabelText("Until (exclusive)"), {
-      target: { value: "2026-01-03T00:00" },
+      target: { value: "03/01/2026 00:00" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     await waitFor(() => expect(dataSource.requests).toHaveLength(2));
@@ -204,9 +204,9 @@ describe("C263 overview shell", () => {
     expect(screen.getByLabelText("Runs started: 7")).toBeInTheDocument();
     expect(screen.queryByLabelText("Runs started: 1")).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-01-04T00:00" } });
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "04/01/2026 00:00" } });
     fireEvent.change(screen.getByLabelText("Until (exclusive)"), {
-      target: { value: "2026-01-03T00:00" },
+      target: { value: "03/01/2026 00:00" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Previous applied results remain unchanged");
@@ -251,6 +251,39 @@ describe("C263 overview shell", () => {
     expect(await screen.findByLabelText("Runs started: 3")).toBeInTheDocument();
   });
 
+  it("C282-4 commits DD/MM drafts in the selected zone and never submits a guessed fold", async () => {
+    const dataSource = new ImmediateDataSource();
+    render(<DashboardApp dataSource={dataSource} />);
+    await waitFor(() => expect(dataSource.summaryCalls).toHaveLength(1));
+
+    fireEvent.change(screen.getByLabelText("IANA time zone"), {
+      target: { value: "America/New_York" },
+    });
+    fireEvent.change(screen.getByLabelText("From"), {
+      target: { value: "01/11/2026 01:30" },
+    });
+    fireEvent.change(screen.getByLabelText("Until (exclusive)"), {
+      target: { value: "01/11/2026 02:30" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("ambiguous");
+    expect(dataSource.summaryCalls).toHaveLength(1);
+
+    fireEvent.change(screen.getByLabelText("From"), {
+      target: { value: "01/11/2026 01:30-04:00" },
+    });
+    fireEvent.change(screen.getByLabelText("Until (exclusive)"), {
+      target: { value: "01/11/2026 02:30-05:00" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(dataSource.summaryCalls).toHaveLength(2));
+    expect(dataSource.summaryCalls[1]).toEqual({
+      fromUtc: "2026-11-01T05:30:00.000Z",
+      toUtc: "2026-11-01T07:30:00.000Z",
+      timeZone: "America/New_York",
+    });
+  });
+
   it("observes every capacity window once and never ties probes to filters", async () => {
     const user = userEvent.setup();
     const dataSource = new ImmediateDataSource();
@@ -284,9 +317,9 @@ describe("C263 overview shell", () => {
     const user = userEvent.setup();
     const dataSource = new ImmediateDataSource();
     render(<DashboardApp dataSource={dataSource} />);
-    await user.click(await screen.findByRole("button", { name: /standalone-run/ }));
+    await user.selectOptions(await screen.findByLabelText("Select loaded run"), "standalone-run");
     expect(await screen.findByText(/Selected run:/)).toHaveTextContent("standalone-run");
-    expect(await screen.findByText("attempt-cursor")).toBeInTheDocument();
+    expect(await screen.findByText("Attempt ID: attempt-cursor")).toBeInTheDocument();
 
     await user.selectOptions(screen.getByLabelText("Project"), "project-b");
     await user.click(screen.getByRole("button", { name: "Apply" }));
@@ -294,7 +327,7 @@ describe("C263 overview shell", () => {
       expect(screen.queryByText(/Selected run:/)).not.toBeInTheDocument(),
     );
     expect(
-      screen.getByText("Select an exact run cell or companion row to inspect it."),
+      screen.getByText("Select an exact run cell or the loaded-run control to inspect it."),
     ).toBeInTheDocument();
   });
 });
