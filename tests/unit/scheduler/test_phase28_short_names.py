@@ -61,6 +61,15 @@ def test_legacy_projection_is_bounded_and_has_id_fallback() -> None:
     assert legacy_short_name(None, fallback_id="x" * 40) == "x" * 35
 
 
+def test_legacy_truncation_removes_new_trailing_whitespace() -> None:
+    # The 35th character is a space inside the original name. Truncation must
+    # still satisfy both the domain and persisted SQLite trimming contracts.
+    value = "x" * 34 + " name continues"
+    projected = legacy_short_name(value, fallback_id="run-123")
+    assert projected == "x" * 34
+    assert require_short_name(projected) == projected
+
+
 def test_manifest_v3_requires_all_names_but_freezes_v2_implementer_semantics() -> None:
     parsed = SequenceManifest.model_validate(_manifest())
     assert parsed.schema_version == 3
