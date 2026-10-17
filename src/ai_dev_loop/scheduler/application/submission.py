@@ -56,12 +56,14 @@ from ai_dev_loop.scheduler.domain.events import RunSubmittedEvent
 from ai_dev_loop.scheduler.domain.state import (
     SUBMITTED_CONTEXT_SCHEMA_VERSION,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
+    SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER,
     AbortedState,
     CodexRuntimeBinding,
     ControllerBinding,
     CursorBinding,
+    CursorSdkBinding,
     EffectiveConfigBinding,
     FreshCodexReviewerBinding,
     ImplementerBinding,
@@ -328,10 +330,9 @@ def _freeze_execution_commands(effective: ProjectConfig) -> ProjectConfig:
         "codex": effective.codex.model_copy(update={"command": codex_command}),
     }
     if effective.implementer.provider == "cursor":
-        if not isinstance(effective.cursor, CursorSection):
-            raise ValidationError("Cursor SDK scheduler dispatch is not available in Phase 25.1")
-        cursor_command = _resolve_frozen_command(effective.cursor.command, label="Cursor")
-        updates["cursor"] = effective.cursor.model_copy(update={"command": cursor_command})
+        if isinstance(effective.cursor, CursorSection):
+            cursor_command = _resolve_frozen_command(effective.cursor.command, label="Cursor")
+            updates["cursor"] = effective.cursor.model_copy(update={"command": cursor_command})
     else:
         implementer_command = effective.implementer.command or "codex"
         frozen_implementer = _resolve_frozen_command(
@@ -346,8 +347,20 @@ def _freeze_execution_commands(effective: ProjectConfig) -> ProjectConfig:
 
 def _implementer_binding(effective: ProjectConfig) -> ImplementerBinding:
     if effective.implementer.provider == "cursor":
-        if not isinstance(effective.cursor, CursorSection):
-            raise ValidationError("Cursor SDK scheduler dispatch is not available in Phase 25.1")
+        if isinstance(effective.cursor, CursorSdkSection):
+            return ImplementerBinding(
+                schema_version=2,
+                provider="cursor",
+                purpose="implementer",
+                runtime="sdk-local",
+                command=None,
+                model=effective.cursor.model,
+                reasoning_effort=None,
+                timeout_minutes=effective.workflow.cursor_timeout_minutes,
+                sandbox=effective.cursor.sandbox,
+                approval_policy=None,
+                session_id=None,
+            )
         return ImplementerBinding(
             provider="cursor",
             purpose="implementer",
@@ -381,21 +394,13 @@ def _implementer_binding(effective: ProjectConfig) -> ImplementerBinding:
 
 
 def _reject_cursor_sdk_dispatch(effective: ProjectConfig) -> None:
-    """Guard only a resolved Cursor implementer until Phase 25.2 can freeze SDK bindings."""
+    """Compatibility hook retained for callers; SDK dispatch is supported in Phase 25.2."""
 
-    if (
-        isinstance(effective.cursor, CursorSdkSection)
-        and effective.implementer.provider == "cursor"
-    ):
-        raise ValidationError(
-            "Cursor SDK configuration is valid, but Cursor SDK scheduler dispatch "
-            "is not available in Phase 25.1; select the Codex implementer or use "
-            "config version 1 for the existing Cursor CLI runtime"
-        )
+    del effective
 
 
-def _legacy_cursor_binding(effective: ProjectConfig) -> CursorBinding:
-    """Build the required historical field without making it the v2 Codex implementer."""
+def _cursor_binding(effective: ProjectConfig) -> CursorBinding | CursorSdkBinding:
+    """Freeze the complete selected Cursor runtime without private local paths."""
 
     if isinstance(effective.cursor, CursorSection):
         return CursorBinding(
@@ -406,13 +411,29 @@ def _legacy_cursor_binding(effective: ProjectConfig) -> CursorBinding:
             trust_workspace=effective.cursor.trust_workspace,
             sandbox=effective.cursor.sandbox,
         )
+    return CursorSdkBinding(
+        sdk_version=effective.cursor.sdk_version,
+        model=effective.cursor.model,
+        parameters=effective.cursor.parameters,
+        credential_ref=effective.cursor.credential_ref,
+        setting_sources=tuple(effective.cursor.setting_sources),
+        sandbox=effective.cursor.sandbox,
+    )
+
+
+def _legacy_cursor_binding(effective: ProjectConfig) -> CursorBinding:
+    """Build the historical placeholder used only by pre-25.2 payload producers."""
+
+    binding = _cursor_binding(effective)
+    if isinstance(binding, CursorBinding):
+        return binding
     return CursorBinding(
         command=UNUSED_SDK_CURSOR_COMMAND,
-        model=effective.cursor.model,
-        output_format=effective.cursor.runtime,
+        model=binding.model,
+        output_format=binding.runtime,
         force=False,
         trust_workspace=False,
-        sandbox=effective.cursor.sandbox,
+        sandbox=binding.sandbox,
     )
 
 
@@ -478,7 +499,12 @@ def _build_agent_led_context(
 ) -> SubmittedRunContext:
     repo_root = str(repo_target.root)
     return SubmittedRunContext(
-        schema_version=SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER,
+        schema_version=(
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK
+            if isinstance(effective.cursor, CursorSdkSection)
+            and effective.implementer.provider == "cursor"
+            else SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER
+        ),
         project_name=effective.project.name,
         repository=RepositoryTargetBinding(
             root=repo_root,
@@ -509,7 +535,11 @@ def _build_agent_led_context(
             binding_artifact_path=FRESH_REVIEWER_INPUT_ARTIFACT,
             binding_sha256=artifact_hashes[FRESH_REVIEWER_INPUT_ARTIFACT],
         ),
-        cursor=_legacy_cursor_binding(effective),
+        cursor=(
+            _cursor_binding(effective)
+            if effective.implementer.provider == "cursor"
+            else _legacy_cursor_binding(effective)
+        ),
         workflow=WorkflowLimits(
             max_review_iterations=effective.workflow.max_review_iterations,
             stage_mode=effective.workflow.stage_mode,

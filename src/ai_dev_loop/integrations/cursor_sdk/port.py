@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Generic, Literal, Protocol, TypeVar
+from typing import Any, Generic, Literal, Protocol, TypeVar
 
 
 class CursorSdkOperation(StrEnum):
@@ -17,6 +18,7 @@ class CursorSdkOperation(StrEnum):
     GET_RUN = "get_run"
     LIST_RUNS = "list_runs"
     CANCEL = "cancel"
+    PREFLIGHT = "preflight"
 
 
 class CursorSdkErrorCode(StrEnum):
@@ -89,6 +91,20 @@ class CursorSdkBridgeHealth:
 
 
 @dataclass(frozen=True)
+class CursorSdkPreflight:
+    health: CursorSdkBridgeHealth
+    authenticated: bool
+    model: str
+    parameters: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True)
+class CursorSdkEnvelope:
+    offset: str
+    payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class CursorSdkAgentIdentity:
     agent_id: str
 
@@ -129,6 +145,8 @@ class CursorSdkPort(Protocol):
 
     def close(self) -> None: ...
 
+    def preflight(self) -> CursorSdkOutcome[CursorSdkPreflight]: ...
+
     def create_agent(self) -> CursorSdkOutcome[CursorSdkAgentIdentity]: ...
 
     def resume_agent(self, agent_id: str) -> CursorSdkOutcome[CursorSdkAgentIdentity]: ...
@@ -142,6 +160,7 @@ class CursorSdkPort(Protocol):
         *,
         mode: Literal["live", "replay"] = "live",
         after_offset: str | None = None,
+        on_envelope: Callable[[CursorSdkEnvelope], None] | None = None,
     ) -> CursorSdkOutcome[CursorSdkTerminalRun]: ...
 
     def get_run(

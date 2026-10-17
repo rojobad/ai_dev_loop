@@ -152,6 +152,7 @@ def _render_short_name_update(
     status = "updated" if result.changed else "unchanged"
     return f"{result.owner_id}: short name {status} to {result.short_name!r}\n"
 
+
 TargetOption = Annotated[
     CodexIntegrationTarget,
     typer.Option(

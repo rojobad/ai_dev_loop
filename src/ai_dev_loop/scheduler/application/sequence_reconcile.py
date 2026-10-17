@@ -23,6 +23,7 @@ from ai_dev_loop.scheduler.domain.state import (
     SCHEDULER_TERMINAL_STATE_KINDS,
     AbortedState,
     is_codex_implementer_reservation_hold,
+    is_cursor_sdk_reservation_hold,
 )
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
@@ -111,9 +112,8 @@ class SequenceReconcileService:
     ) -> bool:
         state, _, _ = self.store.load_validated_snapshot(conn, run_id)
         implementer_hold = (
-            is_codex_implementer_reservation_hold(state)
-            and self.store.get_reservation_for_run(conn, run_id) is not None
-        )
+            is_codex_implementer_reservation_hold(state) or is_cursor_sdk_reservation_hold(state)
+        ) and self.store.get_reservation_for_run(conn, run_id) is not None
         return (
             implementer_hold
             or self.store.has_unresolved_abort_hold(conn, run_id)

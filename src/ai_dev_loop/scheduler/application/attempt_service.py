@@ -89,6 +89,7 @@ from ai_dev_loop.scheduler.domain.state import (
     AdmittedState,
     AwaitingCodexReviewState,
     CursorReadyState,
+    CursorSdkBinding,
     PreflightCompleteState,
     WaitingForCursorFixState,
     WaitingUsageLimitState,
@@ -745,6 +746,8 @@ class AttemptService:
         stderr_rel = attempt_stderr_rel(attempt_id)
         result_rel = attempt_result_rel(attempt_id)
         if cursor_state.cursor.timeout_attempt_id and effect_kind == RUN_CURSOR_TURN_EFFECT_KIND:
+            if isinstance(cursor_state.context.cursor, CursorSdkBinding):
+                raise ValidationError("Cursor SDK retry is deferred to Phase 25.3")
             from ai_dev_loop.scheduler.application.cursor_timeout_retry import timeout_binding
 
             with self.store.begin_read() as conn:
@@ -1146,7 +1149,62 @@ class AttemptService:
             artifacts=self.artifacts,
             checkpoint=checkpoint,
         )
-        binding: dict[str, object] = {
+        if isinstance(context.cursor, CursorSdkBinding):
+            from ai_dev_loop.paths import cursor_conversation_key
+
+            sdk = context.cursor
+            binding: dict[str, object] = {
+                "schema_version": 2,
+                "runtime": "sdk-local",
+                "effect_kind": effect_kind,
+                "repository_root": identity.root,
+                "repository_git_common_dir": identity.git_common_dir,
+                "repository_git_dir": identity.git_dir,
+                "repository_branch": identity.branch,
+                "repository_initial_head": identity.initial_head,
+                "cursor_model": sdk.model,
+                "cursor_sandbox": sdk.sandbox,
+                "sdk_version": sdk.sdk_version,
+                "sdk_parameters": sdk.parameters,
+                "sdk_credential_ref": sdk.credential_ref,
+                "sdk_setting_sources": list(sdk.setting_sources),
+                "sdk_tool_policy": sdk.tool_policy,
+                "conversation_owner_run_id": run_id,
+                "conversation_key": cursor_conversation_key(run_id),
+                "timeout_seconds": context.workflow.cursor_timeout_minutes * 60,
+            }
+            if effect_kind == CREATE_CHAT_EFFECT_KIND:
+                return binding
+            if state.cursor.sdk is None:
+                raise ValidationError("Cursor SDK turn requires a persisted agent identity")
+            if state.cursor.sdk.conversation_owner_run_id != run_id:
+                raise ValidationError("Cursor SDK identity owner disagrees with run")
+            if isinstance(state, WaitingForCursorFixState):
+                prompt_path = state.codex.latest_correction_envelope_path
+                prompt_sha = state.codex.latest_correction_envelope_sha256
+                if not prompt_path or not prompt_sha:
+                    raise ValidationError("SDK correction requires persisted execution envelope")
+                binding.update(
+                    {
+                        "fix_prompt_path": state.codex.latest_fix_prompt_path,
+                        "fix_prompt_sha256": state.codex.latest_fix_prompt_sha256,
+                        "staged_patch_path": state.cursor.staged_patch_path,
+                        "staged_patch_sha256": state.cursor.staged_patch_sha256,
+                    }
+                )
+            else:
+                prompt_path = context.plan_prompt.prompt_artifact_path
+                prompt_sha = context.plan_prompt.prompt_sha256
+            binding.update(
+                {
+                    "iteration": state.cursor.iteration,
+                    "agent_id": state.cursor.sdk.agent_id,
+                    "prompt_path": prompt_path,
+                    "prompt_sha256": prompt_sha,
+                }
+            )
+            return binding
+        legacy_binding: dict[str, object] = {
             "effect_kind": effect_kind,
             "repository_root": identity.root,
             "repository_git_common_dir": identity.git_common_dir,
@@ -1162,7 +1220,7 @@ class AttemptService:
             "timeout_seconds": context.workflow.cursor_timeout_minutes * 60,
         }
         if effect_kind == CREATE_CHAT_EFFECT_KIND:
-            return binding
+            return legacy_binding
         assert effect_kind == RUN_CURSOR_TURN_EFFECT_KIND
         iteration = state.cursor.iteration
         if isinstance(state, WaitingForCursorFixState):
@@ -1172,7 +1230,7 @@ class AttemptService:
                 raise ValidationError(
                     "correction cursor turn requires persisted execution envelope binding"
                 )
-            binding.update(
+            legacy_binding.update(
                 {
                     "iteration": iteration,
                     "chat_id": state.cursor.chat_id,
@@ -1190,7 +1248,7 @@ class AttemptService:
                 if state.cursor.continuation_envelope_path
                 else context.plan_prompt.prompt_artifact_path
             )
-            binding.update(
+            legacy_binding.update(
                 {
                     "iteration": iteration,
                     "chat_id": state.cursor.chat_id,
@@ -1218,10 +1276,10 @@ class AttemptService:
                 recovery,
                 iteration=iteration,
             ):
-                binding["prompt_path"] = recovery.effective_prompt_path
-                binding["prompt_sha256"] = recovery.effective_prompt_sha256
-                binding["chat_id"] = recovery.chat_id
-                binding["iteration"] = recovery.iteration
+                legacy_binding["prompt_path"] = recovery.effective_prompt_path
+                legacy_binding["prompt_sha256"] = recovery.effective_prompt_sha256
+                legacy_binding["chat_id"] = recovery.chat_id
+                legacy_binding["iteration"] = recovery.iteration
             else:
                 from ai_dev_loop.scheduler.application.cursor_correction_recovery import (
                     authenticated_correction_launch,
@@ -1263,7 +1321,7 @@ class AttemptService:
                             )
                         prompt_path = continuation
                         prompt_sha = state.cursor.continuation_envelope_sha256
-                    binding.update(
+                    legacy_binding.update(
                         {
                             "prompt_path": prompt_path,
                             "prompt_sha256": prompt_sha,
@@ -1282,13 +1340,13 @@ class AttemptService:
             state.cursor.usage_limit_fingerprint_path
             and state.cursor.usage_limit_fingerprint_sha256
         ):
-            binding.update(
+            legacy_binding.update(
                 {
                     "usage_limit_fingerprint_path": state.cursor.usage_limit_fingerprint_path,
                     "usage_limit_fingerprint_sha256": state.cursor.usage_limit_fingerprint_sha256,
                 }
             )
-        return binding
+        return legacy_binding
 
     def _reconcile_existing_attempt(
         self,
@@ -1344,6 +1402,7 @@ class AttemptService:
             codex_attempt = effect_kind in CODEX_ATTEMPT_EFFECT_KINDS
             codex_implementer_attempt = effect_kind in IMPLEMENTER_ATTEMPT_EFFECT_KINDS
             agent_attempt = cursor_attempt or codex_attempt or codex_implementer_attempt
+            sdk_attempt = cursor_attempt and isinstance(state.context.cursor, CursorSdkBinding)
 
         observation = self.backend.observe(unit_identity=unit_identity, attempt_id=attempt_id)
         if observation.lifecycle_state == UnitLifecycleState.UNAVAILABLE:
@@ -1451,6 +1510,29 @@ class AttemptService:
                 safe_summary="result envelope failed validation",
             )
 
+        if sdk_attempt:
+            try:
+                self.backend.terminate(unit_identity=unit_identity, attempt_id=attempt_id)
+                terminated = self.backend.observe(
+                    unit_identity=unit_identity,
+                    attempt_id=attempt_id,
+                )
+                if not unit_observation_stopped(terminated):
+                    raise RuntimeError("owned SDK process tree remains active after stop")
+            except Exception:
+                return self._persist_attempt_uncertain(
+                    tick_owner_id=tick_owner_id,
+                    tick_lease_generation=tick_lease_generation,
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                    dispatch_id=dispatch_id,
+                    claim_id=claim_id,
+                    capacity_tick_generation=capacity_tick_generation,
+                    safe_summary=(
+                        "SDK attempt completed but owned process tree termination is unproved"
+                    ),
+                )
+
         return self._persist_attempt_completion(
             tick_owner_id=tick_owner_id,
             tick_lease_generation=tick_lease_generation,
@@ -1463,6 +1545,7 @@ class AttemptService:
             exit_code=validated.exit_code,
             termination_class=validated.termination_class,
             envelope_sha256=validated.envelope_sha256,
+            cleanup_unit=not sdk_attempt,
         )
 
     def _maybe_launch_fake_agent_attempt(
@@ -2001,6 +2084,7 @@ class AttemptService:
         exit_code: int,
         termination_class: TerminationClass,
         envelope_sha256: str,
+        cleanup_unit: bool = True,
     ) -> TickRunReceipt:
         now = self._now_factory()
         terminal_status = (
@@ -2123,7 +2207,8 @@ class AttemptService:
                 tick_lease_generation=capacity_tick_generation,
                 now=now,
             )
-        self._cleanup_completed_unit(unit_identity=unit_identity, attempt_id=attempt_id)
+        if cleanup_unit:
+            self._cleanup_completed_unit(unit_identity=unit_identity, attempt_id=attempt_id)
         return TickRunReceipt(run_id=run_id, action="attempt_completed", detail=attempt_id)
 
     def _persist_attempt_uncertain(

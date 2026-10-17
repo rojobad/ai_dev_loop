@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "captured_for": "phase-25.2",
+  "fixtures": [
+    {
+      "path": "tests/fixtures/phase21_4_pre_21_4_historical/manifest.json",
+      "sha256": "03d2d51f2715ae28280d63913f0d8e1ecbdfc8cf313343dc371d503250a47cd9",
+      "contract": "pre-25 captured fixture manifest and run identity"
+    },
+    {
+      "path": "tests/fixtures/phase21_4_pre_21_4_historical/engine.sqlite3",
+      "sha256": "43da316de14f2e9cd8fb9cdcbf27c78a36c1e7e20bb8913040377c160edec8cb",
+      "contract": "historical ledger rows, state snapshots, events, effects and attempts"
+    },
+    {
+      "path": "tests/fixtures/phase21_4_pre_21_4_historical/run_root/attempts/att-00000000000000000000000000000005/invocation-evidence.json",
+      "sha256": "6cdc45cbf99fa05844dcfab05970c8e9b7b76ec504dc37c4528a9260b6155b14",
+      "contract": "historical Cursor CLI invocation evidence"
+    },
+    {
+      "path": "tests/fixtures/phase22_historical/manual_wait_state_pre_phase22_v1.json",
+      "sha256": "79058457f7c7a43030eb2d963e8d998e20aaa118d50a932153c09f19e56ce19e",
+      "contract": "historical scheduler state/context"
+    },
+    {
+      "path": "tests/fixtures/phase22_historical/manual_retry_event_v1.json",
+      "sha256": "b849788d9f00e33c079cc5fdb79996a52f2cdc054a3ba34f483ec5fd7ec31ee2",
+      "contract": "historical scheduler event"
+    },
+    {
+      "path": "tests/fixtures/phase23_3_historical/cursor-initial-recovery-record-v1.json",
+      "sha256": "d5aa0abb86c1fcee4171981684dea5a4d96cd723ff02314d037b7f68a58408a6",
+      "contract": "historical Cursor recovery record"
+    },
+    {
+      "path": "tests/fixtures/phase23_4_historical/sequence-run-lineage-v1.json",
+      "sha256": "1d8302595c9491667ab7d879f184aaaffc46f63f9aec6690bfd46d87a51a4b1d",
+      "contract": "historical sequence recovery lineage"
+    },
+    {
+      "path": "tests/fixtures/phase27_3_historical/entry-hashes.json",
+      "sha256": "4dd0199f86f28ba56fb0001444006a42c82e6e7544c2f34e7a5eff7931a55a7a",
+      "contract": "accepted frozen entry hashes"
+    },
+    {
+      "path": "tests/fixtures/phase27_3_historical/prepared.json",
+      "sha256": "2fd09ba130a13130fe50a0cd74eb927724293696c673ffdece3ed296cf07fe50",
+      "contract": "manifest v2, frozen entry v2, definition v2"
+    },
+    {
+      "path": "tests/fixtures/phase28_1_historical_v2/prepared.json",
+      "sha256": "6cd10c9bcb574eaae79c4a73ce13d1b110072a57370d661f8dba8004abec0780",
+      "contract": "named-metadata-era historical v2 sequence"
+    }
+  ]
+}

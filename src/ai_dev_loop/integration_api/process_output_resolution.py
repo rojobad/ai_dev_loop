@@ -34,9 +34,14 @@ from ai_dev_loop.scheduler.domain.codex_contract import (
 )
 from ai_dev_loop.scheduler.domain.cursor_contract import (
     CREATE_CHAT_EFFECT_KIND,
+    CURSOR_SDK_CAPTURE_SCHEMA_VERSION,
+    CURSOR_SDK_EVENT_STREAM_FORMAT,
+    CURSOR_SDK_TEXT_STREAM_FORMAT,
     RUN_CURSOR_TURN_EFFECT_KIND,
     cursor_attempt_events_rel,
     cursor_attempt_stderr_rel,
+    cursor_sdk_attempt_events_rel,
+    cursor_sdk_attempt_metadata_rel,
 )
 from ai_dev_loop.scheduler.infrastructure.paths import resolve_run_relative_path
 
@@ -151,7 +156,11 @@ def resolve_process_stream(
                 unavailable_reason="not_captured",
             )
         if stream == "stdout":
-            rel = cursor_attempt_events_rel(iteration, attempt_id)
+            rel = (
+                cursor_sdk_attempt_events_rel(iteration, attempt_id)
+                if auth.invocation.get("runtime") == "sdk-local"
+                else cursor_attempt_events_rel(iteration, attempt_id)
+            )
             return ResolvedProcessStream(rel, "application/x-ndjson", "jsonl", "cursor")
         rel = cursor_attempt_stderr_rel(iteration, attempt_id)
         return ResolvedProcessStream(rel, "text/plain", "text", "cursor")
@@ -231,7 +240,30 @@ def stream_availability_reason(
         raise ProcessOutputIntegrityError("process output path is not safe to read") from exc
     if path.is_symlink():
         raise ProcessOutputIntegrityError("process output path is not safe to read")
+    if (
+        resolved.component == "cursor"
+        and auth.invocation.get("runtime") == "sdk-local"
+        and auth.writer_stopped
+        and auth.outcome is None
+    ):
+        # A cancelled SDK writer may leave private bytes without an authenticated
+        # terminal digest. Never publish those bytes and do not mislabel their
+        # absence of authority as tampering.
+        return "not_captured"
     if path.is_file():
+        if (
+            resolved.component == "cursor"
+            and auth.invocation.get("runtime") == "sdk-local"
+            and auth.writer_stopped
+        ):
+            if auth.outcome is None:
+                raise ProcessOutputIntegrityError("SDK child stream is not terminally bound")
+            key = "events_sha256" if resolved.stream_format == "jsonl" else "stderr_sha256"
+            expected = auth.outcome.get(key)
+            if not isinstance(expected, str) or len(expected) != 64:
+                raise ProcessOutputIntegrityError("SDK child stream digest is missing")
+            if sha256_file(path) != expected:
+                raise ProcessOutputIntegrityError("SDK child stream hash mismatch")
         if resolved.component == "codex_implementer" and auth.outcome is not None:
             key = "events_sha256" if resolved.stream_format == "jsonl" else "stderr_sha256"
             expected = auth.outcome.get(key)
@@ -292,6 +324,58 @@ def load_stream_truncation(
         iteration = _cursor_iteration(auth)
         if iteration is None:
             return ProcessStreamTruncation(truncated_at_source=None)
+        if auth.invocation.get("runtime") == "sdk-local":
+            if auth.outcome is None:
+                raise ProcessOutputIntegrityError("SDK capture outcome is missing")
+            metadata_rel = cursor_sdk_attempt_metadata_rel(iteration, attempt_id)
+            if auth.outcome.get("metadata_path") != metadata_rel:
+                raise ProcessOutputIntegrityError("SDK capture metadata path mismatch")
+            metadata_sha = auth.outcome.get("metadata_sha256")
+            if not isinstance(metadata_sha, str) or len(metadata_sha) != 64:
+                raise ProcessOutputIntegrityError("SDK capture metadata digest is missing")
+            try:
+                metadata_path = resolve_run_relative_path(run_root, metadata_rel)
+            except ValueError as exc:
+                raise ProcessOutputIntegrityError("SDK capture metadata path invalid") from exc
+            if metadata_path.is_symlink() or not metadata_path.is_file():
+                raise ProcessOutputIntegrityError("SDK capture metadata is missing")
+            if metadata_path.stat().st_size > 65536:
+                raise ProcessOutputIntegrityError("SDK capture metadata is oversized")
+            if sha256_file(metadata_path) != metadata_sha:
+                raise ProcessOutputIntegrityError("SDK capture metadata hash mismatch")
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ProcessOutputIntegrityError("SDK capture metadata is invalid") from exc
+            if not isinstance(metadata, dict):
+                raise ProcessOutputIntegrityError("SDK capture metadata is invalid")
+            if stream == "stdout":
+                truncated_key, stored_key = "events_truncated", "events_stored_bytes"
+                expected_format = CURSOR_SDK_EVENT_STREAM_FORMAT
+                format_key = "events_format"
+            else:
+                truncated_key, stored_key = "stderr_truncated", "stderr_stored_bytes"
+                expected_format = CURSOR_SDK_TEXT_STREAM_FORMAT
+                format_key = "stderr_format"
+            if (
+                metadata.get("schema_version") != CURSOR_SDK_CAPTURE_SCHEMA_VERSION
+                or metadata.get(format_key) != expected_format
+            ):
+                raise ProcessOutputIntegrityError("SDK capture metadata format is unsupported")
+            sdk_truncated = _strict_bool_field(metadata, truncated_key)
+            sdk_stored = _strict_int_field(metadata, stored_key)
+            if sdk_truncated != auth.outcome.get(truncated_key) or sdk_stored != auth.outcome.get(
+                stored_key
+            ):
+                raise ProcessOutputIntegrityError(
+                    "SDK capture metadata disagrees with terminal outcome"
+                )
+            if path is None or not path.is_file() or path.stat().st_size != sdk_stored:
+                raise ProcessOutputIntegrityError("SDK capture stored byte count mismatch")
+            return ProcessStreamTruncation(
+                truncated_at_source=sdk_truncated,
+                stored_bytes=sdk_stored,
+            )
         try:
             observation = load_cursor_output_observation(
                 run_root,

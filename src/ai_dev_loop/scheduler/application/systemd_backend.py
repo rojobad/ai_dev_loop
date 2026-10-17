@@ -99,6 +99,7 @@ class SystemdUserBackend(AgentProcessBackend):
             f"--property=StandardOutput=file:{request.stdout_path}",
             f"--property=StandardError=file:{request.stderr_path}",
             "--property=RemainAfterExit=yes",
+            "--property=KillMode=control-group",
             f"--property=TimeoutStartSec={runtime_envelope}",
             f"--property=RuntimeMaxSec={runtime_envelope}",
             f"--property=TimeoutStopSec={stop_grace}",

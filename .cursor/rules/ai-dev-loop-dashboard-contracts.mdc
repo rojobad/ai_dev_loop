@@ -19,7 +19,8 @@ Codex owns this rule and the plans; implementation does not edit governance.
 - Start cohort includes Cursor/Codex implementer and Codex reviewer execution
   effects. Reviewer rounds include review effects only; codex_implementer is never
   a reviewer. Preserve historical provider defaults and current role/retry fields.
-  Exclude chat creation,
+  Cursor SDK initial/correction inference keeps the stable `cursor.run_turn`
+  execution meaning. Exclude CLI chat/SDK agent creation,
   preflight/probes, ingestion and unknown effects. Project comes from projectName.
 - Distinguish started cohort from submissions/review rounds/process seconds.
   Retry grouping is runId+iteration; recorded parallel process seconds are summed.

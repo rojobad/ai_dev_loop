@@ -52,6 +52,7 @@ def _three_phase_manifest() -> str:
     for index, name in enumerate(("phase-one", "phase-two", "phase-final"), start=1):
         phase = {
             "name": name,
+            "short_name": name.replace("-", " ").title(),
             "plan_path": "docs/plans/sample-plan.md",
             "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
             "codex": {"review_model": "gpt-5.6-sol", "review_reasoning_effort": "high"},
@@ -60,7 +61,13 @@ def _three_phase_manifest() -> str:
             phase["commit_message"] = f"checkpoint after {name}"
         phases.append(phase)
     return yaml.safe_dump(
-        {"schema_version": 1, "name": "three-phase", "phases": phases}, sort_keys=False
+        {
+            "schema_version": 3,
+            "name": "three-phase",
+            "short_name": "Three phase",
+            "phases": phases,
+        },
+        sort_keys=False,
     )
 
 

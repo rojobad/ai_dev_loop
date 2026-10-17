@@ -27,6 +27,7 @@ from ai_dev_loop.scheduler.application.cursor_evidence import (
 from ai_dev_loop.scheduler.application.scheduler_checkpoint import checkpoint_from_state
 from ai_dev_loop.scheduler.domain.state import (
     AdmittedRunCheckpoint,
+    CursorSdkBinding,
     RepositoryBinding,
     RepositoryTargetBinding,
     SubmittedRunContext,
@@ -266,6 +267,7 @@ def run_scheduler_preflight(
             implementer = context.implementer
             if implementer is None or implementer.reasoning_effort is None:
                 raise ValidationError("codex implementer binding is incomplete")
+            assert implementer.command is not None
             require_probe_success(
                 _codex_implementer_start_probes(
                     implementer_command=implementer.command,
@@ -279,6 +281,28 @@ def run_scheduler_preflight(
                 reviewer_command=context.codex.command,
                 reviewer_model=context.codex.review_model,
             )
+        elif isinstance(context.cursor, CursorSdkBinding):
+            # SDK package/path/auth/catalog checks execute inside the owned attempt
+            # unit. Preflight stays inference-free while still checking Git and B.
+            require_probe_success(
+                [
+                    item
+                    for item in (
+                        executable_probe("git", label="Git"),
+                        executable_probe(context.codex.command, label="Codex"),
+                        probe_codex_auth(context.codex.command),
+                    )
+                    if item is not None
+                ]
+            )
+            reviewer_version = probe_version(context.codex.command, tool="codex")
+            compat = [
+                probe_codex_model_compatibility(
+                    context.codex.command,
+                    required_model=context.codex.review_model,
+                    installed_version=reviewer_version.version,
+                )
+            ]
         else:
             require_probe_success(
                 run_start_probes(

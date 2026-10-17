@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/scheduler-sequence-manifest-v4.json",
+  "title": "SequenceManifestV4",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "name", "short_name", "phases"],
+  "properties": {
+    "schema_version": {"const": 4},
+    "name": {"type": "string", "minLength": 1, "maxLength": 256},
+    "short_name": {"$ref": "scheduler-sequence-manifest-v3.json#/$defs/shortName"},
+    "phases": {"type": "array", "minItems": 2, "maxItems": 32, "items": {"$ref": "#/$defs/phase"}}
+  },
+  "$defs": {
+    "phase": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "short_name", "plan_path", "prompt_source_path", "cursor", "codex"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 128},
+        "short_name": {"$ref": "scheduler-sequence-manifest-v3.json#/$defs/shortName"},
+        "plan_path": {"type": "string", "minLength": 1},
+        "prompt_source_path": {"type": "string", "minLength": 1},
+        "commit_message": {"type": ["string", "null"]},
+        "cursor": {"$ref": "#/$defs/sdkCursor"},
+        "codex": {"$ref": "scheduler-sequence-manifest-v3.json#/$defs/codexOverrides"},
+        "workflow": {"anyOf": [{"$ref": "scheduler-sequence-manifest-v3.json#/$defs/workflowOverrides"}, {"type": "null"}]},
+        "implementer": {"$ref": "scheduler-sequence-manifest-v3.json#/$defs/implementerOverrides"}
+      }
+    },
+    "sdkCursor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["runtime", "model", "parameters"],
+      "properties": {
+        "runtime": {"const": "sdk-local"},
+        "model": {"type": "string", "minLength": 1},
+        "parameters": {"type": "object", "minProperties": 1, "additionalProperties": {"type": ["string", "boolean"]}}
+      }
+    }
+  }
+}

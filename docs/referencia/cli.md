@@ -138,8 +138,9 @@ ai_dev_loop scheduler sequence status <sequence-id> [--output text|json]
 ai_dev_loop scheduler sequence abort <sequence-id> [--output text|json]
 ```
 
-Todo prepare nuevo exige manifest v3. Conserva la selección de implementer de v2
-y añade un `short_name` explícito para la secuencia y para cada fase:
+Todo prepare nuevo exige un manifest con nombres: v3 para los runtimes históricos
+o v4 para Cursor SDK. V3 conserva la selección de implementer de v2 y añade un
+`short_name` explícito para la secuencia y para cada fase:
 
 ```yaml
 schema_version: 3
@@ -168,6 +169,41 @@ phases:
     codex:
       review_model: gpt-6.1-sol
       review_reasoning_effort: high
+```
+
+Manifest v4 conserva esos nombres y exige la selección SDK completa por fase;
+puede mezclar implementers Cursor y Codex sin compartir sus identidades:
+
+```yaml
+schema_version: 4
+name: sdk-then-codex
+short_name: SDK y Codex
+phases:
+  - name: sdk-implementation
+    short_name: Implementación SDK
+    plan_path: docs/plans/sdk.md
+    prompt_source_path: docs/plans/prompt_sdk.txt
+    commit_message: "checkpoint: sdk accepted"
+    implementer: {provider: cursor}
+    cursor:
+      runtime: sdk-local
+      model: grok-4.7
+      parameters: {context: 256k, fast: false, reasoning_effort: high}
+    codex: {review_model: gpt-6.1-sol, review_reasoning_effort: high}
+  - name: codex-final
+    short_name: Cierre Codex
+    plan_path: docs/plans/final.md
+    prompt_source_path: docs/plans/prompt_final.txt
+    implementer:
+      provider: codex
+      model: gpt-6.1-sol
+      reasoning_effort: high
+      timeout_minutes: 90
+    cursor:
+      runtime: sdk-local
+      model: grok-4.7
+      parameters: {context: 256k, fast: false, reasoning_effort: high}
+    codex: {review_model: gpt-6.1-sol, review_reasoning_effort: high}
 ```
 
 Los `short_name` se recortan en los extremos, deben tener 1..35 code points
@@ -303,6 +339,12 @@ ai_dev_loop scheduler cursor-retry <run-id> [--check | --force] [--output text|j
 `--check` y `--force` son excluyentes. Sin ninguna de las dos banderas, el comando
 sigue autorizando solo el reintento de un timeout Cursor ya terminado, con el mismo
 prompt, chat y salida que antes.
+
+En contextos Cursor SDK v7/v8, las tres variantes devuelven ineligible/error sin
+mutar el run: la reconciliación SDK pertenece a Phase 25.3. Un create/send/run
+incierto conserva la reserva y su journal protegido; el operador puede inspeccionar
+con `--check` o terminar la propiedad explícitamente con `scheduler abort`, pero no
+se autoriza un segundo agente ni un reenvío automático.
 
 Con `--check`, el comando es solo lectura: abre el ledger en modo readonly, reconstruye
 la evidencia causal del fallo `cursor_failure` (si existe) y devuelve un recibo JSON

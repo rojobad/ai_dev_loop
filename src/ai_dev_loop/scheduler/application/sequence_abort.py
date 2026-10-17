@@ -36,6 +36,7 @@ from ai_dev_loop.scheduler.domain.state import (
     SCHEDULER_TERMINAL_STATE_KINDS,
     AbortedState,
     is_codex_implementer_reservation_hold,
+    is_cursor_sdk_reservation_hold,
 )
 from ai_dev_loop.scheduler.infrastructure.paths import default_artifact_root, default_engine_db_path
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
@@ -176,8 +177,8 @@ class SequenceAbortService:
             run_state, _, _ = self.store.load_validated_snapshot(conn, state.current_run_id)
             held_implementer = (
                 is_codex_implementer_reservation_hold(run_state)
-                and self.store.get_reservation_for_run(conn, state.current_run_id) is not None
-            )
+                or is_cursor_sdk_reservation_hold(run_state)
+            ) and self.store.get_reservation_for_run(conn, state.current_run_id) is not None
         if isinstance(run_state, AbortedState):
             return AbortProcessAction.NONE
         if run_state.kind in SCHEDULER_TERMINAL_STATE_KINDS and not held_implementer:

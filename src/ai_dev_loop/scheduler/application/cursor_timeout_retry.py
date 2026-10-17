@@ -26,6 +26,7 @@ from ai_dev_loop.scheduler.domain.cursor_contract import (
 from ai_dev_loop.scheduler.domain.events import CursorTimeoutRetryEvent
 from ai_dev_loop.scheduler.domain.state import (
     CursorReadyState,
+    CursorSdkBinding,
     WaitingForCursorFixState,
     WaitingUsageLimitState,
 )
@@ -129,6 +130,8 @@ class CursorTimeoutRetryService:
         now = self.now()
         with self.store.begin_immediate() as conn:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
+            if isinstance(state.context.cursor, CursorSdkBinding):
+                raise invalid("Cursor SDK timeout recovery is deferred to Phase 25.3")
             attempt = self.store.get_attempt_by_id(conn, attempt_id)
             if not isinstance(state, CURSOR_TURN_STATES) or attempt is None or attempt["ingested"]:
                 return TickRunReceipt(run_id=run_id, action="ingest_state_changed")
@@ -159,6 +162,8 @@ class CursorTimeoutRetryService:
         now = self.now()
         with self.store.begin_immediate() as conn:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
+            if isinstance(state.context.cursor, CursorSdkBinding):
+                raise invalid("Cursor SDK timeout recovery is deferred to Phase 25.3")
             self._require_idle(conn, run_id)
             if not isinstance(state, CURSOR_TURN_STATES) or not state.cursor.timeout_attempt_id:
                 raise invalid("Run has no retryable Cursor timeout")

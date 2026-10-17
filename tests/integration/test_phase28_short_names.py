@@ -148,10 +148,7 @@ def test_real_cli_requires_and_persists_short_name_before_metadata_only_edits(
     submit_help = runner.invoke(app, ["scheduler", "submit", "--help"])
     assert submit_help.exit_code == 0 and "--short-name" in submit_help.stdout
     assert runner.invoke(app, ["scheduler", "run", "set-short-name", "--help"]).exit_code == 0
-    assert (
-        runner.invoke(app, ["scheduler", "sequence", "set-short-name", "--help"]).exit_code
-        == 0
-    )
+    assert runner.invoke(app, ["scheduler", "sequence", "set-short-name", "--help"]).exit_code == 0
 
     submitted = runner.invoke(
         app,
@@ -227,7 +224,10 @@ def test_real_cli_requires_and_persists_short_name_before_metadata_only_edits(
         after = store.get_run_row(conn, run_id)
         assert (after["state_payload_sha256"], after["idempotency_key"]) == immutable
         assert store.run_short_name(conn, run_id) == "Duplicate name"
-        assert conn.execute("SELECT COUNT(*) FROM scheduler_repository_reservations").fetchone()[0] == reservation_count
+        assert (
+            conn.execute("SELECT COUNT(*) FROM scheduler_repository_reservations").fetchone()[0]
+            == reservation_count
+        )
         assert conn.execute("SELECT COUNT(*) FROM scheduler_effects").fetchone()[0] == effect_count
 
 
@@ -260,12 +260,15 @@ def test_v3_prepare_materialize_and_replay_preserve_exact_leaf_alias(
         first = state.definition.entries[0]
         assert state.definition.schema_version == 2
         assert store.sequence_short_name(conn, prepared.sequence_id) == "Fixture sequence"
-        assert store.planned_run_short_name(
-            conn,
-            sequence_id=prepared.sequence_id,
-            ordinal=1,
-            planned_run_id=first.planned_run_id,
-        ) == "Phase one"
+        assert (
+            store.planned_run_short_name(
+                conn,
+                sequence_id=prepared.sequence_id,
+                ordinal=1,
+                planned_run_id=first.planned_run_id,
+            )
+            == "Phase one"
+        )
         frozen_definition = state.definition
 
     started = _start_service(paths).start(prepared.sequence_id)
@@ -315,7 +318,9 @@ def test_fresh_legacy_and_invalid_v3_fail_before_resource_creation(
     legacy_path = git_repo / "legacy-sequence.yaml"
     legacy_path.write_text(yaml.safe_dump(legacy), encoding="utf-8")
     with pytest.raises(ValidationError, match="requires manifest v3"):
-        prepare_sequence(SequencePrepareOptions(manifest_path=legacy_path, repo_path=git_repo, **paths))
+        prepare_sequence(
+            SequencePrepareOptions(manifest_path=legacy_path, repo_path=git_repo, **paths)
+        )
     assert not paths["db_path"].exists()
     assert not paths["artifact_root"].exists()
 
@@ -359,8 +364,7 @@ def test_fresh_legacy_rejection_does_not_change_existing_ledger(
     with sqlite3.connect(paths["db_path"]) as conn:
         authority_before = {
             "migrations": conn.execute(
-                "SELECT version, name, checksum FROM scheduler_schema_migrations "
-                "ORDER BY version"
+                "SELECT version, name, checksum FROM scheduler_schema_migrations ORDER BY version"
             ).fetchall(),
             "sequences": conn.execute(
                 "SELECT sequence_id, payload, payload_sha256 FROM scheduler_sequences "
@@ -382,8 +386,7 @@ def test_fresh_legacy_rejection_does_not_change_existing_ledger(
         ).fetchone()[0] == (3 if schema_version == 17 else 0)
         assert {
             "migrations": conn.execute(
-                "SELECT version, name, checksum FROM scheduler_schema_migrations "
-                "ORDER BY version"
+                "SELECT version, name, checksum FROM scheduler_schema_migrations ORDER BY version"
             ).fetchall(),
             "sequences": conn.execute(
                 "SELECT sequence_id, payload, payload_sha256 FROM scheduler_sequences "
@@ -572,9 +575,12 @@ def test_schema16_read_fallback_and_v17_migration_preserve_authority(
         assert readonly.sequence_short_name(conn, prepared.sequence_id) == "fixture-sequence"
         fallback = readonly.run_short_name(conn, submitted.run_id)
         assert fallback == submitted.run_id[:35]
-        assert conn.execute(
-            "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'scheduler_%_presentation'"
-        ).fetchone()[0] == 0
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'scheduler_%_presentation'"
+            ).fetchone()[0]
+            == 0
+        )
     observations = SqliteDashboardReadRepository(db_path=paths["db_path"]).read_observations(
         DashboardReadScope(
             operation=DashboardReadOperation.RUNS,
@@ -648,9 +654,15 @@ def test_schema17_migration_fault_rolls_back_all_presentation_tables(
 
     with sqlite3.connect(paths["db_path"]) as conn:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 16
-        assert conn.execute(
-            "SELECT COUNT(*) FROM scheduler_schema_migrations WHERE version = 17"
-        ).fetchone()[0] == 0
-        assert conn.execute(
-            "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'scheduler_%_presentation'"
-        ).fetchone()[0] == 0
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM scheduler_schema_migrations WHERE version = 17"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE 'scheduler_%_presentation'"
+            ).fetchone()[0]
+            == 0
+        )

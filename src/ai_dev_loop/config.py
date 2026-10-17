@@ -645,6 +645,8 @@ class ConfigOverrides(BaseModel):
     cursor_command: str | None = None
     cursor_model: str | None = None
     cursor_output_format: str | None = None
+    cursor_sdk_model: str | None = None
+    cursor_sdk_parameters: dict[str, SdkParameterValue] | None = None
     codex_command: str | None = None
     codex_review_model: str | None = None
     codex_review_reasoning_effort: str | None = None
@@ -822,6 +824,10 @@ def resolve_effective_config(
             raise ValidationError(
                 "Cursor CLI command/model/output overrides are not valid for config version 2"
             )
+        if source_repo_config.version == 1 and (
+            overrides.cursor_sdk_model is not None or overrides.cursor_sdk_parameters is not None
+        ):
+            raise ValidationError("Cursor SDK overrides require config version 2")
         if overrides.project_name is not None:
             merged.setdefault("project", {})["name"] = overrides.project_name
         if overrides.cursor_command is not None:
@@ -830,6 +836,10 @@ def resolve_effective_config(
             merged.setdefault("cursor", {})["model"] = overrides.cursor_model
         if overrides.cursor_output_format is not None:
             merged.setdefault("cursor", {})["output_format"] = overrides.cursor_output_format
+        if overrides.cursor_sdk_model is not None:
+            merged.setdefault("cursor", {})["model"] = overrides.cursor_sdk_model
+        if overrides.cursor_sdk_parameters is not None:
+            merged.setdefault("cursor", {})["parameters"] = overrides.cursor_sdk_parameters
         if overrides.codex_command is not None:
             merged.setdefault("codex", {})["command"] = overrides.codex_command
         if overrides.codex_review_model is not None:

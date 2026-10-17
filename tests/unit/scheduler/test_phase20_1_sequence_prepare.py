@@ -76,7 +76,7 @@ def _two_phase_manifest() -> str:
                     "review_reasoning_effort": "high",
                 },
             },
-        ]
+        ],
     )
 
 

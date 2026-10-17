@@ -258,9 +258,33 @@ def verify_pre_execution_cursor_guards(
         identity,
         context="before cursor execution",
     )
+    sdk_runtime = evidence.get("runtime") == "sdk-local"
+    if sdk_runtime:
+        from ai_dev_loop.paths import cursor_conversation_key
+
+        if evidence.get("schema_version") != 2:
+            raise CursorEvidenceError("Cursor SDK invocation requires evidence schema v2")
+        owner = str(evidence.get("conversation_owner_run_id", ""))
+        if owner != run_id or str(evidence.get("conversation_key", "")) != cursor_conversation_key(
+            owner
+        ):
+            raise CursorEvidenceError("Cursor SDK conversation identity is not run-owned")
+        if str(evidence.get("sdk_version", "")) != "1.0.37":
+            raise CursorEvidenceError("Cursor SDK invocation version is not frozen")
+        if str(evidence.get("sdk_tool_policy", "")) != "scheduler-owned-no-shell":
+            raise CursorEvidenceError("Cursor SDK tool policy is not frozen")
+        if evidence.get("timeout_retry_of") or evidence.get("usage_limit_fingerprint_path"):
+            raise CursorEvidenceError("Cursor SDK recovery is deferred to Phase 25.3")
+        if effect_kind == RUN_CURSOR_TURN_EFFECT_KIND and not str(evidence.get("agent_id", "")):
+            raise CursorEvidenceError("Cursor SDK turn requires exact agent identity")
     fingerprint_path = evidence.get("usage_limit_fingerprint_path")
     fingerprint_sha = evidence.get("usage_limit_fingerprint_sha256")
-    if fingerprint_path and fingerprint_sha and not evidence.get("timeout_retry_of"):
+    if (
+        not sdk_runtime
+        and fingerprint_path
+        and fingerprint_sha
+        and not evidence.get("timeout_retry_of")
+    ):
         iteration_raw = evidence["iteration"]
         if isinstance(iteration_raw, bool) or not isinstance(iteration_raw, (int, str)):
             raise CursorEvidenceError("invocation evidence iteration must be numeric")

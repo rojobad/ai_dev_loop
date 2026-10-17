@@ -35,6 +35,9 @@ existing references; it does not imply a public `resume` command.
 - Persist the selected implementer's identity before relying on completed work;
   reuse it for fixes and eligible continuation. Missing identity after recorded
   work is not permission to create another chat or session.
+- For Cursor SDK, durable create/send intents and exact agent/native-run bindings
+  precede reliance on work. SDK recovery is explicitly deferred to Phase 25.3;
+  uncertainty retains the reservation and does not authorize redispatch.
 - A frozen Codex implementer is a separate identity from reviewer B. Historical
   contexts without implementer metadata remain Cursor. Standalone runs and manifest v2 sequence leaves launch the
   initial Codex turn and resume the exact authenticated session for corrections.
@@ -76,6 +79,10 @@ existing references; it does not imply a public `resume` command.
   repair. Preserve unresolved checkpoint/process holds during abort/recovery.
 
 ## Cursor Continuation
+
+The automatic/manual continuation rules below apply to historical Cursor CLI
+bindings. Context v7/v8 SDK failures are provider-specifically ineligible for
+`cursor-retry` and the Cursor branch of `implementer-retry` until Phase 25.3.
 
 - Classify usage limits from protected contemporaneous process evidence, never
   fuzzy `last_error` text. Preserve partial output, prompt, identity, and content

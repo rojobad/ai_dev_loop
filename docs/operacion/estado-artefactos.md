@@ -29,6 +29,9 @@ $XDG_STATE_HOME/ai_dev_loop/
 │       implementer/timeouts/<attempt-id>.intent.json
 │       implementer/iterations/<NN>/final.txt
 │       implementer/turns/<NN>.<attempt-id>.{jsonl,stderr.txt,metadata.json,...}
+│       cursor/sdk-identity.json
+│       cursor/sdk-attempts/<attempt-id>/dispatch-journal.jsonl
+│       cursor/iterations/<NN>/<attempt-id>/{sdk-envelopes.jsonl,sdk-metadata.json,final.txt,stderr.txt}
 │       codex/fresh-reviewer-input.json
 │       codex/fresh-reviewer-binding.json
 │       git/admission-status.txt
@@ -50,6 +53,13 @@ $XDG_STATE_HOME/ai_dev_loop/
   captura una sesión implementer autenticada, conserva cada intento bajo
   `implementer/`, normaliza staging al completar el turno y solo entonces crea el
   reviewer B independiente. Los contextos históricos sin esa metadata siguen Cursor.
+- Un submit Cursor con config v2 congela runtime SDK, versión, modelo+parámetros,
+  referencia de credencial, fuentes, sandbox y policy en contexto v7. El worker
+  persiste `create_intent` antes de crear, liga el agent exacto antes del primer
+  send y persiste `send_intent` antes de inferir. Los envelopes NDJSON acotados,
+  final, metadata y hashes permanecen separados. La identidad lógica no expone
+  roots privados del host. La unidad systemd usa `KillMode=control-group` para
+  incluir bridge y herramientas descendientes en timeout/abort.
 - Una cuota por evidencia estructurada/provider o por un probe post-fallo
   `EXHAUSTED` autenticado durante implementación inicial o corrección entra en
   `waiting_codex_capacity` con rol, turno, prompt, identidad y evidencia del intento.
@@ -97,6 +107,10 @@ No existe `recover` publico en el scheduler central. Ante fallos:
   reserva pero no puede ejecutar. Para la hoja vigente de secuencia,
   `scheduler_sequence_implementer_replacements` liga ordinal, generación, entrada
   congelada y adopción; lineage registra `implementer_retry`;
+- para Cursor SDK v7/v8, los retries automáticos, `cursor-retry` e
+  `implementer-retry` permanecen ineligibles hasta Phase 25.3. Un resultado de
+  create/send incierto retiene la reserva y no se redespacha; inspecciona el
+  journal protegido o usa `scheduler abort` explícito;
 - `scheduler abort` cancela sin borrar artefactos ni cambios staged;
 - para trabajo nuevo tras un run terminal, `scheduler submit` con
   `--short-name`, `--resubmission-id <uuid>`, modelo y razonamiento de review
@@ -135,8 +149,11 @@ sonda acotada al CLI Codex en `PATH`.
 ## Secuencias con implementer por fase
 
 Manifest v3 exige `short_name` de secuencia y fase, mientras definición/entrada
-v2 sigue congelando provider y settings por ordinal; las hojas
-usan contexto submitido v6. Los envelopes de ciclo de vida de secuencia siguen v1.
+v2 sigue congelando runtimes históricos por ordinal y las hojas usan contexto
+submitido v6. Manifest SDK v4 conserva los nombres y exige runtime/modelo/parámetros
+completos por fase; definición/entrada v3 y contexto v8 congelan esa selección,
+incluso en secuencias mixtas Cursor-SDK/Codex. Los envelopes de ciclo de vida de
+secuencia siguen v1.
 Entradas históricas v1 y contextos v4 conservan Cursor, identidad y hashes.
 Preparaciones v1/v2 ya aceptadas conservan replay/materialización exactos; inputs
 legacy nuevos deben actualizarse a v3.

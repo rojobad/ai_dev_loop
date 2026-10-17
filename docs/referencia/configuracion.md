@@ -155,19 +155,26 @@ privados separados bajo
 el repositorio. La identidad del owner se convierte en un digest SHA-256; no se
 usa un nombre inferido, path libre ni estado dentro del checkout.
 
-Phase 25.1 valida config v2 y conserva su configuracion efectiva cuando el
-implementer es Codex, pero mantiene un guard temporal: si el implementer resuelto
-es Cursor, `scheduler submit` y `scheduler sequence prepare` fallan antes de crear
-el run, la secuencia o sus artefactos. Seleccionar explicitamente un implementer
-Codex si permite admission con config v2 y no requiere binario Cursor,
-`cursor-sdk`, credencial Cursor ni variables Cursor; el binding SDK no se usa en
-ese run. Para ejecutar Cursor hoy, usa config v1 hasta que Phase 25.2 retire ese
-guard.
+Phase 25.2 permite que `scheduler submit` con implementer Cursor congele config v2
+en un contexto v7. `submit` no importa el SDK, abre el bridge, lee la credencial ni
+consulta el catalogo. El intento aislado hace ese preflight y persiste, antes de
+inferir, el intent de creación, el `agent_id` exacto y luego el intent de envío y
+el run nativo. Una selección Codex sigue siendo independiente y no requiere
+binario, package, credencial ni environment de Cursor.
+
+Las secuencias SDK nuevas usan manifest v4: conservan los `short_name` de v3 y
+exigen `runtime`, `model` y `parameters` completos en cada fase. La definición y
+entrada congeladas son v3 y cada hoja materializa contexto v8. Manifests v1-v3 ya
+aceptados conservan sus hashes y semántica histórica; no se convierten a SDK.
+La recuperación automática y `cursor-retry` para SDK permanecen deshabilitadas
+hasta Phase 25.3. Una creación o envío inciertos retienen la reserva para
+inspección o `scheduler abort`, sin crear otro agente ni reenviar el prompt.
 
 El wheel publica el extra opcional `cursor-sdk` con pin exacto a 1.0.37. La
 instalacion base no importa ni instala ese package y conserva lectores/CLI
-historicos. Phase 25.1 no autoriza hot-install de este checkout en un scheduler
-estable ni uso real del extra para dispatch.
+historicos. El desarrollo no autoriza hot-install de este checkout en un
+scheduler estable; la instalación o actualización sigue siendo una acción
+separada del operador.
 
 ## `codex`
 

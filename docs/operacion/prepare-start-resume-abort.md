@@ -45,12 +45,14 @@ Requisitos:
   protegidos del run; el YAML permanece portable y los workers no dependen del
   `PATH` de systemd. Un implementer Codex no resuelve ni requiere Cursor.
 
-Config v2 describe el Cursor SDK local fijado a 1.0.37. En Phase 25.1, submit
-con implementer Cursor se rechaza antes de crear estado o artefactos porque el
-dispatch SDK pertenece a Phase 25.2. Un implementer Codex explicito si puede
-admitirse con config v2 sin binario, package extra, credencial ni environment de
-Cursor; sus settings y los del reviewer B se congelan de forma independiente.
-El mismo limite se aplica por fase durante `scheduler sequence prepare`.
+Config v2 describe el Cursor SDK local fijado a 1.0.37. Con implementer Cursor,
+submit congela la selección completa en contexto v7; package, credencial, bridge,
+auth y catálogo se verifican dentro del intento aislado, no durante submit. Un
+implementer Codex explícito sigue admitiéndose sin ningún runtime Cursor y mantiene
+settings e identidad independientes del reviewer B. Las secuencias SDK requieren
+manifest v4 y materializan contexto v8; las preparaciones históricas no cambian.
+La recuperación SDK se mantiene deliberadamente bloqueada hasta Phase 25.3:
+identidad o envío inciertos conservan la reserva y solo ofrecen inspección o abort.
 
 Para flujos controller A, añade `--controller-session-id "<exact-controller-session-id>"`
 al submit. Los reenvios idempotentes sin A reutilizan runs historicos con la misma

@@ -1360,8 +1360,12 @@ class SqliteSchedulerStore:
     ) -> None:
         cleaned = self._validate_stored_short_name(short_name)
         now_text = encode_utc_instant(now)
-        conflict = "DO NOTHING" if if_absent else (
-            "DO UPDATE SET short_name = excluded.short_name, updated_at = excluded.updated_at"
+        conflict = (
+            "DO NOTHING"
+            if if_absent
+            else (
+                "DO UPDATE SET short_name = excluded.short_name, updated_at = excluded.updated_at"
+            )
         )
         conn.execute(
             f"""
@@ -1383,8 +1387,12 @@ class SqliteSchedulerStore:
     ) -> None:
         cleaned = self._validate_stored_short_name(short_name)
         now_text = encode_utc_instant(now)
-        conflict = "DO NOTHING" if if_absent else (
-            "DO UPDATE SET short_name = excluded.short_name, updated_at = excluded.updated_at"
+        conflict = (
+            "DO NOTHING"
+            if if_absent
+            else (
+                "DO UPDATE SET short_name = excluded.short_name, updated_at = excluded.updated_at"
+            )
         )
         conn.execute(
             f"""
@@ -1409,8 +1417,12 @@ class SqliteSchedulerStore:
     ) -> None:
         cleaned = self._validate_stored_short_name(short_name)
         now_text = encode_utc_instant(now)
-        conflict = "DO NOTHING" if if_absent else (
-            "DO UPDATE SET short_name = excluded.short_name, updated_at = excluded.updated_at"
+        conflict = (
+            "DO NOTHING"
+            if if_absent
+            else (
+                "DO UPDATE SET short_name = excluded.short_name, updated_at = excluded.updated_at"
+            )
         )
         conn.execute(
             f"""
@@ -2538,10 +2550,10 @@ class SqliteSchedulerStore:
             )
         sequence_filter = ""
         if kind == "standalone":
-            sequence_filter = " AND COALESCE(json_extract(state_payload, '$.context.schema_version'), 0) NOT IN (4, 6)"
+            sequence_filter = " AND COALESCE(json_extract(state_payload, '$.context.schema_version'), 0) NOT IN (4, 6, 8)"
         elif kind == "sequence":
             sequence_filter = (
-                " AND json_extract(state_payload, '$.context.schema_version') IN (4, 6)"
+                " AND json_extract(state_payload, '$.context.schema_version') IN (4, 6, 8)"
             )
         elif kind != "all":
             raise SchedulerEngineError(
@@ -5264,7 +5276,9 @@ class SqliteSchedulerStore:
                     entry_digest,
                 ),
             )
-            short_name = None if planned_short_names is None else planned_short_names.get(entry.ordinal)
+            short_name = (
+                None if planned_short_names is None else planned_short_names.get(entry.ordinal)
+            )
             if supports_presentation_names:
                 self.insert_planned_run_short_name(
                     conn,

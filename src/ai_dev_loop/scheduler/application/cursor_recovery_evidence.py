@@ -78,6 +78,7 @@ from ai_dev_loop.scheduler.domain.sequence import (
 from ai_dev_loop.scheduler.domain.state import (
     AdmittedRunCheckpoint,
     BlockedState,
+    CursorSdkBinding,
     SequenceRunBinding,
     SubmittedRunContext,
 )
@@ -2161,6 +2162,22 @@ def analyze_cursor_recovery_evidence(
     with store.begin_read() as conn:
         state, _, _ = store.load_validated_snapshot(conn, run_id)
 
+        if isinstance(state.context.cursor, CursorSdkBinding):
+            binding = state.context.sequence
+            return CursorRecoveryAnalysisResult(
+                receipt=receipt(
+                    run_id,
+                    evidence_status="ineligible",
+                    turn_kind=None,
+                    reason_code="cursor_sdk_recovery_deferred",
+                    safe_summary=(
+                        "Cursor SDK recovery is deferred to Phase 25.3; inspect the protected "
+                        "identity journal and use explicit scheduler abort if ownership must end."
+                    ),
+                    sequence_id=None if binding is None else binding.sequence_id,
+                    ordinal=None if binding is None else binding.ordinal,
+                )
+            )
         if not isinstance(state, BlockedState):
             return CursorRecoveryAnalysisResult(
                 receipt=receipt(

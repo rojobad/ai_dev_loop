@@ -45,6 +45,7 @@ from ai_dev_loop.scheduler.domain.state import (
     WaitingForCursorFixState,
     WaitingUsageLimitState,
     is_codex_implementer_reservation_hold,
+    is_cursor_sdk_reservation_hold,
 )
 from ai_dev_loop.scheduler.infrastructure.paths import (
     default_artifact_root,
@@ -156,8 +157,8 @@ class SchedulerAbortService:
             state, _, _ = self.store.load_validated_snapshot(conn, run_id)
             held_implementer = (
                 is_codex_implementer_reservation_hold(state)
-                and self.store.get_reservation_for_run(conn, run_id) is not None
-            )
+                or is_cursor_sdk_reservation_hold(state)
+            ) and self.store.get_reservation_for_run(conn, run_id) is not None
         if isinstance(state, AbortedState):
             return self._reconcile_existing_abort(run_id, now=now)
         if state.kind in SCHEDULER_TERMINAL_STATE_KINDS and not held_implementer:
@@ -179,8 +180,8 @@ class SchedulerAbortService:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
             held_implementer = (
                 is_codex_implementer_reservation_hold(state)
-                and self.store.get_reservation_for_run(conn, run_id) is not None
-            )
+                or is_cursor_sdk_reservation_hold(state)
+            ) and self.store.get_reservation_for_run(conn, run_id) is not None
             if isinstance(state, AbortedState):
                 concurrent_aborted = True
             elif state.kind in SCHEDULER_TERMINAL_STATE_KINDS and not held_implementer:

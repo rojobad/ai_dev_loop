@@ -8,6 +8,7 @@ import os
 import re
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Literal, cast
@@ -17,10 +18,12 @@ from ai_dev_loop.integrations.cursor_sdk.port import (
     CursorSdkAgentIdentity,
     CursorSdkBridgeHealth,
     CursorSdkClientConfig,
+    CursorSdkEnvelope,
     CursorSdkErrorCode,
     CursorSdkFailure,
     CursorSdkOperation,
     CursorSdkOutcome,
+    CursorSdkPreflight,
     CursorSdkRunIdentity,
     CursorSdkRunPage,
     CursorSdkTerminalRun,
@@ -99,6 +102,7 @@ class CursorSdkAdapter:
         self._api_key: str | None = None
         self._agents: dict[str, Any] = {}
         self._runs: dict[str, Any] = {}
+        self._health: CursorSdkBridgeHealth | None = None
 
     def __enter__(self) -> CursorSdkAdapter:
         outcome = self.open()
@@ -164,13 +168,13 @@ class CursorSdkAdapter:
                 return CursorSdkOutcome.failed(
                     self._failure(CursorSdkErrorCode.INVALID_RESPONSE, CursorSdkOperation.OPEN)
                 )
-            return CursorSdkOutcome.success(
-                CursorSdkBridgeHealth(
-                    sdk_version=installed_version,
-                    bridge_version=bridge_version,
-                    protocol_version=protocol_version,
-                )
+            health = CursorSdkBridgeHealth(
+                sdk_version=installed_version,
+                bridge_version=bridge_version,
+                protocol_version=protocol_version,
             )
+            self._health = health
+            return CursorSdkOutcome.success(health)
         except CursorSdkPathError:
             self.close()
             return CursorSdkOutcome.failed(
@@ -186,11 +190,55 @@ class CursorSdkAdapter:
         self._client = None
         self._sdk = None
         self._api_key = None
+        self._health = None
         self._agents.clear()
         self._runs.clear()
         if client is not None:
             with suppress(Exception):
                 client.close()
+
+    def preflight(self) -> CursorSdkOutcome[CursorSdkPreflight]:
+        invalid = self._require_open(CursorSdkOperation.PREFLIGHT)
+        if invalid is not None:
+            return CursorSdkOutcome.failed(invalid)
+        try:
+            self._client.me(api_key=self._api_key)
+            models = tuple(self._client.models.list(api_key=self._api_key))
+            selected = next(
+                (model for model in models if str(getattr(model, "id", "")) == self._config.model),
+                None,
+            )
+            if selected is None:
+                return CursorSdkOutcome.failed(
+                    self._failure(CursorSdkErrorCode.INVALID_REQUEST, CursorSdkOperation.PREFLIGHT)
+                )
+            expected = tuple(sorted(self._config.parameters))
+            variants = tuple(getattr(selected, "variants", ()) or ())
+            exact_variant = any(
+                tuple(
+                    sorted(
+                        (str(getattr(item, "id", "")), str(getattr(item, "value", "")))
+                        for item in (getattr(variant, "params", ()) or ())
+                    )
+                )
+                == expected
+                for variant in variants
+            )
+            if not exact_variant:
+                return CursorSdkOutcome.failed(
+                    self._failure(CursorSdkErrorCode.INVALID_REQUEST, CursorSdkOperation.PREFLIGHT)
+                )
+            assert self._health is not None
+            return CursorSdkOutcome.success(
+                CursorSdkPreflight(
+                    health=self._health,
+                    authenticated=True,
+                    model=self._config.model,
+                    parameters=expected,
+                )
+            )
+        except Exception as exc:
+            return CursorSdkOutcome.failed(self._classify(exc, CursorSdkOperation.PREFLIGHT))
 
     def create_agent(self) -> CursorSdkOutcome[CursorSdkAgentIdentity]:
         invalid = self._require_open(CursorSdkOperation.CREATE)
@@ -274,6 +322,7 @@ class CursorSdkAdapter:
         *,
         mode: Literal["live", "replay"] = "live",
         after_offset: str | None = None,
+        on_envelope: Callable[[CursorSdkEnvelope], None] | None = None,
     ) -> CursorSdkOutcome[CursorSdkTerminalRun]:
         invalid = self._require_open(
             CursorSdkOperation.STREAM,
@@ -289,15 +338,18 @@ class CursorSdkAdapter:
                 # public replay works. Invoke observe directly and never gate it.
                 # ObserveRun does not mutate a handle created by GetRun, so use
                 # the public wait operation for the authoritative terminal result.
-                for _event in run.observe(after_offset=after_offset):
-                    pass
+                for event in run.observe(after_offset=after_offset):
+                    if on_envelope is not None:
+                        on_envelope(self._envelope(event))
                 converted = self._terminal_result(run, run.wait())
             else:
                 run = self._runs.get(run_id)
                 if run is None:
                     run = self._get_public_run(agent_id, run_id)
-                for _message in run.stream():
-                    pass
+                iterator = run.events() if hasattr(run, "events") else run.stream()
+                for event in iterator:
+                    if on_envelope is not None:
+                        on_envelope(self._envelope(event))
                 converted = self._terminal_result(run, run.wait())
             if converted.agent_id != agent_id or converted.run_id != run_id:
                 return CursorSdkOutcome.failed(
@@ -475,12 +527,10 @@ class CursorSdkAdapter:
             },
         )
 
-    @staticmethod
-    def _terminal_run(value: Any) -> CursorSdkTerminalRun:
-        return CursorSdkAdapter._terminal_result(value, value)
+    def _terminal_run(self, value: Any) -> CursorSdkTerminalRun:
+        return self._terminal_result(value, value)
 
-    @staticmethod
-    def _terminal_result(identity: Any, result: Any) -> CursorSdkTerminalRun:
+    def _terminal_result(self, identity: Any, result: Any) -> CursorSdkTerminalRun:
         usage_value = getattr(result, "usage", None)
         usage = None
         if usage_value is not None:
@@ -496,9 +546,14 @@ class CursorSdkAdapter:
             agent_id=str(getattr(identity, "agent_id", "")),
             run_id=CursorSdkAdapter._run_id(identity),
             status=str(getattr(result, "status", "")),
-            text=str(getattr(result, "result", "")),
+            text=self._redact_active_credential(str(getattr(result, "result", ""))),
             usage=usage,
         )
+
+    def _redact_active_credential(self, text: str) -> str:
+        if self._api_key:
+            return text.replace(self._api_key, "[redacted]")
+        return text
 
     @staticmethod
     def _run_id(value: Any) -> str:
@@ -506,6 +561,53 @@ class CursorSdkAdapter:
         if native_id is not None:
             return str(native_id)
         return str(getattr(value, "run_id", ""))
+
+    def _envelope(self, value: Any) -> CursorSdkEnvelope:
+        payload = self._safe_payload(value)
+        offset = str(payload.get("offset", getattr(value, "offset", "")))
+        if not offset:
+            raise ValueError("SDK envelope missing offset")
+        return CursorSdkEnvelope(offset=offset, payload=payload)
+
+    def _safe_payload(self, value: Any) -> dict[str, Any]:
+        seen: set[int] = set()
+
+        def clean(item: object, *, depth: int = 0) -> object:
+            if depth > 12:
+                return "[redacted-depth]"
+            if isinstance(item, dict):
+                result: dict[str, object] = {}
+                for key, child in item.items():
+                    name = str(key)
+                    if any(token in name.lower() for token in ("api_key", "token", "secret")):
+                        continue
+                    result[name] = clean(child, depth=depth + 1)
+                return result
+            if isinstance(item, (list, tuple)):
+                return [clean(child, depth=depth + 1) for child in item]
+            if isinstance(item, (str, int, float, bool)) or item is None:
+                if isinstance(item, str) and self._api_key and self._api_key in item:
+                    return "[redacted]"
+                return item
+            identity = id(item)
+            if identity in seen:
+                return "[redacted-cycle]"
+            seen.add(identity)
+            try:
+                if is_dataclass(item):
+                    expanded: object = asdict(cast(Any, item))
+                elif hasattr(item, "model_dump"):
+                    expanded = item.model_dump(mode="json")
+                elif hasattr(item, "__dict__"):
+                    expanded = dict(vars(item))
+                else:
+                    expanded = str(item)
+                return clean(expanded, depth=depth + 1)
+            finally:
+                seen.discard(identity)
+
+        cleaned = clean(value)
+        return cleaned if isinstance(cleaned, dict) else {"value": cleaned}
 
     def _require_open(
         self,

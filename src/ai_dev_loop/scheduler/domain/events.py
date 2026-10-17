@@ -52,6 +52,8 @@ CODEX_IMPLEMENTER_RECOVERY_SUCCESSOR_CREATED_EVENT_KIND = (
 CURSOR_CHAT_BLOCKED_EVENT_KIND = "cursor_chat_blocked"
 CURSOR_TURN_COMPLETED_EVENT_KIND = "cursor_turn_completed"
 CURSOR_TURN_BLOCKED_EVENT_KIND = "cursor_turn_blocked"
+CURSOR_SDK_AGENT_CREATED_EVENT_KIND = "cursor_sdk_agent_created"
+CURSOR_SDK_TURN_COMPLETED_EVENT_KIND = "cursor_sdk_turn_completed"
 CURSOR_USAGE_LIMIT_DETECTED_EVENT_KIND = "cursor_usage_limit_detected"
 STAGING_COMPLETED_EVENT_KIND = "staging_completed"
 STAGING_BLOCKED_EVENT_KIND = "staging_blocked"
@@ -399,6 +401,30 @@ class CursorTurnCompletedEvent(DomainModel):
         if value != CURSOR_TURN_COMPLETED_EVENT_KIND:
             raise ValueError("kind must be cursor_turn_completed")
         return value
+
+
+class CursorSdkAgentCreatedEvent(DomainModel):
+    kind: Literal["cursor_sdk_agent_created"] = "cursor_sdk_agent_created"
+    schema_version: Literal[1] = 1
+    run_id: NonEmptyStr
+    agent_id: NonEmptyStr
+    conversation_key: Sha256Hex
+    identity_artifact_path: NonEmptyStr
+    identity_artifact_sha256: Sha256Hex
+    journal_path: NonEmptyStr
+    journal_sha256: Sha256Hex
+
+
+class CursorSdkTurnCompletedEvent(DomainModel):
+    kind: Literal["cursor_sdk_turn_completed"] = "cursor_sdk_turn_completed"
+    schema_version: Literal[1] = 1
+    run_id: NonEmptyStr
+    iteration: int = Field(ge=1)
+    native_run_id: NonEmptyStr
+    journal_path: NonEmptyStr
+    journal_sha256: Sha256Hex
+    cursor_output_fingerprint_path: NonEmptyStr
+    cursor_output_fingerprint_sha256: Sha256Hex
 
 
 class CursorTurnBlockedEvent(DomainModel):
@@ -1165,6 +1191,8 @@ SchedulerEvent = Annotated[
     ]
     | Annotated[CursorChatBlockedEvent, Tag(CURSOR_CHAT_BLOCKED_EVENT_KIND)]
     | Annotated[CursorTurnCompletedEvent, Tag(CURSOR_TURN_COMPLETED_EVENT_KIND)]
+    | Annotated[CursorSdkAgentCreatedEvent, Tag(CURSOR_SDK_AGENT_CREATED_EVENT_KIND)]
+    | Annotated[CursorSdkTurnCompletedEvent, Tag(CURSOR_SDK_TURN_COMPLETED_EVENT_KIND)]
     | Annotated[CursorTurnBlockedEvent, Tag(CURSOR_TURN_BLOCKED_EVENT_KIND)]
     | Annotated[CursorUsageLimitDetectedEvent, Tag(CURSOR_USAGE_LIMIT_DETECTED_EVENT_KIND)]
     | Annotated[StagingCompletedEvent, Tag(STAGING_COMPLETED_EVENT_KIND)]

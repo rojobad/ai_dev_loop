@@ -58,6 +58,7 @@ from ai_dev_loop.scheduler.domain.state import (
     BlockedState,
     CodexWorkflowCheckpoint,
     CursorReadyState,
+    CursorSdkBinding,
     CursorWorkflowCheckpoint,
 )
 from ai_dev_loop.scheduler.infrastructure.paths import default_artifact_root, default_engine_db_path
@@ -202,6 +203,9 @@ class CursorInitialRecoveryService:
     def force(self, run_id: str) -> CursorInitialRecoveryResult:
         now = self._now_factory()
         with self.store.begin_read() as conn:
+            source_state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            if isinstance(source_state.context.cursor, CursorSdkBinding):
+                raise _invalid("Cursor SDK recovery is deferred to Phase 25.3")
             existing_rows = self.store.list_cursor_initial_recoveries_for_source(
                 conn,
                 source_run_id=run_id,

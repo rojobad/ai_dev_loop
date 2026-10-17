@@ -226,7 +226,7 @@ def test_mixed_global_and_repository_config_versions_fail_explicitly(
         resolve_effective_config(repo_root=git_repo)
 
 
-def test_cursor_selected_v2_submit_stops_before_freezing_or_creating_resources(
+def test_cursor_selected_v2_submit_freezes_phase25_2_sdk_context_without_importing_sdk(
     git_repo: Path,
     isolated_xdg: Path,
 ) -> None:
@@ -237,14 +237,13 @@ def test_cursor_selected_v2_submit_stops_before_freezing_or_creating_resources(
         ProtectedArtifactStore(paths["artifact_root"]),
         repository_discoverer=lambda _: _repository_target(git_repo),
     )
-    with (
-        patch("sys.stdin", StringIO(_prompt(git_repo))),
-        pytest.raises(ValidationError, match="Cursor SDK scheduler dispatch"),
-    ):
-        service.submit(_submit_options(git_repo, paths))
-    with sqlite3.connect(paths["db_path"]) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM scheduler_runs").fetchone()[0] == 0
-    assert not list(paths["artifact_root"].rglob("effective-config.yaml"))
+    with patch("sys.stdin", StringIO(_prompt(git_repo))):
+        result = service.submit(_submit_options(git_repo, paths))
+    with service.store.begin_read() as conn:
+        state, _, _ = service.store.load_validated_snapshot(conn, result.run_id)
+    assert state.context.schema_version == 7
+    assert state.context.cursor.runtime == "sdk-local"  # type: ignore[union-attr]
+    assert (service.artifacts.run_root(result.run_id) / "effective-config.yaml").is_file()
     assert importlib.util.find_spec("cursor_sdk") is None
 
 

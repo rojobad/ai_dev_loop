@@ -142,13 +142,6 @@ class DashboardPage:
     ) -> DashboardPage:
         if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
             raise DashboardFilterError("offset must be a nonnegative integer.")
-        if (
-            isinstance(limit, bool)
-            or not isinstance(limit, int)
-            or limit < 1
-            or limit > maximum
-        ):
-            raise DashboardFilterError(
-                f"limit must be an integer between 1 and {maximum}."
-            )
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > maximum:
+            raise DashboardFilterError(f"limit must be an integer between 1 and {maximum}.")
         return cls(offset=offset, limit=limit)

@@ -503,6 +503,29 @@ def test_live_stream_combines_run_identity_with_terminal_result(
     adapter.close()
 
 
+def test_terminal_result_redacts_only_the_active_credential(
+    git_repo: Path,
+    isolated_xdg: Path,
+) -> None:
+    client = FakeClient()
+    client.run.wait_result = FakeRunResult(
+        result=f"ordinary prefix {SECRET} ordinary suffix",
+        usage=FakeUsage(),
+    )
+    adapter = _adapter(git_repo, isolated_xdg, client)
+    assert adapter.open().value is not None
+    assert adapter.create_agent().value is not None
+    sent = adapter.send(client.agent.agent_id, "one turn")
+    assert sent.value is not None
+
+    terminal = adapter.stream(client.agent.agent_id, client.run.id)
+
+    assert terminal.value is not None
+    assert terminal.value.text == "ordinary prefix [redacted] ordinary suffix"
+    assert SECRET not in terminal.value.text
+    adapter.close()
+
+
 def test_public_replay_ignores_unreliable_supports_and_returns_one_terminal_usage(
     git_repo: Path,
     isolated_xdg: Path,
