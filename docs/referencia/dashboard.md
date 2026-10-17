@@ -3,7 +3,7 @@
 ## Superficie instalada
 
 `ai_dev_loop dashboard serve --port 8765` sirve el frontend empaquetado y
-`POST /api/dashboard/read` en `127.0.0.1`. La API de integración actual es 1.10 y
+`POST /api/dashboard/read` en `127.0.0.1`. La API de integración actual es 1.11 y
 publica `capabilities.dashboard=true` y `capabilities.shortNames=true`. SQLite
 schema 17 almacena los nombres cortos; schema 16 sigue siendo legible mediante
 fallback sin migración ni escritura. El lector abre un snapshot validado de
@@ -39,6 +39,10 @@ El frontend edita los límites como `DD/MM/yyyy HH:mm` en la zona IANA elegida y
 solo transporta instantes UTC después de validarlos. Una hora local inexistente
 se rechaza; una hora ambigua por cambio DST exige añadir `Z` o un offset
 `±HH:mm` que coincida con esa zona. El límite final conserva semántica exclusiva.
+Proyecto y presets válidos cambian el scope de inmediato. Los campos escritos de
+fecha/zona esperan 400 ms y solo publican un scope completo y válido; un borrador
+inválido conserva la última observación válida y muestra su error. `Refresh
+current scope` vuelve a observar ese scope sin aplicar borradores parciales.
 
 `summary` y `runs` incluyen cada run cuyo primer lanzamiento de ejecución cae
 en el rango. El primer lanzamiento es la primera petición de ejecución owned;
@@ -92,8 +96,17 @@ lanzamiento usada por summary/runs.
 
 ## Paginación y límites
 
-Las páginas usan `offset` y `limit`; el máximo es 100 y `nextOffset` solo existe
-cuando `hasMore=true`. El servicio limita cada observación a 10.000 runs
+Las páginas usan `offset` y `limit`; `dashboard.runs` admite de 1 a 1000 y las
+demás colecciones paginadas conservan su máximo de 100. `nextOffset` solo existe
+cuando `hasMore=true` y avanza por el `limit` solicitado de esa página. El mapa
+solicita 1000 inicialmente y sigue automáticamente hasta agotar la cohorte. Si
+el sobre de una página supera 240 KiB, el productor devuelve
+`PAGE_ENVELOPE_TOO_LARGE` y el cliente reintenta el mismo offset con la mitad del
+lote, hasta 1; otros errores no activan esa reducción. Progreso, cobertura
+incompleta y reintento permanecen visibles, sin botón `Load more` ni totales
+derivados de una carga parcial.
+
+El servicio limita cada observación a 10.000 runs
 relevantes, 100.000 intentos contribuyentes, 5 segundos de consulta y un sobre
 de 240 KiB. El request HTTP está limitado a 16 KiB y cada lectura de contenido a
 65.536 bytes. Superar un límite falla sin publicar totales parciales.
@@ -102,6 +115,24 @@ El servidor admite cuatro handlers, dos trabajos de servicio y una sola sonda
 de capacidad. La saturación responde `503`; no crea una cola ilimitada. El
 cliente mantiene como máximo dos lecturas activas y usa cancelación más fences
 de generación para que una respuesta vieja no restaure un scope retirado.
+
+El polling actualiza la primera página sin eliminar páginas históricas ya
+cargadas ni duplicar IDs. Cada página conserva su observación fechada: el
+conjunto agregado no se presenta como snapshot atómico. Un Refresh explícito o
+un cambio de scope retira la generación completa y reinicia la carga automática.
+
+## Información y presentación accesible
+
+Cada panel o gráfico conserva encabezado, datos, controles, frescura, progreso y
+warnings accionables a la vista. Su botón `Information` abre en un diálogo la
+explicación, definiciones y procedencia detallada; expone `aria-expanded`, admite
+teclado/Escape y devuelve el foco al control que lo abrió. La actividad diaria
+mantiene el calendario y ofrece la lista equivalente bajo un disclosure
+accesible, sin una pared de días permanente.
+
+Los tooltips ECharts se montan a nivel de `body`, se confinan al viewport y usan
+una capa inferior a los modales. Los nombres no confiables se siguen escapando y
+el overlay se elimina al desmontar el gráfico.
 
 ## Contenido y compatibilidad
 

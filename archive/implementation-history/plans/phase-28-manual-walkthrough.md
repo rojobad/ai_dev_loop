@@ -1,16 +1,31 @@
 # Phase 28 final manual walkthrough
 
-Status: pending implementation and operator acceptance. Perform after all three
+Status: automated implementation gates complete; operator acceptance pending.
+Perform after all three
 runs complete, from a separately updated installed build or an owned isolated
 fixture installation. This document does not authorize updating the live package,
 timer, real data or final Git publication. 28.3 must replace planned command
 examples below with verified actual help/output where necessary.
+
+Use the installed command surface below; do not run it from an editable checkout
+or against the live operator ledger for fixture acceptance:
+
+```bash
+ai_dev_loop integration info
+ai_dev_loop dashboard serve --port 8765
+```
 
 1. Review the implemented preparation guidance in AGENTS.md/planning skill,
    --short-name, manifest v3 and the two metadata-only set-short-name commands.
    In an isolated fixture create a named standalone run and a named sequence
    with names per phase. Verify missing/>35/blank names rejected, metadata rename
    preserves ID, state and frozen inputs. No real model call is needed.
+
+   ```bash
+   ai_dev_loop scheduler sequence prepare --repo-path /path/to/repo --manifest /path/to/manifest-v3.yaml
+   ai_dev_loop scheduler run set-short-name <run-id> --short-name "Renamed run"
+   ai_dev_loop scheduler sequence set-short-name <sequence-id> --short-name "Renamed sequence"
+   ```
 2. Use an upgraded historical fixture; existing runs/sequences/planned leaves
    show truncated names without manual filling. Rename a fixture sequence and
    run through the explicit CLI and Refresh; short labels change without
@@ -34,7 +49,8 @@ examples below with verified actual help/output where necessary.
    closing restores focus. Warnings remain visible. Activity's large daily list
    is gone; accessible daily values remain available on demand. Switch all three
    metrics and verify time is formatted as hours/minutes without changing math.
-8. At1095x884 and narrower viewport, light/dark, hover first calendar rows and
+8. At 1095x884 and a narrower viewport, in light and dark themes, hover the first
+   calendar rows and
    other charts. Tooltip stays visible above panels and inside viewport. Test
    Pause/Resume, hidden-tab behavior and explicit Refresh. No sensitive polling.
 9. Record observed results and any defects. Automatic sequence completion is

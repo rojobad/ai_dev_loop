@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ActivityCalendar } from "./ActivityCalendar";
 import { AttemptTimeline } from "./AttemptTimeline";
 import { DashboardChart } from "./DashboardChart";
+import { InformationControl } from "./InformationControl";
 import { RunMap } from "./RunMap";
 import {
   CAPACITY_REFRESH_MS,
@@ -64,12 +65,32 @@ function ObservationLine({
 }) {
   return (
     <p className="observation-line">
-      Local read · source observed {formatInstant(observation.observedAt, timeZone)} · received {formatInstant(
-        observation.receivedAt,
-        timeZone,
-      )} · {formatAge(observation.receivedAt)}
+      Last successful local read · {formatAge(observation.receivedAt)}
     </p>
   );
+}
+
+function ObservationProvenance({
+  observation,
+  timeZone,
+}: {
+  observation: SourceObservation<unknown>;
+  timeZone: string;
+}) {
+  return (
+    <p>
+      The source observed this data at {formatInstant(observation.observedAt, timeZone)};
+      the browser received it at {formatInstant(observation.receivedAt, timeZone)}. These are
+      separate freshness markers and do not imply one atomic snapshot across panels.
+    </p>
+  );
+}
+
+function sameFilters(left: DashboardFilters, right: DashboardFilters): boolean {
+  return left.fromUtc === right.fromUtc &&
+    left.toUtc === right.toUtc &&
+    left.timeZone === right.timeZone &&
+    left.projectName === right.projectName;
 }
 
 function Kpi({ label, value }: { label: string; value: number }) {
@@ -124,10 +145,14 @@ function CapacityPanel({
   return (
     <section className="panel" aria-labelledby="capacity-heading">
       <div className="panel-heading">
-        <div>
-          <h2 id="capacity-heading">Current Codex capacity</h2>
-          <p>Current local observation · independent of project and historical range</p>
-        </div>
+        <h2 id="capacity-heading">Current Codex capacity</h2>
+        <InformationControl label="Current Codex capacity">
+          <p>This is a current local observation, independent of project and historical range.</p>
+          <p>Percentages and reset windows come from the explicit bounded capacity probe.</p>
+          {state.observation ? (
+            <ObservationProvenance observation={state.observation} timeZone={timeZone} />
+          ) : null}
+        </InformationControl>
       </div>
       {state.error ? (
         <p className="error-banner">
@@ -224,10 +249,12 @@ function SummaryPanels({
       <div className="overview-grid">
         <section className="panel" aria-labelledby="states-heading">
           <div className="panel-heading">
-            <div>
-              <h2 id="states-heading">Started runs by project and state</h2>
-              <p>Complete summary counts; unknown additive states remain grouped as Other.</p>
-            </div>
+            <h2 id="states-heading">Started runs by project and state</h2>
+            <InformationControl label="Started runs by project and state">
+              <p>The overview counts the complete first-execution cohort in the current valid scope.</p>
+              <p>Unknown additive states remain grouped as Other without changing their raw labels.</p>
+              <ObservationProvenance observation={observation} timeZone={timeZone} />
+            </InformationControl>
           </div>
           {summary.projects.length ? (
             <>
@@ -250,10 +277,12 @@ function SummaryPanels({
         </section>
         <section className="panel" aria-labelledby="workload-heading">
           <div className="panel-heading">
-            <div>
-              <h2 id="workload-heading">Project workload</h2>
+            <h2 id="workload-heading">Project workload</h2>
+            <InformationControl label="Project workload">
               <p>Area is started-run count; grouping comes from authoritative sequence bindings.</p>
-            </div>
+              <p>Presentation names label groups, while IDs remain the identity and lineage keys.</p>
+              <ObservationProvenance observation={observation} timeZone={timeZone} />
+            </InformationControl>
           </div>
           {summary.workload.length ? (
             <>
@@ -297,9 +326,7 @@ function storedTheme(): "light" | "dark" {
 export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }) {
   const [initial] = useState(makeInitialState);
   const [draft, setDraft] = useState(initial.draft);
-  const draftRef = useRef(draft);
   const [appliedFilters, setAppliedFilters] = useState(initial.filters);
-  const appliedRef = useRef(appliedFilters);
   const [revision, setRevision] = useState(0);
   const [paused, setPaused] = useState(false);
   const [coordinator] = useState(
@@ -321,6 +348,7 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
   const [selectedRun, setSelectedRun] = useState<DashboardRunItem | null>(null);
   const summaryGeneration = useRef(0);
   const previousFilterKey = useRef("");
+  const typedDraftInitialized = useRef(false);
   const datasetKey = useMemo(
     () =>
       canonicalReadKey("dashboard.dataset", {
@@ -334,12 +362,26 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
   );
 
   useEffect(() => {
-    draftRef.current = draft;
-  }, [draft]);
-
-  useEffect(() => {
-    appliedRef.current = appliedFilters;
-  }, [appliedFilters]);
+    if (!typedDraftInitialized.current) {
+      typedDraftInitialized.current = true;
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      try {
+        const typedFilters = commitFilterDraft({ ...draft, projectName: "" });
+        setValidationError(null);
+        setAppliedFilters((current) => {
+          const filters: DashboardFilters = current.projectName
+            ? { ...typedFilters, projectName: current.projectName }
+            : typedFilters;
+          return sameFilters(current, filters) ? current : filters;
+        });
+      } catch (error) {
+        setValidationError(safeError(error));
+      }
+    }, 400);
+    return () => window.clearTimeout(handle);
+  }, [draft.fromLocal, draft.timeZone, draft.untilLocal]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -457,29 +499,28 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
     });
   }, [catalogSettled, coordinator, dataSource]);
 
-  const applyDraft = useCallback(() => {
-    try {
-      const filters = commitFilterDraft(draftRef.current);
-      setValidationError(null);
-      setAppliedFilters(filters);
-      setRevision((value) => value + 1);
-    } catch (error) {
-      setValidationError(safeError(error));
-    }
-  }, []);
-
   const selectProject = useCallback((projectName: string) => {
     setDraft((current) => ({ ...current, projectName }));
-    setValidationError(null);
-    setAppliedFilters((current) => ({ ...current, projectName }));
-    setRevision((value) => value + 1);
+    setAppliedFilters((current) => {
+      const next: DashboardFilters = projectName
+        ? { ...current, projectName }
+        : {
+            fromUtc: current.fromUtc,
+            toUtc: current.toUtc,
+            timeZone: current.timeZone,
+          };
+      return sameFilters(current, next) ? current : next;
+    });
   }, []);
 
   const choosePreset = (days: 7 | 30 | 90) => {
     try {
       const values = presetDraft(days, new Date(), draft.timeZone.trim());
-      setDraft((current) => ({ ...current, ...values }));
+      const nextDraft = { ...draft, ...values };
+      const filters = commitFilterDraft(nextDraft);
+      setDraft(nextDraft);
       setValidationError(null);
+      setAppliedFilters((current) => sameFilters(current, filters) ? current : filters);
     } catch (error) {
       setValidationError(safeError(error));
     }
@@ -512,10 +553,12 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
       <main>
         <section className="filters" aria-labelledby="filters-heading">
           <div className="filter-title">
-            <div>
-              <h2 id="filters-heading">Applied inspection scope</h2>
-              <p>From is inclusive; Until is exclusive. Draft edits do not change data until Apply.</p>
-            </div>
+            <h2 id="filters-heading">Inspection scope</h2>
+            <InformationControl label="Inspection scope">
+              <p>Project and range presets apply immediately. Typed date and time-zone edits commit 400 ms after the complete draft becomes valid.</p>
+              <p>From is inclusive and Until is exclusive. Invalid or incomplete drafts leave the last valid view unchanged.</p>
+              <p>Local date format is DD/MM/yyyy HH:mm in the selected IANA zone. Ambiguous clock times require Z or an explicit ±HH:mm offset; nonexistent local times are rejected.</p>
+            </InformationControl>
             <div className="preset-buttons" aria-label="Range presets">
               {([7, 30, 90] as const).map((days) => (
                 <button type="button" key={days} onClick={() => choosePreset(days)}>
@@ -529,9 +572,7 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
               Project
               <select
                 value={draft.projectName}
-                onChange={(event) =>
-                  setDraft((current) => ({ ...current, projectName: event.target.value }))
-                }
+                onChange={(event) => selectProject(event.target.value)}
               >
                 <option value="">All projects</option>
                 {projects.map((project) => (
@@ -544,7 +585,6 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
             <label>
               From
               <input
-                aria-describedby="date-format-help"
                 value={draft.fromLocal}
                 onChange={(event) =>
                   setDraft((current) => ({ ...current, fromLocal: event.target.value }))
@@ -554,7 +594,6 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
             <label>
               Until (exclusive)
               <input
-                aria-describedby="date-format-help"
                 value={draft.untilLocal}
                 onChange={(event) =>
                   setDraft((current) => ({ ...current, untilLocal: event.target.value }))
@@ -571,22 +610,15 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
               />
             </label>
           </div>
-          <p id="date-format-help" className="field-help">
-            Local format: DD/MM/yyyy HH:mm in the selected IANA zone. For an ambiguous
-            clock time, append Z or an explicit ±HH:mm offset; nonexistent local times are rejected.
-          </p>
           <div className="filter-actions">
-            <button className="primary" type="button" onClick={applyDraft}>
-              Apply
-            </button>
             <button type="button" onClick={() => setRevision((value) => value + 1)}>
-              Refresh applied scope
+              Refresh current scope
             </button>
             <button type="button" aria-pressed={paused} onClick={togglePause}>
               {paused ? "Resume automatic refresh" : "Pause automatic refresh"}
             </button>
             <span>
-              Applied: {appliedFilters.projectName ?? "All projects"} · {appliedFilters.timeZone}
+              Current: {appliedFilters.projectName ?? "All projects"} · {appliedFilters.timeZone}
             </span>
             <span className="refresh-status" aria-live="polite">
               Automatic refresh: {paused ? "paused" : "running"}
@@ -594,30 +626,32 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
           </div>
           {validationError ? (
             <p className="error-banner" role="alert">
-              {validationError} Previous applied results remain unchanged.
+              {validationError} The previous valid results remain unchanged.
             </p>
           ) : null}
           {catalogError ? <p className="error-banner">Project catalog: {catalogError}</p> : null}
         </section>
 
-        {summary.error ? (
-          <p className="error-banner" role="alert">
-            Summary read: {summary.error}
-            {summary.observation ? " · showing the last successful observation" : ""}
-          </p>
-        ) : null}
-        {summary.loading ? <p className="loading-line">Reading applied overview…</p> : null}
-        {summary.observation ? (
-          <SummaryPanels
-            observation={summary.observation}
-            selectedProject={appliedFilters.projectName}
-            selectProject={selectProject}
-            theme={theme}
-            timeZone={appliedFilters.timeZone}
-          />
-        ) : !summary.loading ? (
-          <div className="empty-state">No overview observation is available.</div>
-        ) : null}
+        <div className="summary-observation">
+          {summary.error ? (
+            <p className="error-banner" role="alert">
+              Summary read: {summary.error}
+              {summary.observation ? " · showing the last successful observation" : ""}
+            </p>
+          ) : null}
+          {summary.loading ? <p className="loading-line">Reading applied overview…</p> : null}
+          {summary.observation ? (
+            <SummaryPanels
+              observation={summary.observation}
+              selectedProject={appliedFilters.projectName}
+              selectProject={selectProject}
+              theme={theme}
+              timeZone={appliedFilters.timeZone}
+            />
+          ) : !summary.loading ? (
+            <div className="empty-state">No overview observation is available.</div>
+          ) : null}
+        </div>
 
         <CapacityPanel
           state={capacity}
@@ -638,7 +672,12 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
             />
           ) : (
             <section className="panel" aria-labelledby="run-map-heading">
-              <h2 id="run-map-heading">Linked run map</h2>
+              <div className="panel-heading">
+                <h2 id="run-map-heading">Linked run map</h2>
+                <InformationControl label="Linked run map">
+                  <p>The project catalog settles before the first bounded run cohort read.</p>
+                </InformationControl>
+              </div>
               <p>Settling bounded supporting reads before reading matching runs…</p>
             </section>
           )}

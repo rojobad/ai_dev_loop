@@ -185,6 +185,116 @@ class DeferredDataSource implements DashboardDataSource {
 beforeEach(() => localStorage.clear());
 
 describe("C263 overview shell", () => {
+  it("C283-1 commits one coherent typed draft after exactly 400 ms", async () => {
+    vi.useFakeTimers();
+    const dataSource = new DeferredDataSource();
+    try {
+      render(<DashboardApp dataSource={dataSource} />);
+      await act(async () => {
+        for (let index = 0; index < 8; index += 1) await Promise.resolve();
+      });
+      expect(dataSource.requests).toHaveLength(1);
+
+      fireEvent.change(screen.getByLabelText("IANA time zone"), { target: { value: "UTC" } });
+      fireEvent.change(screen.getByLabelText("From"), { target: { value: "01/01/2026 00:00" } });
+      fireEvent.change(screen.getByLabelText("Until (exclusive)"), {
+        target: { value: "03/01/2026 00:00" },
+      });
+      await act(async () => vi.advanceTimersByTime(399));
+      expect(dataSource.requests).toHaveLength(1);
+      await act(async () => {
+        vi.advanceTimersByTime(1);
+        for (let index = 0; index < 8; index += 1) await Promise.resolve();
+      });
+      expect(dataSource.requests).toHaveLength(2);
+
+      fireEvent.change(screen.getByLabelText("From"), { target: { value: "incomplete" } });
+      await act(async () => {
+        vi.advanceTimersByTime(400);
+        for (let index = 0; index < 8; index += 1) await Promise.resolve();
+      });
+      expect(dataSource.requests).toHaveLength(2);
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "previous valid results remain unchanged",
+      );
+
+      fireEvent.change(screen.getByLabelText("Project"), {
+        target: { value: "project-a" },
+      });
+      await act(async () => {
+        for (let index = 0; index < 8; index += 1) await Promise.resolve();
+      });
+      expect(dataSource.requests).toHaveLength(3);
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "previous valid results remain unchanged",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("C283-1 applies a range preset immediately without a delayed duplicate", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-10T12:00:00Z"));
+    const dataSource = new ImmediateDataSource();
+    try {
+      render(<DashboardApp dataSource={dataSource} />);
+      await act(async () => {
+        for (let index = 0; index < 8; index += 1) await Promise.resolve();
+      });
+      expect(dataSource.summaryCalls).toHaveLength(1);
+      fireEvent.click(screen.getByRole("button", { name: "30 days" }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+        for (let index = 0; index < 24; index += 1) await Promise.resolve();
+      });
+      expect(dataSource.summaryCalls).toHaveLength(2);
+      await act(async () => {
+        vi.advanceTimersByTime(400);
+        for (let index = 0; index < 8; index += 1) await Promise.resolve();
+      });
+      expect(dataSource.summaryCalls).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("C283-1 keeps an immediate project selected across an older typed debounce", async () => {
+    vi.useFakeTimers();
+    const dataSource = new ImmediateDataSource();
+    try {
+      render(<DashboardApp dataSource={dataSource} />);
+      await act(async () => {
+        for (let index = 0; index < 8; index += 1) await Promise.resolve();
+      });
+      expect(dataSource.summaryCalls).toHaveLength(1);
+
+      fireEvent.change(screen.getByLabelText("IANA time zone"), { target: { value: "UTC" } });
+      fireEvent.change(screen.getByLabelText("From"), { target: { value: "01/01/2026 00:00" } });
+      fireEvent.change(screen.getByLabelText("Until (exclusive)"), {
+        target: { value: "03/01/2026 00:00" },
+      });
+      await act(async () => vi.advanceTimersByTime(399));
+      fireEvent.change(screen.getByLabelText("Project"), {
+        target: { value: "project-b" },
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(1);
+        for (let index = 0; index < 12; index += 1) await Promise.resolve();
+      });
+
+      expect(dataSource.summaryCalls).toHaveLength(3);
+      expect(dataSource.summaryCalls.at(-1)).toEqual({
+        fromUtc: "2026-01-01T00:00:00.000Z",
+        toUtc: "2026-01-03T00:00:00.000Z",
+        timeZone: "UTC",
+        projectName: "project-b",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("retires old replies and leaves an invalid draft uncommitted", async () => {
     const dataSource = new DeferredDataSource();
     render(<DashboardApp dataSource={dataSource} />);
@@ -195,8 +305,8 @@ describe("C263 overview shell", () => {
     fireEvent.change(screen.getByLabelText("Until (exclusive)"), {
       target: { value: "03/01/2026 00:00" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     await waitFor(() => expect(dataSource.requests).toHaveLength(2));
+    expect(screen.queryByRole("button", { name: "Apply" })).not.toBeInTheDocument();
 
     await act(async () => dataSource.requests[1].resolve(observation(summaryData(7))));
     expect(await screen.findByLabelText("Runs started: 7")).toBeInTheDocument();
@@ -208,8 +318,7 @@ describe("C263 overview shell", () => {
     fireEvent.change(screen.getByLabelText("Until (exclusive)"), {
       target: { value: "03/01/2026 00:00" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Previous applied results remain unchanged");
+    expect(await screen.findByRole("alert")).toHaveTextContent("previous valid results remain unchanged");
     expect(dataSource.requests).toHaveLength(2);
     expect(screen.getByLabelText("Runs started: 7")).toBeInTheDocument();
   });
@@ -236,7 +345,6 @@ describe("C263 overview shell", () => {
     expect(await screen.findByLabelText("Runs started: 3")).toBeInTheDocument();
 
     await user.selectOptions(screen.getByLabelText("Project"), "");
-    await user.click(screen.getByRole("button", { name: "Apply" }));
     await waitFor(() => expect(dataSource.summaryCalls.at(-1)?.projectName).toBeUndefined());
     expect(await screen.findByLabelText("Runs started: 7")).toBeInTheDocument();
 
@@ -265,7 +373,6 @@ describe("C263 overview shell", () => {
     fireEvent.change(screen.getByLabelText("Until (exclusive)"), {
       target: { value: "01/11/2026 02:30" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("ambiguous");
     expect(dataSource.summaryCalls).toHaveLength(1);
 
@@ -275,7 +382,6 @@ describe("C263 overview shell", () => {
     fireEvent.change(screen.getByLabelText("Until (exclusive)"), {
       target: { value: "01/11/2026 02:30-05:00" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     await waitFor(() => expect(dataSource.summaryCalls).toHaveLength(2));
     expect(dataSource.summaryCalls[1]).toEqual({
       fromUtc: "2026-11-01T05:30:00.000Z",
@@ -293,7 +399,7 @@ describe("C263 overview shell", () => {
     expect(screen.getByText("Reset unavailable")).toBeInTheDocument();
     expect(dataSource.capacityCalls).toBe(1);
 
-    await user.click(screen.getByRole("button", { name: "Refresh applied scope" }));
+    await user.click(screen.getByRole("button", { name: "Refresh current scope" }));
     await user.click(screen.getByRole("button", { name: /Inspect project-b/ }));
     await waitFor(() => expect(dataSource.summaryCalls.length).toBeGreaterThanOrEqual(3));
     expect(dataSource.capacityCalls).toBe(1);
@@ -313,7 +419,7 @@ describe("C263 overview shell", () => {
     expect(screen.queryByText(/0% remaining/)).not.toBeInTheDocument();
   });
 
-  it("clears exact run and attempt ownership when Apply changes the scope", async () => {
+  it("clears exact run and attempt ownership when an immediate project change retires scope", async () => {
     const user = userEvent.setup();
     const dataSource = new ImmediateDataSource();
     render(<DashboardApp dataSource={dataSource} />);
@@ -322,7 +428,6 @@ describe("C263 overview shell", () => {
     expect(await screen.findByText("Attempt ID: attempt-cursor")).toBeInTheDocument();
 
     await user.selectOptions(screen.getByLabelText("Project"), "project-b");
-    await user.click(screen.getByRole("button", { name: "Apply" }));
     await waitFor(() =>
       expect(screen.queryByText(/Selected run:/)).not.toBeInTheDocument(),
     );

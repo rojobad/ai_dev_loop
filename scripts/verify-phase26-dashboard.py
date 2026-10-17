@@ -334,7 +334,11 @@ def _http_get(port: int, path: str) -> tuple[int, dict[str, str], bytes]:
         connection.close()
 
 
-def _http_read(port: int, operation: str, parameters: dict[str, object]) -> dict[str, Any]:
+def _http_exchange(
+    port: int,
+    operation: str,
+    parameters: dict[str, object],
+) -> tuple[int, dict[str, Any]]:
     body = json.dumps({"operation": operation, "parameters": parameters}).encode("utf-8")
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     try:
@@ -353,9 +357,14 @@ def _http_read(port: int, operation: str, parameters: dict[str, object]) -> dict
         payload = json.loads(response.read())
     finally:
         connection.close()
-    if response.status != 200 or payload.get("ok") is not True:
+    return response.status, payload
+
+
+def _http_read(port: int, operation: str, parameters: dict[str, object]) -> dict[str, Any]:
+    status, payload = _http_exchange(port, operation, parameters)
+    if status != 200 or payload.get("ok") is not True:
         raise RuntimeError(
-            f"installed HTTP read failed for {operation}: {response.status} {payload.get('error')}"
+            f"installed HTTP read failed for {operation}: {status} {payload.get('error')}"
         )
     return payload["data"]
 
@@ -431,15 +440,15 @@ def _assert_api(site: InstalledSite) -> None:
         env=site.environment,
     )
     info_payload = json.loads(info.stdout)
-    if info_payload["apiVersion"] != {"major": 1, "minor": 9}:
-        raise RuntimeError("installed Integration API version is not 1.9")
+    if info_payload["apiVersion"] != {"major": 1, "minor": 11}:
+        raise RuntimeError("installed Integration API version is not 1.11")
     if info_payload["data"]["capabilities"]["dashboard"] is not True:
         raise RuntimeError("installed dashboard capability is not registered")
 
     summary = _http_read(site.port, "dashboard.summary", common)
     if summary["totals"]["runsStarted"] != fixture.runs_started:
         raise RuntimeError("installed summary started-run total disagrees with fixture")
-    runs = _http_read(site.port, "dashboard.runs", {**common, "offset": 0, "limit": 100})
+    runs = _http_read(site.port, "dashboard.runs", {**common, "offset": 0, "limit": 1000})
     if runs["totalCount"] != fixture.map_total:
         raise RuntimeError("installed map total disagrees with fixture")
     if {item["implementerProvider"] for item in runs["items"]} != {"cursor", "codex"}:
@@ -447,12 +456,24 @@ def _assert_api(site: InstalledSite) -> None:
     replacement = next(
         item for item in runs["items"] if item["runId"] == fixture.replacement_run_id
     )
+    if runs["page"]["limit"] != 1000 or not all(item.get("shortName") for item in runs["items"]):
+        raise RuntimeError("installed runs did not preserve names or the 1000-item page contract")
     binding = replacement["sequenceBinding"]
     if (
         binding["attemptKind"] != "implementer_retry"
         or binding["sourceRunId"] != fixture.source_run_id
+        or not binding.get("sequenceShortName")
     ):
         raise RuntimeError("installed map did not preserve authoritative recovery lineage")
+
+    for operation, parameters in (
+        ("dashboard.runs", {**common, "limit": 1001}),
+        ("dashboard.projects", {"limit": 101}),
+        ("run.timeline", {"runId": fixture.replacement_run_id, "limit": 101}),
+    ):
+        status, rejected = _http_exchange(site.port, operation, parameters)
+        if status != 400 or rejected["error"]["code"] != "INVALID_ARGUMENT":
+            raise RuntimeError(f"installed {operation} did not preserve its page bound")
 
     expected_activity = fixture.activity_expectations
     for metric in ("submissions", "review-rounds", "process-hours"):
@@ -487,6 +508,8 @@ def _assert_api(site: InstalledSite) -> None:
     )
     if inspection["attemptCount"] != fixture.timeline_total:
         raise RuntimeError("installed timeline total disagrees with fixture")
+    if not inspection.get("shortName"):
+        raise RuntimeError("installed named run inspection omitted shortName")
     if not timeline_first["page"]["hasMore"] or not timeline_second["items"]:
         raise RuntimeError("installed timeline did not exercise a second explicit page")
 
@@ -576,6 +599,15 @@ def _assert_api(site: InstalledSite) -> None:
         connection.close()
     if rejected.status != 400 or rejected_payload["error"]["code"] != "INVALID_ARGUMENT":
         raise RuntimeError("installed reviewer-content accepted a Codex implementer attempt")
+
+    for path, marker in (
+        ("/", b"/assets/dashboard.js"),
+        ("/assets/dashboard.js", b"Refresh current scope"),
+        ("/assets/dashboard.css", b"information-dialog"),
+    ):
+        status, _, content = _http_get(site.port, path)
+        if status != 200 or marker not in content:
+            raise RuntimeError(f"installed static asset smoke failed for {path}")
 
 
 def _assert_browser(site: InstalledSite, root: Path) -> None:

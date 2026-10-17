@@ -147,7 +147,7 @@ function coverage(value: unknown): DashboardCoverage {
   };
 }
 
-function page(value: unknown): DashboardPage {
+function page(value: unknown, maximum = 100): DashboardPage {
   const item = record(value, "page");
   const nextOffset = item.nextOffset === null ? null : integer(item.nextOffset, "page.nextOffset");
   const hasMore = boolean(item.hasMore, "page.hasMore");
@@ -156,6 +156,9 @@ function page(value: unknown): DashboardPage {
   }
   const offset = integer(item.offset, "page.offset");
   const limit = integer(item.limit, "page.limit", 1);
+  if (limit > maximum) {
+    throw new TypeError(`page.limit must not exceed ${maximum}.`);
+  }
   if (nextOffset !== null && nextOffset !== offset + limit) {
     throw new TypeError("page.nextOffset must advance by page.limit.");
   }
@@ -346,7 +349,7 @@ export function parseRunsData(value: unknown): DashboardRunsData {
     filters: filters(data.filters),
     coverage: coverage(data.coverage),
     items: array(data.items, "items").map(dashboardRun),
-    page: page(data.page),
+    page: page(data.page, 1000),
     totalCount: integer(data.totalCount, "totalCount"),
   };
 }

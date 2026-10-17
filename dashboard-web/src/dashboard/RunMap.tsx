@@ -2,19 +2,22 @@ import type { CustomSeriesRenderItem, EChartsCoreOption } from "echarts";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { DashboardChart } from "./DashboardChart";
+import { InformationControl } from "./InformationControl";
 import { escapeHtml } from "./charts";
 import { SUMMARY_REFRESH_MS, RefreshCoordinator, canonicalReadKey } from "./refreshCoordinator";
 import { formatAge, formatInstant } from "./time";
+import { DashboardDataSourceError } from "./types";
 import type {
   DashboardCoverage,
   DashboardDataSource,
   DashboardFilters,
   DashboardPage,
   DashboardRunItem,
+  DashboardRunsData,
   SourceObservation,
 } from "./types";
 
-const RUN_PAGE_SIZE = 25;
+const RUN_INITIAL_PAGE_SIZE = 1000;
 const RUN_CELL_STEP_PX = 44;
 const RUN_MAP_AXIS_LEFT_PX = 220;
 const RUN_MAP_AXIS_RIGHT_PX = 24;
@@ -24,17 +27,24 @@ interface RunMapState {
   totalCount: number;
   coverage?: DashboardCoverage;
   page?: DashboardPage;
-  firstPage?: DashboardPage;
   observations: PageObservation[];
   loading: boolean;
   error: string | null;
-  firstPageIds: string[];
+  retryPage: { offset: number; limit: number } | null;
 }
 
 interface PageObservation {
   offset: number;
   observedAt: string;
   receivedAt: string;
+}
+
+interface PendingPageChain {
+  items: DashboardRunItem[];
+  totalCount: number;
+  coverage: DashboardCoverage;
+  page: DashboardPage;
+  observations: PageObservation[];
 }
 
 export interface RunMapProps {
@@ -58,6 +68,10 @@ function safeError(error: unknown): string {
   return error instanceof Error ? error.message : "The run map read failed.";
 }
 
+function isExpectedCancellation(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
 function sameFilterEcho(filters: DashboardFilters, observation: SourceObservation<unknown> & {
   data: { filters: { fromUtc: string; toUtc: string; timeZone: string; projectName: string | null } };
 }): boolean {
@@ -75,6 +89,36 @@ function mergeRuns(current: DashboardRunItem[], incoming: DashboardRunItem[]): D
   const byId = new Map(current.map((item) => [item.runId, item]));
   for (const item of incoming) byId.set(item.runId, item);
   return [...byId.values()];
+}
+
+export async function readAdaptiveRunsPage(
+  dataSource: DashboardDataSource,
+  filters: DashboardFilters,
+  offset: number,
+  initialLimit: number,
+  signal: AbortSignal,
+): Promise<SourceObservation<DashboardRunsData>> {
+  let limit = initialLimit;
+  for (;;) {
+    try {
+      const observation = await dataSource.runs(filters, { offset, limit }, signal);
+      if (observation.data.page.offset !== offset || observation.data.page.limit !== limit) {
+        throw new Error("The run page response changed the requested offset or limit.");
+      }
+      return observation;
+    } catch (error) {
+      if (
+        error instanceof DashboardDataSourceError &&
+        error.code === "PAGE_ENVELOPE_TOO_LARGE" &&
+        limit > 1 &&
+        !signal.aborted
+      ) {
+        limit = Math.max(1, Math.floor(limit / 2));
+        continue;
+      }
+      throw error;
+    }
+  }
 }
 
 function recordPageObservation(
@@ -258,45 +302,13 @@ export function RunMap({
     observations: [],
     loading: true,
     error: null,
-    firstPageIds: [],
+    retryPage: null,
   });
   const generation = useRef(0);
-  const pageController = useRef<AbortController | null>(null);
-
-  async function loadPage(offset: number, requestGeneration: number) {
-    pageController.current?.abort();
-    const controller = new AbortController();
-    pageController.current = controller;
-    setState((current) => ({ ...current, loading: true, error: null }));
-    try {
-      const observation = await coordinator.request(
-        canonicalReadKey("dashboard.runs.page", { datasetKey, offset, limit: RUN_PAGE_SIZE }),
-        (signal) => dataSource.runs(filters, { offset, limit: RUN_PAGE_SIZE }, signal),
-        controller.signal,
-      );
-      if (controller.signal.aborted || requestGeneration !== generation.current) return;
-      if (!sameFilterEcho(filters, observation)) {
-        throw new Error("The run map response did not match the applied filter scope.");
-      }
-      setState((current) => ({
-        items: mergeRuns(current.items, observation.data.items),
-        totalCount: observation.data.totalCount,
-        coverage: observation.data.coverage,
-        page: observation.data.page,
-        firstPage: current.firstPage,
-        observations: recordPageObservation(current.observations, offset, observation),
-        loading: false,
-        error: null,
-        firstPageIds: current.firstPageIds,
-      }));
-    } catch (error) {
-      if (!controller.signal.aborted && requestGeneration === generation.current) {
-        setState((current) => ({ ...current, loading: false, error: safeError(error) }));
-      }
-    } finally {
-      if (pageController.current === controller) pageController.current = null;
-    }
-  }
+  const chainController = useRef<AbortController | null>(null);
+  const retryContinuation = useRef<((offset: number, limit: number) => void) | null>(null);
+  const previousScopeKey = useRef<string | null>(null);
+  const hasSuccessfulHistory = useRef(false);
 
   const scopeKey = useMemo(
     () =>
@@ -308,85 +320,258 @@ export function RunMap({
       }),
     [filters],
   );
-  const previousScopeKey = useRef<string | null>(null);
+  const refreshOwnerKey = useMemo(
+    () => canonicalReadKey("dashboard.runs", {
+      datasetKey,
+      offset: 0,
+      limit: RUN_INITIAL_PAGE_SIZE,
+    }),
+    [datasetKey],
+  );
 
   useEffect(() => {
     const requestGeneration = ++generation.current;
-    pageController.current?.abort();
-    pageController.current = null;
+    chainController.current?.abort();
+    chainController.current = null;
     const compatibleScope = previousScopeKey.current === scopeKey;
     previousScopeKey.current = scopeKey;
-    setState((current) => {
-      if (!compatibleScope) {
-        return {
+    if (!compatibleScope) hasSuccessfulHistory.current = false;
+    setState((current) => compatibleScope
+      ? {
+          ...current,
+          loading: true,
+          error: null,
+          retryPage: null,
+        }
+      : {
           items: [],
           totalCount: 0,
           observations: [],
           loading: true,
           error: null,
-          firstPageIds: [],
-        };
-      }
-      const firstPageIds = new Set(current.firstPageIds);
-      return {
-        ...current,
-        items: current.items.filter((item) => firstPageIds.has(item.runId)),
-        page: current.firstPage,
-        observations: current.observations.filter((item) => item.offset === 0),
-        loading: true,
-        error: null,
-      };
-    });
+          retryPage: null,
+        });
+
+    const startContinuation = (
+      offset: number,
+      limit: number,
+      pendingChain: PendingPageChain | null = null,
+    ) => {
+      chainController.current?.abort();
+      const controller = new AbortController();
+      chainController.current = controller;
+      setState((current) => ({ ...current, loading: true, error: null, retryPage: null }));
+      void (async () => {
+        let nextOffset = offset;
+        let nextLimit = limit;
+        let pending = pendingChain;
+        try {
+          for (;;) {
+            const observation = await coordinator.requestRefreshContinuation(
+              refreshOwnerKey,
+              canonicalReadKey("dashboard.runs.page", {
+                datasetKey,
+                offset: nextOffset,
+                limit: nextLimit,
+              }),
+              (signal) => readAdaptiveRunsPage(
+                dataSource,
+                filters,
+                nextOffset,
+                nextLimit,
+                signal,
+              ),
+              controller.signal,
+            );
+            if (controller.signal.aborted || requestGeneration !== generation.current) return;
+            if (!sameFilterEcho(filters, observation)) {
+              throw new Error("The run map response did not match the current filter scope.");
+            }
+            if (observation.data.items.length > 0) hasSuccessfulHistory.current = true;
+            if (pending) {
+              pending = {
+                items: mergeRuns(pending.items, observation.data.items),
+                totalCount: observation.data.totalCount,
+                coverage: observation.data.coverage,
+                page: observation.data.page,
+                observations: recordPageObservation(
+                  pending.observations,
+                  observation.data.page.offset,
+                  observation,
+                ),
+              };
+              if (!observation.data.page.hasMore) {
+                const completed = pending;
+                hasSuccessfulHistory.current = completed.items.length > 0;
+                setState((current) => ({
+                  ...current,
+                  ...completed,
+                  loading: false,
+                  error: null,
+                  retryPage: null,
+                }));
+              } else {
+                setState((current) => {
+                  const visibleItems = mergeRuns(current.items, observation.data.items);
+                  return {
+                    ...current,
+                    items: visibleItems,
+                    totalCount: Math.max(observation.data.totalCount, visibleItems.length),
+                    coverage: observation.data.coverage,
+                    page: observation.data.page,
+                    observations: recordPageObservation(
+                      current.observations,
+                      observation.data.page.offset,
+                      observation,
+                    ),
+                    loading: true,
+                    error: null,
+                    retryPage: null,
+                  };
+                });
+              }
+            } else {
+              setState((current) => ({
+                ...current,
+                items: mergeRuns(current.items, observation.data.items),
+                totalCount: observation.data.totalCount,
+                coverage: observation.data.coverage,
+                page: observation.data.page,
+                observations: recordPageObservation(
+                  current.observations,
+                  observation.data.page.offset,
+                  observation,
+                ),
+                loading: observation.data.page.hasMore,
+                error: null,
+                retryPage: null,
+              }));
+            }
+            if (!observation.data.page.hasMore) return;
+            const returnedOffset = observation.data.page.nextOffset;
+            if (returnedOffset === null || returnedOffset <= nextOffset) {
+              throw new Error("Run map paging did not advance.");
+            }
+            nextOffset = returnedOffset;
+            nextLimit = observation.data.page.limit;
+          }
+        } catch (error) {
+          if (
+            isExpectedCancellation(error) &&
+            !controller.signal.aborted &&
+            requestGeneration === generation.current
+          ) {
+            setState((current) => ({ ...current, loading: false }));
+          } else if (!controller.signal.aborted && requestGeneration === generation.current) {
+            setState((current) => ({
+              ...current,
+              loading: false,
+              error: safeError(error),
+              retryPage: pending
+                ? { offset: 0, limit: RUN_INITIAL_PAGE_SIZE }
+                : { offset: nextOffset, limit: nextLimit },
+            }));
+          }
+        } finally {
+          if (chainController.current === controller) chainController.current = null;
+        }
+      })();
+    };
+    retryContinuation.current = startContinuation;
+
     const retire = coordinator.observe({
-      key: canonicalReadKey("dashboard.runs", { datasetKey, offset: 0, limit: RUN_PAGE_SIZE }),
+      key: refreshOwnerKey,
       cadenceMs: SUMMARY_REFRESH_MS,
-      read: (signal) => dataSource.runs(filters, { offset: 0, limit: RUN_PAGE_SIZE }, signal),
+      read: (signal) => readAdaptiveRunsPage(
+        dataSource,
+        filters,
+        0,
+        RUN_INITIAL_PAGE_SIZE,
+        signal,
+      ),
       onSuccess: (observation) => {
         if (requestGeneration !== generation.current) return;
         if (!sameFilterEcho(filters, observation)) {
           setState((current) => ({
             ...current,
             loading: false,
-            error: "The run map response did not match the applied filter scope.",
+            error: "The run map response did not match the current filter scope.",
           }));
           return;
         }
-        setState((current) => {
-          const previousFirstPage = new Set(current.firstPageIds);
-          const retainedHistoricPages = current.items.filter(
-            (item) => !previousFirstPage.has(item.runId),
+        const items = mergeRuns([], observation.data.items);
+        const firstPage: PendingPageChain = {
+          items,
+          totalCount: observation.data.totalCount,
+          coverage: observation.data.coverage,
+          page: observation.data.page,
+          observations: recordPageObservation([], 0, observation),
+        };
+        if (observation.data.page.hasMore && observation.data.page.nextOffset !== null) {
+          const preserveSuccessfulHistory = hasSuccessfulHistory.current;
+          if (items.length > 0) hasSuccessfulHistory.current = true;
+          if (!preserveSuccessfulHistory) {
+            setState((current) => ({
+              ...current,
+              ...firstPage,
+              loading: true,
+              error: null,
+              retryPage: null,
+            }));
+          } else {
+            setState((current) => {
+              const visibleItems = mergeRuns(current.items, items);
+              return {
+                ...current,
+                items: visibleItems,
+                totalCount: Math.max(observation.data.totalCount, visibleItems.length),
+                coverage: observation.data.coverage,
+                page: observation.data.page,
+                observations: recordPageObservation(current.observations, 0, observation),
+                loading: true,
+                error: null,
+                retryPage: null,
+              };
+            });
+          }
+          startContinuation(
+            observation.data.page.nextOffset,
+            observation.data.page.limit,
+            preserveSuccessfulHistory ? firstPage : null,
           );
-          const firstPageIds = observation.data.items.map((item) => item.runId);
-          return {
-            items: mergeRuns(observation.data.items, retainedHistoricPages),
-            totalCount: observation.data.totalCount,
-            coverage: observation.data.coverage,
-            page:
-              current.page && current.page.offset > 0
-                ? current.page
-                : observation.data.page,
-            firstPage: observation.data.page,
-            observations: recordPageObservation(current.observations, 0, observation),
+        } else {
+          chainController.current?.abort();
+          chainController.current = null;
+          hasSuccessfulHistory.current = items.length > 0;
+          setState((current) => ({
+            ...current,
+            ...firstPage,
             loading: false,
             error: null,
-            firstPageIds,
-          };
-        });
+            retryPage: null,
+          }));
+        }
       },
       onError: (error) => {
         if (requestGeneration === generation.current) {
-          setState((current) => ({ ...current, loading: false, error: safeError(error) }));
+          setState((current) => ({
+            ...current,
+            loading: false,
+            error: safeError(error),
+            retryPage: { offset: 0, limit: RUN_INITIAL_PAGE_SIZE },
+          }));
         }
       },
     });
     return () => {
       retire();
-      pageController.current?.abort();
-      pageController.current = null;
+      chainController.current?.abort();
+      chainController.current = null;
+      retryContinuation.current = null;
     };
-  }, [coordinator, dataSource, datasetKey, filters, scopeKey]);
+  }, [coordinator, dataSource, datasetKey, filters, refreshOwnerKey, scopeKey]);
 
-  useEffect(() => () => pageController.current?.abort(), []);
+  useEffect(() => () => chainController.current?.abort(), []);
 
   const groups = useMemo(() => groupRunMapItems(state.items), [state.items]);
   const option = useMemo(
@@ -429,13 +614,26 @@ export function RunMap({
   return (
     <section className="panel run-map-panel" aria-labelledby="map-heading">
       <div className="panel-heading">
-        <div>
-          <h2 id="map-heading">Sequence and run map</h2>
-          <p>Every loaded cell is one authoritative run ID; replacements are never collapsed.</p>
+        <h2 id="map-heading">Sequence and run map</h2>
+        <div className="panel-heading-actions">
+          <strong aria-live="polite">
+            Loaded {state.items.length} of {state.totalCount} started runs
+          </strong>
+          <InformationControl label="Sequence and run map">
+            <p>Every cell is one authoritative run ID; replacement generations are never collapsed.</p>
+            <p>The client requests up to 1000 rows, reduces only a typed oversized page, and follows each returned continuation automatically. Distinct pages can be observed at different times and are not presented as one atomic snapshot.</p>
+            {state.observations.length ? (
+              <ul>
+                {state.observations.map((item) => (
+                  <li key={item.offset}>
+                    Offset {item.offset}: source observed {formatInstant(item.observedAt, filters.timeZone)};
+                    received {formatInstant(item.receivedAt, filters.timeZone)} ({formatAge(item.receivedAt)}).
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </InformationControl>
         </div>
-        <strong aria-live="polite">
-          Loaded {state.items.length} of {state.totalCount} started runs
-        </strong>
       </div>
       {state.coverage ? (
         <p className={`coverage coverage-${state.coverage.dataState}`}>
@@ -445,16 +643,14 @@ export function RunMap({
       ) : null}
       {state.observations.length ? (
         <p className="observation-line">
-          Page observations: {state.observations.map((item) =>
-            `offset ${item.offset} · ${formatInstant(item.observedAt, filters.timeZone)} observed · ${formatInstant(item.receivedAt, filters.timeZone)} received (${formatAge(item.receivedAt)})`
-          ).join(" · ")} (fresh offset pages; not one atomic snapshot)
+          Latest successful run page · {formatAge(state.observations.at(-1)!.receivedAt)}
         </p>
       ) : null}
       {state.error ? (
         <p className="error-banner" role="alert">
           Run map: {state.error}
           {state.observations.length
-            ? ` · showing the last successful visible pages (${formatAge(state.observations[0].receivedAt)})`
+            ? ` · showing ${state.items.length} distinct IDs from successful pages`
             : ""}
         </p>
       ) : null}
@@ -493,14 +689,19 @@ export function RunMap({
       ) : !state.loading ? (
         <div className="empty-state">Run data is unavailable until a successful read.</div>
       ) : null}
-      {state.loading ? <p className="loading-line">Reading authoritative run page…</p> : null}
-      {state.page?.hasMore && state.page.nextOffset !== null ? (
+      {state.loading ? <p className="loading-line">Loading the complete matching run cohort…</p> : null}
+      {state.retryPage ? (
         <button
           type="button"
           disabled={state.loading}
-          onClick={() => void loadPage(state.page!.nextOffset!, generation.current)}
+          onClick={() => {
+            const retry = state.retryPage;
+            if (retry === null) return;
+            if (retry.offset === 0) coordinator.refresh(refreshOwnerKey);
+            else retryContinuation.current?.(retry.offset, retry.limit);
+          }}
         >
-          Load more runs
+          Retry run loading
         </button>
       ) : null}
     </section>

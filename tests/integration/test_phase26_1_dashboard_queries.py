@@ -336,7 +336,7 @@ def test_c261_3_four_real_cli_commands_schemas_help_and_compatibility(
     payloads = []
     for args, schema in operations:
         payload = _invoke(args)
-        assert payload["apiVersion"] == {"major": 1, "minor": 10}
+        assert payload["apiVersion"] == {"major": 1, "minor": 11}
         validate_integration_instance(payload["data"], schema)
         payloads.append(payload)
     assert payloads[1]["data"]["totals"]["runsStarted"] == 2

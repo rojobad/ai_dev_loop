@@ -121,6 +121,14 @@ h3 {
   gap: 1rem;
 }
 
+.panel-heading-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.65rem;
+}
+
 .topbar {
   margin-bottom: 1rem;
 }
@@ -390,6 +398,44 @@ h3 {
   padding: 1rem;
 }
 
+.information-backdrop {
+  position: fixed;
+  z-index: 1100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  background: rgb(7 15 27 / 72%);
+  padding: 1rem;
+}
+
+.information-dialog {
+  width: min(680px, 100%);
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 35%);
+  padding: 1rem;
+}
+
+.information-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.information-content > :last-child {
+  margin-bottom: 0;
+}
+
+.information-trigger {
+  min-height: 36px;
+  padding-block: 0.35rem;
+}
+
 .attempt-modal {
   width: min(980px, 100%);
   max-height: calc(100vh - 2rem);
@@ -514,6 +560,17 @@ button:disabled {
   width: 100%;
   min-width: 0;
   overflow: hidden;
+}
+
+.activity-days-disclosure {
+  margin-top: 0.75rem;
+}
+
+.activity-days-disclosure summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--accent-strong);
+  font-weight: 700;
 }
 
 .companion-list {

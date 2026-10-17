@@ -627,8 +627,9 @@ las órdenes de este namespace emiten un único documento JSON en stdout; `--hel
 sigue siendo ayuda normal de Typer. El namespace plural `integrations` (instalación
 Codex global) no cambia.
 
-La API actual **1.9** expone además `dashboard`; la ausencia de esa capacidad en un
-payload histórico significa que esas cuatro consultas no están disponibles. Las
+La API actual **1.11** expone `dashboard` y nombres cortos; la ausencia de la
+capacidad dashboard en un payload histórico significa que esas cuatro consultas
+no están disponibles. Las
 lecturas de runs, secuencias, revisiones, salidas de procesos y dashboard abren el
 ledger en solo lectura y no migran la base de datos.
 `integration info` no requiere ledger. `integration codex-capacity` ejecuta una
@@ -637,10 +638,12 @@ admitido es JSON; la presencia obligatoria del flag `--output json` depende del
 subcomando, según su ayuda.
 
 Las consultas dashboard tienen rango `[from,to)`, zona IANA, proyecto exacto
-opcional y páginas de 25 por defecto (máximo 100). `summary`/`runs` usan el primer
-lanzamiento de ejecución; `activity` fecha eventos o intervalos y entrega segundos
-para `process-hours`. Los límites de scope/tiempo/envelope fallan sin resultados
-parciales. Estas órdenes no leen contenido sensible ni observan capacidad actual.
+opcional y páginas de 25 por defecto. `dashboard.runs` admite hasta 1000 por
+página; las demás colecciones conservan el máximo de 100. `summary`/`runs` usan
+el primer lanzamiento de ejecución; `activity` fecha eventos o intervalos y
+entrega segundos para `process-hours`. Los límites de scope/tiempo/envelope
+fallan sin resultados parciales. Estas órdenes no leen contenido sensible ni
+observan capacidad actual.
 
 Detalle del sobre, códigos de error, paginación y lecturas sensibles:
 [API de integración local](integration-api.md).
@@ -656,14 +659,17 @@ entero entre 1 y 65535 y su valor por defecto es `8765`. El proceso enlaza
 exclusivamente `127.0.0.1`; no existe opción para cambiar host, ejecutarlo como
 daemon, abrir el navegador ni habilitar acceso LAN.
 
-La ruta `/` sirve el frontend React/ECharts empaquetado: filtros aplicados,
+La ruta `/` sirve el frontend React/ECharts empaquetado: filtros válidos de
+proyecto/preset inmediatos y campos escritos con debounce de 400 ms,
 resumen por proyecto/estado, workload por secuencia o standalone y capacidad
 Codex actual, mapa/timeline enlazados y calendario de actividad seleccionable.
 El cliente refresca solo widgets visibles con cadencias acotadas (30 segundos
 para summary/map/activity, 10 para el run seleccionado y 60 para capacidad), un
 máximo de dos lecturas activas, Pause/Resume, cancelación por visibilidad y
-`Refresh applied scope` explícito incluso durante Pause. Nunca refresca contenido
-sensible automáticamente. Los assets son same-origin y no usan CDN; Node solo interviene al
+`Refresh current scope` explícito incluso durante Pause. El mapa carga la cohorte
+completa automáticamente, con lotes adaptativos ante el error tipado de sobre.
+Nunca refresca contenido sensible automáticamente. Los assets son same-origin y
+no usan CDN; Node solo interviene al
 construir o probar el frontend. `POST /api/dashboard/read` expone únicamente las
 operaciones tipadas y allowlisted documentadas en la [API de integración
 local](integration-api.md). El proceso no inicia, aborta, reintenta ni repara

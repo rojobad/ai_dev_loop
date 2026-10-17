@@ -50,7 +50,7 @@
       }
     },
     "page": {
-      "$ref": "https://ai-dev-loop.local/schemas/integration-api-dashboard-shared-v1.json#/$defs/page"
+      "$ref": "https://ai-dev-loop.local/schemas/integration-api-dashboard-shared-v1.json#/$defs/runsPage"
     },
     "totalCount": { "type": "integer", "minimum": 0 }
   }

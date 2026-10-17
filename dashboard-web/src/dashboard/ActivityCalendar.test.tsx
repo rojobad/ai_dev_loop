@@ -119,6 +119,10 @@ describe("C266-1 activity calendar", () => {
     });
     expect(await screen.findByText("Review rounds total:")).toBeInTheDocument();
     expect(screen.getByRole("img", { name: /Review rounds activity calendar/ })).toBeInTheDocument();
+    const dailyDisclosure = screen.getByText("Show daily values").closest("details");
+    expect(dailyDisclosure).not.toHaveAttribute("open");
+    await user.click(screen.getByText("Show daily values"));
+    expect(dailyDisclosure).toHaveAttribute("open");
     expect(screen.getByLabelText("Review rounds daily values")).toHaveTextContent(
       "29/02/20282",
     );
@@ -149,7 +153,12 @@ describe("C266-1 activity calendar", () => {
     expect(await screen.findByText("02 h 00 m")).toBeInTheDocument();
     expect(screen.getByLabelText("Process hours daily values")).toHaveTextContent("01 h 30 m");
     expect(screen.getByText(/absent days are unknown/i)).toBeInTheDocument();
-    expect(screen.getByText(/Codex implementer attempts never become review rounds/)).toBeInTheDocument();
+    expect(screen.queryByText(/Codex implementer attempts never become review rounds/)).not
+      .toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Information about Activity calendar" }));
+    expect(screen.getByRole("dialog", { name: "Activity calendar" })).toHaveTextContent(
+      /implementer attempts never become review rounds/,
+    );
   });
 
   it("keeps year/leap boundaries as named-zone calendar dates", () => {
@@ -210,7 +219,7 @@ describe("C266-1 activity calendar", () => {
       });
       expect(screen.getByRole("alert")).toHaveTextContent("server restarted");
       expect(screen.getByRole("alert")).toHaveTextContent("showing the last successful observation");
-      expect(screen.getByText(/Last success/)).toHaveTextContent("<1 m old");
+      expect(screen.getByText(/Last successful activity read/)).toHaveTextContent("<1 m old");
       expect(screen.getByText("Submissions total:")).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
@@ -253,7 +262,14 @@ describe("C266-1 activity calendar", () => {
     };
     await act(async () => dataSource.requests[0].request.resolve(first));
     expect(await screen.findByText("Submissions total:")).toBeInTheDocument();
-    expect(screen.getByText(/Last success/)).toHaveTextContent("02/03/2028 00:00");
+    expect(screen.getByText(/Last successful activity read/)).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Information about Activity calendar" }));
+    expect(screen.getByRole("dialog", { name: "Activity calendar" })).toHaveTextContent(
+      "Source observed 02/03/2028 00:00; received 02/03/2028 00:00.",
+    );
+    await user.click(screen.getByRole("button", { name: "Close" }));
 
     view.rerender(
       <ActivityCalendar
@@ -268,7 +284,7 @@ describe("C266-1 activity calendar", () => {
     await act(async () => dataSource.requests[1].request.reject(new Error("manual refresh failed")));
     expect(screen.getByRole("alert")).toHaveTextContent("manual refresh failed");
     expect(screen.getByRole("alert")).toHaveTextContent("showing the last successful observation");
-    expect(screen.getByText(/Last success/)).toHaveTextContent("02/03/2028 00:00");
+    expect(screen.getByText(/Last successful activity read/)).toBeInTheDocument();
 
     const otherFilters = { ...filters, projectName: "different-project" };
     view.rerender(

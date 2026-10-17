@@ -42,13 +42,14 @@ async function waitForServer(url: string): Promise<void> {
   throw new Error("Fixture dashboard server did not become ready.");
 }
 
-async function applyMapScope(page: Page): Promise<void> {
+async function applyMapScope(page: Page, fakeClock = false): Promise<void> {
   await page.locator(".filters select").selectOption("map-project");
   await page.getByLabel("IANA time zone").fill("UTC");
   await page.getByLabel("From").fill("01/01/2026 00:00");
   await page.getByLabel("Until (exclusive)").fill("05/01/2026 00:00");
-  await page.getByRole("button", { name: "Apply" }).click();
-  await expect(page.getByText(/Loaded 25 of 28 started runs/)).toBeVisible();
+  if (fakeClock) await page.clock.runFor(400);
+  else await page.waitForTimeout(450);
+  await expect(page.getByText(/Loaded 28 of 28 started runs/)).toBeVisible();
 }
 
 function operation(route: Route): string | null {
@@ -111,13 +112,14 @@ test("C266-1 real producer renders provider-aware activity metrics", async ({ pa
   await applyMapScope(page);
 
   await expect(page.getByText("Submissions total:")).toBeVisible();
-  await expect(page.getByText("28", { exact: true }).last()).toBeVisible();
+  await expect(page.locator(".activity-total strong")).toHaveText("28");
   await page.getByLabel("Activity metric").selectOption("review-rounds");
   await expect(page.getByText("Review rounds total:")).toBeVisible();
-  await expect(page.getByLabel("Review rounds daily values")).toContainText("2026-01-031");
+  await page.getByText("Show daily values").click();
+  await expect(page.getByLabel("Review rounds daily values")).toContainText("03/01/20261");
   await page.getByLabel("Activity metric").selectOption("process-hours");
   await expect(page.getByText("Process hours total:")).toBeVisible();
-  await expect(page.locator(".activity-total").getByText("4.917 hours")).toBeVisible();
+  await expect(page.locator(".activity-total strong")).toHaveText("04 h 55 m");
   expect(calls.filter((name) => name === "dashboard.activity").length).toBeGreaterThanOrEqual(3);
   expect(
     calls.some((name) =>
@@ -150,7 +152,7 @@ test("C266-2 actual HTTP reads obey queue, Pause, visibility, and cadence", asyn
   expect(maximumActive).toBe(2);
   holding = false;
   releaseInitial();
-  await applyMapScope(page);
+  await applyMapScope(page, true);
   await expect(page.getByText("Submissions total:")).toBeVisible();
   await expect(page.getByText("64% remaining · 36% used")).toBeVisible();
 
@@ -166,7 +168,7 @@ test("C266-2 actual HTTP reads obey queue, Pause, visibility, and cadence", asyn
   await page.clock.runFor(120_000);
   for (const name of recurring) expect(count(name)).toBe(pausedCounts[name]);
 
-  await page.getByRole("button", { name: "Refresh applied scope" }).click();
+  await page.getByRole("button", { name: "Refresh current scope" }).click();
   await expect.poll(() => count("dashboard.activity")).toBe(pausedCounts["dashboard.activity"] + 1);
   await expect.poll(() => count("dashboard.summary")).toBe(pausedCounts["dashboard.summary"] + 1);
   await expect.poll(() => count("dashboard.runs")).toBe(pausedCounts["dashboard.runs"] + 1);
@@ -228,18 +230,15 @@ test("F-01 paused manual Refresh retains compatible activity and first-page succ
   await page.goto(`${baseUrl}/`);
   await applyMapScope(page);
   await expect(page.getByText("Submissions total:")).toBeVisible();
-  await page.getByRole("button", { name: "Load more runs" }).click();
   await expect(page.getByText("Loaded 28 of 28 started runs")).toBeVisible();
   const activitySuccess = await page.locator(".activity-panel .observation-line").textContent();
   const mapSuccess = await page.locator(".run-map-panel .observation-line").textContent();
-  const activityStableDates = activitySuccess?.replace(/ · \d+[smh] old$/, "") ?? "";
-  const firstPageSuccess = mapSuccess?.match(/offset 0 · \S+ received \S+/)?.[0] ?? "";
 
   await page.getByRole("button", { name: "Pause automatic refresh" }).click();
   failRefresh = true;
   const activityCalls = calls.filter((name) => name === "dashboard.activity").length;
   const runCalls = calls.filter((name) => name === "dashboard.runs").length;
-  await page.getByRole("button", { name: "Refresh applied scope" }).click();
+  await page.getByRole("button", { name: "Refresh current scope" }).click();
   await expect.poll(
     () => calls.filter((name) => name === "dashboard.activity").length,
   ).toBe(activityCalls + 1);
@@ -250,12 +249,13 @@ test("F-01 paused manual Refresh retains compatible activity and first-page succ
   await expect(page.locator(".activity-panel [role=alert]")).toContainText(
     "showing the last successful observation",
   );
+  await expect(page.getByText("Loaded 28 of 28 started runs")).toBeVisible();
+  await expect(page.locator(".run-map-panel .observation-line")).toHaveText(mapSuccess ?? "");
   await expect(page.locator(".run-map-panel [role=alert]")).toContainText(
-    "showing the last successful visible pages",
+    "showing 28 distinct IDs from successful pages",
   );
-  await expect(page.locator(".activity-panel .observation-line")).toContainText(activityStableDates);
-  await expect(page.locator(".run-map-panel .observation-line")).toContainText(firstPageSuccess);
-  await expect(page.getByText("Loaded 25 of 28 started runs")).toBeVisible();
+  expect(await page.locator(".activity-panel .observation-line").textContent()).toBe(activitySuccess);
+  expect(await page.locator(".run-map-panel .observation-line").textContent()).toBe(mapSuccess);
   await expect(page.getByText("No started runs match the applied scope.")).toHaveCount(0);
   await expect(page.getByText("Automatic refresh: paused")).toBeVisible();
 });
@@ -300,9 +300,9 @@ test("F-02 held initial capacity cannot gate a paused manual map refresh", async
     await page.getByRole("button", { name: "Pause automatic refresh" }).click();
     await applyMapScope(page);
     const callsBeforeRefresh = runCalls;
-    await page.getByRole("button", { name: "Refresh applied scope" }).click();
+    await page.getByRole("button", { name: "Refresh current scope" }).click();
     await expect.poll(() => runCalls).toBe(callsBeforeRefresh + 1);
-    await expect(page.getByText("Loaded 25 of 28 started runs")).toBeVisible();
+    await expect(page.getByText("Loaded 28 of 28 started runs")).toBeVisible();
     await expect(page.getByText("Automatic refresh: paused")).toBeVisible();
     await expect(page.getByRole("button", { name: "Resume automatic refresh" })).toBeVisible();
   } finally {
@@ -324,20 +324,18 @@ test("C266-3 failure recovery and filter retirement keep only current memory own
     await route.continue();
   });
   await page.goto(`${baseUrl}/`);
-  await applyMapScope(page);
+  await applyMapScope(page, true);
   const lastSuccess = await page.locator(".activity-panel .observation-line").textContent();
-  expect(lastSuccess).toContain("Last success");
+  expect(lastSuccess).toContain("Last successful activity read");
   dropActivity = true;
   await page.clock.runFor(30_000);
   await expect(page.locator(".activity-panel [role=alert]")).toContainText(
     "showing the last successful observation",
   );
-  await expect(page.locator(".activity-panel .observation-line")).toContainText(
-    "source observed",
-  );
-  expect(await page.locator(".activity-panel .observation-line").textContent()).toContain(
-    lastSuccess?.split(" · received")[0],
-  );
+  expect(await page.locator(".activity-panel .observation-line").textContent()).toBe(lastSuccess);
+  // Let the failed fetch's promise-finally schedule the next normal cadence
+  // before advancing the virtual clock into that retry window.
+  await page.waitForTimeout(50);
   dropActivity = false;
   await page.clock.runFor(30_000);
   await expect(page.locator(".activity-panel [role=alert]")).toHaveCount(0);
@@ -359,7 +357,7 @@ test("C266-3 failure recovery and filter retirement keep only current memory own
   await page.clock.runFor(30_000);
   await expect(page.getByLabel("Runs started: 29")).toBeVisible();
   await expect(page.getByText("Submissions total:")).toBeVisible();
-  await expect(page.getByText("29", { exact: true }).last()).toBeVisible();
+  await expect(page.locator(".activity-total strong")).toHaveText("29");
 
   await page.getByLabel("Select loaded run").selectOption("current-map-run");
   await expect(page.getByText(/Selected run:/)).toContainText("current-map-run");
@@ -374,10 +372,7 @@ test("C266-3 failure recovery and filter retirement keep only current memory own
 
   const projectSelect = page.locator(".filters select");
   await projectSelect.selectOption({ label: '<img src=x onerror="window.__dashboard_xss=1">' });
-  // The held content request deliberately keeps the modal backdrop mounted.
-  // Dispatch to the real Apply handler so this test can exercise an external
-  // scope change while that old sensitive reply is still in flight.
-  await page.getByRole("button", { name: "Apply" }).dispatchEvent("click");
+  // The immediate project change retires the held sensitive read and modal ownership.
   await expect(page.getByText("Select an exact run cell or the loaded-run control to inspect it.")).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   writeFileSync(control("release-content-response"), "release\n", "utf-8");

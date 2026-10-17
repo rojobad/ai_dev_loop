@@ -36,7 +36,9 @@ if (!baseUrl || !fixturePath) {
 const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as FixtureExpectation;
 
 function localInput(instant: string): string {
-  return instant.replace("Z", "").slice(0, 16);
+  const value = new Date(instant);
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${pad(value.getUTCDate())}/${pad(value.getUTCMonth() + 1)}/${value.getUTCFullYear()} ${pad(value.getUTCHours())}:${pad(value.getUTCMinutes())}`;
 }
 
 async function applyFixtureScope(page: Page): Promise<void> {
@@ -45,18 +47,16 @@ async function applyFixtureScope(page: Page): Promise<void> {
   await page.getByLabel("IANA time zone").fill("UTC");
   await page.getByLabel("From").fill(localInput(fixture.fromUtc));
   await page.getByLabel("Until (exclusive)").fill(localInput(fixture.toUtc));
-  await page.getByRole("button", { name: "Apply" }).click();
+  await page.waitForTimeout(450);
   await expect(page.getByLabel(`Runs started: ${fixture.runsStarted}`)).toBeVisible();
 }
 
 async function loadAllRuns(page: Page): Promise<void> {
-  const more = page.getByRole("button", { name: "Load more runs" });
-  if (await more.isVisible()) await more.click();
   await expect(page.getByText(`Loaded ${fixture.mapTotal} of ${fixture.mapTotal} started runs`)).toBeVisible();
 }
 
 async function selectRun(page: Page, runId: string): Promise<void> {
-  await page.getByRole("button", { name: new RegExp(`^${runId} `) }).click();
+  await page.getByLabel("Select loaded run").selectOption(runId);
   await expect(page.getByText(/Selected run:/)).toContainText(runId);
 }
 
@@ -74,10 +74,15 @@ async function assertDisplayedActivity(
   await expect(page.locator(".activity-total")).toHaveText(
     `${label} total: ${expected.displayTotal}`,
   );
+  const disclosure = page.locator(".activity-days-disclosure");
+  if (!(await disclosure.getAttribute("open"))) {
+    await disclosure.getByText("Show daily values").click();
+  }
   const rows = page.getByLabel(`${label} daily values`).locator("li");
   await expect(rows).toHaveCount(expected.days.length);
   for (const [index, day] of expected.days.entries()) {
-    await expect(rows.nth(index).locator("time")).toHaveText(day.date);
+    const [year, month, date] = day.date.split("-");
+    await expect(rows.nth(index).locator("time")).toHaveText(`${date}/${month}/${year}`);
     await expect(rows.nth(index).locator("span")).toHaveText(expected.displayDays[index]);
   }
 }
@@ -138,7 +143,7 @@ test("C267-1 installed wheel serves the complete offline provider-aware journey"
       call.operation,
     ),
   ).length;
-  await page.getByRole("button", { name: new RegExp(`^${fixture.implementerAttemptId} `) }).click();
+  await page.getByRole("button", { name: new RegExp(`Attempt ID: ${fixture.implementerAttemptId}`) }).click();
   await expect(page.getByRole("dialog")).toContainText("codex.implementer_resume");
   expect(operations.filter((call) =>
     ["run.initial-prompt", "run.review", "run.review-content", "run.output"].includes(
@@ -153,12 +158,12 @@ test("C267-1 installed wheel serves the complete offline provider-aware journey"
   await expect(page.getByText("Process complete")).toBeVisible();
   await page.getByRole("button", { name: "Close attempt details" }).click();
 
-  await page.getByRole("button", { name: new RegExp(`^${fixture.historicalReviewAttemptId} `) }).click();
+  await page.getByRole("button", { name: new RegExp(`Attempt ID: ${fixture.historicalReviewAttemptId}`) }).click();
   await page.getByRole("button", { name: "Load exact review prompt" }).click();
   await expect(page.getByText(/Unavailable: not_recorded/)).toBeVisible();
   await page.getByRole("button", { name: "Close attempt details" }).click();
 
-  await page.getByRole("button", { name: new RegExp(`^${fixture.exactReviewAttemptId} `) }).click();
+  await page.getByRole("button", { name: new RegExp(`Attempt ID: ${fixture.exactReviewAttemptId}`) }).click();
   await page.getByRole("button", { name: "Load exact review prompt" }).click();
   await expect(page.locator(".content-text")).not.toBeEmpty();
   await page.getByRole("button", { name: "Close attempt details" }).click();
@@ -171,7 +176,7 @@ test("C267-1 installed wheel serves the complete offline provider-aware journey"
   ).toBe(false);
 
   await selectRun(page, fixture.sourceRunId);
-  await page.getByRole("button", { name: new RegExp(`^${fixture.activeAttemptId} `) }).click();
+  await page.getByRole("button", { name: new RegExp(`Attempt ID: ${fixture.activeAttemptId}`) }).click();
   await page.getByRole("button", { name: "Load stdout" }).click();
   await expect(page.getByText("no / active")).toBeVisible();
   await expect(page.getByRole("button", { name: "Check for new bytes" })).toBeVisible();
@@ -179,7 +184,7 @@ test("C267-1 installed wheel serves the complete offline provider-aware journey"
 
   const readsBeforePause = operations.length;
   await page.getByRole("button", { name: "Pause automatic refresh" }).click();
-  await page.getByRole("button", { name: "Refresh applied scope" }).click();
+  await page.getByRole("button", { name: "Refresh current scope" }).click();
   await expect.poll(() => operations.length).toBeGreaterThan(readsBeforePause);
   await expect(page.getByRole("button", { name: "Resume automatic refresh" })).toBeVisible();
   await page.evaluate(() => {

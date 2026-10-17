@@ -174,6 +174,30 @@ export class RefreshCoordinator {
     });
   }
 
+  requestRefreshContinuation<T>(
+    ownerKey: string,
+    key: string,
+    read: (signal: AbortSignal) => Promise<T>,
+    externalSignal?: AbortSignal,
+  ): Promise<T> {
+    if (this.disposed) return Promise.reject(abortError("The dashboard route left."));
+    if (!this.refreshes.has(ownerKey)) {
+      return Promise.reject(abortError("Refresh ownership retired."));
+    }
+    if (!key) return Promise.reject(new TypeError("Read jobs require a key."));
+    const existing = this.active.get(key) ?? this.queue.find((job) => job.key === key);
+    if (existing) {
+      return Promise.reject(new Error(`A dashboard read already owns ${key}.`));
+    }
+    return this.enqueue({
+      key,
+      ownerKey,
+      kind: "refresh",
+      read,
+      externalSignal: externalSignal ?? null,
+    });
+  }
+
   recurringCount(): number {
     return this.refreshes.size;
   }
@@ -200,6 +224,13 @@ export class RefreshCoordinator {
     if ((!this.visible || this.paused) && !explicit) return;
     this.clearRefreshTimer(entry);
     if (this.active.has(entry.key) || this.queue.some((job) => job.key === entry.key)) return;
+    const continuationPending = [...this.active.values(), ...this.queue].some(
+      (job) => job.ownerKey === entry.key,
+    );
+    if (continuationPending) {
+      if (!this.paused && this.visible) this.scheduleNext(entry);
+      return;
+    }
     void this.enqueue({
       key: entry.key,
       ownerKey: entry.key,

@@ -8,7 +8,7 @@ describe("local fetch transport", () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
-          apiVersion: { major: 1, minor: 9 },
+          apiVersion: { major: 1, minor: 11 },
           ok: true,
           observedAt: "2026-01-03T00:00:00Z",
           data: summaryData(),
@@ -63,7 +63,7 @@ describe("local fetch transport", () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
-          apiVersion: { major: 1, minor: 9 },
+          apiVersion: { major: 1, minor: 11 },
           ok: true,
           observedAt: "2026-01-03T00:00:00Z",
           data: activityData("review-rounds"),
@@ -96,7 +96,7 @@ describe("local fetch transport", () => {
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
-            apiVersion: { major: 1, minor: 9 },
+            apiVersion: { major: 1, minor: 11 },
             ok: false,
             observedAt: null,
             data: null,

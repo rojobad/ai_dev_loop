@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { AttemptModal } from "./AttemptModal";
 import { DashboardChart } from "./DashboardChart";
+import { InformationControl } from "./InformationControl";
 import { escapeHtml } from "./charts";
 import { CoordinatedDashboardDataSource } from "./coordinated-data-source";
 import {
@@ -463,7 +464,13 @@ export function AttemptTimeline({
   if (selectedRun === null) {
     return (
       <section className="panel attempt-timeline-panel" aria-labelledby="timeline-heading">
-        <h2 id="timeline-heading">Attempt timeline</h2>
+        <div className="panel-heading">
+          <h2 id="timeline-heading">Attempt timeline</h2>
+          <InformationControl label="Attempt timeline">
+            <p>Select an exact loaded run to read its metadata and authoritative attempt ordering.</p>
+            <p>Attempt ordinals remain tied to that ordering. Content is never preloaded and still requires a deliberate control.</p>
+          </InformationControl>
+        </div>
         <div className="empty-state">Select an exact run cell or the loaded-run control to inspect it.</div>
       </section>
     );
@@ -478,7 +485,23 @@ export function AttemptTimeline({
           <h2 id="timeline-heading">Attempt timeline</h2>
           <p>Selected run: <strong>{selectedRun.shortName}</strong> · Run ID: {selectedRun.runId}</p>
         </div>
-        <span>{timeline.items.length} loaded / {metadata?.attemptCount ?? "?"} recorded attempts</span>
+        <div className="panel-heading-actions">
+          <span>{timeline.items.length} loaded / {metadata?.attemptCount ?? "?"} recorded attempts</span>
+          <InformationControl label="Attempt timeline">
+            <p>Rows follow the producer&apos;s chronological ordering and stable tie-breaker. Page exhaustion does not imply an active or unknown attempt completed.</p>
+            <p>Roles come from authoritative component/effect pairs, not IDs. Selecting a row opens metadata only; prompt, review, and process output remain explicit reads.</p>
+            {timeline.observations.length ? (
+              <ul>
+                {timeline.observations.map((item) => (
+                  <li key={item.offset}>
+                    Offset {item.offset}: source observed {formatInstant(item.observedAt, timeZone)};
+                    received {formatInstant(item.receivedAt, timeZone)} ({formatAge(item.receivedAt)}).
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </InformationControl>
+        </div>
       </div>
       {inspect.error ? (
         <p className="error-banner" role="alert">
@@ -521,9 +544,7 @@ export function AttemptTimeline({
       ) : null}
       {timeline.observations.length ? (
         <p className="observation-line">
-          Timeline page observations: {timeline.observations.map((item) =>
-            `offset ${item.offset} · ${formatInstant(item.observedAt, timeZone)} observed · ${formatInstant(item.receivedAt, timeZone)} received (${formatAge(item.receivedAt)})`
-          ).join(" · ")} (page exhaustion does not complete an attempt)
+          Latest successful timeline page · {formatAge(timeline.observations.at(-1)!.receivedAt)}
         </p>
       ) : null}
       {timeline.items.length ? (
@@ -592,8 +613,6 @@ export function AttemptTimeline({
         >
           Load more attempts
         </button>
-      ) : timeline.page ? (
-        <p className="field-help">No more timeline rows were observed; active/unknown attempts remain explicitly unresolved.</p>
       ) : null}
     </section>
   );

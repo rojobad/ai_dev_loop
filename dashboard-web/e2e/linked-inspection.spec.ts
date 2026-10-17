@@ -42,14 +42,15 @@ async function waitForServer(url: string): Promise<void> {
   throw new Error("Fixture dashboard server did not become ready.");
 }
 
-async function applyMapScope(page: Page): Promise<void> {
+async function applyMapScope(page: Page, fakeClock = false): Promise<void> {
   await page.goto(`${baseUrl}/`);
   await page.locator(".filters select").selectOption("map-project");
   await page.getByLabel("IANA time zone").fill("UTC");
   await page.getByLabel("From").fill("01/01/2026 00:00");
   await page.getByLabel("Until (exclusive)").fill("05/01/2026 00:00");
-  await page.getByRole("button", { name: "Apply" }).click();
-  await expect(page.getByText("Loaded 25 of 28 started runs")).toBeVisible();
+  if (fakeClock) await page.clock.runFor(400);
+  else await page.waitForTimeout(450);
+  await expect(page.getByText("Loaded 28 of 28 started runs")).toBeVisible();
 }
 
 async function clickReplacementChartCell(page: Page, position: 1 | 2): Promise<void> {
@@ -174,7 +175,6 @@ test("C282-1..2 real chart keeps one selected run and stable paged attempt capti
 
   await applyMapScope(page);
   const projectSelect = page.locator(".filters select");
-  await page.getByRole("button", { name: "Load more runs" }).click();
   await expect(page.getByText("Loaded 28 of 28 started runs")).toBeVisible();
   await expect(page.locator(".run-metadata")).toHaveCount(0);
 
@@ -224,7 +224,6 @@ test("C282-1..2 real chart keeps one selected run and stable paged attempt capti
   await page.getByRole("button", { name: "Close attempt details" }).click();
 
   await projectSelect.selectOption("project-a");
-  await page.getByRole("button", { name: "Apply" }).click();
   await expect(page.getByText("Select an exact run cell or the loaded-run control to inspect it.")).toBeVisible();
 
   expect(
@@ -261,7 +260,7 @@ test("F-03 refreshes the exact current selection at the normal cadence after sat
     await route.continue();
   });
 
-  await applyMapScope(page);
+  await applyMapScope(page, true);
   writeFileSync(control("hold-service-jobs"), "hold\n", "utf-8");
   try {
     await page.getByLabel("Select loaded run").selectOption("older-map-run");
@@ -287,6 +286,9 @@ test("F-03 refreshes the exact current selection at the normal cadence after sat
     await expect(page.getByText(/Run metadata:/)).toBeVisible();
     await expect(page.getByText(/Timeline:/)).toBeVisible();
     writeFileSync(control("release-service-jobs"), "release\n", "utf-8");
+    // Let the two fixture worker threads observe their release before advancing
+    // the virtual cadence; otherwise the retry can race the synthetic saturation.
+    await page.waitForTimeout(100);
     await page.clock.runFor(10_000);
 
     await expect(page.getByText(/Selected run:/)).toContainText("current-map-run");

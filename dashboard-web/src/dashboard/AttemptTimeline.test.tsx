@@ -551,13 +551,19 @@ describe("C264-3 attempt timeline semantics", () => {
       { runId: "standalone-run", offset: 0 },
       { runId: "standalone-run", offset: 25 },
     ]);
+    await user.click(
+      screen.getByRole("button", { name: "Information about Attempt timeline" }),
+    );
+    expect(screen.getByRole("dialog", { name: "Attempt timeline" })).toHaveTextContent(
+      "Page exhaustion does not imply an active or unknown attempt completed",
+    );
+    await user.click(screen.getByRole("button", { name: "Close" }));
     await user.click(screen.getByRole("button", { name: "Gantt timeline for standalone-run" }));
     expect(screen.getByText(/Selected 26 - Iteration 1 - Reviewer/)).toHaveTextContent(
       "No content was loaded",
     );
     expect(screen.getByRole("heading", { name: "26 - Iteration 1 - Reviewer" }))
       .toBeInTheDocument();
-    expect(screen.getByText(/page exhaustion does not complete an attempt/)).toBeInTheDocument();
   });
 
   it("keeps chart-opened modal focus inside after animation frames and restores the exact row without scrolling", async () => {
@@ -638,8 +644,11 @@ describe("C264-3 attempt timeline semantics", () => {
     expect(
       screen.getByRole("button", { name: /^26 - Iteration 1 - Reviewer.*Attempt ID: review-retry/ }),
     ).toBeInTheDocument();
-    const observations = screen.getByText(/Timeline page observations:/);
-    expect(observations).toHaveTextContent("offset 0 · 03/01/2026 00:04 observed");
-    expect(observations).toHaveTextContent("offset 25 · 03/01/2026 00:00 observed");
+    await user.click(
+      screen.getByRole("button", { name: "Information about Attempt timeline" }),
+    );
+    const observations = screen.getByRole("dialog", { name: "Attempt timeline" });
+    expect(observations).toHaveTextContent("Offset 0: source observed 03/01/2026 00:04");
+    expect(observations).toHaveTextContent("Offset 25: source observed 03/01/2026 00:00");
   });
 });
