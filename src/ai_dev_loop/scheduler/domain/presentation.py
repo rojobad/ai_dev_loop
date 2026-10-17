@@ -42,7 +42,7 @@ def legacy_short_name(value: object, *, fallback_id: str) -> str:
     ).strip()
     if not cleaned:
         cleaned = fallback_id.strip() or "unknown"
-    return cleaned[:MAX_SHORT_NAME_CODEPOINTS]
+    return cleaned[:MAX_SHORT_NAME_CODEPOINTS].rstrip()
 
 
 @dataclass(frozen=True)
