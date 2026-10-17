@@ -2,11 +2,18 @@ import type { EChartsCoreOption } from "echarts/core";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { DashboardChart } from "./DashboardChart";
+import { InformationControl } from "./InformationControl";
 import {
   SUMMARY_REFRESH_MS,
   RefreshCoordinator,
   canonicalReadKey,
 } from "./refreshCoordinator";
+import {
+  formatAge,
+  formatCalendarDay,
+  formatDuration,
+  formatInstant,
+} from "./time";
 import type {
   DashboardActivityData,
   DashboardActivityMetric,
@@ -67,7 +74,7 @@ export function activityDisplayValue(
 
 function formatValue(metric: DashboardActivityMetric, value: number): string {
   if (metric !== "process-hours") return `${value}`;
-  return `${Number(activityDisplayValue(metric, value).toFixed(3))} hours`;
+  return formatDuration(value);
 }
 
 export function activityCalendarOption(data: DashboardActivityData): EChartsCoreOption {
@@ -81,15 +88,17 @@ export function activityCalendarOption(data: DashboardActivityData): EChartsCore
     tooltip: {
       position: "top",
       renderMode: "html",
-      formatter: (value: unknown) => {
-        const item = typeof value === "object" && value !== null
-          ? (value as Record<string, unknown>)
+      formatter: (eventValue: unknown) => {
+        const item = typeof eventValue === "object" && eventValue !== null
+          ? (eventValue as Record<string, unknown>)
           : {};
         const raw = Array.isArray(item.value) ? item.value : [];
         const date = typeof raw[0] === "string" ? raw[0] : "Unknown date";
-        const amount = typeof raw[1] === "number" ? raw[1] : 0;
-        return `<strong>${date}</strong><br>${amount} ${
-          data.metric === "process-hours" ? "hours" : "events"
+        const day = data.days.find((candidate) => candidate.date === date);
+        const value = day?.value ?? 0;
+        const amount = formatValue(data.metric, value);
+        return `<strong>${formatCalendarDay(date)}</strong><br>${amount}${
+          data.metric === "process-hours" ? "" : " events"
         }`;
       },
     },
@@ -125,13 +134,6 @@ function sameFilter(data: DashboardActivityData, filters: DashboardFilters): boo
     data.filters.timeZone === filters.timeZone &&
     data.filters.projectName === (filters.projectName ?? null)
   );
-}
-
-function observationAge(receivedAt: string): string {
-  const milliseconds = Math.max(0, Date.now() - Date.parse(receivedAt));
-  if (milliseconds < 60_000) return `${Math.floor(milliseconds / 1000)}s old`;
-  if (milliseconds < 3_600_000) return `${Math.floor(milliseconds / 60_000)}m old`;
-  return `${Math.floor(milliseconds / 3_600_000)}h old`;
 }
 
 export function ActivityCalendar({
@@ -202,37 +204,38 @@ export function ActivityCalendar({
   return (
     <section className="panel activity-panel" aria-labelledby="activity-heading">
       <div className="panel-heading activity-heading">
-        <div>
-          <h2 id="activity-heading">Activity calendar</h2>
-          <p>
-            Event-date activity in {filters.timeZone}; this differs from the overview&apos;s
-            started-run cohort.
-          </p>
+        <h2 id="activity-heading">Activity calendar</h2>
+        <div className="panel-heading-actions">
+          <label>
+            Metric
+            <select
+              aria-label="Activity metric"
+              value={metric}
+              onChange={(event) => setMetric(event.target.value as DashboardActivityMetric)}
+            >
+              {(Object.keys(METRIC_LABELS) as DashboardActivityMetric[]).map((value) => (
+                <option key={value} value={value}>{METRIC_LABELS[value]}</option>
+              ))}
+            </select>
+          </label>
+          <InformationControl label="Activity calendar">
+            <p>Activity is dated by event in {filters.timeZone}; it differs from the overview&apos;s first-execution cohort.</p>
+            <p>Submissions use submission dates. Review rounds count the first reviewer launch per run and iteration; implementer attempts never become review rounds.</p>
+            <p>Process hours include resolved implementation and review intervals, including resolved failures or cancellations, and sum parallel process time before display conversion.</p>
+            {state.observation ? (
+              <p>
+                Source observed {formatInstant(state.observation.observedAt, filters.timeZone)};
+                received {formatInstant(state.observation.receivedAt, filters.timeZone)}.
+              </p>
+            ) : null}
+          </InformationControl>
         </div>
-        <label>
-          Metric
-          <select
-            aria-label="Activity metric"
-            value={metric}
-            onChange={(event) => setMetric(event.target.value as DashboardActivityMetric)}
-          >
-            {(Object.keys(METRIC_LABELS) as DashboardActivityMetric[]).map((value) => (
-              <option key={value} value={value}>{METRIC_LABELS[value]}</option>
-            ))}
-          </select>
-        </label>
       </div>
-      <p className="field-help">
-        Submissions use submission dates. Review rounds count the first reviewer launch per
-        run and iteration; Cursor and Codex implementer attempts never become review rounds.
-        Process hours include resolved implementation and review intervals, including resolved
-        failures/cancellations, and sum parallel process time before display conversion.
-      </p>
       {state.error ? (
         <p className="error-banner" role="alert">
           Activity refresh: {state.error}
           {state.observation
-            ? ` · showing the last successful observation (${observationAge(state.observation.receivedAt)})`
+            ? ` · showing the last successful observation (${formatAge(state.observation.receivedAt)})`
             : ""}
         </p>
       ) : null}
@@ -240,8 +243,7 @@ export function ActivityCalendar({
       {state.observation && data ? (
         <>
           <p className="observation-line">
-            Last success · source observed {data.observedAt} · received {state.observation.receivedAt}
-            {` · ${observationAge(state.observation.receivedAt)}`}
+            Last successful activity read · {formatAge(state.observation.receivedAt)}
           </p>
           <p className={`coverage coverage-${data.coverage.dataState}`}>
             Coverage: {data.coverage.dataState}. {partial
@@ -268,14 +270,17 @@ export function ActivityCalendar({
                 : "No activity was recorded in the applied range."}
             </div>
           )}
-          <ol className="activity-days" aria-label={`${METRIC_LABELS[data.metric]} daily values`}>
-            {data.days.map((day) => (
-              <li key={day.date}>
-                <time dateTime={day.date}>{day.date}</time>
-                <span>{formatValue(data.metric, day.value)}</span>
-              </li>
-            ))}
-          </ol>
+          <details className="activity-days-disclosure">
+            <summary>Show daily values</summary>
+            <ol className="activity-days" aria-label={`${METRIC_LABELS[data.metric]} daily values`}>
+              {data.days.map((day) => (
+                <li key={day.date}>
+                  <time dateTime={day.date}>{formatCalendarDay(day.date)}</time>
+                  <span>{formatValue(data.metric, day.value)}</span>
+                </li>
+              ))}
+            </ol>
+          </details>
         </>
       ) : null}
     </section>

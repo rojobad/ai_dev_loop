@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import ValidationError as PydanticValidationError
@@ -385,6 +386,7 @@ class SequencePrepareService:
             raise ValidationError("resolved sequence manifest exceeds size limit")
 
         now = self._now_factory()
+        frozen_schema_version: Literal[1, 2] = 1 if manifest.schema_version == 1 else 2
         frozen_entries: list[FrozenSequenceEntry] = []
         phase_artifact_bytes: list[tuple[bytes, bytes, bytes, bytes, bytes]] = []
         project_name: str | None = None
@@ -460,9 +462,9 @@ class SequencePrepareService:
                 commit_message = None
             frozen_entries.append(
                 FrozenSequenceEntry(
-                    schema_version=manifest.schema_version,
+                    schema_version=frozen_schema_version,
                     implementer=_implementer_binding(effective)
-                    if manifest.schema_version == 2
+                    if manifest.schema_version >= 2
                     else None,
                     ordinal=ordinal,
                     phase_name=phase.name,
@@ -520,7 +522,7 @@ class SequencePrepareService:
 
         assert project_name is not None
         identity_definition = PreparedSequenceDefinition(
-            schema_version=manifest.schema_version,
+            schema_version=frozen_schema_version,
             sequence_id=IDENTITY_PLACEHOLDER,
             name=manifest.name,
             project_name=project_name,
@@ -536,7 +538,11 @@ class SequencePrepareService:
             entries=tuple(frozen_entries),
         )
 
-        with self.store.begin_immediate() as conn:
+        # The admission lookup is read-only.  In particular, the public legacy
+        # replay path uses a read-only store here so an unaccepted v1/v2
+        # manifest can be rejected without migrating or otherwise publishing
+        # scheduler resources.
+        with self.store.begin_read() as conn:
             self.store.require_sequence_schema(conn)
             existing = self.store.find_existing_prepared_sequence(
                 conn,
@@ -554,6 +560,12 @@ class SequencePrepareService:
                         "existing sequence is not reusable for prepare",
                     )
                 return self._reuse_existing_result(existing_state)
+
+            if manifest.schema_version < 3:
+                raise ValidationError(
+                    "fresh sequence preparation requires manifest v3 with short_name "
+                    "on the sequence and every phase"
+                )
 
             idempotency_key = _sequence_idempotency_key(
                 identity_definition,
@@ -634,7 +646,18 @@ class SequencePrepareService:
                     "prepared sequence artifacts failed integrity verification"
                 ) from exc
             try:
-                self.store.insert_prepared_sequence(conn, state=state, now=now)
+                assert manifest.short_name is not None
+                self.store.insert_prepared_sequence(
+                    conn,
+                    state=state,
+                    now=now,
+                    sequence_short_name=manifest.short_name,
+                    planned_short_names={
+                        ordinal: phase.short_name
+                        for ordinal, phase in enumerate(manifest.phases, start=1)
+                        if phase.short_name is not None
+                    },
+                )
             except SchedulerEngineError as exc:
                 if exc.kind is not SchedulerEngineErrorKind.CONFLICT:
                     raise
@@ -735,6 +758,26 @@ def default_sequence_prepare_service(
 
 
 def prepare_sequence(options: SequencePrepareOptions) -> SequencePrepareResult:
+    # Validate manifest syntax and v3's required presentation names before the
+    # default store can create or migrate scheduler resources. Legacy manifests
+    # continue into the service because exact accepted replay requires a lookup.
+    manifest = _parse_manifest(_load_manifest_bytes(options.manifest_path))
+    selected_db_path = options.db_path or default_engine_db_path()
+    if manifest.schema_version < 3:
+        if not selected_db_path.exists():
+            raise ValidationError(
+                "fresh sequence preparation requires manifest v3 with short_name "
+                "on the sequence and every phase"
+            )
+        # Determine exact accepted replay eligibility against the ledger as it
+        # exists.  Opening the writable store first would migrate schema 16 even
+        # when this manifest has no accepted identity and must be rejected.
+        read_only_store = SqliteSchedulerStore.open_readonly(selected_db_path)
+        read_only_service = SequencePrepareService(
+            read_only_store,
+            ProtectedArtifactStore(options.artifact_root or default_artifact_root()),
+        )
+        return read_only_service.prepare(options)
     service = default_sequence_prepare_service(
         db_path=options.db_path,
         artifact_root=options.artifact_root,

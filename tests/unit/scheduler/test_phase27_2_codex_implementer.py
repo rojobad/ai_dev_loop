@@ -62,6 +62,7 @@ def _submit(
     if prompt is None:
         prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
     options = SubmitOptions(
+        short_name="Test run",
         repo_path=repo,
         plan_path=Path("docs/plans/sample-plan.md"),
         prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),

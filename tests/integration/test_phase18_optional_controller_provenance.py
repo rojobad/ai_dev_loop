@@ -38,6 +38,7 @@ def _submit_options(
     controller_session_id: str | None = None,
 ) -> SubmitOptions:
     return SubmitOptions(
+        short_name="Test run",
         repo_path=repo,
         plan_path=Path("docs/plans/sample-plan.md"),
         prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),

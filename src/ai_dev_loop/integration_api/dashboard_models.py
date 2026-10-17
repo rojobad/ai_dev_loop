@@ -48,6 +48,23 @@ class DashboardPageData(PublicWireModel):
         return self
 
 
+class DashboardRunsPageData(PublicWireModel):
+    """Operation-specific page metadata for the wider run-map collection."""
+
+    offset: StrictInt = Field(ge=0)
+    limit: StrictInt = Field(ge=1, le=1000)
+    next_offset: StrictInt | None = Field(alias="nextOffset", ge=0)
+    has_more: StrictBool = Field(alias="hasMore")
+
+    @model_validator(mode="after")
+    def _page_invariants(self) -> DashboardRunsPageData:
+        if self.has_more != (self.next_offset is not None):
+            raise ValueError("nextOffset presence must match hasMore")
+        if self.next_offset is not None and self.next_offset != self.offset + self.limit:
+            raise ValueError("nextOffset must advance by limit")
+        return self
+
+
 class DashboardProjectItem(PublicWireModel):
     project_name: str = Field(alias="projectName", min_length=1)
     run_count: StrictInt = Field(alias="runCount", ge=0)
@@ -102,6 +119,7 @@ class DashboardWorkloadItem(PublicWireModel):
     project_name: str = Field(alias="projectName", min_length=1)
     sequence_id: str | None = Field(alias="sequenceId")
     sequence_name: str | None = Field(alias="sequenceName")
+    sequence_short_name: str | None = Field(alias="sequenceShortName")
     run_count: StrictInt = Field(alias="runCount", ge=0)
 
 
@@ -158,6 +176,7 @@ class DashboardSummaryData(PublicWireModel):
 class DashboardSequenceBinding(PublicWireModel):
     sequence_id: str = Field(alias="sequenceId", min_length=1)
     sequence_name: str = Field(alias="sequenceName", min_length=1)
+    sequence_short_name: str = Field(alias="sequenceShortName", min_length=1)
     ordinal: StrictInt = Field(ge=1)
     phase_name: str = Field(alias="phaseName", min_length=1)
     generation: StrictInt = Field(ge=1)
@@ -167,6 +186,7 @@ class DashboardSequenceBinding(PublicWireModel):
 
 class DashboardRunItem(PublicWireModel):
     run_id: str = Field(alias="runId", min_length=1)
+    short_name: str = Field(alias="shortName", min_length=1)
     project_name: str = Field(alias="projectName", min_length=1)
     implementer_provider: Literal["cursor", "codex"] = Field(alias="implementerProvider")
     state: str = Field(min_length=1)
@@ -180,7 +200,7 @@ class DashboardRunsData(PublicWireModel):
     filters: DashboardFiltersData
     coverage: DashboardCoverageData
     items: tuple[DashboardRunItem, ...]
-    page: DashboardPageData
+    page: DashboardRunsPageData
     total_count: StrictInt = Field(alias="totalCount", ge=0)
 
 

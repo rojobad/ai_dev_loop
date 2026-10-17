@@ -91,6 +91,7 @@ def _write_config(path: Path, extra: str = "") -> Path:
 
 def _submit_options(repo: Path, paths: dict[str, Path], **overrides: object) -> SubmitOptions:
     payload: dict[str, object] = {
+        "short_name": "Test run",
         "repo_path": repo,
         "plan_path": Path("docs/plans/sample-plan.md"),
         "prompt_source_path": Path("docs/plans/prompt_sample-plan.txt"),
@@ -662,7 +663,7 @@ def test_cursor_preflight_still_schedules_create_chat(
     assert "CREATE_CHAT" in fake_clis["agent_log"].read_text(encoding="utf-8")
 
 
-def test_sequence_v1_rejects_codex_and_keeps_omitted_cursor(
+def test_sequence_v1_new_prepare_requires_v3_and_stays_cursor_only(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
 ) -> None:
@@ -708,15 +709,8 @@ def test_sequence_v1_rejects_codex_and_keeps_omitted_cursor(
         db_path=scheduler_paths["db_path"],
         artifact_root=scheduler_paths["artifact_root"],
     )
-    prepared = service.prepare(options)
-    from ai_dev_loop.scheduler.infrastructure.paths import sequence_artifact_root
-
-    effective_path = (
-        sequence_artifact_root(scheduler_paths["artifact_root"], prepared.sequence_id)
-        / "entries/01/effective-config.yaml"
-    )
-    effective = yaml.safe_load(effective_path.read_text(encoding="utf-8"))
-    assert "implementer" not in effective
+    with pytest.raises(ValidationError, match="requires manifest v3"):
+        service.prepare(options)
     config_path = git_repo / "ai_dev_loop.yaml"
     config_path.write_text(
         config_path.read_text(encoding="utf-8")
@@ -905,6 +899,8 @@ def test_cursor_timeout_conflicts_with_codex_implementer_before_publication(
         [
             "scheduler",
             "submit",
+            "--short-name",
+            "Test run",
             "--repo-path",
             str(git_repo),
             "--plan-path",

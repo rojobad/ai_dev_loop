@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
@@ -72,11 +73,16 @@ from ai_dev_loop.scheduler.application.cutover_cleanup import (
     cutover_target_paths,
     run_cutover_cleanup,
 )
+from ai_dev_loop.scheduler.application.presentation_metadata import (
+    set_run_short_name,
+    set_sequence_short_name,
+)
 from ai_dev_loop.scheduler.application.timer_ops import (
     disable_scheduler_timer,
     install_scheduler_timer,
     scheduler_timer_status,
 )
+from ai_dev_loop.scheduler.domain.presentation import ShortNameUpdateResult
 
 app = typer.Typer(
     name="ai_dev_loop",
@@ -102,12 +108,14 @@ sequence_app = typer.Typer(
         "Sequence start materializes phase 1; later phases materialize after accepted reviews."
     ),
 )
+run_app = typer.Typer(help="Inspect or edit scheduler run metadata.")
 integrations_app = typer.Typer(help="Global Codex integration commands.")
 sessions_app = typer.Typer(help="Desktop session rollout bridge commands.")
 integrations_app.add_typer(sessions_app, name="sessions")
 scheduler_app.add_typer(cutover_app, name="cutover")
 scheduler_app.add_typer(timer_app, name="timer")
 scheduler_app.add_typer(sequence_app, name="sequence")
+scheduler_app.add_typer(run_app, name="run")
 review_app = typer.Typer(help="Codex review retry and blocked-run recovery.")
 scheduler_app.add_typer(review_app, name="review")
 app.add_typer(config_app, name="config")
@@ -125,6 +133,24 @@ class OutputFormat(StrEnum):
 
 OutputOption = Annotated[OutputFormat, typer.Option("--output", help="Output format.")]
 DEFAULT_OUTPUT = OutputFormat.text
+
+
+def _render_short_name_update(
+    result: ShortNameUpdateResult,
+    *,
+    output: OutputFormat,
+) -> str:
+    payload = {
+        "schema_version": 1,
+        "owner_id": result.owner_id,
+        "short_name": result.short_name,
+        "previous_short_name": result.previous_short_name,
+        "changed": result.changed,
+    }
+    if output is OutputFormat.json:
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+    status = "updated" if result.changed else "unchanged"
+    return f"{result.owner_id}: short name {status} to {result.short_name!r}\n"
 
 TargetOption = Annotated[
     CodexIntegrationTarget,
@@ -185,6 +211,10 @@ def cli_root(
 
 @scheduler_app.command("submit")
 def scheduler_submit_command(
+    short_name: Annotated[
+        str,
+        typer.Option("--short-name", help="Editable scheduler display name (max 35 characters)."),
+    ],
     config_path: Annotated[
         Path | None,
         typer.Option("--config-path", help="Path to ai_dev_loop.yaml."),
@@ -312,6 +342,7 @@ def scheduler_submit_command(
 
     def run() -> None:
         options = SubmitOptions(
+            short_name=short_name,
             config_path=config_path,
             project_name=project_name,
             repo_path=repo_path,
@@ -704,6 +735,42 @@ def scheduler_sequence_status_command(
     def run() -> None:
         result = scheduler_sequence_status(sequence_id)
         typer.echo(render_sequence_status_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@sequence_app.command("set-short-name")
+def scheduler_sequence_set_short_name_command(
+    sequence_id: Annotated[str, typer.Argument(help="Exact scheduler sequence ID.")],
+    short_name: Annotated[
+        str,
+        typer.Option("--short-name", help="Editable display name (max 35 characters)."),
+    ],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Change only a sequence's scheduler-owned presentation metadata."""
+
+    def run() -> None:
+        result = set_sequence_short_name(sequence_id, short_name)
+        typer.echo(_render_short_name_update(result, output=output), nl=False)
+
+    _handle(run)
+
+
+@run_app.command("set-short-name")
+def scheduler_run_set_short_name_command(
+    run_id: Annotated[str, typer.Argument(help="Exact scheduler run ID.")],
+    short_name: Annotated[
+        str,
+        typer.Option("--short-name", help="Editable display name (max 35 characters)."),
+    ],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Change only a run's scheduler-owned presentation metadata."""
+
+    def run() -> None:
+        result = set_run_short_name(run_id, short_name)
+        typer.echo(_render_short_name_update(result, output=output), nl=False)
 
     _handle(run)
 

@@ -21,6 +21,7 @@ from tests.integration.test_phase26_1_dashboard_queries import (  # noqa: E402
     _insert_attempt,
     _insert_run,
 )
+from tests.unit.scheduler.helpers import sample_submitted_state  # noqa: E402
 from tests.unit.scheduler.test_phase20_3_checkpoint_concurrency import (  # noqa: E402
     _frozen_sequence_entry,
 )
@@ -48,6 +49,7 @@ from ai_dev_loop.scheduler.application.sequence_materializer import (  # noqa: E
     frozen_entry_hash,
 )
 from ai_dev_loop.scheduler.domain.common import encode_utc_instant, worktree_key  # noqa: E402
+from ai_dev_loop.scheduler.domain.events import RunSubmittedEvent  # noqa: E402
 from ai_dev_loop.scheduler.domain.sequence import (  # noqa: E402
     ActiveSequenceState,
     MaterializedSequenceEntry,
@@ -462,10 +464,86 @@ class FixtureCapacityService:
         )
 
 
+def _insert_large_cohort(store: SqliteSchedulerStore, count: int) -> None:
+    """Insert the browser paging fixture in one isolated transaction."""
+
+    base = datetime(2026, 1, 5, 12, 0, tzinfo=UTC)
+    with store.begin_immediate() as conn:
+        for index in range(count):
+            run_id = f"large-fixture-run-{index:04d}"
+            event_id = f"event-{run_id}"
+            submitted_at = base + timedelta(seconds=index)
+            state = sample_submitted_state(run_id=run_id, repo_root=f"/tmp/{run_id}")
+            context = state.context.model_copy(update={"project_name": "large-project"})
+            state = state.model_copy(
+                update={
+                    "context": context,
+                    "idempotency_key": hashlib.sha256(run_id.encode()).hexdigest(),
+                    "submitted_at": encode_utc_instant(submitted_at),
+                    "updated_at": encode_utc_instant(submitted_at),
+                }
+            )
+            store.insert_submitted_run(
+                conn,
+                run_id=run_id,
+                state=state,
+                event_id=event_id,
+                event=RunSubmittedEvent(
+                    run_id=run_id,
+                    idempotency_key=state.idempotency_key,
+                    worktree_key=state.context.repository.worktree_key,
+                    reused_existing=False,
+                ),
+                now=submitted_at,
+                short_name=f"Large alias {index:04d} {'a' * 18}",
+            )
+            launch = base + timedelta(hours=1, seconds=index)
+            completed = launch + timedelta(minutes=1)
+            dispatch_id = f"dispatch-{run_id}"
+            conn.execute(
+                """
+                INSERT INTO scheduler_effects(
+                    dispatch_id, source_event_id, effect_ordinal, run_id, effect_id,
+                    idempotency_key, effect_kind, effect_payload, effect_payload_sha256,
+                    status, available_at, created_at, updated_at
+                ) VALUES (?, ?, 0, ?, ?, ?, 'cursor.run_turn', '{}', ?, 'succeeded', ?, ?, ?)
+                """,
+                (
+                    dispatch_id,
+                    event_id,
+                    run_id,
+                    f"effect-{run_id}",
+                    f"{run_id}:turn",
+                    "d" * 64,
+                    encode_utc_instant(launch),
+                    encode_utc_instant(launch),
+                    encode_utc_instant(launch),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO scheduler_attempts(
+                    attempt_id, run_id, dispatch_id, component, iteration, status,
+                    created_at, updated_at, launch_requested_at, completed_at, ingested
+                ) VALUES (?, ?, ?, 'cursor', 1, 'completed', ?, ?, ?, ?, 1)
+                """,
+                (
+                    f"attempt-{run_id}",
+                    run_id,
+                    dispatch_id,
+                    encode_utc_instant(launch),
+                    encode_utc_instant(completed),
+                    encode_utc_instant(launch),
+                    encode_utc_instant(completed),
+                ),
+            )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--state-root", type=Path, required=True)
+    parser.add_argument("--large-cohort", type=int, default=0)
     args = parser.parse_args()
 
     xdg_state = args.state_root / "state"
@@ -558,6 +636,9 @@ def main() -> None:
             status="active",
             ingested=False,
         )
+
+    if args.large_cohort:
+        _insert_large_cohort(store, args.large_cohort)
 
     artifact_root = xdg_state / "ai_dev_loop" / "artifacts"
     factories = replace(

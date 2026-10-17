@@ -55,6 +55,17 @@
         "hasMore": { "type": "boolean" }
       }
     },
+    "runsPage": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["offset", "limit", "nextOffset", "hasMore"],
+      "properties": {
+        "offset": { "type": "integer", "minimum": 0 },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "nextOffset": { "type": ["integer", "null"], "minimum": 0 },
+        "hasMore": { "type": "boolean" }
+      }
+    },
     "stateCounts": {
       "type": "object",
       "additionalProperties": true,
@@ -92,6 +103,7 @@
       "properties": {
         "sequenceId": { "type": "string", "minLength": 1 },
         "sequenceName": { "type": "string", "minLength": 1 },
+        "sequenceShortName": { "type": "string", "minLength": 1, "maxLength": 35 },
         "ordinal": { "type": "integer", "minimum": 1 },
         "phaseName": { "type": "string", "minLength": 1 },
         "generation": { "type": "integer", "minimum": 1 },

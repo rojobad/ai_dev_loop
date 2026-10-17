@@ -62,6 +62,7 @@ def scheduler_paths(isolated_xdg: Path) -> dict[str, Path]:
 def _submit_run(git_repo: Path, scheduler_paths: dict[str, Path]) -> str:
     prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
     options = SubmitOptions(
+        short_name="Test run",
         repo_path=git_repo,
         plan_path=Path("docs/plans/sample-plan.md"),
         prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
@@ -867,6 +868,7 @@ def test_c03_multichunk_unicode_prompt_eof_and_integrity_errors(
     prompt_path.write_bytes(prompt_bytes)
     prompt = prompt_bytes.decode("utf-8")
     options = SubmitOptions(
+        short_name="Test run",
         repo_path=git_repo,
         plan_path=Path("docs/plans/sample-plan.md"),
         prompt_source_path=rel_prompt,
@@ -1171,6 +1173,7 @@ def test_c05_v4_populated_run_inspect_via_cli(
     shutil.copy(db, state_root / "engine.sqlite3")
     prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
     options = SubmitOptions(
+        short_name="Test run",
         repo_path=git_repo,
         plan_path=Path("docs/plans/sample-plan.md"),
         prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),

@@ -29,6 +29,7 @@
         ],
         "properties": {
           "runId": { "type": "string", "minLength": 1 },
+          "shortName": { "type": "string", "minLength": 1, "maxLength": 35 },
           "projectName": { "type": "string", "minLength": 1 },
           "implementerProvider": { "enum": ["cursor", "codex"] },
           "state": { "type": "string", "minLength": 1 },
@@ -49,7 +50,7 @@
       }
     },
     "page": {
-      "$ref": "https://ai-dev-loop.local/schemas/integration-api-dashboard-shared-v1.json#/$defs/page"
+      "$ref": "https://ai-dev-loop.local/schemas/integration-api-dashboard-shared-v1.json#/$defs/runsPage"
     },
     "totalCount": { "type": "integer", "minimum": 0 }
   }

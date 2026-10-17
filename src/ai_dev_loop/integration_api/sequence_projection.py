@@ -157,6 +157,7 @@ def _phase_run_item(
 ) -> IntegrationSequencePhaseRunItem:
     return IntegrationSequencePhaseRunItem(
         run_id=attempt.run_id,
+        short_name=store.run_short_name(conn, attempt.run_id),
         generation=attempt.generation,
         source_run_id=attempt.source_run_id,
         attempt_kind=attempt.attempt_kind,
@@ -234,10 +235,15 @@ def _load_lineage_by_ordinal(
     return {phase.ordinal: phase for phase in lineage.phase_executions}
 
 
-def build_sequence_list_item(status: SequenceStatusResult) -> IntegrationSequenceListItem:
+def build_sequence_list_item(
+    status: SequenceStatusResult,
+    *,
+    short_name: str,
+) -> IntegrationSequenceListItem:
     return IntegrationSequenceListItem(
         sequence_id=status.sequence_id,
         name=status.name,
+        short_name=short_name,
         project_name=status.project_name,
         repository_root=status.repository_root,
         state=status.state_kind,
@@ -286,6 +292,12 @@ def build_sequence_inspect_data(
                 if definition_entry.implementer is None
                 else definition_entry.implementer.provider,
                 name=definition_entry.phase_name,
+                short_name=store.planned_run_short_name(
+                    conn,
+                    sequence_id=status_result.sequence_id,
+                    ordinal=definition_entry.ordinal,
+                    planned_run_id=definition_entry.planned_run_id,
+                ),
                 initial_planned_run_id=definition_entry.planned_run_id,
                 materialized=entry_summary.materialized,
                 current_run_id=phase_exec.current_run_id if phase_exec else None,
@@ -348,6 +360,7 @@ def build_sequence_inspect_data(
         implementer_timeout_retry_limit=status_result.implementer_timeout_retry_limit,
         sequence_id=status_result.sequence_id,
         name=status_result.name,
+        short_name=store.sequence_short_name(conn, status_result.sequence_id),
         project_name=status_result.project_name,
         repository_root=status_result.repository_root,
         state=status_result.state_kind,
@@ -418,6 +431,13 @@ def build_sequence_phase_runs_data(
     selected, has_more, next_off = paginate_runs(attempts, offset=offset, limit=limit)
     return IntegrationSequencePhaseRunListData(
         sequence_id=status_result.sequence_id,
+        sequence_short_name=store.sequence_short_name(conn, status_result.sequence_id),
+        phase_short_name=store.planned_run_short_name(
+            conn,
+            sequence_id=status_result.sequence_id,
+            ordinal=ordinal,
+            planned_run_id=definition.entries[ordinal - 1].planned_run_id,
+        ),
         ordinal=ordinal,
         items=tuple(_phase_run_item(store, conn, attempt) for attempt in selected),
         page=collection_page(offset, limit, has_more),

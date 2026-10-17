@@ -61,7 +61,7 @@ def _tick(repo, paths, *, backend=None):
     )
 
 
-def manifest_payload(providers: tuple[str, ...], *, version: int = 2) -> dict:
+def manifest_payload(providers: tuple[str, ...], *, version: int = 3) -> dict:
     phases = []
     for ordinal, provider in enumerate(providers, 1):
         phase = {
@@ -70,6 +70,8 @@ def manifest_payload(providers: tuple[str, ...], *, version: int = 2) -> dict:
             "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
             "codex": {"review_model": "gpt-6.1-sol", "review_reasoning_effort": "high"},
         }
+        if version == 3:
+            phase["short_name"] = f"Phase {ordinal}"
         if ordinal < len(providers):
             phase["commit_message"] = f"accepted checkpoint {ordinal}"
         if provider == "codex":
@@ -80,7 +82,10 @@ def manifest_payload(providers: tuple[str, ...], *, version: int = 2) -> dict:
                 "timeout_minutes": 17 + ordinal,
             }
         phases.append(phase)
-    return {"schema_version": version, "name": "dual-provider-smoke", "phases": phases}
+    payload = {"schema_version": version, "name": "dual-provider-smoke", "phases": phases}
+    if version == 3:
+        payload["short_name"] = "Dual provider smoke"
+    return payload
 
 
 def prepare(
@@ -88,7 +93,7 @@ def prepare(
     paths: dict[str, Path],
     providers: tuple[str, ...],
     *,
-    version: int = 2,
+    version: int = 3,
     payload: dict | None = None,
 ):
     manifest = repo.parent / "sequence.yaml"
@@ -317,7 +322,7 @@ def validate_schema(payload, name):
     ],
 )
 def test_manifest_rejects_null_invalid_and_conflicting_fields(bad):
-    payload = manifest_payload(("codex", "cursor"))
+    payload = manifest_payload(("codex", "cursor"), version=2)
     payload["phases"][0]["implementer"] = bad
     with pytest.raises(ModelValidationError):
         SequenceManifest.model_validate(payload)
@@ -383,21 +388,9 @@ def test_v1_stays_cursor_and_rejects_implementer_metadata(git_repo, scheduler_pa
     payload = manifest_payload(("codex", "cursor"), version=1)
     with pytest.raises(ModelValidationError):
         SequenceManifest.model_validate(payload)
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
-    result = prepare(git_repo, scheduler_paths, ("cursor", "cursor"), version=1)
-    seq = sequence_state(scheduler_paths, result.sequence_id)
-    assert seq.definition.schema_version == 1
-    for entry in seq.definition.entries:
-        assert entry.implementer is None and "implementer" not in entry.model_dump(mode="json")
-        validate_schema(entry.model_dump(mode="json"), "scheduler-frozen-sequence-entry-v1.json")
-    start_sequence(result.sequence_id, db_path=scheduler_paths["db_path"])
-    final = drive(
-        _tick(git_repo, scheduler_paths), scheduler_paths, result.sequence_id, monkeypatch
-    )
-    assert all(
-        leaf_state(scheduler_paths, e.run_id).context.schema_version == 4
-        for e in final.materialized_entries
-    )
+    del monkeypatch
+    with pytest.raises(ValidationError, match="requires manifest v3"):
+        prepare(git_repo, scheduler_paths, ("cursor", "cursor"), version=1)
 
 
 def test_abort_uncertain_capacity_continuation_holds_then_converges(
@@ -532,6 +525,8 @@ def test_cli_smoke_real_admission_fake_clis_and_frozen_models(
             [
                 "scheduler",
                 "submit",
+                "--short-name",
+                "CLI smoke",
                 "--repo-path",
                 str(git_repo),
                 "--plan-path",
@@ -599,7 +594,7 @@ def test_cli_smoke_real_admission_fake_clis_and_frozen_models(
 
 @pytest.mark.parametrize("effort", ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"])
 def test_manifest_v2_preserves_supported_codex_effort_vocabulary(effort):
-    payload = manifest_payload(("codex", "cursor"))
+    payload = manifest_payload(("codex", "cursor"), version=2)
     payload["phases"][0]["implementer"]["reasoning_effort"] = effort
     assert SequenceManifest.model_validate(payload).phases[0].implementer.reasoning_effort == effort
     validate_schema(payload, "scheduler-sequence-manifest-v2.json")
@@ -624,17 +619,5 @@ def test_v1_explicit_cursor_config_preserves_canonical_effective_representation(
 ):
     source = git_repo / "ai_dev_loop.yaml"
     source.write_text(source.read_text() + "\nimplementer:\n  provider: cursor\n")
-    result = prepare(git_repo, scheduler_paths, ("cursor", "cursor"), version=1)
-    state = sequence_state(scheduler_paths, result.sequence_id)
-    artifacts = ProtectedArtifactStore(scheduler_paths["artifact_root"])
-    entry = state.definition.entries[0]
-    frozen = yaml.safe_load(
-        artifacts.read_sequence_verified_bytes(
-            result.sequence_id,
-            entry.effective_config.effective_config_artifact_path,
-            expected_sha256=entry.effective_config.effective_config_sha256,
-        )
-    )
-    assert frozen["implementer"] == {"provider": "cursor"}
-    assert entry.implementer is None
-    assert prepare(git_repo, scheduler_paths, ("cursor", "cursor"), version=1).reused_existing
+    with pytest.raises(ValidationError, match="requires manifest v3"):
+        prepare(git_repo, scheduler_paths, ("cursor", "cursor"), version=1)

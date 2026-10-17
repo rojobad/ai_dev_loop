@@ -51,6 +51,7 @@ HTTP_MAX_STATIC_BYTES = 10 * 1024 * 1024
 HTTP_CONTENT_CHUNK_BYTES = 65_536
 HTTP_DEFAULT_PAGE_LIMIT = 25
 HTTP_MAX_PAGE_LIMIT = 100
+HTTP_MAX_RUNS_PAGE_LIMIT = 1000
 HTTP_SOCKET_TIMEOUT_SECONDS = 5.0
 HTTP_HANDLER_DEADLINE_SECONDS = 30.0
 
@@ -288,7 +289,7 @@ class DashboardHttpDispatcher:
                     "limit",
                     default=HTTP_DEFAULT_PAGE_LIMIT,
                     minimum=1,
-                    maximum=HTTP_MAX_PAGE_LIMIT,
+                    maximum=HTTP_MAX_RUNS_PAGE_LIMIT,
                 )
                 return PreparedHttpRead(
                     operation,
@@ -502,6 +503,8 @@ def _json_bytes(payload: Mapping[str, object]) -> bytes:
 
 
 def _status_for_error(error: IntegrationApiError) -> HTTPStatus:
+    if error.code is IntegrationErrorCode.PAGE_ENVELOPE_TOO_LARGE:
+        return HTTPStatus.REQUEST_ENTITY_TOO_LARGE
     if error.code is IntegrationErrorCode.INVALID_ARGUMENT:
         return HTTPStatus.BAD_REQUEST
     if error.code is IntegrationErrorCode.NOT_FOUND:

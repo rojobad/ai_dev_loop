@@ -39,6 +39,9 @@ _DASHBOARD_SCOPE_ENVELOPE_MESSAGE = (
 _DASHBOARD_CATALOG_ENVELOPE_MESSAGE = (
     "Dashboard project catalog is too large; retry or reduce the page size."
 )
+_DASHBOARD_RUNS_PAGE_ENVELOPE_MESSAGE = (
+    "Dashboard run page is too large; retry the same offset with a smaller limit."
+)
 
 
 def _map_read_error(exc: DashboardReadError) -> IntegrationApiError:
@@ -72,6 +75,7 @@ class IntegrationDashboardReadService:
         ),
         *,
         oversize_message: str = _DASHBOARD_SCOPE_ENVELOPE_MESSAGE,
+        page_envelope_error: bool = False,
     ) -> DashboardProjectsData | DashboardSummaryData | DashboardRunsData | DashboardActivityData:
         payload = model.model_dump(mode="json", by_alias=True)
         envelope = build_success_envelope(
@@ -80,6 +84,8 @@ class IntegrationDashboardReadService:
         )
         encoded = json.dumps(envelope, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
         if len(encoded) > self.envelope_max_bytes:
+            if page_envelope_error:
+                raise IntegrationApiError.page_envelope_too_large(oversize_message)
             raise IntegrationApiError.invalid_argument(oversize_message)
         return model
 
@@ -162,7 +168,7 @@ class IntegrationDashboardReadService:
             time_zone=time_zone,
         )
         try:
-            page = DashboardPage.parse(offset=offset, limit=limit)
+            page = DashboardPage.parse_runs(offset=offset, limit=limit)
             result = self.queries.runs(filters, page)
         except DashboardFilterError as exc:
             raise IntegrationApiError.invalid_argument(str(exc)) from exc
@@ -170,7 +176,11 @@ class IntegrationDashboardReadService:
             raise _map_read_error(exc) from exc
         return cast(
             DashboardRunsData,
-            self._bounded(DashboardRunsData.model_validate(asdict(result))),
+            self._bounded(
+                DashboardRunsData.model_validate(asdict(result)),
+                oversize_message=_DASHBOARD_RUNS_PAGE_ENVELOPE_MESSAGE,
+                page_envelope_error=True,
+            ),
         )
 
     def activity(

@@ -18,6 +18,7 @@ interface ObserverMock {
 const ownership = vi.hoisted(() => ({
   charts: [] as ChartMock[],
   observers: [] as ObserverMock[],
+  props: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("echarts/core", () => ({ use: vi.fn() }));
@@ -38,7 +39,8 @@ vi.mock("echarts/components", () => ({
 }));
 vi.mock("echarts/renderers", () => ({ CanvasRenderer: {} }));
 vi.mock("echarts-for-react/lib/core", () => ({
-  default: forwardRef(function MockChart(_props: object, ref: React.ForwardedRef<object>) {
+  default: forwardRef(function MockChart(props: object, ref: React.ForwardedRef<object>) {
+    ownership.props.push(props as Record<string, unknown>);
     const [chart] = useState<ChartMock>(() => {
       let disposed = false;
       const instance: ChartMock = {
@@ -56,11 +58,16 @@ vi.mock("echarts-for-react/lib/core", () => ({
   }),
 }));
 
-import { DashboardChart } from "./DashboardChart";
+import {
+  DashboardChart,
+  viewportTooltipPosition,
+  withViewportTooltip,
+} from "./DashboardChart";
 
 beforeEach(() => {
   ownership.charts.length = 0;
   ownership.observers.length = 0;
+  ownership.props.length = 0;
   class ResizeObserverMock {
     readonly record: ObserverMock;
 
@@ -110,5 +117,47 @@ describe("chart ownership", () => {
     view.unmount();
     expect(ownership.observers[1].disconnect).toHaveBeenCalledTimes(1);
     expect(ownership.charts[1].dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("moves HTML tooltips to a body overlay and positions them in the viewport", () => {
+    const formatter = vi.fn();
+    const source = {
+      tooltip: { renderMode: "html", formatter, extraCssText: "color:red" },
+      series: [],
+    };
+    const result = withViewportTooltip(source) as {
+      tooltip: Record<string, unknown>;
+    };
+    expect(result.tooltip).toMatchObject({
+      appendToBody: true,
+      confine: false,
+      formatter,
+    });
+    expect(result.tooltip.extraCssText).toContain("max-width:min(32rem,calc(100vw - 16px))");
+    expect(result.tooltip.extraCssText).toContain("z-index:900");
+    expect(source.tooltip).not.toHaveProperty("appendToBody");
+    expect(viewportTooltipPosition(
+      [1350, 190],
+      [281, 120],
+      { left: -1060, top: 700 },
+      { width: 390, height: 844 },
+    )).toEqual([1161, 16]);
+
+    render(
+      <DashboardChart
+        ariaLabel="tooltip chart"
+        height={200}
+        option={source}
+        theme="light"
+      />,
+    );
+    expect(ownership.props.at(-1)?.option).toMatchObject({
+      tooltip: {
+        appendToBody: true,
+        confine: false,
+        formatter,
+        position: expect.any(Function),
+      },
+    });
   });
 });

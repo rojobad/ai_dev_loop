@@ -142,6 +142,11 @@ Sin el ciclo GitHub, el usuario decide manualmente si commitea despues de revisa
 
 ## Proteccion del contrato congelado en submit
 
+`short_name` es metadata scheduler-owned separada de esos inputs. Crear o editar
+un alias no cambia payloads congelados, hashes, identidad/linaje, reservas,
+effects ni autorización. Los comandos locales de rename validan 1..35 code
+points Unicode tras trim y el Dashboard no expone endpoints de escritura.
+
 `scheduler submit` congela en el ledger:
 
 - la raiz canonica del worktree y su identidad de repositorio;

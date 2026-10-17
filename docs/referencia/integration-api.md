@@ -5,7 +5,7 @@ futuro supervise el scheduler local sin acceder a SQLite ni rutas privadas.
 
 ## Versión del contrato
 
-- Versión actual de la API: **1.9** (`apiVersion.major` / `apiVersion.minor`).
+- Versión actual de la API: **1.11** (`apiVersion.major` / `apiVersion.minor`).
 - Misma major: compatible; campos desconocidos se ignoran en consumidores.
 - Major distinta: el consumidor debe detenerse con `UPDATE_REQUIRED` y no emitir
   más peticiones de recursos.
@@ -18,7 +18,7 @@ Todas las órdenes bajo `integration` escriben **un único documento JSON** en s
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 9 },
+  "apiVersion": { "major": 1, "minor": 11 },
   "ok": true,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": {},
@@ -30,7 +30,7 @@ Error:
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 9 },
+  "apiVersion": { "major": 1, "minor": 11 },
   "ok": false,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": null,
@@ -44,6 +44,7 @@ Códigos estables y códigos de salida:
 |--------|--------|
 | `INTERNAL_ERROR` | 1 |
 | `INVALID_ARGUMENT` | 2 |
+| `PAGE_ENVELOPE_TOO_LARGE` | 2 |
 | `NOT_FOUND` | 3 |
 | `UNSUPPORTED` | 4 |
 | `DATA_INTEGRITY` | 5 |
@@ -63,8 +64,8 @@ ai_dev_loop integration info [--output json]
 - No requiere ledger del scheduler, no crea directorios XDG y no sondea Codex.
 - `data.aiDevLoopVersion` es la versión del paquete instalado.
 - `data.capabilities` declara de forma honesta qué lecturas existen en esta
-  versión. En **1.9**, `runs`, `sequences`, `reviewInspection`, `processOutput`,
-  `codexCapacity` y `dashboard` son `true`.
+  versión. En **1.11**, `runs`, `sequences`, `reviewInspection`, `processOutput`,
+  `codexCapacity`, `dashboard` y `shortNames` son `true`.
 
 ## Capacidad Codex local (API 1.5)
 
@@ -185,7 +186,7 @@ ai_dev_loop integration run output RUN_ID --attempt ATTEMPT_ID --stream stdout|s
 
 Los esquemas empaquetados viven en `src/ai_dev_loop/schemas/integration-api-*.json`.
 
-## Consultas compartidas del dashboard (API 1.9)
+## Consultas compartidas del dashboard (API 1.9+)
 
 ```bash
 ai_dev_loop integration dashboard projects [--offset N --limit N]
@@ -221,6 +222,21 @@ ai_dev_loop integration dashboard activity --from UTC --to UTC --metric submissi
   soportados, corrupción y fallos de lectura usan los códigos seguros existentes.
 - La consulta no incluye prompts, salida de procesos, sesiones, rutas privadas ni
   capacidad Codex actual. Esos contenidos conservan sus interfaces explícitas.
+
+API 1.10 añade `shortName` a las proyecciones de run, secuencia, fase e intento
+materializado, y `sequenceShortName` donde existe binding de secuencia. Son
+campos aditivos; los esquemas v1 siguen validando fixtures históricos sin esos
+campos. El productor actual siempre devuelve un valor no vacío mediante metadata
+schema 17 o el fallback de solo lectura para schema 16. Los nombres son solo
+presentación: IDs, estado, provider, proyecto y linaje siguen saliendo de campos
+autoritativos.
+
+API 1.11 amplía exclusivamente `dashboard.runs` para aceptar `limit` de 1 a
+1000. Las demás colecciones continúan limitadas a 100. La aritmética de página
+sigue usando el límite solicitado: si hay continuación, `nextOffset` es
+`offset + limit`. Un resultado que no cabe en el sobre existente de 240 KiB
+falla con el código tipado `PAGE_ENVELOPE_TOO_LARGE`; no se trunca ni aumenta el
+presupuesto. Este código es aditivo al sobre de error genérico de API major 1.
 
 ## Implementer, capacidad y timeout por rol (API 1.7+)
 
@@ -264,8 +280,9 @@ Las operaciones permitidas son `dashboard.projects`, `dashboard.summary`,
 `run.initial-prompt`, `run.review`, `run.review-content` y `run.output`. No existe
 dispatch genérico de comandos, SQL, argv o rutas. Los parámetros de rango usan
 `fromUtc`, `toUtc`, `timeZone` y `projectName`; los identificadores usan `runId`,
-`sequenceId` y `attemptId`. Páginas HTTP usan 25 por defecto y máximo 100. Las
-lecturas de contenido usan `byteOffset` y `limit`, con máximo fijo de 65.536 bytes.
+`sequenceId` y `attemptId`. Las páginas HTTP usan 25 por defecto;
+`dashboard.runs` admite hasta 1000 y las demás colecciones hasta 100. Las lecturas
+de contenido usan `byteOffset` y `limit`, con máximo fijo de 65.536 bytes.
 
 El cliente debe enviar `Host: 127.0.0.1:PORT` y, para la ruta API, el `Origin`
 exacto `http://127.0.0.1:PORT`. No hay CORS wildcard, credenciales, login ni proxy
@@ -283,11 +300,19 @@ Prompts y stdout/stderr se cargan solo por selección explícita, paginados y si
 cache durable del servidor. El servidor mantiene la semántica read-only de los
 servicios existentes y no controla el scheduler.
 
-El mapa local consume páginas explícitas de `dashboard.runs` y conserva cada
-`runId` y binding de secuencia, incluidas generaciones de reemplazo. La línea de
+El mapa local solicita hasta 1000 elementos de `dashboard.runs`, reduce solamente
+una página rechazada con `PAGE_ENVELOPE_TOO_LARGE` y sigue automáticamente cada
+`nextOffset` hasta agotar la cohorte. Conserva cada `runId` y binding de secuencia,
+incluidas generaciones de reemplazo, y muestra progreso/error/reintento sin
+presentar una carga parcial como completa. La línea de
 tiempo seleccionada consume `run.inspect` y páginas de `run.timeline`: clasifica
 por separado turnos implementer Cursor, turnos implementer Codex y reviews Codex,
 y representa intentos sin lanzamiento o sin fin observado sin inventar duración.
+El frontend usa el orden cronológico/tie-breaker del productor y el offset de la
+página para títulos ordinales estables; no infiere intentos ausentes, rol ni
+provider desde IDs. La selección compacta conserva el ID exacto y solo muestra
+metadata de un run a la vez. Fechas y duraciones se formatean en presentación con
+la zona IANA seleccionada; los instantes y segundos transportados no cambian.
 Cambiar de run o de filtros cancela y retira respuestas anteriores. Estas vistas
 no solicitan prompt, review-content ni output; ese contenido sigue requiriendo
 una acción deliberada en su superficie asignada.
@@ -299,19 +324,19 @@ requests activos y timeout acotado. No solapa una clave idéntica ni intenta
 «ponerse al día» con ráfagas si una lectura tarda más que su cadencia. Resumen,
 primera página visible del mapa y actividad usan 30 segundos; metadata y primera
 página de timeline del run seleccionado usan 10 segundos; capacidad actual usa
-60 segundos. Las páginas históricas agregadas con `Load more` no se convierten en
-claves periódicas.
+60 segundos. Las páginas históricas cargadas automáticamente no se convierten en
+claves periódicas; cada una conserva su propia observación fechada.
 
 `Pause automatic refresh`, una pestaña oculta, el retiro del último widget y la
-salida de la ruta cancelan trabajo periódico propio. `Resume` hace una lectura
-nueva por clave visible sin replay de intervalos perdidos. `Refresh applied
-scope` funciona durante Pause y reinicia el mapa en la primera página; no carga
-contenido sensible. Al reiniciar descarta las páginas agregadas, pero una falla
-conserva como último éxito la primera página del mismo filtro real, con sus
-fechas originales. Cada página histórica retenida conserva una sola observación
-fechada y no se vuelve una clave de polling. La lectura independiente de
-capacidad no bloquea el inicio ni el Refresh del mapa. Prompt, review-content y
-stdout/stderr siguen siendo lecturas deliberadas, paginadas y nunca periódicas.
+salida de la ruta cancelan trabajo periódico y continuaciones de carga propios.
+`Resume` hace una lectura nueva por clave visible sin replay de intervalos
+perdidos. `Refresh current scope` funciona durante Pause, retira la generación
+del mapa y reinicia su carga automática; no carga contenido sensible. El polling
+de la primera página reconcilia IDs sin descartar las páginas cargadas. Una falla
+conserva el último éxito compatible con sus fechas originales y deja visible que
+la cobertura está incompleta. La lectura independiente de capacidad no bloquea
+el inicio ni el Refresh del mapa. Prompt, review-content y stdout/stderr siguen
+siendo lecturas deliberadas, paginadas y nunca periódicas.
 
 Ante un fallo se conserva solamente la última observación exitosa en memoria,
 con sus fechas originales, edad y error visibles. Un filtro, métrica o selección

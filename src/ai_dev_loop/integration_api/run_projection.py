@@ -103,9 +103,13 @@ def build_run_list_item(
     updated_at: str,
     review_budget: IntegrationReviewBudget,
     sequence_binding: IntegrationSequenceBinding | None,
+    short_name: str,
+    sequence_short_name: str | None,
 ) -> IntegrationRunListItem:
     return IntegrationRunListItem(
         run_id=state.run_id,
+        short_name=short_name,
+        sequence_short_name=sequence_short_name,
         project_name=state.context.project_name,
         implementer_provider="cursor"
         if state.context.implementer is None
@@ -204,6 +208,12 @@ def build_run_inspect_data(
         codex_pending_turn=projection["codex_pending_turn"],
         codex_capacity_reason=projection["codex_capacity_reason"],
         run_id=state.run_id,
+        short_name=store.run_short_name(conn, state.run_id),
+        sequence_short_name=(
+            None
+            if state.context.sequence is None
+            else store.sequence_short_name(conn, state.context.sequence.sequence_id)
+        ),
         project_name=state.context.project_name,
         implementer_provider="cursor"
         if state.context.implementer is None

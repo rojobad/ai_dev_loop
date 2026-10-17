@@ -118,6 +118,14 @@ class IntegrationRunReadService:
                             updated_at=str(row["updated_at"]),
                             review_budget=review_budget,
                             sequence_binding=_sequence_binding(state.context.sequence),
+                            short_name=self.store.run_short_name(conn, run_id),
+                            sequence_short_name=(
+                                None
+                                if state.context.sequence is None
+                                else self.store.sequence_short_name(
+                                    conn, state.context.sequence.sequence_id
+                                )
+                            ),
                         )
                     )
         except SchedulerEngineError as exc:

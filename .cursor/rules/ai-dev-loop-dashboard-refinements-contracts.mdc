@@ -1,0 +1,30 @@
+---
+description: "Approved Phase 28 short-name metadata and Dashboard interaction refinements."
+globs: ["src/ai_dev_loop/dashboard/**", "src/ai_dev_loop/integration_api/**", "src/ai_dev_loop/scheduler/**", "dashboard-web/**", "tests/**"]
+alwaysApply: false
+---
+
+# Dashboard refinements
+
+Codex-authored policy for Phase 28; read AGENTS.md, the active subphase and
+archive/implementation-history/plans/phase-28-dashboard-refinements.md.
+Phase 28 supersedes Phase26's visible all-runs companions, manual Apply and
+manual Load more UI. It authorizes scheduler-owned editable presentation
+metadata, outside frozen execution inputs, and operation-specific runs paging
+up to 1000 with adaptive batches under the unchanged 240 KiB envelope.
+
+New named preparations require a chosen short_name of 1..35 trimmed Unicode code
+points; no implicit truncation for new inputs. Historical migration truncates
+without rewriting IDs, immutable payloads, artifact hashes or execution identity.
+Manifest v3 is the new named format; preserve accepted frozen v1/v2 replay and
+materialization. Read-only Dashboard paths never migrate or rename data.
+
+No selected run means no run card. Selected exact ID means one card, without
+page jumps. Attempts use stable per-run ordinal/iteration/authoritative role,
+not opaque IDs as titles. Selected IANA zone governs display, not metric math.
+Keep unknown coverage visible, explicit sensitive reads, <= 2 active client
+reads, cancellation fences, Pause and visibility behavior. Information controls
+hide explanations, never actionable errors or incomplete coverage.
+
+Implementation owns only its subphase and docs, not this policy/review skills,
+root YAML, real installed scheduler/timer, operator ledger or final acceptance.

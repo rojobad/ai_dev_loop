@@ -30,6 +30,7 @@
     "implementerTimeoutRetryLimit": { "type": ["integer", "null"], "minimum": 0 },
     "sequenceId": { "type": "string", "minLength": 1 },
     "name": { "type": "string", "minLength": 1 },
+    "shortName": { "type": "string", "minLength": 1, "maxLength": 35 },
     "projectName": { "type": "string", "minLength": 1 },
     "repositoryRoot": { "type": "string", "minLength": 1 },
     "state": { "type": "string", "minLength": 1 },
@@ -83,6 +84,7 @@
         "properties": {
           "ordinal": { "type": "integer", "minimum": 1 },
           "name": { "type": "string", "minLength": 1 },
+          "shortName": { "type": "string", "minLength": 1, "maxLength": 35 },
           "initialPlannedRunId": { "type": "string", "minLength": 1 },
           "implementerProvider": { "enum": ["cursor", "codex"] },
           "materialized": { "type": "boolean" },

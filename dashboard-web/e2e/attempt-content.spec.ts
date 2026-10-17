@@ -46,10 +46,9 @@ async function applyMapScope(page: Page): Promise<void> {
   await page.goto(`${baseUrl}/`);
   await page.locator(".filters select").selectOption("map-project");
   await page.getByLabel("IANA time zone").fill("UTC");
-  await page.getByLabel("From").fill("2026-01-01T00:00");
-  await page.getByLabel("Until (exclusive)").fill("2026-01-05T00:00");
-  await page.getByRole("button", { name: "Apply" }).click();
-  await expect(page.getByText("Loaded 25 of 28 started runs")).toBeVisible();
+  await page.getByLabel("From").fill("01/01/2026 00:00");
+  await page.getByLabel("Until (exclusive)").fill("05/01/2026 00:00");
+  await expect(page.getByText("Loaded 28 of 28 started runs")).toBeVisible();
 }
 
 async function expectFocusInsideDialog(page: Page): Promise<void> {
@@ -119,8 +118,8 @@ test("C265-1 deliberate controls preserve exact implementer and reviewer ownersh
   });
 
   await applyMapScope(page);
-  await page.getByRole("button", { name: /^current-map-run codex/ }).click();
-  await page.getByRole("button", { name: /^attempt-current-map-run-execution Codex/ }).click();
+  await page.getByLabel("Select loaded run").selectOption("current-map-run");
+  await page.getByRole("button", { name: /Attempt ID: attempt-current-map-run-execution/ }).click();
   await expect(page.getByRole("dialog")).toContainText("codex.implementer_bootstrap");
   expect(
     operations.some((call) =>
@@ -138,9 +137,9 @@ test("C265-1 deliberate controls preserve exact implementer and reviewer ownersh
   expect(operations.some((call) => call.operation === "run.review-content")).toBe(false);
   await page.getByRole("button", { name: "Close attempt details" }).click();
 
-  await page.getByRole("button", { name: /^older-map-run codex/ }).click();
+  await page.getByLabel("Select loaded run").selectOption("older-map-run");
   await page.getByRole("button", { name: "Load more attempts" }).click();
-  await page.getByRole("button", { name: /^attempt-older-map-run-review-retry Codex reviewer/ }).click();
+  await page.getByRole("button", { name: /Attempt ID: attempt-older-map-run-review-retry/ }).click();
   const sensitiveBeforeReviewerAction = operations.filter((call) =>
     ["run.review", "run.review-content", "run.output"].includes(call.operation),
   ).length;
@@ -161,7 +160,7 @@ test("C265-1 deliberate controls preserve exact implementer and reviewer ownersh
   await expect(page.getByText("review-owned fix prompt sentinel")).toBeVisible();
   await page.getByRole("button", { name: "Close attempt details" }).click();
 
-  await page.getByRole("button", { name: /^attempt-older-map-run-active-correction Codex/ }).click();
+  await page.getByRole("button", { name: /Attempt ID: attempt-older-map-run-active-correction/ }).click();
   await expect(page.getByText(/Exact correction prompt unavailable/)).toBeVisible();
   await page.getByRole("button", { name: "Load stderr" }).click();
   await expect(
@@ -187,8 +186,8 @@ test("C265-3 Escape retires an in-flight sensitive body and late success cannot 
     rmSync(join(stateRoot, name), { force: true });
   }
   await applyMapScope(page);
-  await page.getByRole("button", { name: /^current-map-run codex/ }).click();
-  const row = page.getByRole("button", { name: /^attempt-current-map-run-execution Codex/ });
+  await page.getByLabel("Select loaded run").selectOption("current-map-run");
+  const row = page.getByRole("button", { name: /Attempt ID: attempt-current-map-run-execution/ });
   await row.click();
   writeFileSync(join(stateRoot, "hold-content-response"), "hold\n", "utf-8");
   try {
@@ -229,8 +228,8 @@ test("C265-3 paging keeps focus contained through loading and terminal completio
 
   try {
     await applyMapScope(page);
-    await page.getByRole("button", { name: /^current-map-run codex/ }).click();
-    const row = page.getByRole("button", { name: /^attempt-current-map-run-execution Codex/ });
+    await page.getByLabel("Select loaded run").selectOption("current-map-run");
+    const row = page.getByRole("button", { name: /Attempt ID: attempt-current-map-run-execution/ });
     await row.click();
     const dialog = page.getByRole("dialog");
     await page.getByRole("button", { name: "Load stdout" }).click({ timeout: 5_000 });

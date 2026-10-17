@@ -76,8 +76,8 @@ EXPECTED_ACTIVITY: dict[str, dict[str, object]] = {
             {"date": "2026-10-16", "value": 0},
         ],
         "total": EXPECTED_PROCESS_SECONDS,
-        "displayTotal": "4 hours",
-        "displayDays": ["0 hours", "4 hours", "0 hours"],
+        "displayTotal": "04 h 00 m",
+        "displayDays": ["00 h 00 m", "04 h 00 m", "00 h 00 m"],
     },
 }
 

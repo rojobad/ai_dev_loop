@@ -1,7 +1,19 @@
 import { describe, expect, it } from "vitest";
 
-import { parseActivityData, parseCapacityData, parseSummaryData } from "./parsers";
-import { activityData, capacityData, summaryData } from "./test-fixtures";
+import {
+  parseActivityData,
+  parseCapacityData,
+  parseProjectsData,
+  parseRunsData,
+  parseSummaryData,
+} from "./parsers";
+import {
+  activityData,
+  capacityData,
+  completeCoverage,
+  standaloneRun,
+  summaryData,
+} from "./test-fixtures";
 
 describe("explicit public DTO parsers", () => {
   it("accepts additive fields while preserving open labels and exact aggregate counts", () => {
@@ -47,5 +59,41 @@ describe("explicit public DTO parsers", () => {
     expect(() => parseActivityData({ ...input, total: input.total + 1 })).toThrow(
       "must equal returned daily values",
     );
+  });
+
+  it("allows only the run collection to describe pages up to 1000", () => {
+    const page = { offset: 0, limit: 1000, nextOffset: null, hasMore: false };
+    expect(parseRunsData({
+      observedAt: "2026-01-03T00:00:00Z",
+      filters: {
+        fromUtc: "2026-01-01T00:00:00Z",
+        toUtc: "2026-01-03T00:00:00Z",
+        timeZone: "UTC",
+        projectName: null,
+      },
+      coverage: completeCoverage,
+      items: [standaloneRun],
+      page,
+      totalCount: 1,
+    }).page.limit).toBe(1000);
+    expect(() => parseRunsData({
+      observedAt: "2026-01-03T00:00:00Z",
+      filters: {
+        fromUtc: "2026-01-01T00:00:00Z",
+        toUtc: "2026-01-03T00:00:00Z",
+        timeZone: "UTC",
+        projectName: null,
+      },
+      coverage: completeCoverage,
+      items: [],
+      page: { ...page, limit: 1001 },
+      totalCount: 0,
+    })).toThrow("must not exceed 1000");
+    expect(() => parseProjectsData({
+      observedAt: "2026-01-03T00:00:00Z",
+      items: [],
+      page,
+      totalCount: 0,
+    })).toThrow("must not exceed 100");
   });
 });

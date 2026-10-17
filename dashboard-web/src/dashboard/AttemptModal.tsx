@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { ContentReader } from "./ContentReader";
 import type { ContentTarget, ReadableContentChunk } from "./ContentReader";
+import { formatDuration, formatInstant } from "./time";
 import { DashboardDataSourceError } from "./types";
 import type {
   AttemptTimelineItem,
@@ -15,8 +16,10 @@ import type {
 
 export interface AttemptModalProps {
   attempt: AttemptTimelineItem;
+  caption: string;
   dataSource: DashboardDataSource;
   runId: string;
+  timeZone: string;
   onClose(): void;
 }
 
@@ -82,14 +85,12 @@ function ownershipError(): DashboardDataSourceError {
   );
 }
 
-function optionalTime(value: string | null): string {
-  return value ?? "not recorded";
-}
-
 export function AttemptModal({
   attempt,
+  caption,
   dataSource,
   runId,
+  timeZone,
   onClose,
 }: AttemptModalProps): React.JSX.Element {
   const [target, setTarget] = useState<ContentTarget | null>(null);
@@ -228,21 +229,21 @@ export function AttemptModal({
         <div className="modal-heading">
           <div>
             <p className="eyebrow">Exact attempt metadata</p>
-            <h2 id="attempt-modal-title">Attempt {attempt.attemptId}</h2>
+            <h2 id="attempt-modal-title">{caption}</h2>
           </div>
           <button ref={closeButton} type="button" onClick={onClose} aria-label="Close attempt details">Close</button>
         </div>
         <dl className="attempt-modal-metadata">
-          <div><dt>Run ID</dt><dd>{runId}</dd></div>
-          <div><dt>Attempt ID</dt><dd>{attempt.attemptId}</dd></div>
           <div><dt>Component</dt><dd>{attempt.component}</dd></div>
           <div><dt>Effect</dt><dd>{attempt.effectKind ?? "not recorded"}</dd></div>
           <div><dt>Iteration / phase attempt</dt><dd>{attempt.iteration} / {attempt.phaseAttempt}</dd></div>
           <div><dt>Status</dt><dd>{attempt.status}</dd></div>
-          <div><dt>Created</dt><dd>{attempt.createdAt}</dd></div>
-          <div><dt>Launch requested</dt><dd>{optionalTime(attempt.launchRequestedAt)}</dd></div>
-          <div><dt>Completed</dt><dd>{optionalTime(attempt.completedAt)}</dd></div>
-          <div><dt>Observed duration</dt><dd>{attempt.observedDurationSeconds ?? "not recorded"}</dd></div>
+          <div><dt>Created</dt><dd>{formatInstant(attempt.createdAt, timeZone)}</dd></div>
+          <div><dt>Launch requested</dt><dd>{attempt.launchRequestedAt === null ? "not recorded" : formatInstant(attempt.launchRequestedAt, timeZone)}</dd></div>
+          <div><dt>Completed</dt><dd>{attempt.completedAt === null ? "not recorded" : formatInstant(attempt.completedAt, timeZone)}</dd></div>
+          <div><dt>Observed duration</dt><dd>{formatDuration(attempt.observedDurationSeconds)}</dd></div>
+          <div><dt>Run ID</dt><dd>{runId}</dd></div>
+          <div><dt>Attempt ID</dt><dd>{attempt.attemptId}</dd></div>
         </dl>
         <section className="content-controls" aria-labelledby="attempt-content-heading">
           <h3 id="attempt-content-heading">Deliberate content inspection</h3>
@@ -271,7 +272,7 @@ export function AttemptModal({
             <button type="button" onClick={() => setTarget(outputTarget("stderr"))}>Load stderr</button>
           </div>
         </section>
-        {target ? <ContentReader key={target.key} target={target} /> : null}
+        {target ? <ContentReader key={target.key} target={target} timeZone={timeZone} /> : null}
       </div>
     </div>
   );

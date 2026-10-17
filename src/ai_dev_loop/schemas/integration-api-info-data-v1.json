@@ -26,7 +26,8 @@
         "dualImplementers": { "type": "boolean" },
         "mixedImplementerSequences": { "type": "boolean" },
         "codexImplementerManualRecovery": { "type": "boolean" },
-        "dashboard": { "type": "boolean" }
+        "dashboard": { "type": "boolean" },
+        "shortNames": { "type": "boolean" }
       }
     }
   }

@@ -194,4 +194,89 @@ describe("C266-2 refresh coordinator", () => {
     expect((await signalSeen.promise).aborted).toBe(true);
     expect(coordinator.activeCount()).toBe(0);
   });
+
+  it("owns automatic page continuations under Pause and visibility cancellation", async () => {
+    const runtime = new FakeRuntime();
+    const coordinator = new RefreshCoordinator({ runtime, timeoutMs: 1_000_000 });
+    const ownerRead = vi.fn(async () => "first page");
+    const retire = coordinator.observe({
+      key: "map-owner",
+      cadenceMs: SUMMARY_REFRESH_MS,
+      read: ownerRead,
+      onSuccess: vi.fn(),
+      onError: vi.fn(),
+    });
+    await runtime.advance(0);
+
+    const firstSignals: AbortSignal[] = [];
+    const first = coordinator.requestRefreshContinuation(
+      "map-owner",
+      "map-page-1",
+      async (signal) => {
+        firstSignals.push(signal);
+        return await new Promise<string>(() => undefined);
+      },
+    );
+    expect(coordinator.activeCount()).toBe(1);
+    coordinator.setPaused(true);
+    await expect(first).rejects.toMatchObject({ name: "AbortError" });
+    expect(firstSignals[0].aborted).toBe(true);
+    expect(coordinator.activeCount()).toBe(0);
+
+    coordinator.refresh("map-owner");
+    await runtime.advance(0);
+    expect(ownerRead).toHaveBeenCalledTimes(2);
+    const held = deferred<string>();
+    const deliberateWhilePaused = coordinator.requestRefreshContinuation(
+      "map-owner",
+      "map-page-2",
+      () => held.promise,
+    );
+    held.resolve("second page");
+    await expect(deliberateWhilePaused).resolves.toBe("second page");
+    await runtime.advance(0);
+
+    coordinator.setPaused(false);
+    await runtime.advance(0);
+    const hidden = coordinator.requestRefreshContinuation(
+      "map-owner",
+      "map-page-3",
+      async () => await new Promise<string>(() => undefined),
+    );
+    coordinator.setVisible(false);
+    await expect(hidden).rejects.toMatchObject({ name: "AbortError" });
+    expect(coordinator.activeCount()).toBe(0);
+    retire();
+  });
+
+  it("lets an owned continuation finish before scheduling another first-page poll", async () => {
+    const runtime = new FakeRuntime();
+    const coordinator = new RefreshCoordinator({ runtime, timeoutMs: 1_000_000 });
+    const ownerRead = vi.fn(async () => "first page");
+    const retire = coordinator.observe({
+      key: "map-owner",
+      cadenceMs: SUMMARY_REFRESH_MS,
+      read: ownerRead,
+      onSuccess: vi.fn(),
+      onError: vi.fn(),
+    });
+    await runtime.advance(0);
+
+    const continuation = deferred<string>();
+    const pageRead = coordinator.requestRefreshContinuation(
+      "map-owner",
+      "map-page-1",
+      () => continuation.promise,
+    );
+    await runtime.advance(SUMMARY_REFRESH_MS);
+    expect(ownerRead).toHaveBeenCalledTimes(1);
+
+    continuation.resolve("last page");
+    await expect(pageRead).resolves.toBe("last page");
+    await runtime.advance(SUMMARY_REFRESH_MS - 1);
+    expect(ownerRead).toHaveBeenCalledTimes(1);
+    await runtime.advance(1);
+    expect(ownerRead).toHaveBeenCalledTimes(2);
+    retire();
+  });
 });

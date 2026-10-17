@@ -5,7 +5,7 @@ Phase 17.7 retiro los comandos legacy (`prepare`, `start`, `resume`, `recover`, 
 ## Comandos principales
 
 ```bash
-ai_dev_loop scheduler submit
+ai_dev_loop scheduler submit [OPTIONS]
 ai_dev_loop scheduler start <run-id>
 ai_dev_loop scheduler tick
 ai_dev_loop scheduler status <run-id>
@@ -23,6 +23,7 @@ Congela un run `queued` en el ledger central (`engine.sqlite3`) y artefactos pro
 
 ```bash
 ai_dev_loop scheduler submit \
+  --short-name "Mi plan" \
   --repo-path /path/al/repo \
   --plan-path docs/plans/mi-plan.md \
   --prompt-source-path docs/plans/prompt_mi-plan.txt \
@@ -34,7 +35,8 @@ ai_dev_loop scheduler submit \
 Requisitos:
 
 - lee el prompt exacto desde stdin;
-- `--codex-review-model` y `--codex-review-reasoning-effort` son obligatorios;
+- `--short-name`, `--codex-review-model` y
+  `--codex-review-reasoning-effort` son obligatorios;
 - `--controller-session-id` es opcional (proveniencia A para lookup/control);
 - no admite `--codex-session-id` (reviewer B se crea en el primer review);
 - congela inputs inmutables; la admision del worktree ocurre en el primer tick.
@@ -99,6 +101,7 @@ tiempo necesario para repetir un submit incierto sin duplicar filas:
 RESUBMISSION_ID="$(uuidgen)"
 
 ai_dev_loop scheduler submit \
+  --short-name "Reenvío de mi plan" \
   --repo-path /path/al/repo \
   --plan-path docs/plans/mi-plan.md \
   --prompt-source-path docs/plans/prompt_mi-plan.txt \

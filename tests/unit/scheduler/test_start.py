@@ -104,6 +104,7 @@ def test_submit_time_reservation_conflict(tmp_path: Path, monkeypatch: pytest.Mo
     )
     prompt = (repo / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
     options = SubmitOptions(
+        short_name="Test run",
         repo_path=repo,
         plan_path=Path("docs/plans/sample-plan.md"),
         prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
@@ -118,6 +119,7 @@ def test_submit_time_reservation_conflict(tmp_path: Path, monkeypatch: pytest.Mo
     with patch("sys.stdin", StringIO(prompt)), pytest.raises(Exception, match="reservation"):
         submission.submit(
             SubmitOptions(
+                short_name="Test run",
                 repo_path=repo,
                 plan_path=Path("docs/plans/sample-plan.md"),
                 prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),

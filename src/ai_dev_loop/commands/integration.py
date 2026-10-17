@@ -249,6 +249,11 @@ DashboardLimitOption = Annotated[
     typer.Option("--limit", help="Dashboard page size (default 25, max 100)."),
 ]
 
+DashboardRunsLimitOption = Annotated[
+    int,
+    typer.Option("--limit", help="Dashboard runs page size (default 25, max 1000)."),
+]
+
 
 @integration_app.callback(invoke_without_command=True)
 def integration_root(ctx: typer.Context) -> None:
@@ -328,7 +333,7 @@ def integration_dashboard_runs_command(
     project_name: DashboardProjectOption = None,
     time_zone: DashboardTimeZoneOption = "America/La_Paz",
     offset: OffsetOption = 0,
-    limit: DashboardLimitOption = 25,
+    limit: DashboardRunsLimitOption = 25,
 ) -> None:
     """Return one authoritative started-run map page."""
     _require_json_output(output)

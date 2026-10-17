@@ -37,16 +37,27 @@ FIXED_RUN_IDS = (
 )
 
 
-def _manifest_yaml(*, phases: list[dict[str, object]], name: str = "fixture-sequence") -> str:
-    payload = {"schema_version": 1, "name": name, "phases": phases}
+def _manifest_yaml(
+    *,
+    phases: list[dict[str, object]],
+    name: str = "fixture-sequence",
+    schema_version: int = 1,
+    short_name: str | None = None,
+) -> str:
+    payload = {"schema_version": schema_version, "name": name, "phases": phases}
+    if short_name is not None:
+        payload["short_name"] = short_name
     return yaml.safe_dump(payload, sort_keys=False)
 
 
 def _two_phase_manifest() -> str:
     return _manifest_yaml(
+        schema_version=3,
+        short_name="Fixture sequence",
         phases=[
             {
                 "name": "phase-one",
+                "short_name": "Phase one",
                 "plan_path": "docs/plans/sample-plan.md",
                 "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
                 "commit_message": "checkpoint after phase one",
@@ -57,6 +68,7 @@ def _two_phase_manifest() -> str:
             },
             {
                 "name": "phase-two",
+                "short_name": "Phase two",
                 "plan_path": "docs/plans/sample-plan.md",
                 "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
                 "codex": {

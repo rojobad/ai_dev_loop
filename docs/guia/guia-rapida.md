@@ -99,6 +99,7 @@ Desde la sesion interactiva original de Codex, despues de aprobar el plan y el p
 
 ```bash
 ai_dev_loop scheduler submit \
+  --short-name "Mi plan" \
   --repo-path /path/al/repo \
   --plan-path docs/plans/mi-plan.md \
   --prompt-source-path docs/plans/prompt_mi-plan.txt \

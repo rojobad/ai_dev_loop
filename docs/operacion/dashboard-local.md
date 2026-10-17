@@ -24,12 +24,17 @@ No publiques este puerto mediante un proxy, túnel o interfaz LAN. El servidor n
 tiene login: su límite de seguridad es el loopback local, además de validar
 `Host` y `Origin` same-origin.
 
-## Aplicar una vista
+## Elegir una vista
 
 La barra superior permite elegir proyecto, instante inicial, instante final
 exclusivo y zona IANA. Las horas se interpretan en esa zona y el rango máximo es
-366 días. `Apply` crea un scope nuevo; los resultados tardíos del scope anterior
-se descartan.
+366 días. Escribe cada instante como `DD/MM/yyyy HH:mm`. Si un cambio DST vuelve
+ambigua la hora, añade `Z` o el offset `±HH:mm` correspondiente; horas ambiguas o
+inexistentes no se envían como UTC adivinado. No hay botón Apply: elegir proyecto
+o preset crea el scope válido de inmediato; las ediciones escritas esperan 400 ms
+y solo se publican cuando fecha, zona y rango forman un scope coherente. Un
+borrador inválido conserva la última vista válida y explica el error. Los
+resultados tardíos del scope anterior se descartan.
 
 La vista reúne:
 
@@ -37,9 +42,11 @@ La vista reúne:
   en `[from,to)`;
 - workload por secuencia o standalone;
 - capacidad Codex actual, observada independientemente del rango histórico;
-- mapa paginado de runs con provider Cursor/Codex y linaje de secuencia, incluido
-  `implementer_retry`;
-- timeline paginado del run seleccionado;
+- mapa de runs con carga automática de la cohorte completa, provider Cursor/Codex
+  y linaje de secuencia, incluido `implementer_retry`; empieza sin detalle y un
+  click o selector accesible muestra exactamente un run sin salto de página;
+- timeline paginado con ordinal estable por run y títulos compartidos entre
+  gráfico, controles accesibles y modal;
 - detalle del intento con contenido disponible bajo carga deliberada;
 - actividad diaria por submissions, rounds de review o process hours.
 
@@ -47,20 +54,36 @@ Los indicadores de cobertura distinguen datos completos, parciales y vacíos. Un
 run sin lanzamiento no entra en la cohorte. Un intento sin duración resuelta no
 recibe una duración inventada.
 
+Cada panel ofrece `Information` para consultar por teclado sus definiciones y
+procedencia sin mantener párrafos instructivos abiertos. Escape/cerrar devuelve
+el foco. Warnings, progreso, frescura y errores accionables siguen visibles. La
+actividad diaria mantiene su equivalente textual dentro de un disclosure bajo
+demanda. Los tooltips de los gráficos aparecen sobre los paneles y se confinan al
+viewport también en pantallas estrechas.
+
+Los instantes se muestran como `DD/MM/yyyy HH:mm` en la zona elegida, los días
+como `DD/MM/yyyy` y las duraciones resueltas como horas/minutos (`<1 m` cuando
+son positivas pero menores a un minuto). Los valores UTC y segundos del API no se
+reescriben.
+
 ## Refresco y contenido sensible
 
 El refresco automático usa como máximo dos lecturas activas. Summary, primera
 página visible del mapa y actividad usan 30 segundos; el run/timeline
-seleccionado usa 10 segundos; capacidad usa 60 segundos. Las páginas añadidas
-con `Load more` no se convierten en polling periódico.
+seleccionado usa 10 segundos; capacidad usa 60 segundos. El mapa solicita hasta
+1000 runs y sigue las páginas automáticamente. Si una página no cabe en el sobre
+de 240 KiB, reduce ese lote de forma acotada; las páginas históricas cargadas no
+se convierten en polling periódico. Progreso, cobertura incompleta y `Retry`
+permanecen visibles y no existe un botón `Load more` en el flujo normal.
 
-`Pause automatic refresh` cancela trabajo periódico propio. `Resume` hace una
-lectura fresca por clave visible, sin reproducir intervalos perdidos.
-`Refresh applied scope` funciona incluso durante Pause, vuelve el mapa a su
-primera página y no abre contenido sensible. Ocultar la pestaña también retira
-el trabajo periódico; al volver visible se leen de nuevo las claves visibles.
-Ante un error se conserva solamente el último éxito compatible en memoria, con
-sus fechas originales y el error visible.
+`Pause automatic refresh` cancela trabajo periódico y continuaciones propias.
+`Resume` hace una lectura fresca por clave visible, sin reproducir intervalos
+perdidos. `Refresh current scope` funciona incluso durante Pause, retira la
+generación del mapa y reinicia su carga automática sin abrir contenido sensible.
+Ocultar la pestaña también retira ese trabajo; al volver visible se leen de nuevo
+las claves visibles. El polling de la primera página conserva la historia ya
+cargada y reconcilia IDs exactos. Ante un error se conserva solamente el último
+éxito compatible en memoria, con sus fechas originales y el error visible.
 
 El prompt inicial, el contenido de review y stdout/stderr se leen solamente al
 presionar su acción en el modal. Se autentican por run, intento, componente y

@@ -46,6 +46,7 @@ from ai_dev_loop.scheduler.application.implementer_failure_recovery import (
     load_implementer_recovery_record,
 )
 from ai_dev_loop.scheduler.application.implementer_timeout_retry import ImplementerRetryService
+from ai_dev_loop.scheduler.application.presentation_metadata import set_run_short_name
 from ai_dev_loop.scheduler.application.review_budget_extend import ReviewBudgetExtendService
 from ai_dev_loop.scheduler.application.sequence_abort import SequenceAbortService
 from ai_dev_loop.scheduler.application.sequence_start import start_sequence
@@ -211,6 +212,11 @@ def test_schema_v16_intent_and_initial_recovery_continue_checkpoint_and_final_st
     prepared, tick, blocked = _blocked_codex_leaf(git_repo, scheduler_paths, monkeypatch)
     blocked_payload = blocked.model_dump_json()
     head = _git(git_repo, "rev-parse", "HEAD")
+    set_run_short_name(
+        blocked.run_id,
+        "Edited retry source",
+        db_path=scheduler_paths["db_path"],
+    )
     result = ImplementerRetryService(tick.store, tick.artifacts, now_factory=lambda: NOW).retry(
         blocked.run_id, force=True
     )
@@ -231,7 +237,9 @@ def test_schema_v16_intent_and_initial_recovery_continue_checkpoint_and_final_st
             conn, prepared.sequence_id, definition=adopted.definition
         )
         record = load_implementer_recovery_record(tick.store, tick.artifacts, conn, result.run_id)
-    assert SCHEMA_VERSION == 16
+        assert tick.store.run_short_name(conn, blocked.run_id) == "Edited retry source"
+        assert tick.store.run_short_name(conn, result.run_id) == "Edited retry source"
+    assert SCHEMA_VERSION == 17
     assert row is not None and row["adopted_at"] is not None and row["cancelled_at"] is None
     assert [attempt.attempt_kind for attempt in lineage.phase_executions[0].attempts] == [
         "planned_run",
@@ -244,6 +252,20 @@ def test_schema_v16_intent_and_initial_recovery_continue_checkpoint_and_final_st
         schema_path("scheduler-sequence-implementer-replacement-intent-v1.json").read_text()
     )
     jsonschema.Draft202012Validator(schema).validate(json.loads(str(row["intent_payload"])))
+
+    set_run_short_name(
+        result.run_id,
+        "Edited retry successor",
+        db_path=scheduler_paths["db_path"],
+    )
+    replay = ImplementerRetryService(
+        SqliteSchedulerStore(scheduler_paths["db_path"]),
+        ProtectedArtifactStore(scheduler_paths["artifact_root"]),
+        now_factory=lambda: NOW,
+    ).retry(blocked.run_id, force=True)
+    assert replay.run_id == result.run_id and not replay.changed
+    with tick.store.begin_read() as conn:
+        assert tick.store.run_short_name(conn, result.run_id) == "Edited retry successor"
 
     final = _drive_sequence_final(
         _tick(git_repo, scheduler_paths),
@@ -1376,15 +1398,18 @@ def test_v15_migration_adds_sequence_replacement_without_rewriting_runs(
     store.bootstrap()
     with store.begin_immediate() as conn:
         before = int(conn.execute("SELECT COUNT(*) FROM scheduler_runs").fetchone()[0])
+        conn.execute("DROP TABLE scheduler_planned_run_presentation")
+        conn.execute("DROP TABLE scheduler_run_presentation")
+        conn.execute("DROP TABLE scheduler_sequence_presentation")
         conn.execute("DROP TABLE scheduler_sequence_implementer_replacements")
         conn.execute(
             "DROP INDEX IF EXISTS idx_scheduler_sequence_implementer_replacements_sequence"
         )
-        conn.execute("DELETE FROM scheduler_schema_migrations WHERE version = 16")
+        conn.execute("DELETE FROM scheduler_schema_migrations WHERE version >= 16")
         conn.execute("PRAGMA user_version = 15")
     store.bootstrap()
     with store.begin_read() as conn:
-        assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == 16
+        assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == SCHEMA_VERSION
         assert int(conn.execute("SELECT COUNT(*) FROM scheduler_runs").fetchone()[0]) == before
         assert (
             int(

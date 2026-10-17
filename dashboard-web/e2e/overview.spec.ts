@@ -102,9 +102,8 @@ test("C263-1..4 real server renders bounded overview with local-only assets", as
   await page.goto(`${baseUrl}/`);
   await expect(page.getByRole("heading", { name: "Project overview" })).toBeVisible();
   await page.getByLabel("IANA time zone").fill("UTC");
-  await page.getByLabel("From").fill("2026-01-01T00:00");
-  await page.getByLabel("Until (exclusive)").fill("2026-01-03T00:00");
-  await page.getByRole("button", { name: "Apply" }).click();
+  await page.getByLabel("From").fill("01/01/2026 00:00");
+  await page.getByLabel("Until (exclusive)").fill("03/01/2026 00:00");
 
   await expect(page.getByLabel("Runs started: 3")).toBeVisible();
   await expect(page.getByText("64% remaining · 36% used")).toBeVisible();

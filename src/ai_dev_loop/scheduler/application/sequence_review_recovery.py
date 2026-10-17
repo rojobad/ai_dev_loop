@@ -475,6 +475,12 @@ def _materialize_pending_successor(
                 event=event,
                 now=now,
             )
+            store.copy_run_short_name_if_absent(
+                active_conn,
+                source_run_id=source_run_id,
+                successor_run_id=successor_run_id,
+                now=now,
+            )
             store.insert_review_recovery_successor(
                 active_conn,
                 source_run_id=source_run_id,

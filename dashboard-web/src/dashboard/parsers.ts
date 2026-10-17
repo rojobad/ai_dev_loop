@@ -147,7 +147,7 @@ function coverage(value: unknown): DashboardCoverage {
   };
 }
 
-function page(value: unknown): DashboardPage {
+function page(value: unknown, maximum = 100): DashboardPage {
   const item = record(value, "page");
   const nextOffset = item.nextOffset === null ? null : integer(item.nextOffset, "page.nextOffset");
   const hasMore = boolean(item.hasMore, "page.hasMore");
@@ -156,6 +156,9 @@ function page(value: unknown): DashboardPage {
   }
   const offset = integer(item.offset, "page.offset");
   const limit = integer(item.limit, "page.limit", 1);
+  if (limit > maximum) {
+    throw new TypeError(`page.limit must not exceed ${maximum}.`);
+  }
   if (nextOffset !== null && nextOffset !== offset + limit) {
     throw new TypeError("page.nextOffset must advance by page.limit.");
   }
@@ -237,6 +240,10 @@ function workload(value: unknown, index: number): DashboardWorkloadItem {
     projectName: text(item.projectName, `workload[${index}].projectName`),
     sequenceId: nullableText(item.sequenceId, `workload[${index}].sequenceId`),
     sequenceName: nullableText(item.sequenceName, `workload[${index}].sequenceName`),
+    sequenceShortName: nullableText(
+      item.sequenceShortName,
+      `workload[${index}].sequenceShortName`,
+    ),
     runCount: integer(item.runCount, `workload[${index}].runCount`),
   };
 }
@@ -301,6 +308,7 @@ function dashboardSequenceBinding(value: unknown, context: string): DashboardSeq
   return {
     sequenceId: text(item.sequenceId, `${context}.sequenceId`),
     sequenceName: text(item.sequenceName, `${context}.sequenceName`),
+    sequenceShortName: text(item.sequenceShortName, `${context}.sequenceShortName`),
     ordinal: integer(item.ordinal, `${context}.ordinal`, 1),
     phaseName: text(item.phaseName, `${context}.phaseName`),
     generation: integer(item.generation, `${context}.generation`, 1),
@@ -318,6 +326,7 @@ function dashboardRun(value: unknown, index: number): DashboardRunItem {
   }
   return {
     runId: text(item.runId, `${context}.runId`),
+    shortName: text(item.shortName, `${context}.shortName`),
     projectName: text(item.projectName, `${context}.projectName`),
     implementerProvider: provider,
     state: text(item.state, `${context}.state`),
@@ -340,7 +349,7 @@ export function parseRunsData(value: unknown): DashboardRunsData {
     filters: filters(data.filters),
     coverage: coverage(data.coverage),
     items: array(data.items, "items").map(dashboardRun),
-    page: page(data.page),
+    page: page(data.page, 1000),
     totalCount: integer(data.totalCount, "totalCount"),
   };
 }
@@ -424,6 +433,8 @@ export function parseRunInspectData(value: unknown): RunInspectData {
     codexPendingTurn: optionalNullableText(data.codexPendingTurn, "codexPendingTurn"),
     codexCapacityReason: optionalNullableText(data.codexCapacityReason, "codexCapacityReason"),
     runId: text(data.runId, "runId"),
+    shortName: text(data.shortName, "shortName"),
+    sequenceShortName: nullableText(data.sequenceShortName, "sequenceShortName"),
     projectName: text(data.projectName, "projectName"),
     repositoryRoot: text(data.repositoryRoot, "repositoryRoot"),
     state: text(data.state, "state"),

@@ -157,6 +157,7 @@ Ejemplo de submit standalone (sustituye rutas y modelos por los aprobados):
 
 ```bash
 ai_dev_loop scheduler submit \
+  --short-name "Recovery smoke con Codex" \
   --repo-path /ruta/al/repo-desechable \
   --plan-path docs/plans/recovery-smoke.md \
   --prompt-source-path docs/plans/prompt_recovery-smoke.txt \

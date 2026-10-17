@@ -52,6 +52,7 @@ class IntegrationCapabilities(PublicWireModel):
         False, alias="codexImplementerManualRecovery"
     )
     dashboard: StrictBool = False
+    short_names: StrictBool = Field(False, alias="shortNames")
 
 
 class IntegrationInfoData(PublicWireModel):
@@ -185,6 +186,8 @@ class IntegrationSafeNextAction(PublicWireModel):
 class IntegrationRunListItem(PublicWireModel):
     implementer_provider: str = Field("cursor", alias="implementerProvider")
     run_id: str = Field(alias="runId")
+    short_name: str = Field(alias="shortName", min_length=1)
+    sequence_short_name: str | None = Field(alias="sequenceShortName")
     project_name: str = Field(alias="projectName")
     repository_root: str = Field(alias="repositoryRoot")
     state: str
@@ -203,6 +206,8 @@ class IntegrationRunInspectData(PublicWireModel):
     codex_pending_turn: str | None = Field(None, alias="codexPendingTurn")
     codex_capacity_reason: str | None = Field(None, alias="codexCapacityReason")
     run_id: str = Field(alias="runId")
+    short_name: str = Field(alias="shortName", min_length=1)
+    sequence_short_name: str | None = Field(alias="sequenceShortName")
     project_name: str = Field(alias="projectName")
     repository_root: str = Field(alias="repositoryRoot")
     state: str
@@ -348,6 +353,7 @@ class IntegrationPhaseFrozenInputs(PublicWireModel):
 
 class IntegrationSequencePhaseRunItem(PublicWireModel):
     run_id: str = Field(alias="runId")
+    short_name: str = Field(alias="shortName", min_length=1)
     generation: StrictInt = Field(ge=1)
     source_run_id: str | None = Field(None, alias="sourceRunId")
     attempt_kind: str = Field(alias="attemptKind")
@@ -361,6 +367,7 @@ class IntegrationSequencePhaseSummary(PublicWireModel):
     implementer_provider: str = Field("cursor", alias="implementerProvider")
     ordinal: StrictInt = Field(ge=1)
     name: str
+    short_name: str = Field(alias="shortName", min_length=1)
     initial_planned_run_id: str = Field(alias="initialPlannedRunId")
     materialized: StrictBool
     current_run_id: str | None = Field(None, alias="currentRunId")
@@ -379,6 +386,7 @@ class IntegrationSequencePhaseSummary(PublicWireModel):
 class IntegrationSequenceListItem(PublicWireModel):
     sequence_id: str = Field(alias="sequenceId")
     name: str
+    short_name: str = Field(alias="shortName", min_length=1)
     project_name: str = Field(alias="projectName")
     repository_root: str = Field(alias="repositoryRoot")
     state: str
@@ -405,6 +413,7 @@ class IntegrationSequenceInspectData(PublicWireModel):
     )
     sequence_id: str = Field(alias="sequenceId")
     name: str
+    short_name: str = Field(alias="shortName", min_length=1)
     project_name: str = Field(alias="projectName")
     repository_root: str = Field(alias="repositoryRoot")
     state: str
@@ -429,6 +438,8 @@ class IntegrationSequenceInspectData(PublicWireModel):
 
 class IntegrationSequencePhaseRunListData(PublicWireModel):
     sequence_id: str = Field(alias="sequenceId")
+    sequence_short_name: str = Field(alias="sequenceShortName", min_length=1)
+    phase_short_name: str = Field(alias="phaseShortName", min_length=1)
     ordinal: StrictInt = Field(ge=1)
     items: tuple[IntegrationSequencePhaseRunItem, ...]
     page: IntegrationCollectionPage

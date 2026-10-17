@@ -78,6 +78,7 @@ export interface DashboardWorkloadItem {
   projectName: string;
   sequenceId: string | null;
   sequenceName: string | null;
+  sequenceShortName: string | null;
   runCount: number;
 }
 
@@ -93,6 +94,7 @@ export interface DashboardSummaryData {
 export interface DashboardSequenceBinding {
   sequenceId: string;
   sequenceName: string;
+  sequenceShortName: string;
   ordinal: number;
   phaseName: string;
   generation: number;
@@ -102,6 +104,7 @@ export interface DashboardSequenceBinding {
 
 export interface DashboardRunItem {
   runId: string;
+  shortName: string;
   projectName: string;
   implementerProvider: "cursor" | "codex";
   state: string;
@@ -161,6 +164,8 @@ export interface RunInspectData {
   codexPendingTurn: string | null;
   codexCapacityReason: string | null;
   runId: string;
+  shortName: string;
+  sequenceShortName: string | null;
   projectName: string;
   repositoryRoot: string;
   state: string;

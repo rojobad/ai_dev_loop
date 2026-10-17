@@ -98,18 +98,22 @@ interface WorkloadNode {
   name: string;
   value: number;
   projectName: string;
+  sequenceId?: string | null;
+  sequenceName?: string | null;
   children?: WorkloadNode[];
 }
 
 export function workloadOption(items: DashboardWorkloadItem[]): EChartsCoreOption {
   const projects = new Map<string, WorkloadNode[]>();
   for (const item of items) {
-    const group = item.sequenceName ?? "Standalone";
+    const group = item.sequenceShortName ?? "Standalone";
     const children = projects.get(item.projectName) ?? [];
     children.push({
       name: group,
       value: item.runCount,
       projectName: item.projectName,
+      sequenceId: item.sequenceId,
+      sequenceName: item.sequenceName,
     });
     projects.set(item.projectName, children);
   }
@@ -130,7 +134,14 @@ export function workloadOption(items: DashboardWorkloadItem[]): EChartsCoreOptio
         const project =
           typeof dataItem.projectName === "string" ? dataItem.projectName : name;
         const count = typeof item.value === "number" ? item.value : 0;
-        return `<strong>${escapeHtml(project)}</strong><br>${escapeHtml(name)}: ${count} runs`;
+        const sequenceId =
+          typeof dataItem.sequenceId === "string" ? dataItem.sequenceId : null;
+        const sequenceName =
+          typeof dataItem.sequenceName === "string" ? dataItem.sequenceName : null;
+        const details = sequenceId && sequenceName
+          ? `<br>${escapeHtml(sequenceName)} · ${escapeHtml(sequenceId)}`
+          : "";
+        return `<strong>${escapeHtml(project)}</strong><br>${escapeHtml(name)}: ${count} runs${details}`;
       },
     },
     series: [

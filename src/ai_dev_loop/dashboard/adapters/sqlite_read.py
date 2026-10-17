@@ -254,6 +254,7 @@ class SqliteDashboardReadRepository:
             runs.append(
                 RunObservation(
                     run_id=run_id,
+                    short_name=store.run_short_name(conn, run_id),
                     project_name=state.context.project_name,
                     implementer_provider=(
                         "cursor" if implementer is None else implementer.provider
@@ -330,6 +331,7 @@ class SqliteDashboardReadRepository:
                     bindings[attempt.run_id] = SequenceBindingObservation(
                         sequence_id=sequence_id,
                         sequence_name=sequence_state.definition.name,
+                        sequence_short_name=store.sequence_short_name(conn, sequence_id),
                         ordinal=phase.ordinal,
                         phase_name=entry.phase_name,
                         generation=attempt.generation,
@@ -584,6 +586,7 @@ class SqliteDashboardReadRepository:
                     runs = [
                         RunObservation(
                             run_id=run.run_id,
+                            short_name=run.short_name,
                             project_name=run.project_name,
                             implementer_provider=run.implementer_provider,
                             state=run.state,

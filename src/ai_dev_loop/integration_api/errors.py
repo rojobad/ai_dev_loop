@@ -12,6 +12,7 @@ class IntegrationErrorCode(StrEnum):
     UNSUPPORTED = "UNSUPPORTED"
     DATA_INTEGRITY = "DATA_INTEGRITY"
     IO_ERROR = "IO_ERROR"
+    PAGE_ENVELOPE_TOO_LARGE = "PAGE_ENVELOPE_TOO_LARGE"
 
 
 _EXIT_BY_CODE: dict[IntegrationErrorCode, int] = {
@@ -21,6 +22,7 @@ _EXIT_BY_CODE: dict[IntegrationErrorCode, int] = {
     IntegrationErrorCode.UNSUPPORTED: 4,
     IntegrationErrorCode.DATA_INTEGRITY: 5,
     IntegrationErrorCode.IO_ERROR: 6,
+    IntegrationErrorCode.PAGE_ENVELOPE_TOO_LARGE: 2,
 }
 
 
@@ -65,3 +67,7 @@ class IntegrationApiError(Exception):
     @classmethod
     def io_error(cls, message: str) -> IntegrationApiError:
         return cls(IntegrationErrorCode.IO_ERROR, message)
+
+    @classmethod
+    def page_envelope_too_large(cls, message: str) -> IntegrationApiError:
+        return cls(IntegrationErrorCode.PAGE_ENVELOPE_TOO_LARGE, message)

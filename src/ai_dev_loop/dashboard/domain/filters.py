@@ -11,6 +11,7 @@ DEFAULT_TIME_ZONE = "America/La_Paz"
 MAX_RANGE = timedelta(days=366)
 DASHBOARD_DEFAULT_LIMIT = 25
 DASHBOARD_MAX_LIMIT = 100
+DASHBOARD_RUNS_MAX_LIMIT = 1000
 PROJECT_NAME_UNSET = object()
 _RFC3339_INSTANT = re.compile(
     r"^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})$"
@@ -118,15 +119,36 @@ class DashboardPage:
         offset: object = 0,
         limit: object = DASHBOARD_DEFAULT_LIMIT,
     ) -> DashboardPage:
+        return cls._parse(offset=offset, limit=limit, maximum=DASHBOARD_MAX_LIMIT)
+
+    @classmethod
+    def parse_runs(
+        cls,
+        *,
+        offset: object = 0,
+        limit: object = DASHBOARD_DEFAULT_LIMIT,
+    ) -> DashboardPage:
+        """Parse the wider page bound owned only by ``dashboard.runs``."""
+
+        return cls._parse(offset=offset, limit=limit, maximum=DASHBOARD_RUNS_MAX_LIMIT)
+
+    @classmethod
+    def _parse(
+        cls,
+        *,
+        offset: object,
+        limit: object,
+        maximum: int,
+    ) -> DashboardPage:
         if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
             raise DashboardFilterError("offset must be a nonnegative integer.")
         if (
             isinstance(limit, bool)
             or not isinstance(limit, int)
             or limit < 1
-            or limit > DASHBOARD_MAX_LIMIT
+            or limit > maximum
         ):
             raise DashboardFilterError(
-                f"limit must be an integer between 1 and {DASHBOARD_MAX_LIMIT}."
+                f"limit must be an integer between 1 and {maximum}."
             )
         return cls(offset=offset, limit=limit)

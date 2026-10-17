@@ -30,3 +30,6 @@ archive/implementation-history/plans/prompt_*.txt
 
 # Portable Phase 27 dual-implementer handoff inputs.
 !archive/implementation-history/plans/prompt_phase-27-*.txt
+
+# Portable Phase 28 Dashboard refinement inputs.
+!archive/implementation-history/plans/prompt_phase-28-*.txt

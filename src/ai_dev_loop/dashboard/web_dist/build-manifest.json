@@ -5,33 +5,34 @@
     "dashboard-web/package-lock.json": "39fbcebe6bcbe6593aaa287c7538f4fe36e28b877f436f2049e86e6f47e9cd13",
     "dashboard-web/package.json": "cfaa050bac56776d652ce5935d33aa79c93917346519dfbc2556fc36da242ac4",
     "dashboard-web/scripts/write-build-manifest.mjs": "a0f7f5b4f4ffa2de764e5e374ced0824867a43955d70f8bb6a8284785a2cfe3d",
-    "dashboard-web/src/dashboard/ActivityCalendar.tsx": "f7a57eaefc6c50ad1e84a0b632ddf9c8121064a3ff53f17bac3b7c8a583ba1fa",
-    "dashboard-web/src/dashboard/AttemptModal.tsx": "adb966eb88b179a111d8e2e3e890d64cb4d266bcc0f11303687b8218fe0317ae",
-    "dashboard-web/src/dashboard/AttemptTimeline.tsx": "1f80c607010d86cc7ca33c170e983c0ad8e289367b66c467275e8f304308ea40",
-    "dashboard-web/src/dashboard/ContentReader.tsx": "a451c84dfb8e0cf75d1c3384f0d506c687761ffae2bfbb16a221499e70a2642f",
-    "dashboard-web/src/dashboard/DashboardApp.tsx": "b6a990846258b5d30778aeb631f8fc2e9633bc478ca8cc9c39fef100d4eb6d46",
-    "dashboard-web/src/dashboard/DashboardChart.tsx": "72dc37b0859a0b7d08829b69f3ce93855fba9818d8939f644f363dc6e6b5c544",
-    "dashboard-web/src/dashboard/RunMap.tsx": "234e49dcc788cddf66e48941d5348fe625ab82a76482b53cdf07cae9f0e518f4",
-    "dashboard-web/src/dashboard/charts.ts": "64a147dd1c358accec8a15db4503114a6c4e88ad621343c63cae5ed777f3eaaf",
+    "dashboard-web/src/dashboard/ActivityCalendar.tsx": "38f015292b2e525db473b3e6692d025f953889ac607cc6bf77385273fff12da3",
+    "dashboard-web/src/dashboard/AttemptModal.tsx": "2a68b35c53be280d65ce2425cbafce4cac7dbc56f8a4c64d0c04879454ef05ee",
+    "dashboard-web/src/dashboard/AttemptTimeline.tsx": "3ab9b7f2bc00448504ae92520fcff98b2f8da54938ead92a52403e189b37beb5",
+    "dashboard-web/src/dashboard/ContentReader.tsx": "604a4d0f4d0db0d937f84eb97aab1a36aa3ac356b02d0e20bb779fc879db3250",
+    "dashboard-web/src/dashboard/DashboardApp.tsx": "ce16a9617678706038a8f21393a343360595a6840b86348ebd3b4f8ebe2008ad",
+    "dashboard-web/src/dashboard/DashboardChart.tsx": "c6b2554ee66f6fe9de162edcff663edffceb3b089eaf9228e28468de84cbebca",
+    "dashboard-web/src/dashboard/InformationControl.tsx": "73bda114ddad5673638f02a5dc8f10983a3db3311601ce42ecb966dcfac6d80f",
+    "dashboard-web/src/dashboard/RunMap.tsx": "1f9882d1bcdfc0dd86560e0cae51e458b87cbb9f791f6ac8cc58ad814abe78fc",
+    "dashboard-web/src/dashboard/charts.ts": "bfa22ab00952d941b8237db4bfe5d39f85145cdcb5f50faf1da9f7afe5f3ecb3",
     "dashboard-web/src/dashboard/coordinated-data-source.ts": "a7e79d27975e392be5d3955027a97dba7df55def828a583c246d03ee37873f99",
     "dashboard-web/src/dashboard/local-fetch-data-source.ts": "afcd8624d6197ba8024e9f2e27f6458ca6d3ed466395cff39c0997ca57e10369",
-    "dashboard-web/src/dashboard/parsers.ts": "a1f34bf3cb4723d834e2c17295fc07d070ce3e63b8f829e41861b1e287e7923f",
-    "dashboard-web/src/dashboard/refreshCoordinator.ts": "142f14edb4582ea9da01511ce6c05b1957f7d0f4bad6600555dc5758a5ab8e14",
-    "dashboard-web/src/dashboard/time.ts": "ee62778515448c12c2c0a3fe6d6d92d67b0d0e06c1ce565025e8d3fdc1668145",
-    "dashboard-web/src/dashboard/types.ts": "571a8e42880aaf7afc3b87d4f4f453eaeaa9bf148573fe1ffe6d73b2b9241de5",
+    "dashboard-web/src/dashboard/parsers.ts": "7de444108eadb20f2c7773bcc9bc9c39e3c42abe3ecfd36fee13c36937d41a90",
+    "dashboard-web/src/dashboard/refreshCoordinator.ts": "509b61f8f40c12612b7f9990b066acdc51c3cde5ac2bf94441156aa6fc62ad67",
+    "dashboard-web/src/dashboard/time.ts": "648fd73c8f791bbad4b78eb665378bba0b451a90d501fd7568fe60ab1a335f66",
+    "dashboard-web/src/dashboard/types.ts": "59775b20223949e36b0cb5e8273509972bd09a9e0e087ebae201e4ee80908bf3",
     "dashboard-web/src/main.tsx": "789172e299060b2876fd614c5327c9e8dfc64bbac1871066232b88e20c7c7e3a",
-    "dashboard-web/src/styles.css": "bc9ba30f1d32b4f40f22368b032ce48777aa52dde552afee5a71d71a550b352b",
+    "dashboard-web/src/styles.css": "8fe8293225204edfbbd848cda8ea32b54db65034176fcd478ebafff27e375282",
     "dashboard-web/tsconfig.json": "6d00d89c7b11aedea1e8861b32024f3202a95ffda62e506e5ea9c00b22b35891",
     "dashboard-web/vite.config.ts": "aa460188ccaf49a342a7c3661cc08b63b7acbef596adb2625dfce7b3b75d4afb"
   },
   "outputs": {
     "assets/dashboard.css": {
-      "sha256": "33636aed512ea9b702254b0de1796a1e1dc666ee47bd2253a496ff134bbae923",
-      "size": 8583
+      "sha256": "6fc4cab7ebe34a96d44a8c386e0857eccedbe56f60eb372332cbe82917046e59",
+      "size": 9346
     },
     "assets/dashboard.js": {
-      "sha256": "1b97de9aeaf2f6b1b2ab256e50d05a13547bf4021f865806baf8ce1821f3f0ed",
-      "size": 893568
+      "sha256": "e8440b9297c003a325c48944dfec7ec1c21eac977b1a9ce012237db8c0c32327",
+      "size": 903767
     },
     "index.html": {
       "sha256": "4daf46ff9a868dacd44afbce2f2edbd36434b3b0479007d452e2cf13f04cf1c7",

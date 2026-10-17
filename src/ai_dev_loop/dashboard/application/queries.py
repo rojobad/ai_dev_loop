@@ -108,6 +108,7 @@ class WorkloadResult:
     project_name: str
     sequence_id: str | None
     sequence_name: str | None
+    sequence_short_name: str | None
     run_count: int
 
 
@@ -125,6 +126,7 @@ class SummaryResult:
 class SequenceBindingResult:
     sequence_id: str
     sequence_name: str
+    sequence_short_name: str
     ordinal: int
     phase_name: str
     generation: int
@@ -135,6 +137,7 @@ class SequenceBindingResult:
 @dataclass(frozen=True)
 class RunItemResult:
     run_id: str
+    short_name: str
     project_name: str
     implementer_provider: str
     state: str
@@ -245,6 +248,7 @@ def _binding(value: SequenceBindingObservation | None) -> SequenceBindingResult 
     return SequenceBindingResult(
         sequence_id=value.sequence_id,
         sequence_name=value.sequence_name,
+        sequence_short_name=value.sequence_short_name,
         ordinal=value.ordinal,
         phase_name=value.phase_name,
         generation=value.generation,
@@ -304,7 +308,7 @@ class DashboardQueries:
             if run.run_id in launches and filters.contains(launches[run.run_id])
         ]
         by_project: dict[str, list[RunObservation]] = defaultdict(list)
-        workload: Counter[tuple[str, str | None, str | None]] = Counter()
+        workload: Counter[tuple[str, str | None, str | None, str | None]] = Counter()
         for run in cohort:
             by_project[run.project_name].append(run)
             binding = run.sequence_binding
@@ -313,6 +317,7 @@ class DashboardQueries:
                     run.project_name,
                     binding.sequence_id if binding else None,
                     binding.sequence_name if binding else None,
+                    binding.sequence_short_name if binding else None,
                 )
             ] += 1
         grouped = Counter(state_group(run.state) for run in cohort)
@@ -340,6 +345,7 @@ class DashboardQueries:
                     project_name=key[0],
                     sequence_id=key[1],
                     sequence_name=key[2],
+                    sequence_short_name=key[3],
                     run_count=count,
                 )
                 for key, count in sorted(
@@ -348,6 +354,7 @@ class DashboardQueries:
                         item[0][0],
                         item[0][1] is None,
                         item[0][2] or "",
+                        item[0][3] or "",
                         item[0][1] or "",
                     ),
                 )
@@ -373,6 +380,7 @@ class DashboardQueries:
             items=tuple(
                 RunItemResult(
                     run_id=run.run_id,
+                    short_name=run.short_name,
                     project_name=run.project_name,
                     implementer_provider=run.implementer_provider,
                     state=run.state,

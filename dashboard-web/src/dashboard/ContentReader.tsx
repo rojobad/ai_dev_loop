@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { formatInstant } from "./time";
 import { DashboardDataSourceError } from "./types";
 import type {
   ArtifactContentChunk,
@@ -31,6 +32,7 @@ export interface ContentTarget {
 
 export interface ContentReaderProps {
   target: ContentTarget;
+  timeZone?: string;
 }
 
 interface ReaderState {
@@ -148,7 +150,7 @@ function assertChunkOwnership(chunk: ArtifactContentChunk, requestedOffset: numb
   }
 }
 
-export function ContentReader({ target }: ContentReaderProps): React.JSX.Element {
+export function ContentReader({ target, timeZone = "UTC" }: ContentReaderProps): React.JSX.Element {
   const [state, setState] = useState<ReaderState>(initialState);
   const generation = useRef(0);
   const requestSerial = useRef(0);
@@ -379,7 +381,7 @@ export function ContentReader({ target }: ContentReaderProps): React.JSX.Element
           <button type="button" onClick={nextWindow}>Next bounded window</button>
         ) : null}
       </div>
-      {state.observedAt ? <p className="observation-line">Content observed at {state.observedAt}; it is held in memory only.</p> : null}
+      {state.observedAt ? <p className="observation-line">Content observed at {formatInstant(state.observedAt, timeZone)}; it is held in memory only.</p> : null}
     </section>
   );
 }
