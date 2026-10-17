@@ -19,6 +19,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+cursor-sdk = [
+    "cursor-sdk==1.0.37",
+]
 dev = [
     "build>=1.0",
     "mkdocs>=1.6,<2.0",

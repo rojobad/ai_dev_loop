@@ -31,6 +31,8 @@ from ai_dev_loop.scheduler.application.contracts import (
 from ai_dev_loop.scheduler.application.submission import (
     _freeze_execution_commands,
     _implementer_binding,
+    _legacy_cursor_binding,
+    _reject_cursor_sdk_dispatch,
     require_resubmission_id,
 )
 from ai_dev_loop.scheduler.domain.common import canonical_json_sha256, worktree_key
@@ -48,7 +50,6 @@ from ai_dev_loop.scheduler.domain.sequence import (
 )
 from ai_dev_loop.scheduler.domain.state import (
     ControllerBinding,
-    CursorBinding,
     EffectiveConfigBinding,
     FreshCodexReviewerBinding,
     PlanPromptBinding,
@@ -416,6 +417,7 @@ class SequencePrepareService:
                 )
             ):
                 raise ValidationError("Cursor overrides conflict with Codex implementer selection")
+            _reject_cursor_sdk_dispatch(effective)
             effective = _freeze_execution_commands(effective)
             if project_name is None:
                 project_name = effective.project.name
@@ -502,14 +504,7 @@ class SequencePrepareService:
                         binding_artifact_path=_entry_fresh_reviewer_artifact(ordinal),
                         binding_sha256=artifact_hashes[_entry_fresh_reviewer_artifact(ordinal)],
                     ),
-                    cursor=CursorBinding(
-                        command=effective.cursor.command,
-                        model=effective.cursor.model,
-                        output_format=effective.cursor.output_format,
-                        force=effective.cursor.force,
-                        trust_workspace=effective.cursor.trust_workspace,
-                        sandbox=effective.cursor.sandbox,
-                    ),
+                    cursor=_legacy_cursor_binding(effective),
                     workflow=WorkflowLimits(
                         max_review_iterations=effective.workflow.max_review_iterations,
                         stage_mode=effective.workflow.stage_mode,

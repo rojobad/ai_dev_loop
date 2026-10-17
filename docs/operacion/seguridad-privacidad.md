@@ -88,6 +88,30 @@ sustituye la política de espera del scheduler. **Gate A** valida con
 fakes/process boundaries; **Gate B** es
 aceptacion live pendiente hasta completar el ciclo controlado en parish360-poc.
 
+### Credencial y estado local del Cursor SDK
+
+Config v2 guarda solamente un `credential_ref`. El adapter lo resuelve bajo
+`$XDG_CONFIG_HOME/ai_dev_loop/credentials/`; rechaza nombres con traversal,
+symlinks, archivos no regulares, owners ajenos, directorios distintos de `0700`,
+archivos distintos de `0600`, payloads multilinea/no UTF-8 y archivos mayores de
+16 KiB. El operador crea ese archivo fuera del repositorio y sin poner la llave
+en YAML, argv o variables de entorno. El producto no crea, copia, rota ni imprime
+la credencial.
+
+La llave se lee solo al abrir el cliente y se pasa en los campos `api_key`
+publicos de `cursor-sdk==1.0.37`. Durante el arranque del bridge, el adapter
+retira temporalmente variables de autenticacion Cursor y cualquier variable cuyo
+valor coincida con la llave, y las restaura al retornar; no captura ni persiste el
+environment. Fallos tipados conservan solo codigo, operacion, IDs nativos y
+metadata acotada segura; no conservan mensajes del SDK ni el secreto.
+
+El workspace SDK es la raiz explicita admitida dentro del repositorio. El estado
+del bridge y el store JSONL nativo son roots privados y separados bajo
+`$XDG_STATE_HOME/ai_dev_loop/cursor-sdk/<sha256-owner>/`, fuera del checkout. El
+store nativo es la autoridad de replay/consulta de la conversacion; el ledger no
+duplica transcript, eventos ni uso como nueva verdad. El bridge se cierra en el
+boundary de lifecycle del adapter tanto en salida normal como excepcional.
+
 El servidor `dashboard serve` es una superficie local sin login: enlaza únicamente
 IPv4 `127.0.0.1` y exige Host/Origin same-origin exactos. No debe publicarse mediante
 un proxy ni exponerse a LAN. Solo sirve un manifiesto de assets empaquetados y un

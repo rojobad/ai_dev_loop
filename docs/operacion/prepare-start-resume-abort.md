@@ -40,9 +40,17 @@ Requisitos:
 - `--controller-session-id` es opcional (proveniencia A para lookup/control);
 - no admite `--codex-session-id` (reviewer B se crea en el primer review);
 - congela inputs inmutables; la admision del worktree ocurre en el primer tick.
-- resuelve `cursor.command` y `codex.command` en la terminal que hace submit y
-  congela sus rutas absolutas sólo en los artefactos protegidos del run; el YAML
-  del repositorio permanece portable y los workers no dependen del `PATH` de systemd.
+- siempre resuelve `codex.command`; con config v1 e implementer Cursor tambien
+  resuelve `cursor.command`. Congela las rutas necesarias sólo en los artefactos
+  protegidos del run; el YAML permanece portable y los workers no dependen del
+  `PATH` de systemd. Un implementer Codex no resuelve ni requiere Cursor.
+
+Config v2 describe el Cursor SDK local fijado a 1.0.37. En Phase 25.1, submit
+con implementer Cursor se rechaza antes de crear estado o artefactos porque el
+dispatch SDK pertenece a Phase 25.2. Un implementer Codex explicito si puede
+admitirse con config v2 sin binario, package extra, credencial ni environment de
+Cursor; sus settings y los del reviewer B se congelan de forma independiente.
+El mismo limite se aplica por fase durante `scheduler sequence prepare`.
 
 Para flujos controller A, añade `--controller-session-id "<exact-controller-session-id>"`
 al submit. Los reenvios idempotentes sin A reutilizan runs historicos con la misma
