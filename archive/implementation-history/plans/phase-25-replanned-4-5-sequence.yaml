@@ -5,7 +5,7 @@ name: phase-25-sdk-replanned-4-5-f06-deferred
 short_name: Fase 25 SDK 4–5 (F-06 diferido)
 phases:
 - name: phase-25-4-token-usage-and-historical-queries
-  short_name: 25.4 Tokens por rol e históricos (F-06 diferido)
+  short_name: 25.4 Tokens por rol (F-06 diferido)
   plan_path: archive/implementation-history/plans/phase-25-4-token-usage-and-historical-queries.md
   prompt_source_path: archive/implementation-history/plans/prompt_phase-25-4-token-usage-and-historical-queries.txt
   commit_message: 'feat: implement Phase 25.4 role-aware token usage'
