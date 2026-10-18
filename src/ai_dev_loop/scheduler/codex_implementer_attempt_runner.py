@@ -28,6 +28,7 @@ from ai_dev_loop.scheduler.application.codex_evidence import (
 )
 from ai_dev_loop.scheduler.application.codex_subprocess_env import sanitize_codex_subprocess_env
 from ai_dev_loop.scheduler.application.cursor_evidence import verify_prompt_binding
+from ai_dev_loop.scheduler.application.token_usage_capture import capture_codex_usage_safely
 from ai_dev_loop.scheduler.application.worktree_boundary import worktree_content_fingerprint
 from ai_dev_loop.scheduler.domain.codex_contract import (
     BOOTSTRAP_CODEX_IMPLEMENTER_EFFECT_KIND,
@@ -289,6 +290,18 @@ def _execute(evidence: dict[str, object], run_root: Path, run_id: str) -> dict[s
         "final_sha256": final_sha,
     }
     atomic_write_json(run_root / metadata_rel, metadata, sensitive=True)
+    usage_capture = capture_codex_usage_safely(
+        run_root=run_root,
+        run_id=run_id,
+        role="implementer",
+        stage="initial" if turn == "initial" else "correction",
+        scheduler_attempt_id=attempt_id,
+        publisher_attempt_id=attempt_id,
+        source_dispatch_id=str(evidence["dispatch_id"]),
+        source_artifact_path=events_rel,
+        source_artifact_sha256=sha256_file(events_path),
+        capture_complete=not truncated,
+    )
     # A nonzero result with a resolved process and authenticated identity may be
     # reclassified by the scheduler's bounded post-failure capacity probe. Keep
     # the exact role/turn/prompt continuation available for that decision too;
@@ -341,6 +354,7 @@ def _execute(evidence: dict[str, object], run_root: Path, run_id: str) -> dict[s
         "worktree_unchanged": before_text == after_text,
         "work_observed": work_observed,
         "final_sha256": final_sha,
+        **usage_capture.outcome_fields(),
     }
 
 

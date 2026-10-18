@@ -310,10 +310,12 @@ conserva el B de su origen autenticado.
 ai_dev_loop scheduler start <run-id>
 ai_dev_loop scheduler tick
 ai_dev_loop scheduler status <run-id> [--output text|json]
+ai_dev_loop scheduler usage <run-id> [--output text|json]
 ai_dev_loop scheduler list [--output text|json]
 ai_dev_loop scheduler abort <run-id> [--output text|json]
 ai_dev_loop scheduler history <run-id> [--limit N] [--order oldest|newest] [--output text|json]
 ai_dev_loop scheduler timeline <run-id> [--limit N] [--order oldest|newest] [--output text|json]
+ai_dev_loop scheduler sequence usage <sequence-id> [--output text|json]
 ```
 
 `scheduler abort` persiste primero la cancelacion durable, invalida effects/timers/claims
@@ -329,6 +331,13 @@ resuelta. Los demás estados terminales mantienen su política de rechazo de abo
 `max_review_iterations` segun el techo efectivo de reviews del run. Cuando un run
 fue extendido explicitamente, el techo efectivo puede superar el limite congelado en
 el contexto enviado; la salida indica el limite enviado solo cuando difiere.
+
+`scheduler usage` es una consulta de solo lectura. Separa el consumo directo del
+run y el total de su linaje de recuperación; `scheduler sequence usage` agrega una
+vez cada run adoptado por el linaje de fases. Ambos muestran el total conocido como
+cota inferior y cobertura `complete`, `partial`, `unknown` o `not_applicable`.
+Conservan categorías nativas y atribuyen Cursor/Codex por rol y etapa. No calculan
+costos, no ejecutan proveedores y no reescriben artefactos históricos.
 
 ## `scheduler cursor-retry`
 
@@ -678,7 +687,7 @@ las órdenes de este namespace emiten un único documento JSON en stdout; `--hel
 sigue siendo ayuda normal de Typer. El namespace plural `integrations` (instalación
 Codex global) no cambia.
 
-La API actual **1.11** expone `dashboard` y nombres cortos; la ausencia de la
+La API actual **1.12** expone `dashboard`, nombres cortos y `tokenUsage`; la ausencia de la
 capacidad dashboard en un payload histórico significa que esas cuatro consultas
 no están disponibles. Las
 lecturas de runs, secuencias, revisiones, salidas de procesos y dashboard abren el

@@ -27,7 +27,8 @@
         "mixedImplementerSequences": { "type": "boolean" },
         "codexImplementerManualRecovery": { "type": "boolean" },
         "dashboard": { "type": "boolean" },
-        "shortNames": { "type": "boolean" }
+        "shortNames": { "type": "boolean" },
+        "tokenUsage": { "type": "boolean" }
       }
     }
   }

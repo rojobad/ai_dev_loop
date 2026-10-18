@@ -82,6 +82,11 @@ from ai_dev_loop.scheduler.application.timer_ops import (
     install_scheduler_timer,
     scheduler_timer_status,
 )
+from ai_dev_loop.scheduler.application.token_usage_query import (
+    render_usage_report,
+    scheduler_sequence_usage,
+    scheduler_usage,
+)
 from ai_dev_loop.scheduler.domain.presentation import ShortNameUpdateResult
 
 app = typer.Typer(
@@ -428,6 +433,20 @@ def scheduler_list_command(
     _handle(run)
 
 
+@scheduler_app.command("usage")
+def scheduler_usage_command(
+    run_id: Annotated[str, typer.Argument(help="Exact scheduler run ID.")],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Show read-only provider token usage for one run and its recovery lineage."""
+
+    def run() -> None:
+        result = scheduler_usage(run_id)
+        typer.echo(render_usage_report(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
 @scheduler_app.command("extend")
 def scheduler_extend_command(
     run_id: Annotated[str, typer.Argument(help="Scheduler run ID in max_iterations_reached.")],
@@ -754,6 +773,20 @@ def scheduler_sequence_set_short_name_command(
     def run() -> None:
         result = set_sequence_short_name(sequence_id, short_name)
         typer.echo(_render_short_name_update(result, output=output), nl=False)
+
+    _handle(run)
+
+
+@sequence_app.command("usage")
+def scheduler_sequence_usage_command(
+    sequence_id: Annotated[str, typer.Argument(help="Exact scheduler sequence ID.")],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Show read-only token usage over authenticated sequence run lineage."""
+
+    def run() -> None:
+        result = scheduler_sequence_usage(sequence_id)
+        typer.echo(render_usage_report(result, output=output.value), nl=False)
 
     _handle(run)
 

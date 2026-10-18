@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-usage-shared-v1.json",
+  "title": "ai_dev_loop Integration API token usage shared v1",
+  "$defs": {
+    "category": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["knownTotal", "knownObservations", "observationCount", "coverage"],
+      "properties": {
+        "knownTotal": { "type": ["integer", "null"], "minimum": 0 },
+        "knownObservations": { "type": "integer", "minimum": 0 },
+        "observationCount": { "type": "integer", "minimum": 0 },
+        "coverage": { "enum": ["complete", "partial", "unknown", "not_applicable"] }
+      }
+    },
+    "breakdown": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["provider", "role", "stage", "knownTotalTokens", "inferenceAttempts", "knownAttempts", "partialAttempts", "unknownAttempts", "coverage", "categories", "nativeCategories"],
+      "properties": {
+        "provider": { "enum": ["cursor", "codex"] },
+        "role": { "enum": ["implementer", "reviewer"] },
+        "stage": { "enum": ["initial", "correction", "review"] },
+        "knownTotalTokens": { "type": ["integer", "null"], "minimum": 0 },
+        "inferenceAttempts": { "type": "integer", "minimum": 0 },
+        "knownAttempts": { "type": "integer", "minimum": 0 },
+        "partialAttempts": { "type": "integer", "minimum": 0 },
+        "unknownAttempts": { "type": "integer", "minimum": 0 },
+        "coverage": { "enum": ["complete", "partial", "unknown", "not_applicable"] },
+        "categories": { "type": "object", "additionalProperties": { "$ref": "#/$defs/category" } },
+        "nativeCategories": { "type": "object", "additionalProperties": { "$ref": "#/$defs/category" } }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["scope", "runIds", "knownTotalTokens", "inferenceAttempts", "knownAttempts", "partialAttempts", "unknownAttempts", "coverage", "breakdowns", "diagnostics"],
+      "properties": {
+        "scope": { "enum": ["direct", "recovery_lineage", "sequence"] },
+        "runIds": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "knownTotalTokens": { "type": ["integer", "null"], "minimum": 0 },
+        "inferenceAttempts": { "type": "integer", "minimum": 0 },
+        "knownAttempts": { "type": "integer", "minimum": 0 },
+        "partialAttempts": { "type": "integer", "minimum": 0 },
+        "unknownAttempts": { "type": "integer", "minimum": 0 },
+        "coverage": { "enum": ["complete", "partial", "unknown", "not_applicable"] },
+        "breakdowns": { "type": "array", "items": { "$ref": "#/$defs/breakdown" } },
+        "diagnostics": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "runUsage": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["schemaVersion", "normalizationVersion", "runId", "direct", "recoveryLineage"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "normalizationVersion": { "const": "provider-usage-v1" },
+        "runId": { "type": "string", "minLength": 1 },
+        "direct": { "$ref": "#/$defs/scope" },
+        "recoveryLineage": { "$ref": "#/$defs/scope" }
+      }
+    },
+    "sequenceUsage": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["schemaVersion", "normalizationVersion", "sequenceId", "sequence"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "normalizationVersion": { "const": "provider-usage-v1" },
+        "sequenceId": { "type": "string", "minLength": 1 },
+        "sequence": { "$ref": "#/$defs/scope" }
+      }
+    }
+  }
+}

@@ -58,6 +58,7 @@ from ai_dev_loop.scheduler.application.sequence_start import start_sequence
 from ai_dev_loop.scheduler.application.start import start_run
 from ai_dev_loop.scheduler.application.submission import SubmitOptions, submit_run
 from ai_dev_loop.scheduler.application.tick import TickService
+from ai_dev_loop.scheduler.application.token_usage_query import TokenUsageReadService
 from ai_dev_loop.scheduler.domain.cursor_contract import (
     RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND,
     RUN_CURSOR_TURN_EFFECT_KIND,
@@ -1074,7 +1075,17 @@ def test_failed_worker_without_result_stops_owned_descendants_before_native_repl
     monkeypatch.setenv("FAKE_CURSOR_SDK_TREE_MARKERS", str(markers))
     monkeypatch.setenv("FAKE_CURSOR_SDK_SEND_COUNTER", str(send_counter))
     monkeypatch.setenv("FAKE_CODEX_REVIEW_SEQUENCE", "no_findings")
-    run_id, _db, artifacts_root, store, tick = _submit_sdk_run(
+    usage = {
+        "input_tokens": 4820,
+        "output_tokens": 139,
+        "cache_read_tokens": 2560,
+        "cache_write_tokens": 0,
+        "total_tokens": 7519,
+        "reasoning_tokens": 118,
+    }
+    monkeypatch.setenv("FAKE_CURSOR_SDK_STREAM_USAGE_JSON", json.dumps(usage))
+    monkeypatch.setenv("FAKE_CURSOR_SDK_USAGE_JSON", json.dumps(usage))
+    run_id, db, artifacts_root, store, tick = _submit_sdk_run(
         git_repo,
         isolated_xdg,
         monkeypatch,
@@ -1124,6 +1135,23 @@ def test_failed_worker_without_result_stops_owned_descendants_before_native_repl
         ).fetchone()[0]
         reservation = store.get_reservation_for_run(conn, run_id)
     assert recovered == 1 and reservation is None
+    report = TokenUsageReadService(
+        SqliteSchedulerStore.open_readonly(db), artifact_root=artifacts_root
+    ).run_report(run_id)
+    cursor = next(item for item in report.direct.breakdowns if item.provider == "cursor")
+    assert cursor.known_total_tokens == 7519
+    assert cursor.inference_attempts == 1
+    assert cursor.known_attempts == 1
+    assert (
+        len(
+            list(
+                ProtectedArtifactStore(artifacts_root)
+                .run_root(run_id)
+                .glob("usage/observations/*/*.json")
+            )
+        )
+        == 1
+    )
     assert (
         ProtectedArtifactStore(artifacts_root)
         .run_root(run_id)

@@ -59,6 +59,12 @@
     "codexRoutingAutoRetryLimit": { "type": ["integer", "null"], "minimum": 0 },
     "codexRoutingAutoRetryExhausted": { "type": ["boolean", "null"] },
     "codexRoutingFailurePostProbeStatus": { "type": ["string", "null"] },
-    "codexRoutingFailurePostProbeReason": { "type": ["string", "null"] }
+    "codexRoutingFailurePostProbeReason": { "type": ["string", "null"] },
+    "tokenUsage": {
+      "oneOf": [
+        { "$ref": "https://ai-dev-loop.local/schemas/integration-api-usage-shared-v1.json#/$defs/runUsage" },
+        { "type": "null" }
+      ]
+    }
   }
 }

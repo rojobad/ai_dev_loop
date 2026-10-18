@@ -296,8 +296,13 @@ def _install_fake_sdk(root: Path) -> None:
                 def __init__(self, workspace): self.workspace = Path(workspace)
                 @property
                 def status(self):
-                    if (
+                    failure_marker = os.environ.get("FAKE_CURSOR_SDK_STREAM_FAILURE_MARKER", "")
+                    stream_still_failing = (
                         os.environ.get("FAKE_CURSOR_SDK_STREAM_FAILURE") == "1"
+                        and not (failure_marker and Path(failure_marker).is_file())
+                    )
+                    if (
+                        stream_still_failing
                         or os.environ.get("FAKE_CURSOR_SDK_BLOCK_TREE") == "1"
                     ): return ""
                     return os.environ.get("FAKE_CURSOR_SDK_TERMINAL_STATUS", "finished")
@@ -310,9 +315,23 @@ def _install_fake_sdk(root: Path) -> None:
                     prior = target.read_text(encoding="utf-8") if target.is_file() else ""
                     target.write_text(prior + "sdk implementation\\n", encoding="utf-8")
                     yield SimpleNamespace(offset="1", kind="sdk_message", sdk_message=SimpleNamespace(type="status", status="RUNNING"))
+                    stream_usage_sequence = os.environ.get("FAKE_CURSOR_SDK_STREAM_USAGE_SEQUENCE_JSON", "").strip()
+                    stream_usage = os.environ.get("FAKE_CURSOR_SDK_STREAM_USAGE_JSON", "").strip()
+                    usages = json.loads(stream_usage_sequence) if stream_usage_sequence else ([json.loads(stream_usage)] if stream_usage else [])
+                    for index, usage in enumerate(usages, start=2):
+                        yield SimpleNamespace(offset=str(index), kind="sdk_message", sdk_message=SimpleNamespace(type="usage", usage=SimpleNamespace(**usage)))
+                    if os.environ.get("FAKE_CURSOR_SDK_WAIT_FOR_DEADLINE") == "1":
+                        marker = Path(os.environ["FAKE_CURSOR_SDK_DEADLINE_MARKER"])
+                        marker.with_name(marker.name + ".armed").write_text("armed")
+                        while True: time.sleep(0.1)
+                    if os.environ.get("FAKE_CURSOR_SDK_TRIGGER_DEADLINE") == "1":
+                        signal.raise_signal(signal.SIGALRM)
                     if os.environ.get("FAKE_CURSOR_SDK_RATE_LIMIT") == "1":
                         raise RateLimitError()
                     if os.environ.get("FAKE_CURSOR_SDK_STREAM_FAILURE") == "1":
+                        marker = os.environ.get("FAKE_CURSOR_SDK_STREAM_FAILURE_MARKER", "")
+                        if marker:
+                            Path(marker).write_text("failed")
                         raise RuntimeError("synthetic stream transport failure")
                     if os.environ.get("FAKE_CURSOR_SDK_BLOCK_TREE") == "1":
                         _spawn_owned_tree()
@@ -320,12 +339,26 @@ def _install_fake_sdk(root: Path) -> None:
                 def observe(self, after_offset=None):
                     if os.environ.get("FAKE_CURSOR_SDK_REPLAY_SUCCESS") != "1":
                         raise RuntimeError("synthetic replay transport failure")
-                    yield SimpleNamespace(offset="2", kind="sdk_message", sdk_message=SimpleNamespace(type="status", status="FINISHED"))
+                    replay_usage_sequence = os.environ.get("FAKE_CURSOR_SDK_REPLAY_USAGE_SEQUENCE_JSON")
+                    if replay_usage_sequence is not None:
+                        usages = json.loads(replay_usage_sequence)
+                    else:
+                        stream_usage_sequence = os.environ.get("FAKE_CURSOR_SDK_STREAM_USAGE_SEQUENCE_JSON", "").strip()
+                        stream_usage = os.environ.get("FAKE_CURSOR_SDK_STREAM_USAGE_JSON", "").strip()
+                        usages = json.loads(stream_usage_sequence) if stream_usage_sequence else ([json.loads(stream_usage)] if stream_usage else [])
+                    for index, usage in enumerate(usages, start=2):
+                        yield SimpleNamespace(offset=str(index), kind="sdk_message", sdk_message=SimpleNamespace(type="usage", usage=SimpleNamespace(**usage)))
+                    yield SimpleNamespace(offset=str(len(usages) + 2), kind="sdk_message", sdk_message=SimpleNamespace(type="status", status="FINISHED"))
                 def wait(self):
+                    usage_json = os.environ.get("FAKE_CURSOR_SDK_USAGE_JSON", "").strip()
                     return SimpleNamespace(
                         status=os.environ.get("FAKE_CURSOR_SDK_TERMINAL_STATUS", "finished"),
                         result=os.environ.get("FAKE_CURSOR_SDK_TERMINAL_TEXT", "exact fake terminal"),
-                        usage=None,
+                        usage=(
+                            None
+                            if not usage_json
+                            else SimpleNamespace(**json.loads(usage_json))
+                        ),
                     )
 
             class Agent:
@@ -376,7 +409,21 @@ def _install_fake_sdk(root: Path) -> None:
                     if os.environ.get("FAKE_CURSOR_SDK_NATIVE_UNAVAILABLE") == "1":
                         raise RuntimeError("synthetic native observation unavailable")
                     return Run(self.workspace)
-                def close(self): pass
+                def close(self):
+                    marker_value = os.environ.get("FAKE_CURSOR_SDK_DEADLINE_MARKER", "")
+                    if not marker_value:
+                        return
+                    marker = Path(marker_value)
+                    armed = marker.with_name(marker.name + ".armed")
+                    if not armed.is_file():
+                        return
+                    armed.unlink()
+                    marker.with_name(marker.name + ".closing").write_text("closing")
+                    try:
+                        time.sleep(2)
+                    except BaseException:
+                        marker.with_name(marker.name + ".repeated").write_text("repeated")
+                        raise
 
             class CursorClient:
                 @staticmethod

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 from typing import Literal
 
 from ai_dev_loop.integration_api.models import (
@@ -16,6 +17,7 @@ from ai_dev_loop.integration_api.models import (
     IntegrationReviewBudget,
     IntegrationRunInspectData,
     IntegrationRunListItem,
+    IntegrationRunUsage,
     IntegrationSafeNextAction,
     IntegrationSequenceBinding,
 )
@@ -32,6 +34,7 @@ from ai_dev_loop.scheduler.application.review_budget import (
 )
 from ai_dev_loop.scheduler.application.safe_actions import safe_next_action_for_scheduler_state
 from ai_dev_loop.scheduler.application.timeline import _observed_duration_seconds, _timeline_status
+from ai_dev_loop.scheduler.application.token_usage_query import TokenUsageReadService
 from ai_dev_loop.scheduler.domain.state import SchedulerState, SequenceRunBinding
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
@@ -130,6 +133,7 @@ def build_run_inspect_data(
     *,
     submitted_at: str,
     updated_at: str,
+    artifact_root: Path | None = None,
 ) -> IntegrationRunInspectData:
     projection = scheduler_status_projection_from_state(state)
     ledger_reviews_completed = store.count_review_completion_events(conn, state.run_id)
@@ -238,6 +242,11 @@ def build_run_inspect_data(
         else None,
         safe_next_action=safe_action,
         attempt_count=store.count_attempts_for_run(conn, state.run_id),
+        token_usage=IntegrationRunUsage.model_validate(
+            TokenUsageReadService(store, artifact_root=artifact_root)
+            .run_report(state.run_id)
+            .model_dump()
+        ),
         codex_review_retry_failure_kind=routing_failure_kind,
         codex_routing_auto_retry_eligible=(
             projection["codex_routing_auto_retry_eligible"] == "true"

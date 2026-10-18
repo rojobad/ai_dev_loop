@@ -147,6 +147,7 @@ class IntegrationRunReadService:
                     state,
                     submitted_at=str(state.submitted_at),
                     updated_at=str(row["updated_at"]),
+                    artifact_root=self.artifact_root,
                 )
         except SchedulerEngineError as exc:
             raise _map_engine_error(exc) from exc

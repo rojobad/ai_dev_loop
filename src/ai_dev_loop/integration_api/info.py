@@ -21,6 +21,7 @@ def build_integration_info_data() -> IntegrationInfoData:
                 "codexImplementerManualRecovery": True,
                 "dashboard": True,
                 "shortNames": True,
+                "tokenUsage": True,
             },
         }
     )

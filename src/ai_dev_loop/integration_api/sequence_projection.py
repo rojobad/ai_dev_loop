@@ -24,6 +24,7 @@ from ai_dev_loop.integration_api.models import (
     IntegrationSequencePhaseRunItem,
     IntegrationSequencePhaseRunListData,
     IntegrationSequencePhaseSummary,
+    IntegrationSequenceUsage,
 )
 from ai_dev_loop.integration_api.run_projection import collection_page
 from ai_dev_loop.scheduler.application.contracts import (
@@ -35,6 +36,7 @@ from ai_dev_loop.scheduler.application.contracts import (
     SequenceStatusResult,
     scheduler_status_projection_from_state,
 )
+from ai_dev_loop.scheduler.application.token_usage_query import TokenUsageReadService
 from ai_dev_loop.scheduler.domain.checkpoint import SEQUENCE_CHECKPOINT_RESULT_ARTIFACT
 from ai_dev_loop.scheduler.domain.sequence import (
     AWAITING_FINALIZATION_SEQUENCE_STATE_KIND,
@@ -383,6 +385,11 @@ def build_sequence_inspect_data(
             implementer_retry_wait_until=implementer_retry_wait_until,
         ),
         report=report_summary,
+        token_usage=IntegrationSequenceUsage.model_validate(
+            TokenUsageReadService(store, artifact_root=artifact_root)
+            .sequence_report(status_result.sequence_id)
+            .model_dump()
+        ),
         phases=tuple(phases),
     )
 

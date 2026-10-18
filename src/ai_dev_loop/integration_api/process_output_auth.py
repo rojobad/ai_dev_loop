@@ -24,6 +24,7 @@ from ai_dev_loop.scheduler.domain.codex_contract import (
 )
 from ai_dev_loop.scheduler.domain.cursor_contract import (
     CREATE_CHAT_EFFECT_KIND,
+    RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND,
     RUN_CURSOR_TURN_EFFECT_KIND,
     invocation_evidence_rel,
 )
@@ -111,7 +112,11 @@ def authenticate_process_attempt(
                 launch_intent_sha256=launch_intent_sha256,
                 effect_kind=effect_kind,
             )
-        elif effect_kind in {RUN_CURSOR_TURN_EFFECT_KIND, CREATE_CHAT_EFFECT_KIND}:
+        elif effect_kind in {
+            RUN_CURSOR_TURN_EFFECT_KIND,
+            CREATE_CHAT_EFFECT_KIND,
+            RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND,
+        }:
             invocation = verify_cursor_invocation_evidence(
                 run_root,
                 attempt_id=attempt_id,
@@ -183,7 +188,11 @@ def authenticate_process_attempt(
                     expected_dispatch_id=dispatch_id,
                     expected_effect_kind=effect_kind,
                 )
-            elif effect_kind in {RUN_CURSOR_TURN_EFFECT_KIND, CREATE_CHAT_EFFECT_KIND}:
+            elif effect_kind in {
+                RUN_CURSOR_TURN_EFFECT_KIND,
+                CREATE_CHAT_EFFECT_KIND,
+                RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND,
+            }:
                 outcome = load_authenticated_cursor_outcome(
                     run_root,
                     attempt_id=attempt_id,

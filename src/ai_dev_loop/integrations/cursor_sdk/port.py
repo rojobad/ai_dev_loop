@@ -117,12 +117,19 @@ class CursorSdkRunIdentity:
 
 @dataclass(frozen=True)
 class CursorSdkUsage:
-    input_tokens: int
-    output_tokens: int
-    cache_read_tokens: int
-    cache_write_tokens: int
-    total_tokens: int
-    reasoning_tokens: int | None
+    """Untrusted provider counters retained without coercion.
+
+    Strict numeric validation belongs at the usage-observation boundary.  Keeping
+    the SDK values verbatim prevents booleans, strings and fractional values from
+    becoming apparently valid counters before that boundary sees them.
+    """
+
+    input_tokens: object
+    output_tokens: object
+    cache_read_tokens: object
+    cache_write_tokens: object
+    total_tokens: object
+    reasoning_tokens: object
 
 
 @dataclass(frozen=True)

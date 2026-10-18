@@ -995,6 +995,20 @@ def create_fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[st
                         }}
                     )
                 )
+                usage_sequence = os.environ.get(
+                    "FAKE_CODEX_IMPLEMENTER_USAGE_SEQUENCE_JSON", ""
+                ).strip()
+                if usage_sequence:
+                    usage_values = json.loads(usage_sequence)
+                    usage = usage_values[min(counter, len(usage_values) - 1)]
+                    contributions = usage if isinstance(usage, list) else [usage]
+                    for contribution in contributions:
+                        print(
+                            json.dumps(
+                                {{"type": "turn.completed", "usage": contribution}}
+                            ),
+                            flush=True,
+                        )
                 sys.exit(0)
             if mode == "invalid_json":
                 if "resume" not in args:
@@ -1103,6 +1117,18 @@ def create_fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[st
                 )
                 print(json.dumps({{"type": "thread.started", "thread_id": bootstrap_id}}), flush=True)
             print(json.dumps({{"type": "message", "content": "review complete"}}))
+            usage_sequence = os.environ.get(
+                "FAKE_CODEX_REVIEW_USAGE_SEQUENCE_JSON", ""
+            ).strip()
+            if usage_sequence:
+                usage_values = json.loads(usage_sequence)
+                usage = usage_values[min(counter, len(usage_values) - 1)]
+                contributions = usage if isinstance(usage, list) else [usage]
+                for contribution in contributions:
+                    print(
+                        json.dumps({{"type": "turn.completed", "usage": contribution}}),
+                        flush=True,
+                    )
             sys.exit(0)
 
         if len(args) >= 2 and args[0] == "app-server" and args[1] == "--stdio":

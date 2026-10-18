@@ -53,6 +53,10 @@ from ai_dev_loop.scheduler.application.cursor_sdk_journal import (
     authenticate_sdk_recovery_journal,
 )
 from ai_dev_loop.scheduler.application.output_observation import write_cursor_output_observation
+from ai_dev_loop.scheduler.application.token_usage_capture import (
+    CursorUsageEvent,
+    capture_cursor_usage_evidence_safely,
+)
 from ai_dev_loop.scheduler.domain.cursor_contract import (
     CREATE_CHAT_EFFECT_KIND,
     CURSOR_SDK_CAPTURE_SCHEMA_VERSION,
@@ -97,6 +101,15 @@ MAX_CURSOR_SDK_RECONCILIATION_RUNS = 1_000
 class CursorSdkOperationTimeout(BaseException):
     """Dedicated worker deadline that SDK exception translation cannot consume."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        capture_payload: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.capture_payload = {} if capture_payload is None else capture_payload
+
 
 @contextmanager
 def _sdk_operation_deadline(evidence: dict[str, object]) -> Iterator[None]:
@@ -104,9 +117,13 @@ def _sdk_operation_deadline(evidence: dict[str, object]) -> Iterator[None]:
     if timeout_seconds <= 0:
         raise ValueError("Cursor SDK timeout_seconds must be positive")
     previous_handler = signal.getsignal(signal.SIGALRM)
+    capture_payload: dict[str, object] = {}
 
     def deadline_expired(_signum: int, _frame: FrameType | None) -> None:
-        raise CursorSdkOperationTimeout("Cursor SDK operation exceeded its frozen deadline")
+        raise CursorSdkOperationTimeout(
+            "Cursor SDK operation exceeded its frozen deadline",
+            capture_payload=capture_payload,
+        )
 
     signal.signal(signal.SIGALRM, deadline_expired)
     # Repeating delivery also bounds a bridge close that starts while unwinding
@@ -648,6 +665,43 @@ def _run_sdk_create_operation(
         adapter.close()
 
 
+def _cursor_usage_from_envelope(envelope: CursorSdkEnvelope) -> object | None:
+    """Return only an explicit public SDK usage-message payload."""
+
+    payload: object = envelope.payload
+    if not isinstance(payload, dict):
+        return None
+    message = payload.get("sdk_message", payload)
+    if not isinstance(message, dict) or message.get("type") != "usage":
+        return None
+    usage = message.get("usage")
+    return usage if isinstance(usage, dict) else None
+
+
+def _safe_cursor_usage_metadata(usage: object) -> dict[str, object] | None:
+    if not isinstance(usage, dict):
+        return None
+    return {
+        key: value if value is None or isinstance(value, (int, float, bool)) else None
+        for key, value in usage.items()
+        if key
+        in {
+            "input_tokens",
+            "output_tokens",
+            "cache_read_tokens",
+            "cache_write_tokens",
+            "total_tokens",
+            "reasoning_tokens",
+        }
+    }
+
+
+def _cursor_sdk_capture_complete(status: str | None) -> bool:
+    """Return whether a native terminal status proves the usage capture complete."""
+
+    return status is not None and status.lower() == "finished"
+
+
 def _sdk_capture_payload(
     evidence: dict[str, object],
     run_root: Path,
@@ -660,6 +714,7 @@ def _sdk_capture_payload(
     truncated: bool,
     capture_complete: bool,
     terminal: CursorSdkTerminalRun | None = None,
+    stream_usages: tuple[CursorUsageEvent, ...] = (),
     has_completion: bool = False,
 ) -> dict[str, object]:
     iteration = _binding_int(evidence, "iteration")
@@ -676,6 +731,7 @@ def _sdk_capture_payload(
     events_sha = sha256_file(events_path)
     stderr_sha = sha256_file(stderr_path)
     stderr_stored = stderr_path.stat().st_size
+    terminal_usage = asdict(terminal.usage) if terminal is not None and terminal.usage else None
     metadata = {
         "schema_version": CURSOR_SDK_CAPTURE_SCHEMA_VERSION,
         "runtime": "sdk-local",
@@ -693,13 +749,21 @@ def _sdk_capture_payload(
         "stderr_sha256": stderr_sha,
         "stderr_stored_bytes": stderr_stored,
         "stderr_truncated": False,
-        "usage": asdict(terminal.usage) if terminal is not None and terminal.usage else None,
+        "usage": _safe_cursor_usage_metadata(terminal_usage),
+        "stream_usage": [
+            {
+                "offset": item.offset,
+                "ordinal": item.ordinal,
+                "usage": _safe_cursor_usage_metadata(item.usage),
+            }
+            for item in stream_usages
+        ],
         "final_response_path": final_rel if final_sha else None,
         "final_response_format": CURSOR_SDK_TEXT_STREAM_FORMAT if final_sha else None,
         "final_response_sha256": final_sha,
     }
     atomic_write_json(run_root / metadata_rel, metadata, sensitive=True)
-    return {
+    payload: dict[str, object] = {
         "metadata_path": metadata_rel,
         "metadata_sha256": sha256_file(run_root / metadata_rel),
         "events_path": events_rel,
@@ -713,6 +777,26 @@ def _sdk_capture_payload(
         "final_response_path": final_rel if final_sha else None,
         "final_response_sha256": final_sha,
     }
+    if native_run_id is not None:
+        logical_attempt_id = str(evidence.get("source_attempt_id") or attempt_id)
+        logical_dispatch_id = str(evidence.get("source_dispatch_id") or evidence["dispatch_id"])
+        terminal_usages = (terminal_usage,) if terminal_usage is not None else ()
+        usage_result = capture_cursor_usage_evidence_safely(
+            run_root=run_root,
+            run_id=str(evidence["run_id"]),
+            stage="initial" if iteration == 1 else "correction",
+            scheduler_attempt_id=logical_attempt_id,
+            publisher_attempt_id=attempt_id,
+            source_dispatch_id=logical_dispatch_id,
+            native_run_id=native_run_id,
+            source_artifact_path=metadata_rel,
+            source_artifact_sha256=str(payload["metadata_sha256"]),
+            stream_usages=stream_usages,
+            cumulative_usages=terminal_usages,
+            capture_complete=capture_complete and not truncated,
+        )
+        payload.update(usage_result.outcome_fields())
+    return payload
 
 
 def _existing_sdk_capture_payload(
@@ -911,9 +995,19 @@ def _run_sdk_turn_operation(
         )
         stored = 0
         truncated = False
+        stream_usages: list[CursorUsageEvent] = []
 
         def capture(envelope: CursorSdkEnvelope) -> None:
             nonlocal stored, truncated
+            usage = _cursor_usage_from_envelope(envelope)
+            if usage is not None:
+                stream_usages.append(
+                    CursorUsageEvent(
+                        offset=envelope.offset,
+                        ordinal=len(stream_usages) + 1,
+                        usage=usage,
+                    )
+                )
             line = (
                 json.dumps(
                     {
@@ -938,17 +1032,20 @@ def _run_sdk_turn_operation(
 
         try:
             streamed = adapter.stream(agent_id, native_run_id, on_envelope=capture)
-        except CursorSdkOperationTimeout:
-            _sdk_capture_payload(
-                evidence,
-                run_root,
-                attempt_id=attempt_id,
-                agent_id=agent_id,
-                native_run_id=native_run_id,
-                status=None,
-                stored=stored,
-                truncated=truncated,
-                capture_complete=False,
+        except CursorSdkOperationTimeout as exc:
+            exc.capture_payload.update(
+                _sdk_capture_payload(
+                    evidence,
+                    run_root,
+                    attempt_id=attempt_id,
+                    agent_id=agent_id,
+                    native_run_id=native_run_id,
+                    status=None,
+                    stored=stored,
+                    truncated=truncated,
+                    capture_complete=False,
+                    stream_usages=tuple(stream_usages),
+                )
             )
             raise
         if streamed.failure is not None or streamed.value is None:
@@ -962,6 +1059,7 @@ def _run_sdk_turn_operation(
                 stored=stored,
                 truncated=truncated,
                 capture_complete=False,
+                stream_usages=tuple(stream_usages),
             )
             append_sdk_journal(
                 journal,
@@ -1001,8 +1099,9 @@ def _run_sdk_turn_operation(
             status=terminal.status,
             stored=stored,
             truncated=truncated,
-            capture_complete=True,
+            capture_complete=_cursor_sdk_capture_complete(terminal.status),
             terminal=terminal,
+            stream_usages=tuple(stream_usages),
             has_completion=has_completion,
         )
         run_state = _run_state_from_binding(
@@ -1248,9 +1347,19 @@ def _run_sdk_reconciliation_operation(
                         if terminal.status.lower() == "finished" and bool(terminal.text):
                             stored = 0
                             truncated = False
+                            stream_usages: list[CursorUsageEvent] = []
 
                             def capture(envelope: CursorSdkEnvelope) -> None:
                                 nonlocal stored, truncated
+                                usage = _cursor_usage_from_envelope(envelope)
+                                if usage is not None:
+                                    stream_usages.append(
+                                        CursorUsageEvent(
+                                            offset=envelope.offset,
+                                            ordinal=len(stream_usages) + 1,
+                                            usage=usage,
+                                        )
+                                    )
                                 line = (
                                     json.dumps(
                                         {
@@ -1300,8 +1409,9 @@ def _run_sdk_reconciliation_operation(
                                     status=terminal.status,
                                     stored=stored,
                                     truncated=truncated,
-                                    capture_complete=True,
+                                    capture_complete=_cursor_sdk_capture_complete(terminal.status),
                                     terminal=terminal,
+                                    stream_usages=tuple(stream_usages),
                                     has_completion=True,
                                 )
                                 run_state = _run_state_from_binding(
@@ -1535,6 +1645,8 @@ def main(argv: list[str] | None = None) -> int:
                     timed_out=sdk_timed_out,
                 )
             )
+            if isinstance(exc, CursorSdkOperationTimeout):
+                diagnostic_payload.update(exc.capture_payload)
         failure_exit_code = 124 if sdk_timed_out else 1
         return _write_attempt_artifacts(
             stdout_path=stdout_path,

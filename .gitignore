@@ -11,6 +11,10 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
+# SQLite read-only inspection can leave transient WAL shared-memory sidecars.
+*.sqlite3-shm
+*.sqlite3-wal
+
 *.whl
 *.tar.gz
 

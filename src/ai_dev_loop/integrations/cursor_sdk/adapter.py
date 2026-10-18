@@ -43,6 +43,16 @@ _CURSOR_AUTH_ENV_NAMES = frozenset(
         "CURSOR_SDK_BRIDGE_AUTH_TOKEN",
     }
 )
+_SAFE_NUMERIC_USAGE_FIELDS = frozenset(
+    {
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "total_tokens",
+        "reasoning_tokens",
+    }
+)
 
 
 def build_cursor_sdk_client_config(
@@ -538,12 +548,12 @@ class CursorSdkAdapter:
         usage = None
         if usage_value is not None:
             usage = CursorSdkUsage(
-                input_tokens=int(getattr(usage_value, "input_tokens", 0)),
-                output_tokens=int(getattr(usage_value, "output_tokens", 0)),
-                cache_read_tokens=int(getattr(usage_value, "cache_read_tokens", 0)),
-                cache_write_tokens=int(getattr(usage_value, "cache_write_tokens", 0)),
-                total_tokens=int(getattr(usage_value, "total_tokens", 0)),
-                reasoning_tokens=cast(int | None, getattr(usage_value, "reasoning_tokens", None)),
+                input_tokens=getattr(usage_value, "input_tokens", None),
+                output_tokens=getattr(usage_value, "output_tokens", None),
+                cache_read_tokens=getattr(usage_value, "cache_read_tokens", None),
+                cache_write_tokens=getattr(usage_value, "cache_write_tokens", None),
+                total_tokens=getattr(usage_value, "total_tokens", None),
+                reasoning_tokens=getattr(usage_value, "reasoning_tokens", None),
             )
         return CursorSdkTerminalRun(
             agent_id=str(getattr(identity, "agent_id", "")),
@@ -582,6 +592,14 @@ class CursorSdkAdapter:
                 result: dict[str, object] = {}
                 for key, child in item.items():
                     name = str(key)
+                    if name in _SAFE_NUMERIC_USAGE_FIELDS:
+                        # Exact provider counter names are the sole exception to
+                        # the broad secret-token key filter.  Preserve their raw
+                        # scalar type so strict validation can reject malformed
+                        # numeric values; no string or nested value passes it.
+                        if child is None or isinstance(child, (int, float, bool)):
+                            result[name] = child
+                        continue
                     if any(token in name.lower() for token in ("api_key", "token", "secret")):
                         continue
                     result[name] = clean(child, depth=depth + 1)

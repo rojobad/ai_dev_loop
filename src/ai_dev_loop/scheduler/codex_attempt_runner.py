@@ -50,6 +50,7 @@ from ai_dev_loop.scheduler.application.codex_routing_auto_retry import (
     annotate_codex_outcome_routing_evidence,
 )
 from ai_dev_loop.scheduler.application.codex_subprocess_env import sanitize_codex_subprocess_env
+from ai_dev_loop.scheduler.application.token_usage_capture import capture_codex_usage_safely
 from ai_dev_loop.scheduler.domain.codex_contract import (
     BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND,
     CODEX_ATTEMPT_EFFECT_KINDS,
@@ -450,6 +451,19 @@ def _run_codex_review(
         "review_error": review_error,
     }
     atomic_write_json(metadata_path, metadata, sensitive=True)
+    events_sha256 = sha256_file(events_path) if events_path.is_file() else ""
+    usage_capture = capture_codex_usage_safely(
+        run_root=run_root,
+        run_id=run_id,
+        role="reviewer",
+        stage="review",
+        scheduler_attempt_id=attempt_id,
+        publisher_attempt_id=attempt_id,
+        source_dispatch_id=str(evidence["dispatch_id"]),
+        source_artifact_path=events_rel,
+        source_artifact_sha256=events_sha256,
+        capture_complete=not output_truncated,
+    )
 
     outcome: dict[str, object] = {
         "effect_kind": effect_kind,
@@ -464,6 +478,7 @@ def _run_codex_review(
         "stderr_truncated": process.stderr_truncated,
         "review_output_truncated": output_truncated,
         "events_path": events_rel,
+        "events_sha256": events_sha256,
         "stderr_path": stderr_rel,
         "review_result_path": result_rel,
         "review_result_sha256": sha256_file(result_path) if result_path.is_file() else "",
@@ -474,6 +489,7 @@ def _run_codex_review(
         "has_actionable_findings": (
             review_result.has_actionable_findings if review_result is not None else False
         ),
+        **usage_capture.outcome_fields(),
     }
     if review_result is not None and review_result.cursor_fix_prompt:
         outcome["fix_prompt_path"] = fix_prompt_path(review_iteration)
