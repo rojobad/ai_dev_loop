@@ -198,6 +198,8 @@ def test_blocked_run_reports_completed_reviews_from_ledger(tmp_path: Path) -> No
     fix_event = WaitingForCursorFixEnteredEvent(
         run_id=submitted.run_id,
         review_iteration=1,
+        review_result_path="codex/reviews/01.json",
+        review_result_sha256="7" * 64,
         fix_prompt_path="prompts/fixes/01.txt",
         fix_prompt_sha256="b" * 64,
         correction_envelope_path="prompts/fixes/01.execution-envelope.txt",

@@ -1,0 +1,175 @@
+{
+  "additionalProperties": false,
+  "description": "Immutable native observation/cancellation authority for one failed turn.",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "run_id": {
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "source_attempt_id": {
+      "minLength": 1,
+      "title": "Source Attempt Id",
+      "type": "string"
+    },
+    "source_dispatch_id": {
+      "minLength": 1,
+      "title": "Source Dispatch Id",
+      "type": "string"
+    },
+    "turn_kind": {
+      "enum": [
+        "initial",
+        "correction"
+      ],
+      "title": "Turn Kind",
+      "type": "string"
+    },
+    "iteration": {
+      "minimum": 1,
+      "title": "Iteration",
+      "type": "integer"
+    },
+    "conversation_owner_run_id": {
+      "minLength": 1,
+      "title": "Conversation Owner Run Id",
+      "type": "string"
+    },
+    "conversation_key": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Conversation Key",
+      "type": "string"
+    },
+    "agent_id": {
+      "minLength": 1,
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "prompt_path": {
+      "minLength": 1,
+      "title": "Prompt Path",
+      "type": "string"
+    },
+    "prompt_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Prompt Sha256",
+      "type": "string"
+    },
+    "source_journal_path": {
+      "minLength": 1,
+      "title": "Source Journal Path",
+      "type": "string"
+    },
+    "source_journal_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Source Journal Sha256",
+      "type": "string"
+    },
+    "identity_artifact_path": {
+      "minLength": 1,
+      "title": "Identity Artifact Path",
+      "type": "string"
+    },
+    "identity_artifact_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Identity Artifact Sha256",
+      "type": "string"
+    },
+    "source_state": {
+      "additionalProperties": true,
+      "title": "Source State",
+      "type": "object"
+    },
+    "reviews_completed": {
+      "minimum": 0,
+      "title": "Reviews Completed",
+      "type": "integer"
+    },
+    "submitted_max_review_iterations": {
+      "minimum": 1,
+      "title": "Submitted Max Review Iterations",
+      "type": "integer"
+    },
+    "effective_review_ceiling": {
+      "minimum": 1,
+      "title": "Effective Review Ceiling",
+      "type": "integer"
+    },
+    "native_run_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Native Run Id"
+    },
+    "failure_class": {
+      "enum": [
+        "timeout",
+        "capacity",
+        "failure",
+        "worker_lost",
+        "ambiguous"
+      ],
+      "title": "Failure Class",
+      "type": "string"
+    },
+    "retry_after_seconds": {
+      "anyOf": [
+        {
+          "maximum": 86400,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Retry After Seconds"
+    }
+  },
+  "required": [
+    "run_id",
+    "source_attempt_id",
+    "source_dispatch_id",
+    "turn_kind",
+    "iteration",
+    "conversation_owner_run_id",
+    "conversation_key",
+    "agent_id",
+    "prompt_path",
+    "prompt_sha256",
+    "source_journal_path",
+    "source_journal_sha256",
+    "identity_artifact_path",
+    "identity_artifact_sha256",
+    "source_state",
+    "reviews_completed",
+    "submitted_max_review_iterations",
+    "effective_review_ceiling",
+    "failure_class"
+  ],
+  "title": "CursorSdkReconciliationIntentV1",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

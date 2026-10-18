@@ -28,6 +28,11 @@ and loop rules. The supported commands are `scheduler abort <run-id>` and
 - Repeated abort of an aborted run reconciles outstanding cleanup idempotently;
   other terminal outcomes follow the command's conflict policy. Review-budget
   extension is a separate explicit command, not an abort transition.
+- For an SDK send with uncertain native outcome, abort persists first and then
+  uses the exact owner/key/agent plus the pre-send inventory to cancel and confirm
+  every attributable post-baseline native run. Missing or conflicting observation
+  keeps the abort hold and repository reservation; it is never permission to
+  release ownership or dispatch another prompt.
 - A blocked Codex implementer with unsafe identity/evidence and an active
   repository reservation permits explicit abort through the same cancellation
   and ownership checks. Other blocked/terminal runs keep their conflict policy.

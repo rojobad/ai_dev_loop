@@ -1534,6 +1534,8 @@ class CodexWorkflowService:
             fix_event = WaitingForCursorFixEnteredEvent(
                 run_id=run_id,
                 review_iteration=review_iteration,
+                review_result_path=result_path,
+                review_result_sha256=result_sha,
                 fix_prompt_path=fix_path,
                 fix_prompt_sha256=fix_sha,
                 correction_envelope_path=envelope_path,

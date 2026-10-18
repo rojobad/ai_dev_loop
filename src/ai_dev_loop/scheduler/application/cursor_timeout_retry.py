@@ -23,6 +23,7 @@ from ai_dev_loop.scheduler.domain.cursor_contract import (
     RUN_CURSOR_TURN_EFFECT_ID,
     RUN_CURSOR_TURN_EFFECT_KIND,
 )
+from ai_dev_loop.scheduler.domain.cursor_sdk_recovery import CursorSdkReconciliationRecordV1
 from ai_dev_loop.scheduler.domain.events import CursorTimeoutRetryEvent
 from ai_dev_loop.scheduler.domain.state import (
     CursorReadyState,
@@ -31,7 +32,10 @@ from ai_dev_loop.scheduler.domain.state import (
     WaitingUsageLimitState,
 )
 from ai_dev_loop.scheduler.infrastructure.paths import default_artifact_root, default_engine_db_path
-from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
+from ai_dev_loop.scheduler.infrastructure.protected_artifacts import (
+    ProtectedArtifactError,
+    ProtectedArtifactStore,
+)
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 from ai_dev_loop.state import utc_now
 
@@ -131,7 +135,9 @@ class CursorTimeoutRetryService:
         with self.store.begin_immediate() as conn:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
             if isinstance(state.context.cursor, CursorSdkBinding):
-                raise invalid("Cursor SDK timeout recovery is deferred to Phase 25.3")
+                raise invalid(
+                    "Cursor SDK timeout recovery requires completed native-run reconciliation"
+                )
             attempt = self.store.get_attempt_by_id(conn, attempt_id)
             if not isinstance(state, CURSOR_TURN_STATES) or attempt is None or attempt["ingested"]:
                 return TickRunReceipt(run_id=run_id, action="ingest_state_changed")
@@ -162,14 +168,15 @@ class CursorTimeoutRetryService:
         now = self.now()
         with self.store.begin_immediate() as conn:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
-            if isinstance(state.context.cursor, CursorSdkBinding):
-                raise invalid("Cursor SDK timeout recovery is deferred to Phase 25.3")
             self._require_idle(conn, run_id)
             if not isinstance(state, CURSOR_TURN_STATES) or not state.cursor.timeout_attempt_id:
                 raise invalid("Run has no retryable Cursor timeout")
-            binding = timeout_binding(
-                self.store, self.artifacts, conn, run_id, state.cursor.timeout_attempt_id
-            )
+            if isinstance(state.context.cursor, CursorSdkBinding):
+                binding = self._sdk_timeout_binding(state, run_id)
+            else:
+                binding = timeout_binding(
+                    self.store, self.artifacts, conn, run_id, state.cursor.timeout_attempt_id
+                )
             self._check_identity(state, binding)
             pending = conn.execute(
                 "SELECT * FROM scheduler_effects WHERE run_id=? AND status='pending' "
@@ -220,11 +227,42 @@ class CursorTimeoutRetryService:
 
     @staticmethod
     def _check_identity(state: CursorTurnState, binding: dict[str, object]) -> None:
+        if isinstance(state.context.cursor, CursorSdkBinding):
+            if (
+                binding.get("iteration") != state.cursor.iteration
+                or state.cursor.sdk is None
+                or binding.get("agent_id") != state.cursor.sdk.agent_id
+            ):
+                raise invalid("Timeout does not belong to the current Cursor SDK turn")
+            return
         if (
             binding.get("iteration") != state.cursor.iteration
             or binding.get("chat_id") != state.cursor.chat_id
         ):
             raise invalid("Timeout does not belong to the current Cursor turn")
+
+    def _sdk_timeout_binding(
+        self,
+        state: CursorTurnState,
+        run_id: str,
+    ) -> dict[str, object]:
+        path = state.cursor.sdk_reconciliation_path
+        digest = state.cursor.sdk_reconciliation_sha256
+        if not path or not digest or state.cursor.sdk is None:
+            raise invalid("Cursor SDK timeout retry lacks reconciliation evidence")
+        try:
+            payload = self.artifacts.read_verified_bytes(run_id, path, expected_sha256=digest)
+            record = CursorSdkReconciliationRecordV1.model_validate_json(payload)
+        except (OSError, ValueError, ProtectedArtifactError) as exc:
+            raise invalid("Cursor SDK timeout reconciliation evidence is invalid") from exc
+        if (
+            record.run_id != run_id
+            or record.source_attempt_id != state.cursor.timeout_attempt_id
+            or record.outcome != "continuation_ready"
+            or record.agent_id != state.cursor.sdk.agent_id
+        ):
+            raise invalid("Cursor SDK timeout reconciliation does not authorize retry")
+        return {"iteration": state.cursor.iteration, "agent_id": record.agent_id}
 
     def _persist(
         self,

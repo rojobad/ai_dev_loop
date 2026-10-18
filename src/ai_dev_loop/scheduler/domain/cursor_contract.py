@@ -7,12 +7,14 @@ from ai_dev_loop.iterations import iteration_label
 PREFLIGHT_EFFECT_KIND = "cursor.preflight_and_probes"
 CREATE_CHAT_EFFECT_KIND = "cursor.create_chat"
 RUN_CURSOR_TURN_EFFECT_KIND = "cursor.run_turn"
+RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND = "cursor.reconcile_sdk_run"
 INGEST_CURSOR_RESULT_EFFECT_KIND = "cursor.ingest_result"
 NORMALIZE_STAGING_EFFECT_KIND = "cursor.normalize_staging"
 
 PREFLIGHT_EFFECT_ID = "cursor-preflight"
 CREATE_CHAT_EFFECT_ID = "cursor-create-chat"
 RUN_CURSOR_TURN_EFFECT_ID = "cursor-run-turn"
+RECONCILE_CURSOR_SDK_RUN_EFFECT_ID = "cursor-reconcile-sdk-run"
 INGEST_CURSOR_RESULT_EFFECT_ID = "cursor-ingest-result"
 NORMALIZE_STAGING_EFFECT_ID = "cursor-normalize-staging"
 
@@ -58,6 +60,16 @@ def cursor_attempt_final_rel(iteration_number: int, attempt_id: str) -> str:
 
 def cursor_sdk_attempt_journal_rel(attempt_id: str) -> str:
     return f"cursor/sdk-attempts/{attempt_id}/dispatch-journal.jsonl"
+
+
+def cursor_sdk_reconciliation_record_rel(
+    source_attempt_id: str,
+    reconciliation_attempt_id: str | None = None,
+) -> str:
+    directory = f"cursor/sdk-reconciliation/{source_attempt_id}"
+    if reconciliation_attempt_id is None:
+        return f"{directory}/record-v1.json"
+    return f"{directory}/attempts/{reconciliation_attempt_id}/record-v1.json"
 
 
 def cursor_sdk_attempt_events_rel(iteration_number: int, attempt_id: str) -> str:

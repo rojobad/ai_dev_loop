@@ -227,7 +227,7 @@ API 1.10 añade `shortName` a las proyecciones de run, secuencia, fase e intento
 materializado, y `sequenceShortName` donde existe binding de secuencia. Son
 campos aditivos; los esquemas v1 siguen validando fixtures históricos sin esos
 campos. El productor actual siempre devuelve un valor no vacío mediante metadata
-schema 17 o el fallback de solo lectura para schema 16. Los nombres son solo
+schema 17 en adelante o el fallback de solo lectura para schema 16. Los nombres son solo
 presentación: IDs, estado, provider, proyecto y linaje siguen saliendo de campos
 autoritativos.
 

@@ -5,7 +5,7 @@
 `ai_dev_loop dashboard serve --port 8765` sirve el frontend empaquetado y
 `POST /api/dashboard/read` en `127.0.0.1`. La API de integración actual es 1.11 y
 publica `capabilities.dashboard=true` y `capabilities.shortNames=true`. SQLite
-schema 17 almacena los nombres cortos; schema 16 sigue siendo legible mediante
+schema 17 en adelante almacena los nombres cortos; schema 16 sigue siendo legible mediante
 fallback sin migración ni escritura. El lector abre un snapshot validado de
 `engine.sqlite3` en modo solo lectura y usa los artefactos protegidos como autoridad.
 

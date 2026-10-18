@@ -926,6 +926,8 @@ def apply_waiting_for_cursor_fix_entered(
         raise ValueError("event run_id disagrees with state")
     codex = state.codex.model_copy(
         update={
+            "latest_review_result_path": event.review_result_path,
+            "latest_review_result_sha256": event.review_result_sha256,
             "latest_fix_prompt_path": event.fix_prompt_path,
             "latest_fix_prompt_sha256": event.fix_prompt_sha256,
             "latest_correction_envelope_path": event.correction_envelope_path,

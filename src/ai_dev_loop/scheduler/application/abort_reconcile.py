@@ -203,6 +203,7 @@ def reconcile_run_abort_attempts(
     attempt_rows: Sequence[sqlite3.Row],
     now: datetime,
     event_id_factory: Callable[[], str],
+    before_finalize: Callable[[sqlite3.Connection, sqlite3.Row], bool] | None = None,
     emit_stale_events: bool = False,
     stale_rejection_kind: str = "run_aborted",
     stale_safe_summary: str = "attempt result arrived after scheduler abort",
@@ -241,6 +242,9 @@ def reconcile_run_abort_attempts(
             continue
 
         with store.begin_immediate() as conn:
+            if before_finalize is not None and not before_finalize(conn, row):
+                termination_pending = True
+                continue
             status = str(row["status"])
             if status in {
                 ATTEMPT_STATUS_LAUNCHING,

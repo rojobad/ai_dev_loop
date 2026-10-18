@@ -27,6 +27,7 @@ from ai_dev_loop.scheduler.application.contracts import (
 )
 from ai_dev_loop.scheduler.application.safe_actions import safe_next_action_for_scheduler_state
 from ai_dev_loop.scheduler.application.systemd_backend import SystemdUserBackend
+from ai_dev_loop.scheduler.domain.cursor_contract import RUN_CURSOR_TURN_EFFECT_KIND
 from ai_dev_loop.scheduler.domain.events import AbortRequestedEvent, RunAbortedEvent
 from ai_dev_loop.scheduler.domain.reducer import apply_run_aborted
 from ai_dev_loop.scheduler.domain.state import (
@@ -39,6 +40,7 @@ from ai_dev_loop.scheduler.domain.state import (
     BlockedState,
     CheckpointPendingState,
     CursorReadyState,
+    CursorSdkBinding,
     PreflightCompleteState,
     SubmittedState,
     WaitingCodexReviewRetryState,
@@ -51,7 +53,10 @@ from ai_dev_loop.scheduler.infrastructure.paths import (
     default_artifact_root,
     default_engine_db_path,
 )
-from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
+from ai_dev_loop.scheduler.infrastructure.protected_artifacts import (
+    ProtectedArtifactError,
+    ProtectedArtifactStore,
+)
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
 
@@ -265,6 +270,16 @@ class SchedulerAbortService:
                         SchedulerEngineErrorKind.CONFLICT,
                         "scheduler run changed during abort",
                     )
+                from ai_dev_loop.scheduler.application.cursor_sdk_reconciliation import (
+                    request_sdk_reconciliation_abort,
+                )
+
+                request_sdk_reconciliation_abort(
+                    self.store,
+                    conn,
+                    run_id=run_id,
+                    now=now,
+                )
                 hold = self.store.get_checkpoint_reconciliation_hold_row(conn, run_id)
                 if hold is not None and not int(hold["ref_may_have_advanced"]):
                     self.store.release_checkpoint_reconciliation_hold(
@@ -338,6 +353,47 @@ class SchedulerAbortService:
 
         process_action = AbortProcessAction.NONE
         if pending:
+
+            def before_finalize(conn: sqlite3.Connection, attempt: sqlite3.Row) -> bool:
+                state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+                dispatch = self.store.get_effect_by_dispatch_id(
+                    conn,
+                    str(attempt["dispatch_id"]),
+                )
+                sdk_turn = bool(
+                    isinstance(state, AbortedState)
+                    and isinstance(state.context.cursor, CursorSdkBinding)
+                    and dispatch is not None
+                    and str(dispatch["effect_kind"]) == RUN_CURSOR_TURN_EFFECT_KIND
+                )
+                if not sdk_turn:
+                    return True
+                if self._artifacts is None:
+                    return False
+                from ai_dev_loop.scheduler.application.cursor_sdk_reconciliation import (
+                    ensure_aborted_sdk_turn_reconciliation,
+                )
+
+                try:
+                    return ensure_aborted_sdk_turn_reconciliation(
+                        self.store,
+                        self._artifacts,
+                        conn,
+                        run_id=run_id,
+                        attempt=attempt,
+                        now=now,
+                        event_id_factory=self._event_id_factory,
+                    )
+                except (
+                    ProtectedArtifactError,
+                    SchedulerEngineError,
+                    OSError,
+                    ValueError,
+                    TypeError,
+                    KeyError,
+                ):
+                    return False
+
             summary = reconcile_run_abort_attempts(
                 self.store,
                 self.backend,
@@ -345,6 +401,7 @@ class SchedulerAbortService:
                 attempt_rows=pending,
                 now=now,
                 event_id_factory=self._event_id_factory,
+                before_finalize=before_finalize,
                 emit_stale_events=False,
             )
             process_action = summary.process_action

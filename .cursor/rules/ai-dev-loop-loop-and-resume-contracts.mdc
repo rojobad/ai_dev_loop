@@ -36,8 +36,10 @@ existing references; it does not imply a public `resume` command.
   reuse it for fixes and eligible continuation. Missing identity after recorded
   work is not permission to create another chat or session.
 - For Cursor SDK, durable create/send intents and exact agent/native-run bindings
-  precede reliance on work. SDK recovery is explicitly deferred to Phase 25.3;
-  uncertainty retains the reservation and does not authorize redispatch.
+  precede reliance on work. Recovery first proves the owned attempt tree stopped,
+  then reconciles the exact native run with a fresh authenticated client. Unknown
+  or conflicting native ownership retains the reservation and never authorizes
+  speculative redispatch.
 - A frozen Codex implementer is a separate identity from reviewer B. Historical
   contexts without implementer metadata remain Cursor. Standalone runs and manifest v2 sequence leaves launch the
   initial Codex turn and resume the exact authenticated session for corrections.
@@ -81,8 +83,10 @@ existing references; it does not imply a public `resume` command.
 ## Cursor Continuation
 
 The automatic/manual continuation rules below apply to historical Cursor CLI
-bindings. Context v7/v8 SDK failures are provider-specifically ineligible for
-`cursor-retry` and the Cursor branch of `implementer-retry` until Phase 25.3.
+bindings and, after authenticated native-run reconciliation, context v7/v8 SDK
+bindings. SDK continuation retains the original owner/key/agent and uses the
+same scheduler retry limits; native reads or cancellation alone do not authorize
+a new prompt.
 
 - Classify usage limits from protected contemporaneous process evidence, never
   fuzzy `last_error` text. Preserve partial output, prompt, identity, and content
@@ -106,6 +110,12 @@ bindings. Context v7/v8 SDK failures are provider-specifically ineligible for
 - A prior process must be confirmed terminated and the reservation retained.
   Abort, uncertain termination, integrity failures, and create-chat timeouts
   must not be bypassed through the timeout-retry command.
+- Before an SDK retry, compare the durable pre-send inventory with public runs
+  for the exact agent. Adopt only one uniquely attributable run. Replay a known
+  terminal result, or cancel and confirm a known stale nonterminal run, before
+  continuation. Zero/multiple candidates and uncertain create identity remain
+  blocked without a resend. Abort cancels and confirms all attributable
+  post-baseline candidates before ownership can be released.
 - Preserve each attempt's artifacts separately. Do not overwrite prior output,
   rerun admission, or confuse an attempt retry with a completed correction.
 

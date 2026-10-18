@@ -239,7 +239,7 @@ def test_schema_v16_intent_and_initial_recovery_continue_checkpoint_and_final_st
         record = load_implementer_recovery_record(tick.store, tick.artifacts, conn, result.run_id)
         assert tick.store.run_short_name(conn, blocked.run_id) == "Edited retry source"
         assert tick.store.run_short_name(conn, result.run_id) == "Edited retry source"
-    assert SCHEMA_VERSION == 17
+    assert SCHEMA_VERSION == 18
     assert row is not None and row["adopted_at"] is not None and row["cancelled_at"] is None
     assert [attempt.attempt_kind for attempt in lineage.phase_executions[0].attempts] == [
         "planned_run",
@@ -1398,6 +1398,7 @@ def test_v15_migration_adds_sequence_replacement_without_rewriting_runs(
     store.bootstrap()
     with store.begin_immediate() as conn:
         before = int(conn.execute("SELECT COUNT(*) FROM scheduler_runs").fetchone()[0])
+        conn.execute("DROP TABLE scheduler_cursor_sdk_reconciliations")
         conn.execute("DROP TABLE scheduler_planned_run_presentation")
         conn.execute("DROP TABLE scheduler_run_presentation")
         conn.execute("DROP TABLE scheduler_sequence_presentation")

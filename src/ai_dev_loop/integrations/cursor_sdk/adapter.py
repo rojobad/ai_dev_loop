@@ -433,7 +433,10 @@ class CursorSdkAdapter:
                         agent_id=agent_id,
                     )
                 )
-            next_cursor = str(getattr(page, "next_cursor", "")) or None
+            raw_next_cursor = getattr(page, "next_cursor", None)
+            next_cursor = (
+                str(raw_next_cursor).strip() if raw_next_cursor is not None else None
+            ) or None
             return CursorSdkOutcome.success(CursorSdkRunPage(runs=runs, next_cursor=next_cursor))
         except Exception as exc:
             return CursorSdkOutcome.failed(

@@ -27,6 +27,7 @@ from ai_dev_loop.scheduler.application.attempt_envelope import (
 from ai_dev_loop.scheduler.domain.common import payload_sha256
 from ai_dev_loop.scheduler.domain.cursor_contract import (
     CREATE_CHAT_EFFECT_KIND,
+    RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND,
     RUN_CURSOR_TURN_EFFECT_KIND,
     invocation_evidence_rel,
 )
@@ -265,17 +266,20 @@ def verify_pre_execution_cursor_guards(
         if evidence.get("schema_version") != 2:
             raise CursorEvidenceError("Cursor SDK invocation requires evidence schema v2")
         owner = str(evidence.get("conversation_owner_run_id", ""))
-        if owner != run_id or str(evidence.get("conversation_key", "")) != cursor_conversation_key(
-            owner
-        ):
+        if str(evidence.get("conversation_key", "")) != cursor_conversation_key(owner):
             raise CursorEvidenceError("Cursor SDK conversation identity is not run-owned")
+        if owner != run_id and not evidence.get("sdk_successor_recovery_key"):
+            raise CursorEvidenceError("Cursor SDK inherited conversation lacks recovery authority")
         if str(evidence.get("sdk_version", "")) != "1.0.37":
             raise CursorEvidenceError("Cursor SDK invocation version is not frozen")
         if str(evidence.get("sdk_tool_policy", "")) != "scheduler-owned-no-shell":
             raise CursorEvidenceError("Cursor SDK tool policy is not frozen")
-        if evidence.get("timeout_retry_of") or evidence.get("usage_limit_fingerprint_path"):
-            raise CursorEvidenceError("Cursor SDK recovery is deferred to Phase 25.3")
-        if effect_kind == RUN_CURSOR_TURN_EFFECT_KIND and not str(evidence.get("agent_id", "")):
+        if evidence.get("timeout_retry_of") and not evidence.get("sdk_reconciliation_sha256"):
+            raise CursorEvidenceError("Cursor SDK timeout retry lacks reconciliation authority")
+        if effect_kind in {
+            RUN_CURSOR_TURN_EFFECT_KIND,
+            RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND,
+        } and not str(evidence.get("agent_id", "")):
             raise CursorEvidenceError("Cursor SDK turn requires exact agent identity")
     fingerprint_path = evidence.get("usage_limit_fingerprint_path")
     fingerprint_sha = evidence.get("usage_limit_fingerprint_sha256")
@@ -532,7 +536,11 @@ def load_authenticated_cursor_outcome(
     if not isinstance(outcome, dict):
         raise CursorEvidenceError("authenticated stdout outcome must be a JSON object")
     effect_kind = str(outcome.get("effect_kind", ""))
-    if effect_kind not in {CREATE_CHAT_EFFECT_KIND, RUN_CURSOR_TURN_EFFECT_KIND}:
+    if effect_kind not in {
+        CREATE_CHAT_EFFECT_KIND,
+        RUN_CURSOR_TURN_EFFECT_KIND,
+        RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND,
+    }:
         raise CursorEvidenceError("authenticated outcome effect_kind is invalid")
     if expected_effect_kind and effect_kind != expected_effect_kind:
         raise CursorEvidenceError("authenticated outcome effect_kind does not match dispatch")

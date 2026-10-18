@@ -48,13 +48,17 @@ from ai_dev_loop.scheduler.application.cursor_evidence import (
     authenticate_pinned_invocation_evidence,
     verify_pre_execution_cursor_guards,
 )
-from ai_dev_loop.scheduler.application.cursor_sdk_journal import append_sdk_journal
+from ai_dev_loop.scheduler.application.cursor_sdk_journal import (
+    append_sdk_journal,
+    authenticate_sdk_recovery_journal,
+)
 from ai_dev_loop.scheduler.application.output_observation import write_cursor_output_observation
 from ai_dev_loop.scheduler.domain.cursor_contract import (
     CREATE_CHAT_EFFECT_KIND,
     CURSOR_SDK_CAPTURE_SCHEMA_VERSION,
     CURSOR_SDK_EVENT_STREAM_FORMAT,
     CURSOR_SDK_TEXT_STREAM_FORMAT,
+    RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND,
     RUN_CURSOR_TURN_EFFECT_KIND,
     cursor_attempt_events_rel,
     cursor_attempt_final_rel,
@@ -63,9 +67,11 @@ from ai_dev_loop.scheduler.domain.cursor_contract import (
     cursor_sdk_attempt_events_rel,
     cursor_sdk_attempt_journal_rel,
     cursor_sdk_attempt_metadata_rel,
+    cursor_sdk_reconciliation_record_rel,
     git_status_after_cursor_rel,
     git_status_before_cursor_rel,
 )
+from ai_dev_loop.scheduler.domain.cursor_sdk_recovery import CursorSdkReconciliationRecordV1
 from ai_dev_loop.scheduler.domain.effects import CURSOR_ATTEMPT_EFFECT_KINDS
 from ai_dev_loop.scheduler.infrastructure.paths import run_artifact_root
 from ai_dev_loop.state import (
@@ -85,6 +91,7 @@ from ai_dev_loop.state import (
 )
 
 MAX_CURSOR_SDK_EVENT_BYTES = 8 * 1024 * 1024
+MAX_CURSOR_SDK_RECONCILIATION_RUNS = 1_000
 
 
 class CursorSdkOperationTimeout(BaseException):
@@ -456,7 +463,7 @@ def _sdk_selection(evidence: dict[str, object]) -> CursorSdkSection:
 def _sdk_adapter(evidence: dict[str, object]) -> CursorSdkAdapter:
     owner = str(evidence["conversation_owner_run_id"])
     expected_key = str(evidence["conversation_key"])
-    if owner != str(evidence["run_id"]) or cursor_conversation_key(owner) != expected_key:
+    if cursor_conversation_key(owner) != expected_key:
         raise ValueError("Cursor SDK conversation ownership binding is invalid")
     repository_root = Path(str(evidence["repository_root"]))
     config = build_cursor_sdk_client_config(
@@ -836,6 +843,41 @@ def _run_sdk_turn_operation(
             "agent_id": agent_id,
             "prompt_sha256": prompt_sha,
         }
+        baseline_run_ids: list[str] = []
+        next_cursor: str | None = None
+        while True:
+            listed = adapter.list_runs(agent_id, cursor=next_cursor, limit=100)
+            if listed.failure is not None or listed.value is None:
+                return {
+                    "runtime": "sdk-local",
+                    "effect_kind": RUN_CURSOR_TURN_EFFECT_KIND,
+                    "iteration": iteration,
+                    "returncode": 1,
+                    "timed_out": False,
+                    "parse_ok": False,
+                    "has_completion_signal": False,
+                    "failure_kind": "cursor_sdk_preflight_failed",
+                    "sdk_failure": _sdk_failure_payload(listed.failure),
+                    **empty_capture_payload,
+                    **_outcome_identity(evidence),
+                }
+            for native in listed.value.runs:
+                if native.agent_id != agent_id or not native.run_id:
+                    raise ValueError("Cursor SDK run inventory crossed the bound agent")
+                if native.run_id not in baseline_run_ids:
+                    baseline_run_ids.append(native.run_id)
+                if len(baseline_run_ids) > MAX_CURSOR_SDK_RECONCILIATION_RUNS:
+                    raise ValueError("Cursor SDK run inventory exceeded the reconciliation bound")
+            if listed.value.next_cursor is None:
+                break
+            if listed.value.next_cursor == next_cursor:
+                raise ValueError("Cursor SDK run inventory cursor made no progress")
+            next_cursor = listed.value.next_cursor
+        append_sdk_journal(
+            journal,
+            kind="run_inventory_baseline",
+            payload={**base, "run_ids": sorted(baseline_run_ids)},
+        )
         append_sdk_journal(journal, kind="send_intent", payload=base)
         sent = adapter.send(agent_id, prompt)
         if sent.failure is not None or sent.value is None:
@@ -1004,6 +1046,353 @@ def _run_sdk_turn_operation(
         adapter.close()
 
 
+def _list_sdk_runs_for_agent(
+    adapter: CursorSdkAdapter,
+    agent_id: str,
+) -> tuple[list[CursorSdkTerminalRun] | None, CursorSdkFailure | None]:
+    runs: list[CursorSdkTerminalRun] = []
+    seen: set[str] = set()
+    next_cursor: str | None = None
+    while True:
+        listed = adapter.list_runs(agent_id, cursor=next_cursor, limit=100)
+        if listed.failure is not None or listed.value is None:
+            return None, listed.failure
+        for native in listed.value.runs:
+            if native.agent_id != agent_id or not native.run_id:
+                raise ValueError("Cursor SDK reconciliation inventory crossed the bound agent")
+            if native.run_id not in seen:
+                seen.add(native.run_id)
+                runs.append(native)
+            if len(runs) > MAX_CURSOR_SDK_RECONCILIATION_RUNS:
+                raise ValueError("Cursor SDK reconciliation inventory exceeded its bound")
+        if listed.value.next_cursor is None:
+            return runs, None
+        if listed.value.next_cursor == next_cursor:
+            raise ValueError("Cursor SDK reconciliation cursor made no progress")
+        next_cursor = listed.value.next_cursor
+
+
+def _run_sdk_reconciliation(
+    evidence: dict[str, object],
+    run_root: Path,
+    *,
+    attempt_id: str,
+) -> dict[str, object]:
+    with _sdk_operation_deadline(evidence):
+        return _run_sdk_reconciliation_operation(evidence, run_root, attempt_id=attempt_id)
+
+
+def _run_sdk_reconciliation_operation(
+    evidence: dict[str, object],
+    run_root: Path,
+    *,
+    attempt_id: str,
+) -> dict[str, object]:
+    source_attempt_id = str(evidence["source_attempt_id"])
+    source_dispatch_id = str(evidence["source_dispatch_id"])
+    source_journal_rel = str(evidence["source_journal_path"])
+    source_journal_sha = str(evidence["source_journal_sha256"])
+    agent_id = str(evidence["agent_id"])
+    iteration = _binding_int(evidence, "iteration")
+    expected_binding = {
+        "attempt_id": source_attempt_id,
+        "dispatch_id": source_dispatch_id,
+        "conversation_owner_run_id": str(evidence["conversation_owner_run_id"]),
+        "conversation_key": str(evidence["conversation_key"]),
+        "agent_id": agent_id,
+        "prompt_sha256": str(evidence["prompt_sha256"]),
+    }
+    records = authenticate_sdk_recovery_journal(
+        run_root / source_journal_rel,
+        expected_sha256=source_journal_sha,
+        expected_binding=expected_binding,
+    )
+    raw_baseline = records[0].get("run_ids")
+    if not isinstance(raw_baseline, list) or not all(
+        isinstance(item, str) for item in raw_baseline
+    ):
+        raise ValueError("Cursor SDK run inventory baseline is invalid")
+    baseline = tuple(sorted(raw_baseline))
+    native_run_id = str(evidence.get("native_run_id") or "") or None
+    journal_native = next(
+        (
+            str(record.get("native_run_id"))
+            for record in records
+            if record.get("kind") == "native_run_bound" and record.get("native_run_id")
+        ),
+        None,
+    )
+    if native_run_id is not None and journal_native != native_run_id:
+        raise ValueError("Cursor SDK reconciliation native identity disagrees with journal")
+    if native_run_id is None:
+        native_run_id = journal_native
+
+    events_rel = cursor_sdk_attempt_events_rel(iteration, attempt_id)
+    stderr_rel = cursor_attempt_stderr_rel(iteration, attempt_id)
+    before_rel = git_status_before_cursor_rel(iteration, attempt_id)
+    after_rel = git_status_after_cursor_rel(iteration, attempt_id)
+    events_path = run_root / events_rel
+    events_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(events_path, "", sensitive=True)
+    atomic_write_text(run_root / stderr_rel, "", sensitive=True)
+    repository_root = str(evidence["repository_root"])
+    atomic_write_text(run_root / before_rel, capture_git_status(repository_root) + "\n")
+
+    adapter = _sdk_adapter(evidence)
+    initial_status: str | None = None
+    final_status: str | None = None
+    cancellation_requested = False
+    outcome = "native_unavailable"
+    candidate_run_ids: list[str] = []
+    candidate_final_statuses: dict[str, str] = {}
+    abort_requested = evidence.get("abort_requested") is True
+    capture_payload: dict[str, object] = {}
+    try:
+        opened = adapter.open()
+        preflight = adapter.preflight() if opened.failure is None else None
+        resumed = (
+            adapter.resume_agent(agent_id)
+            if preflight is not None and preflight.failure is None
+            else None
+        )
+        if (
+            opened.failure is not None
+            or preflight is None
+            or preflight.failure is not None
+            or resumed is None
+            or resumed.failure is not None
+        ):
+            outcome = "native_unavailable"
+        else:
+            if native_run_id is None:
+                listed, _failure = _list_sdk_runs_for_agent(adapter, agent_id)
+                if listed is None:
+                    outcome = "native_unavailable"
+                else:
+                    candidates = [run for run in listed if run.run_id not in set(baseline)]
+                    candidate_run_ids = [run.run_id for run in candidates]
+                    if not candidates:
+                        outcome = "abort_reconciled" if abort_requested else "ambiguous_missing"
+                    elif len(candidates) != 1:
+                        outcome = "ambiguous_multiple"
+                    else:
+                        native_run_id = candidates[0].run_id
+            else:
+                candidate_run_ids = [native_run_id]
+            if abort_requested and candidate_run_ids:
+                all_stopped = True
+                for candidate_id in candidate_run_ids:
+                    observed = adapter.get_run(agent_id, candidate_id)
+                    if observed.failure is not None or observed.value is None:
+                        all_stopped = False
+                        break
+                    status = observed.value.status.lower()
+                    if status not in {"finished", "failed", "cancelled", "canceled", "error"}:
+                        cancelled = adapter.cancel(agent_id, candidate_id)
+                        cancellation_requested = True
+                        if cancelled.failure is not None:
+                            all_stopped = False
+                            break
+                        confirmed = adapter.get_run(agent_id, candidate_id)
+                        if confirmed.failure is not None or confirmed.value is None:
+                            all_stopped = False
+                            break
+                        if confirmed.value.status.lower() not in {
+                            "finished",
+                            "failed",
+                            "cancelled",
+                            "canceled",
+                            "error",
+                        }:
+                            all_stopped = False
+                            break
+                        status = confirmed.value.status.lower()
+                    candidate_final_statuses[candidate_id] = status
+                outcome = "abort_reconciled" if all_stopped else "native_unavailable"
+            terminal: CursorSdkTerminalRun | None = None
+            if not abort_requested and native_run_id is not None:
+                observed = adapter.get_run(agent_id, native_run_id)
+                if observed.failure is not None or observed.value is None:
+                    outcome = "native_unavailable"
+                else:
+                    terminal = observed.value
+                    outcome = "continuation_ready"
+                    initial_status = terminal.status
+                    status = terminal.status.lower()
+                    if status not in {"finished", "failed", "cancelled", "canceled", "error"}:
+                        cancelled = adapter.cancel(agent_id, native_run_id)
+                        cancellation_requested = True
+                        if cancelled.failure is not None:
+                            terminal = None
+                            outcome = "native_unavailable"
+                        else:
+                            confirmed = adapter.get_run(agent_id, native_run_id)
+                            if confirmed.failure is not None or confirmed.value is None:
+                                terminal = None
+                                outcome = "native_unavailable"
+                            else:
+                                terminal = confirmed.value
+                                status = terminal.status.lower()
+                                if status not in {
+                                    "finished",
+                                    "failed",
+                                    "cancelled",
+                                    "canceled",
+                                    "error",
+                                }:
+                                    terminal = None
+                                    outcome = "native_unavailable"
+                    if terminal is not None:
+                        final_status = terminal.status
+                        candidate_final_statuses[native_run_id] = terminal.status.lower()
+                        if terminal.status.lower() == "finished" and bool(terminal.text):
+                            stored = 0
+                            truncated = False
+
+                            def capture(envelope: CursorSdkEnvelope) -> None:
+                                nonlocal stored, truncated
+                                line = (
+                                    json.dumps(
+                                        {
+                                            "schema_version": CURSOR_SDK_CAPTURE_SCHEMA_VERSION,
+                                            **asdict(envelope),
+                                        },
+                                        sort_keys=True,
+                                        separators=(",", ":"),
+                                    )
+                                    + "\n"
+                                ).encode("utf-8")
+                                if stored + len(line) > MAX_CURSOR_SDK_EVENT_BYTES:
+                                    truncated = True
+                                    return
+                                descriptor = os.open(
+                                    events_path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600
+                                )
+                                try:
+                                    os.write(descriptor, line)
+                                    os.fsync(descriptor)
+                                finally:
+                                    os.close(descriptor)
+                                stored += len(line)
+
+                            replayed = adapter.stream(
+                                agent_id,
+                                native_run_id,
+                                mode="replay",
+                                on_envelope=capture,
+                            )
+                            if replayed.failure is not None or replayed.value is None:
+                                outcome = "native_unavailable"
+                            else:
+                                terminal = replayed.value
+                                final_status = terminal.status
+                                candidate_final_statuses[native_run_id] = terminal.status.lower()
+                                atomic_write_text(
+                                    run_root / after_rel,
+                                    capture_git_status(repository_root) + "\n",
+                                )
+                                capture_payload = _sdk_capture_payload(
+                                    evidence,
+                                    run_root,
+                                    attempt_id=attempt_id,
+                                    agent_id=agent_id,
+                                    native_run_id=native_run_id,
+                                    status=terminal.status,
+                                    stored=stored,
+                                    truncated=truncated,
+                                    capture_complete=True,
+                                    terminal=terminal,
+                                    has_completion=True,
+                                )
+                                run_state = _run_state_from_binding(
+                                    {
+                                        **evidence,
+                                        "cursor_command": "cursor-sdk-local",
+                                        "cursor_output_format": "sdk-ndjson",
+                                    }
+                                )
+                                fingerprint = capture_cursor_output_fingerprint(
+                                    run_state,
+                                    run_root,
+                                    iteration_number=iteration,
+                                    status_text=(run_root / after_rel).read_text(encoding="utf-8"),
+                                    artifact_id=attempt_id,
+                                )
+                                capture_payload.update(
+                                    {
+                                        "after_status_path": after_rel,
+                                        "cursor_output_fingerprint_path": fingerprint.relative_path,
+                                        "cursor_output_fingerprint_sha256": fingerprint.aggregate_sha256,
+                                    }
+                                )
+                                outcome = "terminal_recovered"
+                        elif outcome != "native_unavailable":
+                            outcome = "continuation_ready"
+    finally:
+        adapter.close()
+
+    record = CursorSdkReconciliationRecordV1(
+        run_id=str(evidence["run_id"]),
+        source_attempt_id=source_attempt_id,
+        reconciliation_attempt_id=attempt_id,
+        source_dispatch_id=source_dispatch_id,
+        reconciliation_dispatch_id=str(evidence["dispatch_id"]),
+        conversation_owner_run_id=str(evidence["conversation_owner_run_id"]),
+        conversation_key=str(evidence["conversation_key"]),
+        agent_id=agent_id,
+        prompt_sha256=str(evidence["prompt_sha256"]),
+        source_journal_path=source_journal_rel,
+        source_journal_sha256=source_journal_sha,
+        baseline_run_ids=baseline,
+        candidate_run_ids=tuple(candidate_run_ids),
+        candidate_final_statuses=candidate_final_statuses,
+        native_run_id=native_run_id,
+        initial_native_status=initial_status,
+        final_native_status=final_status,
+        outcome=outcome,  # type: ignore[arg-type]
+        cancellation_requested=cancellation_requested,
+        terminal_response_path=(
+            str(capture_payload.get("final_response_path"))
+            if outcome == "terminal_recovered"
+            else None
+        ),
+        terminal_response_sha256=(
+            str(capture_payload.get("final_response_sha256"))
+            if outcome == "terminal_recovered"
+            else None
+        ),
+        cursor_output_fingerprint_path=(
+            str(capture_payload.get("cursor_output_fingerprint_path"))
+            if outcome == "terminal_recovered"
+            else None
+        ),
+        cursor_output_fingerprint_sha256=(
+            str(capture_payload.get("cursor_output_fingerprint_sha256"))
+            if outcome == "terminal_recovered"
+            else None
+        ),
+    )
+    record_rel = cursor_sdk_reconciliation_record_rel(source_attempt_id, attempt_id)
+    atomic_write_json(run_root / record_rel, record.model_dump(mode="json"), sensitive=True)
+    record_sha = sha256_file(run_root / record_rel)
+    return {
+        "runtime": "sdk-local",
+        "effect_kind": RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND,
+        "iteration": iteration,
+        "agent_id": agent_id,
+        "native_run_id": native_run_id,
+        "returncode": 0,
+        "timed_out": False,
+        "parse_ok": True,
+        "has_completion_signal": True,
+        "reconciliation_outcome": outcome,
+        "reconciliation_record_path": record_rel,
+        "reconciliation_record_sha256": record_sha,
+        **capture_payload,
+        **_outcome_identity(evidence),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Scheduler Cursor attempt runner")
     parser.add_argument("--run-id", required=True)
@@ -1087,7 +1476,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise TypeError("Cursor SDK create returncode must be numeric")
             if sdk_runtime and int(raw_returncode) != 0:
                 exit_code = int(raw_returncode)
-        else:
+        elif effect_kind == RUN_CURSOR_TURN_EFFECT_KIND:
             cursor_outcome = (
                 _run_sdk_turn(evidence, run_root, attempt_id=args.attempt_id)
                 if sdk_runtime
@@ -1113,15 +1502,30 @@ def main(argv: list[str] | None = None) -> int:
                 or cursor_outcome.get("has_completion_signal") is not True
             ):
                 exit_code = 1
+        else:
+            if not sdk_runtime or effect_kind != RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND:
+                raise ValueError("Cursor SDK reconciliation requires the sdk-local runtime")
+            cursor_outcome = _run_sdk_reconciliation(
+                evidence,
+                run_root,
+                attempt_id=args.attempt_id,
+            )
     except (Exception, CursorSdkOperationTimeout) as exc:
         sdk_timed_out = isinstance(exc, CursorSdkOperationTimeout)
         failure_kind = (
             "cursor_chat_create_failed"
             if effect_kind == CREATE_CHAT_EFFECT_KIND
-            else "cursor_turn_execution_failed"
+            else (
+                "cursor_sdk_reconciliation_failed"
+                if effect_kind == RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND
+                else "cursor_turn_execution_failed"
+            )
         )
         diagnostic_payload: dict[str, object] = {"failure_kind": failure_kind}
-        if evidence.get("runtime") == "sdk-local":
+        if (
+            evidence.get("runtime") == "sdk-local"
+            and effect_kind != RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND
+        ):
             diagnostic_payload.update(
                 _sdk_uncertainty_payload(
                     evidence,

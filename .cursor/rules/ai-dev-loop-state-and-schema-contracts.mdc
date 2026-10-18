@@ -82,8 +82,10 @@ and `docs/operacion/estado-artefactos.md`.
   postcondition to actual restart/abort callers. Test convergence after outcomes
   become known as well as safety while outcomes are uncertain.
 - Persist the historical Cursor chat before dispatch, or for SDK persist create
-  intent, exact owner/key/agent binding, send intent and native run binding at
-  their causal barriers. Bind a Codex implementer from authenticated bootstrap
+  intent, exact owner/key/agent binding, the pre-send native inventory, send intent
+  and native run binding at their causal barriers. Reconciliation intent/result
+  and manual successor authority are immutable ledger/artifact relations; bind a
+  Codex implementer from authenticated bootstrap
   evidence and reviewer B independently at first review. Missing/conflicting
   identity must not cause silent creation of replacement agents.
 - Preserve frozen repository identity, reviewed artifacts, and exact prompts

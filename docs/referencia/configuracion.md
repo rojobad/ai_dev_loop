@@ -166,9 +166,14 @@ Las secuencias SDK nuevas usan manifest v4: conservan los `short_name` de v3 y
 exigen `runtime`, `model` y `parameters` completos en cada fase. La definición y
 entrada congeladas son v3 y cada hoja materializa contexto v8. Manifests v1-v3 ya
 aceptados conservan sus hashes y semántica histórica; no se convierten a SDK.
-La recuperación automática y `cursor-retry` para SDK permanecen deshabilitadas
-hasta Phase 25.3. Una creación o envío inciertos retienen la reserva para
-inspección o `scheduler abort`, sin crear otro agente ni reenviar el prompt.
+La recuperación SDK exige primero terminación comprobada del árbol de procesos y
+reconciliación pública del run nativo para el owner/key/agent exacto. Un run
+conocido terminal se reproduce sin otro prompt; uno conocido no terminal se
+cancela y confirma antes de aplicar la política normal de timeout/capacidad. Para
+un envío cuya respuesta se perdió, solo se adopta el único run nuevo respecto al
+inventario pre-envío. Cero o varios candidatos, o una creación cuya identidad no
+puede probarse, retienen la reserva para inspección o `scheduler abort` sin crear
+otro agente ni reenviar el prompt.
 
 El wheel publica el extra opcional `cursor-sdk` con pin exacto a 1.0.37. La
 instalacion base no importa ni instala ese package y conserva lectores/CLI

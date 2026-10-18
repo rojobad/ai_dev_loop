@@ -310,6 +310,12 @@ def authenticate_cursor_publication_for_adoption(
         raise _corrupt("cursor recovery relation disagrees with the sequence replacement")
     if str(row["status"]) == "cancelled":
         raise _conflict("cursor recovery publication was cancelled")
+    if _intent_schema_version(row) == 3:
+        from ai_dev_loop.scheduler.application.cursor_sdk_successor import (
+            authenticate_sdk_successor_for_adoption,
+        )
+
+        return authenticate_sdk_successor_for_adoption(store, artifacts, conn, row)
     if _intent_schema_version(row) == 2:
         return authenticate_correction_publication_for_adoption(store, artifacts, conn, row)
     return authenticate_initial_publication_for_adoption(store, artifacts, conn, row)
@@ -575,6 +581,7 @@ def _cancel_pending_recovery_row(
         CursorInitialRecoveryPublicationIntentV1,
     )
     from ai_dev_loop.scheduler.domain.cursor_recovery_v2 import CursorRecoveryPublicationIntentV2
+    from ai_dev_loop.scheduler.domain.cursor_sdk_recovery import CursorSdkSuccessorIntentV1
 
     raw = str(row["intent_payload"])
     try:
@@ -583,7 +590,13 @@ def _cancel_pending_recovery_row(
         raise _corrupt("cursor recovery publication intent is not valid JSON") from exc
     version = parsed.get("schema_version") if isinstance(parsed, dict) else None
     try:
-        if version == 2:
+        if version == 3:
+            intent_v3 = CursorSdkSuccessorIntentV1.model_validate_json(raw)
+            cancelled_v3 = intent_v3.model_copy(
+                update={"status": "cancelled", "record_sha256": None}
+            )
+            payload = cancelled_v3.canonical_bytes()
+        elif version == 2:
             intent_v2 = CursorRecoveryPublicationIntentV2.model_validate_json(raw)
             cancelled_v2 = intent_v2.model_copy(
                 update={"status": "cancelled", "record_sha256": None}

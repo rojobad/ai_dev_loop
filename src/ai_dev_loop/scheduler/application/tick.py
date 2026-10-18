@@ -256,6 +256,23 @@ class TickService:
                     now_factory=self._now_factory,
                 )
             )
+            from ai_dev_loop.scheduler.application.cursor_sdk_reconciliation import (
+                CursorSdkReconciliationService,
+            )
+
+            sdk_reconciliation = CursorSdkReconciliationService(
+                self.store,
+                self.artifacts,
+                now_factory=self._now_factory,
+                event_id_factory=self._event_id_factory,
+                dispatch_id_factory=self._dispatch_id_factory,
+            )
+            receipts.extend(sdk_reconciliation.ensure_pending_effects())
+            with self.store.begin_read() as conn:
+                for row in self.store.list_cursor_sdk_reconciliations(conn, statuses=("pending",)):
+                    sdk_run_id = str(row["run_id"])
+                    if sdk_run_id not in run_ids:
+                        run_ids.append(sdk_run_id)
 
             for sequence_id in pending_report_sequence_ids:
                 self._reconcile_completion_report_publication(sequence_id)

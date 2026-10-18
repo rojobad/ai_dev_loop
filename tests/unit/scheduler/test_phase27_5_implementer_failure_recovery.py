@@ -220,7 +220,7 @@ def test_current_schema_and_real_cli_initial_recovery_preserve_prompt_identity_a
         "completed",
     )
 
-    assert SCHEMA_VERSION == 17
+    assert SCHEMA_VERSION == 18
     assert completed.codex.implementer_session_id == IMPLEMENTER_ID
     assert completed.codex.reviewer_session_id == REVIEWER_ID
     assert [path.read_bytes() for path in sorted(witness.glob("*.bin"))] == [
@@ -714,6 +714,7 @@ def test_v14_migration_adds_relation_without_rewriting_existing_runs(tmp_path: P
     store.bootstrap()
     with store.begin_immediate() as conn:
         before = conn.execute("SELECT COUNT(*) FROM scheduler_runs").fetchone()[0]
+        conn.execute("DROP TABLE scheduler_cursor_sdk_reconciliations")
         conn.execute("DROP TABLE scheduler_planned_run_presentation")
         conn.execute("DROP TABLE scheduler_run_presentation")
         conn.execute("DROP TABLE scheduler_sequence_presentation")

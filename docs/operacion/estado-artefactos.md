@@ -107,10 +107,14 @@ No existe `recover` publico en el scheduler central. Ante fallos:
   reserva pero no puede ejecutar. Para la hoja vigente de secuencia,
   `scheduler_sequence_implementer_replacements` liga ordinal, generación, entrada
   congelada y adopción; lineage registra `implementer_retry`;
-- para Cursor SDK v7/v8, los retries automáticos, `cursor-retry` e
-  `implementer-retry` permanecen ineligibles hasta Phase 25.3. Un resultado de
-  create/send incierto retiene la reserva y no se redespacha; inspecciona el
-  journal protegido o usa `scheduler abort` explícito;
+- para Cursor SDK v7/v8, el ledger
+  `scheduler_cursor_sdk_reconciliations` y los records protegidos enlazan el
+  intento fallido, journal, owner/key/agent, inventario pre-envío y resultado
+  nativo. Solo una reconciliación exacta habilita el retry automático o manual.
+  `cursor-retry --check/--force` y la rama Cursor de `implementer-retry` conservan
+  agente, reviewer, presupuesto, ordinal y short name. Una creación incierta o
+  cero/varios candidatos retienen la reserva sin redispatch; `scheduler abort`
+  también espera cancelación/confirmación nativa antes de liberar ownership;
 - `scheduler abort` cancela sin borrar artefactos ni cambios staged;
 - para trabajo nuevo tras un run terminal, `scheduler submit` con
   `--short-name`, `--resubmission-id <uuid>`, modelo y razonamiento de review

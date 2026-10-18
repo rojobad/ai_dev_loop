@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import sqlite3
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -46,6 +47,7 @@ from ai_dev_loop.scheduler.domain.cursor_contract import (
     NORMALIZE_STAGING_EFFECT_ID,
     NORMALIZE_STAGING_EFFECT_KIND,
     PREFLIGHT_EFFECT_KIND,
+    RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND,
     RUN_CURSOR_TURN_EFFECT_ID,
     RUN_CURSOR_TURN_EFFECT_KIND,
 )
@@ -126,6 +128,39 @@ class CursorWorkflowService:
         self._dispatch_id_factory = dispatch_id_factory or (lambda: f"fx-{secrets.token_hex(16)}")
         self._timer_id_factory = timer_id_factory or (lambda: f"tmr-{secrets.token_hex(16)}")
         self._preflight_port = preflight_port or DefaultSchedulerPreflightPort()
+
+    def _capacity_wait_is_correction(
+        self,
+        conn: sqlite3.Connection,
+        state: WaitingUsageLimitState,
+    ) -> bool:
+        ordinary_correction = bool(
+            state.codex.latest_correction_envelope_path
+            and state.codex.latest_correction_envelope_sha256
+            and state.cursor.original_prompt_path == state.codex.latest_correction_envelope_path
+            and state.cursor.original_prompt_sha256 == state.codex.latest_correction_envelope_sha256
+        )
+        if ordinary_correction:
+            return True
+        if not isinstance(state.context.cursor, CursorSdkBinding):
+            return False
+        from ai_dev_loop.scheduler.application.cursor_sdk_successor import (
+            authenticate_sdk_successor_authority,
+        )
+
+        authority = authenticate_sdk_successor_authority(
+            self.store,
+            self.artifacts,
+            conn,
+            state.run_id,
+        )
+        return bool(
+            authority is not None
+            and authority.turn_kind == "correction"
+            and authority.iteration == state.cursor.iteration
+            and state.cursor.original_prompt_path == authority.effective_prompt_path
+            and state.cursor.original_prompt_sha256 == authority.effective_prompt_sha256
+        )
 
     def process_run(
         self,
@@ -230,6 +265,15 @@ class CursorWorkflowService:
             ]
             if pending:
                 return None
+            try:
+                correction_capacity = self._capacity_wait_is_correction(conn, state)
+            except (SchedulerEngineError, ProtectedArtifactError, ValidationError) as exc:
+                return self._block_waiting_usage_limit(
+                    run_id,
+                    reason_kind="usage_limit_continuation_guard_failed",
+                    summary=str(exc)[:240],
+                )
+            observed_version = version
 
         with self.store.begin_immediate() as conn:
             commit_now = self._now_factory()
@@ -244,6 +288,8 @@ class CursorWorkflowService:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
             if not isinstance(state, WaitingUsageLimitState):
                 return None
+            if version != observed_version:
+                return TickRunReceipt(run_id=run_id, action="usage_limit_schedule_lost")
             fired_timer = self.store.get_fired_retry_timer_for_run(conn, run_id)
             if fired_timer is None:
                 return None
@@ -263,7 +309,8 @@ class CursorWorkflowService:
                 claimed_run_version=version,
                 now=commit_now,
             )
-            new_state = CursorReadyState(
+            resumed_type = WaitingForCursorFixState if correction_capacity else CursorReadyState
+            new_state = resumed_type(
                 run_id=state.run_id,
                 version=state.version + 1,
                 submitted_at=state.submitted_at,
@@ -680,6 +727,22 @@ class CursorWorkflowService:
             return self._ingest_create_chat(run_id, attempt)
         if effect_kind == RUN_CURSOR_TURN_EFFECT_KIND:
             return self._ingest_cursor_turn(run_id, attempt)
+        if effect_kind == RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND:
+            try:
+                outcome = self._authenticated_outcome(run_id, attempt)
+            except (CursorEvidenceError, ValueError, TypeError, KeyError, OSError):
+                outcome = {}
+            from ai_dev_loop.scheduler.application.cursor_sdk_reconciliation import (
+                CursorSdkReconciliationService,
+            )
+
+            return CursorSdkReconciliationService(
+                self.store,
+                self.artifacts,
+                now_factory=self._now_factory,
+                event_id_factory=self._event_id_factory,
+                dispatch_id_factory=self._dispatch_id_factory,
+            ).ingest(run_id, attempt=attempt, outcome=outcome)
         return None
 
     def _authenticated_outcome(self, run_id: str, attempt: object) -> dict[str, object]:
@@ -1174,25 +1237,88 @@ class CursorWorkflowService:
         dispatch_id = str(attempt["dispatch_id"])  # type: ignore[index]
         failure_kind = str(outcome.get("failure_kind", ""))
         if bool(outcome.get("timed_out")):
-            failure_kind = "cursor_sdk_recovery_deferred"
+            failure_kind = "cursor_sdk_native_run_uncertain"
+        raw_returncode = outcome.get("returncode", 0)
+        explicit_nonzero = (
+            isinstance(raw_returncode, int)
+            and not isinstance(raw_returncode, bool)
+            and raw_returncode != 0
+        ) or (
+            isinstance(raw_returncode, str)
+            and raw_returncode.lstrip("-").isdigit()
+            and int(raw_returncode) != 0
+        )
+        if (
+            not failure_kind
+            and explicit_nonzero
+            and outcome.get("parse_ok") is True
+            and outcome.get("journal_path")
+            and outcome.get("journal_sha256")
+        ):
+            failure_kind = "cursor_sdk_terminal_failed"
         if failure_kind:
-            retain = failure_kind in {
+            recoverable = failure_kind in {
                 "cursor_sdk_send_uncertain",
                 "cursor_sdk_native_run_uncertain",
-                "cursor_sdk_recovery_deferred",
+                "cursor_sdk_worker_lost",
+                "cursor_sdk_terminal_failed",
             }
+            if recoverable:
+                failure = outcome.get("sdk_failure")
+                failure_code = str(failure.get("code", "")) if isinstance(failure, dict) else ""
+                failure_class = (
+                    "timeout"
+                    if bool(outcome.get("timed_out")) or failure_code == "timeout"
+                    else (
+                        "capacity"
+                        if failure_code == "rate_limited"
+                        else (
+                            "worker_lost" if failure_kind == "cursor_sdk_worker_lost" else "failure"
+                        )
+                    )
+                )
+                retry_after: int | None = None
+                if failure_class == "capacity" and isinstance(failure, dict):
+                    raw_retry = failure.get("retry_after")
+                    if isinstance(raw_retry, str) and raw_retry.isdigit():
+                        retry_after = max(1, min(int(raw_retry), 86_400))
+                from ai_dev_loop.scheduler.application.cursor_sdk_reconciliation import (
+                    CursorSdkReconciliationService,
+                )
+
+                try:
+                    return CursorSdkReconciliationService(
+                        self.store,
+                        self.artifacts,
+                        now_factory=self._now_factory,
+                        event_id_factory=self._event_id_factory,
+                        dispatch_id_factory=self._dispatch_id_factory,
+                    ).request(
+                        run_id,
+                        source_attempt_id=attempt_id,
+                        source_dispatch_id=dispatch_id,
+                        outcome=outcome,
+                        failure_class=failure_class,
+                        retry_after_seconds=retry_after,
+                    )
+                except (SchedulerEngineError, ValueError, OSError) as exc:
+                    return self._block_from_ingest(
+                        run_id,
+                        dispatch_id=dispatch_id,
+                        attempt_id=attempt_id,
+                        kind="cursor_turn_blocked",
+                        reason_kind="cursor_sdk_reconciliation_evidence_invalid",
+                        summary=str(exc)[:240],
+                        retain_reservation=True,
+                    )
             return self._block_from_ingest(
                 run_id,
                 dispatch_id=dispatch_id,
                 attempt_id=attempt_id,
                 kind="cursor_turn_blocked",
                 reason_kind=failure_kind,
-                summary=(
-                    "Cursor SDK recovery is deferred; inspect the protected journal and abort"
-                    if retain
-                    else "Cursor SDK in-unit preflight failed before send intent"
-                ),
-                retain_reservation=retain,
+                summary=("Cursor SDK in-unit preflight failed before send intent"),
+                retain_reservation=False,
             )
         iteration = _outcome_int(outcome, "iteration", INITIAL_CURSOR_ITERATION)
         native_run_id = str(outcome.get("native_run_id", ""))
@@ -1205,6 +1331,16 @@ class CursorWorkflowService:
             validate_cursor_turn_outcome_semantics(outcome)
             with self.store.begin_read() as conn:
                 state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+                from ai_dev_loop.scheduler.application.cursor_sdk_successor import (
+                    authenticated_sdk_successor_launch,
+                )
+
+                sdk_recovery = authenticated_sdk_successor_launch(
+                    self.store,
+                    self.artifacts,
+                    conn,
+                    run_id,
+                )
             if not isinstance(state, (CursorReadyState, WaitingForCursorFixState)):
                 raise ValueError("Cursor SDK turn state changed")
             sdk = state.cursor.sdk
@@ -1215,6 +1351,8 @@ class CursorWorkflowService:
                 if isinstance(state, WaitingForCursorFixState)
                 else state.context.plan_prompt.prompt_sha256
             )
+            if sdk_recovery is not None:
+                expected_prompt_sha = sdk_recovery.effective_prompt_sha256
             if not expected_prompt_sha:
                 raise ValueError("Cursor SDK prompt binding is missing")
             agent_id = str(outcome.get("agent_id", ""))
@@ -1237,9 +1375,9 @@ class CursorWorkflowService:
                 },
             )
             if (
-                str(records[1].get("native_run_id", "")) != native_run_id
-                or str(records[2].get("native_run_id", "")) != native_run_id
-                or records[2].get("outcome") != "success"
+                str(records[-2].get("native_run_id", "")) != native_run_id
+                or str(records[-1].get("native_run_id", "")) != native_run_id
+                or records[-1].get("outcome") != "success"
             ):
                 raise ValueError("Cursor SDK native run identity mismatch")
             run_state = run_state_from_scheduler_context(

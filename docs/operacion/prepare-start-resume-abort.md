@@ -51,8 +51,11 @@ auth y catálogo se verifican dentro del intento aislado, no durante submit. Un
 implementer Codex explícito sigue admitiéndose sin ningún runtime Cursor y mantiene
 settings e identidad independientes del reviewer B. Las secuencias SDK requieren
 manifest v4 y materializan contexto v8; las preparaciones históricas no cambian.
-La recuperación SDK se mantiene deliberadamente bloqueada hasta Phase 25.3:
-identidad o envío inciertos conservan la reserva y solo ofrecen inspección o abort.
+La recuperación SDK conserva owner/key/agent y settings congelados. Antes de un
+retry, el scheduler prueba la terminación del intento, reconcilia el run nativo
+exacto y persiste el resultado. Una identidad de creación no comprobable o un
+envío con cero/varios candidatos conserva la reserva y solo ofrece inspección o
+abort; nunca causa un reenvío especulativo.
 
 Para flujos controller A, añade `--controller-session-id "<exact-controller-session-id>"`
 al submit. Los reenvios idempotentes sin A reutilizan runs historicos con la misma

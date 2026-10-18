@@ -54,6 +54,8 @@ CURSOR_TURN_COMPLETED_EVENT_KIND = "cursor_turn_completed"
 CURSOR_TURN_BLOCKED_EVENT_KIND = "cursor_turn_blocked"
 CURSOR_SDK_AGENT_CREATED_EVENT_KIND = "cursor_sdk_agent_created"
 CURSOR_SDK_TURN_COMPLETED_EVENT_KIND = "cursor_sdk_turn_completed"
+CURSOR_SDK_RECONCILIATION_REQUESTED_EVENT_KIND = "cursor_sdk_reconciliation_requested"
+CURSOR_SDK_RECONCILED_EVENT_KIND = "cursor_sdk_reconciled"
 CURSOR_USAGE_LIMIT_DETECTED_EVENT_KIND = "cursor_usage_limit_detected"
 STAGING_COMPLETED_EVENT_KIND = "staging_completed"
 STAGING_BLOCKED_EVENT_KIND = "staging_blocked"
@@ -302,6 +304,32 @@ class ImplementerDispatchBlockedEvent(DomainModel):
         if value != IMPLEMENTER_DISPATCH_BLOCKED_EVENT_KIND:
             raise ValueError("kind must be implementer_dispatch_blocked")
         return value
+
+
+class CursorSdkReconciliationRequestedEvent(DomainModel):
+    kind: Literal["cursor_sdk_reconciliation_requested"] = "cursor_sdk_reconciliation_requested"
+    run_id: NonEmptyStr
+    recovery_key: Sha256Hex
+    source_attempt_id: NonEmptyStr
+    source_dispatch_id: NonEmptyStr
+
+
+class CursorSdkReconciledEvent(DomainModel):
+    kind: Literal["cursor_sdk_reconciled"] = "cursor_sdk_reconciled"
+    run_id: NonEmptyStr
+    recovery_key: Sha256Hex
+    source_attempt_id: NonEmptyStr
+    reconciliation_attempt_id: NonEmptyStr
+    outcome: Literal[
+        "terminal_recovered",
+        "continuation_ready",
+        "ambiguous_missing",
+        "ambiguous_multiple",
+        "native_unavailable",
+        "abort_reconciled",
+    ]
+    record_path: NonEmptyStr
+    record_sha256: Sha256Hex
 
 
 class CursorInitialRecoverySuccessorCreatedEvent(DomainModel):
@@ -913,6 +941,8 @@ class WaitingForCursorFixEnteredEvent(DomainModel):
     kind: str = Field(default=WAITING_FOR_CURSOR_FIX_EVENT_KIND)
     run_id: str
     review_iteration: int
+    review_result_path: NonEmptyStr
+    review_result_sha256: Sha256Hex
     fix_prompt_path: NonEmptyStr
     fix_prompt_sha256: Sha256Hex
     correction_envelope_path: NonEmptyStr
@@ -1193,6 +1223,11 @@ SchedulerEvent = Annotated[
     | Annotated[CursorTurnCompletedEvent, Tag(CURSOR_TURN_COMPLETED_EVENT_KIND)]
     | Annotated[CursorSdkAgentCreatedEvent, Tag(CURSOR_SDK_AGENT_CREATED_EVENT_KIND)]
     | Annotated[CursorSdkTurnCompletedEvent, Tag(CURSOR_SDK_TURN_COMPLETED_EVENT_KIND)]
+    | Annotated[
+        CursorSdkReconciliationRequestedEvent,
+        Tag(CURSOR_SDK_RECONCILIATION_REQUESTED_EVENT_KIND),
+    ]
+    | Annotated[CursorSdkReconciledEvent, Tag(CURSOR_SDK_RECONCILED_EVENT_KIND)]
     | Annotated[CursorTurnBlockedEvent, Tag(CURSOR_TURN_BLOCKED_EVENT_KIND)]
     | Annotated[CursorUsageLimitDetectedEvent, Tag(CURSOR_USAGE_LIMIT_DETECTED_EVENT_KIND)]
     | Annotated[StagingCompletedEvent, Tag(STAGING_COMPLETED_EVENT_KIND)]

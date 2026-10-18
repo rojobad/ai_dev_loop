@@ -340,14 +340,18 @@ ai_dev_loop scheduler cursor-retry <run-id> [--check | --force] [--output text|j
 sigue autorizando solo el reintento de un timeout Cursor ya terminado, con el mismo
 prompt, chat y salida que antes.
 
-En contextos Cursor SDK v7/v8, las tres variantes devuelven ineligible/error sin
-mutar el run: la reconciliación SDK pertenece a Phase 25.3. Un create/send/run
-incierto conserva la reserva y su journal protegido; el operador puede inspeccionar
-con `--check` o terminar la propiedad explícitamente con `scheduler abort`, pero no
-se autoriza un segundo agente ni un reenvío automático.
+En contextos Cursor SDK v7/v8, el scheduler prueba primero la ausencia del árbol
+de procesos y reconcilia el run nativo con un cliente fresco ligado al mismo
+owner/key/agent. Un run terminal conocido se reproduce sin otro envío; uno no
+terminal se cancela y confirma antes de habilitar la política normal de retry. Si
+se perdió la respuesta de `send`, el inventario público posterior se compara con
+el inventario durable anterior: solo un candidato nuevo único se adopta. Cero o
+varios candidatos, un backend no observable o una creación sin identidad exacta
+permanecen bloqueados con la reserva retenida y cero redispatch especulativo.
 
 Con `--check`, el comando es solo lectura: abre el ledger en modo readonly, reconstruye
-la evidencia causal del fallo `cursor_failure` (si existe) y devuelve un recibo JSON
+la evidencia causal del fallo `cursor_failure` (si existe) o autentica el intent y
+record de reconciliación SDK, y devuelve un recibo JSON
 acotado (`evidence_status`, `turn_kind`, `reason_code`, `safe_summary`,
 `sequence_id`, `ordinal`, `recovery_supported`). `recovery_supported` es `true` para
 un turno inicial autenticado, sin reviewer B y sin reviews completadas, y también
@@ -360,7 +364,8 @@ Los artefactos protegidos se resuelven con raíces confinadas existentes; no se
 crean directorios ni se alteran permisos.
 
 Con `--force`, un fallo terminal autenticado de `cursor.run_turn` en un turno inicial
-o una corrección publica un sucesor del mismo chat. En una secuencia, el sucesor
+o una corrección publica un sucesor del mismo chat o, para SDK, del mismo
+owner/key/agent. En una secuencia, el sucesor
 ocupa el mismo ordinal y la misma entrada congelada; no crea otra fase ni reordena
 las entradas. El prompt efectivo es el sobre exacto del intento fallido más una
 nota operativa fija. Una corrección conserva el fix crudo, el reviewer B, la
@@ -379,8 +384,10 @@ congelada y los bytes del acarreo de presupuesto. Abortos, procesos activos,
 holds sin resolver y dueños de worktree en conflicto se rechazan. `scheduler
 sequence abort` cancela un reemplazo pendiente y no materializa fases futuras.
 
-`reason_code` estable (resumen): `authenticated_cursor_failure` (evidencia causal
-autenticada); `insufficient_evidence_history` / `insufficient_evidence_ambiguous_failure`
+`reason_code` estable (resumen): `authenticated_cursor_failure` o
+`authenticated_cursor_sdk_reconciliation` (evidencia causal autenticada);
+`sdk_reconciliation_missing`, `insufficient_evidence_history` /
+`insufficient_evidence_ambiguous_failure`
 / `incomplete_event_history` (historial incompleto o ambiguo); `insufficient_chat_binding`,
 `insufficient_reviewer_binding`, `insufficient_correction_envelope` (faltan enlaces);
 `insufficient_sequence_*` (secuencia/hash/ordinal no verificados); `ineligible_*`
@@ -389,7 +396,7 @@ no autentican). `safe_summary` está acotado y no incluye prompts, parches ni sa
 agentes.
 
 Tras un timeout confirmado de un turno Cursor, el scheduler conserva el mismo run,
-chat, reviewer, prompt e iteracion, incluidos los cambios staged y unstaged. Programa
+chat o agente SDK, reviewer, prompt e iteracion, incluidos los cambios staged y unstaged. Programa
 un nuevo intento a los 30 minutos, con un maximo de tres reintentos automaticos por
 turno. Cada intento conserva sus propios artefactos; no consume una review adicional.
 
@@ -450,8 +457,10 @@ intent durable, lineage `implementer_retry` y transferencia de reserva antes del
 dispatch. Tras aceptación continúa el checkpoint no final ordinario o el staging final.
 
 Para provider Cursor, este comando compartido delega en la misma recuperación
-autenticada de `scheduler cursor-retry --force`; el comando Cursor existente conserva
-su compatibilidad y sus recibos propios.
+autenticada de `scheduler cursor-retry`. En SDK, tanto el timeout sin `--force`
+como el sucesor manual exigen primero el record de reconciliación nativa; el
+sucesor conserva owner/key/agent, reviewer B, presupuesto y short name. El comando
+Cursor existente conserva su compatibilidad y sus recibos propios.
 
 `--force` rechaza timeouts, esperas de capacidad, abortos, terminación incierta,
 identidad no ligada, hojas obsoletas sin relación y evidencia corrupta sin crear

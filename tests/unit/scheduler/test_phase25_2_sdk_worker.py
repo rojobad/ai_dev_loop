@@ -24,6 +24,7 @@ from ai_dev_loop.integrations.cursor_sdk.port import (
     CursorSdkOutcome,
     CursorSdkPreflight,
     CursorSdkRunIdentity,
+    CursorSdkRunPage,
     CursorSdkTerminalRun,
 )
 from ai_dev_loop.iterations import (
@@ -129,6 +130,11 @@ class FakeSdkAdapter:
                 )
             )
         return CursorSdkOutcome.success(CursorSdkRunIdentity(agent_id, NATIVE_RUN_ID))
+
+    def list_runs(self, agent_id: str, *, cursor=None, limit=None):  # type: ignore[no-untyped-def]
+        del cursor, limit
+        assert agent_id == AGENT_ID
+        return CursorSdkOutcome.success(CursorSdkRunPage(runs=(), next_cursor=None))
 
     def stream(self, agent_id: str, run_id: str, *, on_envelope=None, **kwargs):  # type: ignore[no-untyped-def]
         del kwargs
@@ -282,11 +288,18 @@ def test_send_intent_and_native_id_precede_bounded_terminal_evidence(
 
     def assert_send_intent_is_durable() -> None:
         records = [json.loads(line) for line in journal.read_text().splitlines()]
-        assert [item["kind"] for item in records] == ["send_intent"]
+        assert [item["kind"] for item in records] == [
+            "run_inventory_baseline",
+            "send_intent",
+        ]
 
     def assert_native_run_binding_is_durable() -> None:
         records = [json.loads(line) for line in journal.read_text().splitlines()]
-        assert [item["kind"] for item in records] == ["send_intent", "native_run_bound"]
+        assert [item["kind"] for item in records] == [
+            "run_inventory_baseline",
+            "send_intent",
+            "native_run_bound",
+        ]
         assert records[-1]["native_run_id"] == NATIVE_RUN_ID
 
     adapter.before_send = assert_send_intent_is_durable
@@ -295,8 +308,13 @@ def test_send_intent_and_native_id_precede_bounded_terminal_evidence(
     records = [
         json.loads(line) for line in (run_root / outcome["journal_path"]).read_text().splitlines()
     ]
-    assert [item["kind"] for item in records] == ["send_intent", "native_run_bound", "terminal"]
-    assert records[1]["native_run_id"] == NATIVE_RUN_ID == outcome["native_run_id"]
+    assert [item["kind"] for item in records] == [
+        "run_inventory_baseline",
+        "send_intent",
+        "native_run_bound",
+        "terminal",
+    ]
+    assert records[2]["native_run_id"] == NATIVE_RUN_ID == outcome["native_run_id"]
     assert (run_root / outcome["events_path"]).read_text().count("partial") == 1
     assert (run_root / outcome["final_response_path"]).read_text() == "exact terminal"
     metadata = json.loads((run_root / outcome["metadata_path"]).read_text(encoding="utf-8"))
@@ -352,7 +370,11 @@ def test_lost_create_and_send_results_are_terminal_uncertainty(monkeypatch, tmp_
         json.loads(line)
         for line in (run_root / send_outcome["journal_path"]).read_text().splitlines()
     ]
-    assert [record["kind"] for record in send_records] == ["send_intent", "terminal"]
+    assert [record["kind"] for record in send_records] == [
+        "run_inventory_baseline",
+        "send_intent",
+        "terminal",
+    ]
     assert send_outcome["failure_kind"] == "cursor_sdk_send_uncertain"
     assert send_outcome["events_stored_bytes"] == 0
     assert send_outcome["stderr_stored_bytes"] == 0

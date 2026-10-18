@@ -211,13 +211,26 @@ def _install_fake_sdk(root: Path) -> None:
             from types import SimpleNamespace
             __version__ = "1.0.37"
 
+            class RateLimitError(Exception):
+                def __init__(self):
+                    super().__init__("synthetic rate limit")
+                    self.code = "rate_limited"
+                    self.retry_after = "1"
+
+            errors = SimpleNamespace(RateLimitError=RateLimitError)
+
             def _latest_journal_kinds():
                 root = os.environ.get("FAKE_CURSOR_SDK_RUN_ROOT", "")
                 if not root:
                     return []
                 paths = list((Path(root) / "cursor/sdk-attempts").glob("*/dispatch-journal.jsonl"))
-                latest = max(paths, key=lambda item: item.stat().st_mtime_ns)
-                return [json.loads(line)["kind"] for line in latest.read_text().splitlines()]
+                journals = [
+                    (path, [json.loads(line)["kind"] for line in path.read_text().splitlines()])
+                    for path in paths
+                ]
+                active = [item for item in journals if "terminal" not in item[1]]
+                latest = max(active or journals, key=lambda item: item[0].stat().st_mtime_ns)
+                return latest[1]
 
             def _turn_identity_is_persisted():
                 identity = os.environ.get("FAKE_CURSOR_SDK_IDENTITY_PATH", "")
@@ -258,6 +271,15 @@ def _install_fake_sdk(root: Path) -> None:
                     stderr=subprocess.DEVNULL,
                 )
 
+            def _block_reconciliation():
+                if os.environ.get("FAKE_CURSOR_SDK_BLOCK_RECONCILIATION") != "1":
+                    return
+                root = Path(os.environ["FAKE_CURSOR_SDK_TREE_MARKERS"])
+                _spawn_owned_tree()
+                root.mkdir(parents=True, exist_ok=True)
+                (root / "reconciliation.ready").write_text("ready")
+                while True: time.sleep(0.1)
+
             class Options:
                 def __init__(self, **kwargs): self.__dict__.update(kwargs)
             LocalAgentOptions = LocalAgentStoreConfig = SandboxOptions = Options
@@ -272,18 +294,33 @@ def _install_fake_sdk(root: Path) -> None:
                 id = "run-019abc00-1111-4222-8333-555555555555"
                 agent_id = "019abc00-1111-4222-8333-444444444444"
                 def __init__(self, workspace): self.workspace = Path(workspace)
+                @property
+                def status(self):
+                    if (
+                        os.environ.get("FAKE_CURSOR_SDK_STREAM_FAILURE") == "1"
+                        or os.environ.get("FAKE_CURSOR_SDK_BLOCK_TREE") == "1"
+                    ): return ""
+                    return os.environ.get("FAKE_CURSOR_SDK_TERMINAL_STATUS", "finished")
+                @property
+                def result(self): return os.environ.get("FAKE_CURSOR_SDK_TERMINAL_TEXT", "exact fake terminal")
                 def events(self):
                     if os.environ.get("FAKE_CURSOR_SDK_RUN_ROOT"):
-                        assert _latest_journal_kinds() == ["send_intent", "native_run_bound"]
+                        assert _latest_journal_kinds() == ["run_inventory_baseline", "send_intent", "native_run_bound"]
                     target = self.workspace / "tracked.txt"
                     prior = target.read_text(encoding="utf-8") if target.is_file() else ""
                     target.write_text(prior + "sdk implementation\\n", encoding="utf-8")
                     yield SimpleNamespace(offset="1", kind="sdk_message", sdk_message=SimpleNamespace(type="status", status="RUNNING"))
+                    if os.environ.get("FAKE_CURSOR_SDK_RATE_LIMIT") == "1":
+                        raise RateLimitError()
                     if os.environ.get("FAKE_CURSOR_SDK_STREAM_FAILURE") == "1":
                         raise RuntimeError("synthetic stream transport failure")
                     if os.environ.get("FAKE_CURSOR_SDK_BLOCK_TREE") == "1":
                         _spawn_owned_tree()
                         while True: time.sleep(0.1)
+                def observe(self, after_offset=None):
+                    if os.environ.get("FAKE_CURSOR_SDK_REPLAY_SUCCESS") != "1":
+                        raise RuntimeError("synthetic replay transport failure")
+                    yield SimpleNamespace(offset="2", kind="sdk_message", sdk_message=SimpleNamespace(type="status", status="FINISHED"))
                 def wait(self):
                     return SimpleNamespace(
                         status=os.environ.get("FAKE_CURSOR_SDK_TERMINAL_STATUS", "finished"),
@@ -303,7 +340,7 @@ def _install_fake_sdk(root: Path) -> None:
                     identity = os.environ.get("FAKE_CURSOR_SDK_IDENTITY_PATH", "")
                     if identity:
                         assert Path(identity).is_file()
-                        assert _latest_journal_kinds() == ["send_intent"]
+                        assert _latest_journal_kinds() == ["run_inventory_baseline", "send_intent"]
                     if os.environ.get("FAKE_CURSOR_SDK_SEND_UNCERTAIN") == "1":
                         raise RuntimeError("synthetic send result loss")
                     return Run(self.workspace)
@@ -331,6 +368,14 @@ def _install_fake_sdk(root: Path) -> None:
                         raise RuntimeError("synthetic create result loss")
                     return Agent(options.local.cwd)
                 def resume_agent(self, agent_id, options): return Agent(options.local.cwd)
+                def list_runs(self, agent_id, **kwargs):
+                    class Page(list): next_cursor = None
+                    return Page()
+                def get_run(self, run_id, options):
+                    _block_reconciliation()
+                    if os.environ.get("FAKE_CURSOR_SDK_NATIVE_UNAVAILABLE") == "1":
+                        raise RuntimeError("synthetic native observation unavailable")
+                    return Run(self.workspace)
                 def close(self): pass
 
             class CursorClient:
@@ -517,8 +562,8 @@ def test_sdk_initial_and_correction_reach_acceptance_with_durable_exact_identity
     ("failure_env", "expected_reason", "expected_attempts"),
     [
         ("FAKE_CURSOR_SDK_CREATE_UNCERTAIN", "cursor_sdk_create_uncertain", 1),
-        ("FAKE_CURSOR_SDK_SEND_UNCERTAIN", "cursor_sdk_send_uncertain", 2),
-        ("FAKE_CURSOR_SDK_STREAM_FAILURE", "cursor_sdk_native_run_uncertain", 2),
+        ("FAKE_CURSOR_SDK_SEND_UNCERTAIN", "cursor_sdk_ambiguous_missing", 3),
+        ("FAKE_CURSOR_SDK_STREAM_FAILURE", "cursor_sdk_reconciliation_failed", 3),
     ],
 )
 def test_sdk_lost_identity_result_holds_reservation_and_rejects_recovery(
@@ -608,11 +653,11 @@ def test_sdk_lost_identity_result_holds_reservation_and_rejects_recovery(
     actual_sends = send_counter.read_text(encoding="utf-8") if send_counter.is_file() else "0"
     assert actual_sends == expected_sends
     check = scheduler_cursor_recovery_check(run_id, db_path=db, artifact_root=artifacts_root)
-    assert check.reason_code == "cursor_sdk_recovery_deferred"
+    assert check.reason_code == "ineligible_block_reason"
     assert check.recovery_supported is False
-    with pytest.raises(SchedulerEngineError, match="deferred to Phase 25.3"):
+    with pytest.raises(SchedulerEngineError, match="no retryable Cursor timeout"):
         scheduler_implementer_retry(run_id, db_path=db)
-    with pytest.raises(SchedulerEngineError, match="deferred to Phase 25.3"):
+    with pytest.raises(SchedulerEngineError, match="requires a cursor_failure block"):
         scheduler_implementer_retry(run_id, db_path=db, force=True)
     if failure_env in {"FAKE_CURSOR_SDK_SEND_UNCERTAIN", "FAKE_CURSOR_SDK_STREAM_FAILURE"}:
         assert turn_row is not None
@@ -805,7 +850,7 @@ def test_sdk_timeout_stops_real_owned_bridge_and_tool_tree_without_redispatch(
             break
         time.sleep(0.02)
     assert state is not None and state.kind == "blocked"
-    assert state.block_reason_kind == "cursor_sdk_recovery_deferred"
+    assert state.block_reason_kind == "cursor_sdk_reconciliation_failed"
     _wait_for_path(markers / "tree.ready")
     _wait_for_path(markers / "bridge.stopped")
     _wait_for_path(markers / "tool.stopped")
@@ -821,7 +866,7 @@ def test_sdk_timeout_stops_real_owned_bridge_and_tool_tree_without_redispatch(
         attempts_after = conn.execute(
             "SELECT COUNT(*) FROM scheduler_attempts WHERE run_id=?", (run_id,)
         ).fetchone()[0]
-    assert attempts_after == attempts_before == 2
+    assert attempts_after == attempts_before == 3
     assert reservation is not None and reservation["status"] == "active"
 
 
@@ -1004,7 +1049,7 @@ def test_sdk_completed_result_waits_for_proved_process_tree_termination(
     assert reservation is not None and reservation["status"] == "active"
     assert downstream == 0
     check = scheduler_cursor_recovery_check(run_id, db_path=db, artifact_root=artifacts_root)
-    assert check.reason_code == "cursor_sdk_recovery_deferred"
+    assert check.reason_code == "ineligible_not_blocked"
     assert check.recovery_supported is False
 
     aborted = scheduler_abort_run(

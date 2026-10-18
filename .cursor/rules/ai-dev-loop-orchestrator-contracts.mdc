@@ -84,8 +84,10 @@ These contracts preserve the product's safety model across implementation phases
 - Persist CLI chat binding in `cursor/chat.json`, or SDK owner/key/agent binding in
   `cursor/sdk-identity.json`, before relying on implementation work. Persist SDK
   send intent before inference and the returned native run ID immediately.
-- Reuse the stored chat/agent on later turns. SDK retry/reconciliation remains
-  provider-specifically disabled until its approved recovery phase.
+- Reuse the stored chat/agent on later turns. SDK retry/reconciliation requires
+  proved owned-process termination plus authenticated exact-native observation,
+  cancellation/terminal confirmation, and durable scheduler authorization.
+  Ambiguous create/send evidence must not create an agent or resend a prompt.
 - Pass CLI prompts as exact positional arguments without shell interpolation. Send
   SDK prompts through the typed adapter with the exact authenticated digest.
 - Use CLI `stream-json` or bounded SDK NDJSON envelopes for auditability. Keep

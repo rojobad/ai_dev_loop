@@ -553,6 +553,12 @@ CURSOR_SDK_RESERVATION_HOLD_BLOCK_KINDS = frozenset(
         "cursor_sdk_native_run_uncertain",
         "cursor_sdk_recovery_deferred",
         "cursor_sdk_termination_uncertain",
+        "cursor_sdk_reconciliation_failed",
+        "cursor_sdk_reconciliation_evidence_invalid",
+        "cursor_sdk_ambiguous_missing",
+        "cursor_sdk_ambiguous_multiple",
+        "cursor_sdk_native_unavailable",
+        "cursor_failure",
     }
 )
 
@@ -876,6 +882,45 @@ class CursorSdkRuntimeBinding(DomainModel):
         return value
 
 
+class CursorSdkRecoveryPending(DomainModel):
+    """Durable fence between a failed SDK worker and native reconciliation."""
+
+    schema_version: Literal[1] = 1
+    recovery_key: Sha256Hex
+    source_attempt_id: NonEmptyStr
+    source_dispatch_id: NonEmptyStr
+    turn_kind: Literal["initial", "correction"]
+    prompt_path: NonEmptyStr
+    prompt_sha256: Sha256Hex
+    source_journal_path: NonEmptyStr
+    source_journal_sha256: Sha256Hex
+    native_run_id: NonEmptyStr | None = None
+    failure_class: Literal["timeout", "capacity", "failure", "worker_lost", "ambiguous"]
+    retry_after_seconds: int | None = Field(default=None, ge=1, le=86_400)
+
+    @field_validator("native_run_id")
+    @classmethod
+    def valid_pending_native_run_id(cls, value: str | None) -> str | None:
+        if value is not None and not _CURSOR_SDK_RUN_ID.fullmatch(value):
+            raise ValueError("native_run_id must be an exact Cursor SDK run identity")
+        return value
+
+    @field_validator("retry_after_seconds", mode="before")
+    @classmethod
+    def strict_retry_after(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("retry_after_seconds must be a JSON integer")
+        return value
+
+    @model_validator(mode="after")
+    def retry_after_requires_capacity(self) -> CursorSdkRecoveryPending:
+        if self.retry_after_seconds is not None and self.failure_class != "capacity":
+            raise ValueError("retry_after_seconds requires capacity failure")
+        return self
+
+
 class CursorWorkflowCheckpoint(DomainModel):
     """Durable cursor/staging checkpoint carried across Phase 17.4 states."""
 
@@ -897,6 +942,9 @@ class CursorWorkflowCheckpoint(DomainModel):
     timeout_attempt_id: NonEmptyStr | None = None
     timeout_automatic_retries: int = Field(default=0, ge=0, le=3)
     sdk: CursorSdkRuntimeBinding | None = None
+    sdk_recovery_pending: CursorSdkRecoveryPending | None = None
+    sdk_reconciliation_path: NonEmptyStr | None = None
+    sdk_reconciliation_sha256: Sha256Hex | None = None
 
     @field_validator("iteration")
     @classmethod
@@ -913,7 +961,20 @@ class CursorWorkflowCheckpoint(DomainModel):
         data = handler(self)
         if self.sdk is None:
             data.pop("sdk", None)
+        if self.sdk_recovery_pending is None:
+            data.pop("sdk_recovery_pending", None)
+        if self.sdk_reconciliation_path is None:
+            data.pop("sdk_reconciliation_path", None)
+            data.pop("sdk_reconciliation_sha256", None)
         return data
+
+    @model_validator(mode="after")
+    def sdk_recovery_bindings(self) -> CursorWorkflowCheckpoint:
+        if bool(self.sdk_reconciliation_path) != bool(self.sdk_reconciliation_sha256):
+            raise ValueError("SDK reconciliation path and digest must appear together")
+        if self.sdk_recovery_pending is not None and self.sdk is None:
+            raise ValueError("SDK reconciliation requires an exact SDK identity")
+        return self
 
 
 def _schema_version_is_four(value: int) -> int:
@@ -993,7 +1054,15 @@ class WaitingUsageLimitState(SchedulerRunBase):
     @model_validator(mode="after")
     def usage_limit_fields_required(self) -> WaitingUsageLimitState:
         if isinstance(self.context.cursor, CursorSdkBinding):
-            raise ValueError("Cursor SDK recovery is deferred to Phase 25.3")
+            if self.cursor.sdk is None:
+                raise ValueError("Cursor SDK usage wait requires exact SDK identity")
+            if not self.cursor.wait_until:
+                raise ValueError("Cursor SDK usage wait requires wait_until")
+            if not self.cursor.original_prompt_path or not self.cursor.original_prompt_sha256:
+                raise ValueError("Cursor SDK usage wait requires exact prompt binding")
+            if not self.cursor.sdk_reconciliation_path or not self.cursor.sdk_reconciliation_sha256:
+                raise ValueError("Cursor SDK usage wait requires reconciliation evidence")
+            return self
         if not self.cursor.chat_id:
             raise ValueError("waiting_usage_limit requires chat_id")
         if not self.cursor.wait_until:

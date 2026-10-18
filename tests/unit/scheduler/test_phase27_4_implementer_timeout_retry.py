@@ -1132,11 +1132,13 @@ def test_sequence_timeout_remains_the_same_current_leaf_and_projects_retry(
     scheduler_paths: dict[str, Path],
 ) -> None:
     payload = {
-        "schema_version": 2,
+        "schema_version": 3,
         "name": "timeout-current-leaf",
+        "short_name": "Timeout current leaf",
         "phases": [
             {
                 "name": "phase-1",
+                "short_name": "Timeout phase one",
                 "plan_path": "docs/plans/sample-plan.md",
                 "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
                 "implementer": {
@@ -1153,6 +1155,7 @@ def test_sequence_timeout_remains_the_same_current_leaf_and_projects_retry(
             },
             {
                 "name": "phase-2",
+                "short_name": "Timeout phase two",
                 "plan_path": "docs/plans/sample-plan.md",
                 "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
                 "codex": {
