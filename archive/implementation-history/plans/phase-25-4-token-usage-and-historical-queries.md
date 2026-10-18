@@ -53,6 +53,58 @@ not validate its cache semantics. Confirm supported fields against official
 Codex documentation and the installed CLI's public event contract/fixtures before
 normalization. A repository test fake is not evidence of real field semantics.
 
+## Plan-Owner Decision 2026-10-18 — F-06 Deferred Residual Risk
+
+The plan owner (Rodrigo Badia) decided on 2026-10-18 05:15 BOT (UTC-4) to accept
+and defer finding F-06 ("Mandatory acceptance prerequisites remain unavailable")
+of the aborted 25.4 run as **accepted residual risk**. The following external
+prerequisites are explicitly **out of this slice's acceptance gate**:
+
+- **D-01 (U-04 historical tokens):** genuine pre-Phase-25 historical ledger/
+  artifact captures containing token-bearing `turn.completed.usage` for both Codex
+  roles (implementer and reviewer) with authenticated provenance/hash manifest.
+  No such bundle exists in the checkout and none may be fabricated, generated with
+  Phase 25.4 code or captured live.
+- **D-02 (U-05 frontend gate):** Dashboard frontend typecheck/Vitest/browser
+  validation that needs Node/npm, which is not provisioned on this workstation.
+  Do not install Node/npm or any toolchain.
+
+Reviewers and the implementer must not block acceptance, raise findings or fail
+`tests_status` solely because D-01 or D-02 are unavailable. Record them in the
+findings file under a "Deferred residual risk (plan owner 2026-10-18)" heading
+with status `deferred`, as the not-executed commands with their reason. A review
+that otherwise finds no actionable defect should use the accepted-with-residual-
+risk outcome rather than a blocking finding for D-01/D-02.
+
+Everything else stays mandatory. Acceptance relies on the available checks: the
+focused regression tests in Validation, the existing genuine historical fixtures
+(for example `tests/fixtures/phase21_4_pre_21_4_historical`, Phase 27/28 fixtures)
+proving runtime-independent historical reads with unknown usage where counters
+are absent, the authenticated projection path tests, the Python Integration API/
+Dashboard HTTP compatibility tests, probes, `ruff format --check`, `ruff check`,
+`mypy`, `mkdocs build --strict` and `git diff --check`. Real code defects found
+by review remain blocking as usual. This deferral does not waive any other U-01–
+U-05 behaviour and does not authorize new fallbacks or invented authority.
+
+## Carryover From The Aborted 25.4 Run
+
+The aborted run `ai-dev-loop-implementer-recovery-20261018T025518822830Z-6b361d2b`
+(7/7 reviews, only F-06 left open) produced the 25.4 implementation on top of
+the accepted 25.3 checkpoint `50bfed0`. It is preserved as an operator-provided,
+read-only input outside the repository:
+
+- Patch: `/home/rojobad/Projects/ai_dev_loop_carryover/phase-25-4/phase-25-4-preserved-staged.patch`
+- SHA-256: `2a5e703cd52eff2445a00112de4bdbf980df97fd2c54bbc93bff1494653e7632`
+- Applying it with `git apply --index` on `50bfed0` reproduces index tree
+  `a0a9c6ac798007c71e9055ea84812390057ef1dc` (40 files, +4557/−39).
+
+Start by verifying the hash and applying this patch to the working tree (do not
+commit; never modify the patch file). Then re-verify every contract against the
+code, update `archive/implementation-history/findings/phase-25-4-token-usage-findings.md`
+to record the D-01/D-02 deferral above (F-06 → deferred residual risk accepted by
+the plan owner), fix any real remaining defect and run the Validation commands.
+If the patch no longer applies cleanly, report it and reimplement the same scope.
+
 ## Cursor Rules And Skills
 
 Follow `AGENTS.md` and all ten `.cursor/rules/` in the overview. Read
@@ -190,8 +242,8 @@ Use a separate Codex example with input=100, cached=60, output=10 yielding total
 | U-01 | Real Cursor/Codex ingestion publishes one observation despite event/result/replay and crash replay; unknown/null/zero/malformed/partial flags are distinct; metrics never change accepted review outcome. |
 | U-02 | Initial+correction+retry+failed/successor fixture yields independent direct/lineage/sequence totals once per native attempt; missing attempts yield correct lower-bound coverage and provider category semantics. |
 | U-03 | Actual usage CLI and inspection API provide human/JSON known totals and coverage, remain read-only, redact sentinels and preserve old consumer envelopes; no auth/runtime dependency. |
-| U-04 | Historical status/list/history/timeline/inspection/content commands succeed without old tools; fixture bytes/hashes unchanged and old Cursor usage unknown; authenticated old Codex usage from either role is projected without backfill. |
-| U-05 | Dashboard application/HTTP/API reads new and historical providers/lineage with unchanged independent activity totals, filters/paging/names and strict client compatibility; authority bytes are unchanged and missing metrics do not hide runs. |
+| U-04 | Historical status/list/history/timeline/inspection/content commands succeed without old tools over the existing genuine fixtures; fixture bytes/hashes unchanged and old Cursor usage unknown; authenticated Codex usage from either role is projected without backfill (proved through the authenticated projection path). Genuine pre-25 token-bearing captures for both roles are deferred residual risk D-01. |
+| U-05 | Dashboard application/HTTP/API reads new and historical providers/lineage with unchanged independent activity totals, filters/paging/names and strict Python/HTTP client compatibility; authority bytes are unchanged and missing metrics do not hide runs. Node/npm frontend typecheck/Vitest/browser execution is deferred residual risk D-02. |
 
 Race/publication tests use production fencing and independent expected totals,
 not sums computed by calling the same normalizer being tested. Test conflicting
@@ -217,12 +269,16 @@ git diff --check
 Report U-01–U-05, normalization evidence/version, observation/aggregate schema,
 fixture provenance, query examples and exact results in
 `archive/implementation-history/findings/phase-25-4-token-usage-findings.md`.
-If public DTOs/assets change, run Dashboard typecheck and focused parser/
+If public DTOs/assets change, the Dashboard typecheck and focused parser/
 modal/data-source Vitest tests (`npm run typecheck`; `npm test -- --run` with
-affected test paths), and regenerate packaged assets through the existing build
-script. Do not edit generated dist without matching source/build provenance.
+affected test paths) would normally run; Node/npm is not provisioned here, so
+record them as not executed under deferred residual risk D-02 (plan owner
+2026-10-18) instead of blocking. Keep browser parsers compatible by additive,
+optional fields only. Do not edit generated dist without matching source/build
+provenance and do not regenerate packaged assets without the toolchain.
 Full-suite gate belongs to 25.5. Missing historical-reader or accounting coverage
-is incomplete scope, even when the POC checks pass.
+is incomplete scope, even when the POC checks pass, except for the deferred
+external prerequisites D-01/D-02 above.
 
 ## Risks Or Recovery Notes
 
@@ -236,3 +292,5 @@ failed agent/review decision and must not trigger another agent call.
 
 None. Provider normalization must be supported by primary evidence; report any
 contract conflict before implementing a different accounting rule.
+F-06 / D-01 / D-02 are resolved by the plan-owner deferral of 2026-10-18; they
+are not open questions for this slice.

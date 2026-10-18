@@ -1,0 +1,39 @@
+# Re-prepared Phase 25.4–25.5 after plan-owner deferral of 25.4 F-06 (2026-10-18).
+# Starts from accepted 25.3 checkpoint 50bfed0 plus the plan-adjustment commit.
+schema_version: 3
+name: phase-25-sdk-replanned-4-5-f06-deferred
+short_name: Fase 25 SDK 4–5 (F-06 diferido)
+phases:
+- name: phase-25-4-token-usage-and-historical-queries
+  short_name: 25.4 Tokens por rol e históricos (F-06 diferido)
+  plan_path: archive/implementation-history/plans/phase-25-4-token-usage-and-historical-queries.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-25-4-token-usage-and-historical-queries.txt
+  commit_message: 'feat: implement Phase 25.4 role-aware token usage'
+  implementer:
+    provider: codex
+    command: codex
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
+    timeout_minutes: 90
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: high
+  workflow:
+    max_review_iterations: 7
+    codex_timeout_minutes: 90
+- name: phase-25-5-sdk-integration-and-cutover-acceptance
+  short_name: 25.5 Integración y corte Cursor SDK
+  plan_path: archive/implementation-history/plans/phase-25-5-sdk-integration-and-cutover-acceptance.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-25-5-sdk-integration-and-cutover-acceptance.txt
+  implementer:
+    provider: codex
+    command: codex
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
+    timeout_minutes: 90
+  codex:
+    review_model: gpt-6-astra
+    review_reasoning_effort: high
+  workflow:
+    max_review_iterations: 7
+    codex_timeout_minutes: 90

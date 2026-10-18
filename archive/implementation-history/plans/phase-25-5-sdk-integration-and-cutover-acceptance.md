@@ -85,6 +85,24 @@ surface requires it; do not change installed global assets during development.
   accepted changes remain staged; only existing approved intermediate sequence
   checkpoints commit locally.
 
+## Plan-Owner Decision 2026-10-18 — Inherited Deferred Residual Risk
+
+On 2026-10-18 05:15 BOT the plan owner accepted and deferred Phase 25.4 finding
+F-06 as residual risk: **D-01** genuine pre-Phase-25 token-bearing historical
+captures for both Codex roles with authenticated provenance, and **D-02**
+Node/npm Dashboard frontend typecheck/Vitest/Playwright/browser validation (no
+Node/npm toolchain is provisioned on this workstation; do not install one).
+When rechecking predecessor contracts, treat 25.4 U-04/U-05 as accepted with
+D-01/D-02 deferred. In this slice, frontend/Playwright commands that need Node/npm
+are recorded as not executed under D-02, not as blocking failures. If a package
+build or installed-Dashboard check strictly requires the Node toolchain, record
+that step as not executed under D-02; never bypass the hatch build hook or ship
+stale assets to make it pass. Reviewers must not block
+acceptance solely on D-01/D-02. All other G-01–G-04 contracts, the Python focused
+suite, the repository-wide pytest gate, ruff, mypy, mkdocs and build checks remain
+mandatory, and real defects stay blocking. This final phase is accepted manually
+by the plan owner.
+
 ## Implementation Plan
 
 **G-01 — Final execution boundary.** Remove intermediate guards only after their
@@ -213,10 +231,11 @@ git diff --check
 ```
 
 Run Dashboard typecheck/Vitest and its installed Playwright acceptance if
-DTOs, effect classifications, readers or packaged assets changed. Use existing
-Node 24 tooling and isolated server fixtures; do not start the live Dashboard
-or modify user packages to satisfy tests. Record frontend commands/results
-separately from Python.
+DTOs, effect classifications, readers or packaged assets changed and existing
+Node 24 tooling is available, with isolated server fixtures; do not start the
+live Dashboard or modify user packages to satisfy tests. Without Node/npm, record
+these frontend commands as not executed under deferred residual risk D-02 (plan
+owner 2026-10-18). Record frontend commands/results separately from Python.
 
 Separate repository integration gate:
 
