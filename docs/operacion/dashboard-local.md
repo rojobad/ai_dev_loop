@@ -145,5 +145,6 @@ inicio de proceso, comando y grupo siguen coincidiendo. Esos modos son para la
 aceptación desde fuentes, no para controlar el scheduler del operador.
 
 Consulta [Referencia del dashboard](../referencia/dashboard.md) para las
-definiciones y límites, y [Seguridad y privacidad](seguridad-privacidad.md) para
+definiciones y límites, [Gobernanza de UX](../referencia/dashboard-ux.md) para
+los criterios de futuras modificaciones, y [Seguridad y privacidad](seguridad-privacidad.md) para
 la frontera de exposición local.

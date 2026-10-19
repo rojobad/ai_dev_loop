@@ -1,5 +1,9 @@
 # Referencia del dashboard
 
+La [gobernanza de UX](dashboard-ux.md) define los criterios vigentes de
+presentación para agentes, planes y revisiones. Esta referencia describe los
+contratos de datos y lecturas.
+
 ## Superficie instalada
 
 `ai_dev_loop dashboard serve --port 8765` sirve el frontend empaquetado y
@@ -53,12 +57,14 @@ campos autoritativos. Provider histórico ausente significa Cursor.
 secuencia; nunca se infiere del ID del run.
 
 El mapa prefiere `shortName`/`sequenceShortName` en ejes y etiquetas. Conserva
-el nombre original y los IDs completos en detalles/tooltips, y selecciona por
+el nombre original y los IDs completos en los detalles de inspección, y selecciona por
 `runId`/`sequenceId`; aliases duplicados no colapsan runs. Las etiquetas se
 tratan como texto no confiable y se escapan antes de cualquier tooltip HTML.
 Sin selección no aparece metadata de run. Un click de celda o el selector
 compacto accesible muestra exactamente un run y reemplaza la selección anterior,
-sin enfocar una tarjeta distante ni desplazar la página.
+sin enfocar una tarjeta distante ni desplazar la página. La ficha extensa y el
+linaje se consultan desde información. Las tarjetas de intentos están colapsadas
+por defecto; los IDs no aparecen en los tooltips de gráficas.
 
 El timeline numera todos los intentos por el orden cronológico autoritativo y el
 offset de página: `N - Iteration I - Implementer|Reviewer|Unclassified`. El mismo
@@ -125,11 +131,18 @@ un cambio de scope retira la generación completa y reinicia la carga automátic
 ## Información y presentación accesible
 
 Cada panel o gráfico conserva encabezado, datos, controles, frescura, progreso y
-warnings accionables a la vista. Su botón `Information` abre en un diálogo la
-explicación, definiciones y procedencia detallada; expone `aria-expanded`, admite
+warnings accionables a la vista. Su botón de *i* en cursiva dentro de un círculo
+abre en un diálogo la explicación, definiciones y procedencia detallada; conserva
+un nombre accesible contextual, expone `aria-expanded`, admite
 teclado/Escape y devuelve el foco al control que lo abrió. La actividad diaria
 mantiene el calendario y ofrece la lista equivalente bajo un disclosure
-accesible, sin una pared de días permanente.
+accesible, cerrado por defecto y sin una pared de días permanente.
+
+El mapa presenta el progreso como `40/40 loaded` con estilo secundario, dispone
+de scroll interno en ambos ejes y limita su alto a 500 px. Los dos gráficos de
+resumen ocupan el ancho completo. El calendario reserva espacio mientras cambia
+de métrica para mantener la posición de la página. Los títulos y contadores
+conservan su jerarquía sin comprimir las gráficas.
 
 Los tooltips ECharts se montan a nivel de `body`, se confinan al viewport y usan
 una capa inferior a los modales. Los nombres no confiables se siguen escapando y

@@ -1,32 +1,53 @@
 ---
-description: "Approved Phase 28 short-name metadata and Dashboard interaction refinements."
-globs: ["src/ai_dev_loop/dashboard/**", "src/ai_dev_loop/integration_api/**", "src/ai_dev_loop/scheduler/**", "dashboard-web/**", "tests/**"]
+description: "Current Dashboard UX contracts: graphs, information icon, compact inspection, names, scroll, scope and human time."
+globs: ["src/ai_dev_loop/dashboard/**", "src/ai_dev_loop/integration_api/dashboard*", "src/ai_dev_loop/scheduler/domain/presentation.py", "src/ai_dev_loop/scheduler/application/presentation_metadata.py", "dashboard-web/**", "tests/**/dashboard/**", "tests/**/test_phase28*", "docs/**/dashboard*.md"]
 alwaysApply: false
 ---
 
-# Dashboard refinements
+# Dashboard presentation and interaction contracts
 
-Codex-authored policy for Phase 28; read AGENTS.md, the active subphase and
-archive/implementation-history/plans/phase-28-dashboard-refinements.md.
-Phase 28 supersedes Phase26's visible all-runs companions, manual Apply and
-manual Load more UI. It authorizes scheduler-owned editable presentation
-metadata, outside frozen execution inputs, and operation-specific runs paging
-up to 1000 with adaptive batches under the unchanged 240 KiB envelope.
+Read `AGENTS.md`, `docs/referencia/dashboard-ux.md` (DUX-01..09),
+`docs/referencia/dashboard.md` and the active approved scope. These are current
+operator decisions for the local Dashboard. Archived Phase 26/28 plans retain
+history; they do not restore superseded UI. Apply the affected contracts without
+expanding unrelated work. Codex authors policy; implementation follows it.
 
-New named preparations require a chosen short_name of 1..35 trimmed Unicode code
-points; no implicit truncation for new inputs. Historical migration truncates
-without rewriting IDs, immutable payloads, artifact hashes or execution identity.
-Manifest v3 is the named Codex-only format and v4 the named SDK/mixed format;
-preserve accepted frozen v1/v2 replay. Only Codex-only historical definitions
-remain materializable; effective Cursor CLI leaves are read-only. Read-only
-Dashboard paths never migrate or rename data.
+- DUX-01: prioritize graphs and useful human values. Overview state/workload
+  charts each use full width. Counters are secondary, small, gray and normal
+  weight (`40/40 loaded` for the map). Axes remain legible without technical
+  captions or overlapping ticks.
+- DUX-02: explanations/definitions/provenance live behind an italic circled `i`
+  using `InformationControl`, with a contextual accessible name, keyboard/modal
+  focus, Escape and scroll-free focus return. Meaningful errors/partial coverage
+  remain visible.
+- DUX-03: no wall of run/sequence cards. No selection means no run detail; one
+  exact selection owns one timeline. Run metadata/lineage goes in information;
+  attempt/day lists are closed disclosures by default. Use the same human
+  ordinal/iteration/role caption in attempt graph, controls and modal.
+- DUX-04: use authoritative short names, max 35 trimmed Unicode code points for
+  new preparer input. IDs remain internal selection/lineage keys, absent from
+  graph tooltips, and last when shown in inspection metadata. Never merge
+  duplicate aliases, infer roles from names or rewrite frozen inputs to rename.
+- DUX-05: preserve page position through selection, refresh and loading; no
+  chart-triggered scrollIntoView. Map viewport is at most 500 px with internal
+  two-axis scrolling. Reserve calendar geometry while changing metrics. Separate
+  filter/action rows. Keep escaped tooltips inside the viewport and below modals.
+- DUX-06: project/preset applies immediately; coherent valid typed scope applies
+  after 400 ms, without Apply. Invalid drafts retain the prior valid scope. Fence
+  late replies and retire sensitive content on scope/selection changes. Preserve
+  Pause/visibility, at most 2 active reads, adaptive batches up to 1000 rows and
+  honest progress.
+- DUX-07/08: reuse time.ts for selected-IANA `DD/MM/yyyy HH:mm`, day
+  `DD/MM/yyyy`, compact contextual axis ticks and `XX h XX m` durations. Positive
+  sub-minute values use `<1 m`; unknown stays unavailable. Preserve raw API time,
+  named-zone day buckets and metric math; never rewrite inspected content bytes.
+- DUX-09: use proportionate evidence from production components/callers. Scroll
+  and delayed-response regressions need real browser geometry, not only a
+  screenshot or unit mock. Governance-only edits need links/consistency/docs,
+  not runtime tests matching wording.
 
-No selected run means no run card. Selected exact ID means one card, without
-page jumps. Attempts use stable per-run ordinal/iteration/authoritative role,
-not opaque IDs as titles. Selected IANA zone governs display, not metric math.
-Keep unknown coverage visible, explicit sensitive reads, <= 2 active client
-reads, cancellation fences, Pause and visibility behavior. Information controls
-hide explanations, never actionable errors or incomplete coverage.
-
-Implementation owns only its subphase and docs, not this policy/review skills,
-root YAML, real installed scheduler/timer, operator ledger or final acceptance.
+`ai_dev_loop` owns mutable presentation metadata separately from frozen inputs.
+Read-only Dashboard paths never migrate or rename data. Shared API/HTTP bounds,
+role-aware exact-ID content reads, generation fencing and loopback security stay
+in force. No installation, timer change, real ledger mutation, model turn, Git
+publication or final acceptance follows from these UI rules.
