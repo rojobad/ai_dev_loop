@@ -6,7 +6,7 @@ import itertools
 import json
 import subprocess
 import textwrap
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -455,114 +455,6 @@ def test_envelope_replacement_after_waiting_for_cursor_fix_blocks(
     pytest.fail("expected blocked after envelope replacement")
 
 
-@pytest.mark.skip(reason="superseded Cursor CLI correction fixture")
-def test_staged_index_drift_prevents_correction_launch(
-    git_repo: Path,
-    scheduler_paths: dict[str, Path],
-    fake_clis: dict[str, Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
-    monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
-    monkeypatch.setenv("FAKE_CODEX_REVIEW_SEQUENCE", "findings,no_findings")
-    monkeypatch.delenv("FAKE_CODEX_REVIEW_MODE", raising=False)
-    run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, db_path=scheduler_paths["db_path"])
-    backend = FakeAgentProcessBackend(
-        default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
-    )
-    tick = _tick_service(
-        git_repo,
-        scheduler_paths,
-        now=datetime(2026, 9, 9, 15, 30, tzinfo=UTC),
-        backend=backend,
-    )
-    _run_until(tick, run_id, target_kind="waiting_for_cursor_fix")
-    launches_before = backend.launch_calls
-    (git_repo / "post-review-drift.txt").write_text("drift\n", encoding="utf-8")
-    _git(git_repo, "add", "post-review-drift.txt")
-    for _ in range(8):
-        tick.run_once()
-        with tick.store.begin_read() as conn:
-            state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
-            if state.kind == "blocked":
-                break
-    assert len(backend.launch_calls) == len(launches_before)
-    with tick.store.begin_read() as conn:
-        state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
-        assert state.kind in {"waiting_for_cursor_fix", "blocked"}
-
-
-@pytest.mark.skip(reason="superseded Cursor CLI correction fixture")
-def test_usage_limit_during_correction_preserves_chat_and_reviewer(
-    git_repo: Path,
-    scheduler_paths: dict[str, Path],
-    fake_clis: dict[str, Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
-    monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
-    monkeypatch.setenv("FAKE_CODEX_REVIEW_SEQUENCE", "findings,no_findings")
-    monkeypatch.setenv("FAKE_AGENT_RUN_SEQUENCE", "success,usage_limit,success")
-    monkeypatch.setenv(
-        "FAKE_AGENT_RUN_COUNTER",
-        str(Path(fake_clis["agent_log"]).parent / "corr-usage-limit-counter.txt"),
-    )
-    monkeypatch.delenv("FAKE_CODEX_REVIEW_MODE", raising=False)
-    run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, db_path=scheduler_paths["db_path"])
-    tick = _tick_service(
-        git_repo,
-        scheduler_paths,
-        now=datetime(2026, 9, 9, 16, 0, tzinfo=UTC),
-        backend=FakeAgentProcessBackend(
-            default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
-        ),
-    )
-    _run_until(tick, run_id, target_kind="waiting_for_cursor_fix")
-    with tick.store.begin_read() as conn:
-        state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
-        chat_id = state.cursor.chat_id
-        reviewer_id = state.codex.reviewer_session_id
-        fix_path = state.codex.latest_fix_prompt_path
-        iteration = state.cursor.iteration
-    for _ in range(12):
-        tick.run_once()
-        with tick.store.begin_read() as conn:
-            state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
-            if state.kind == "waiting_usage_limit":
-                break
-    assert state.kind == "waiting_usage_limit"
-    assert state.codex.reviewer_session_id == reviewer_id
-    assert state.codex.latest_fix_prompt_path == fix_path
-    wait_until = datetime.fromisoformat(state.cursor.wait_until.replace("Z", "+00:00"))
-    tick_continue = _tick_service(
-        git_repo,
-        scheduler_paths,
-        now=wait_until + timedelta(seconds=1),
-        backend=FakeAgentProcessBackend(
-            default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
-        ),
-    )
-    _run_until(tick_continue, run_id, target_kind="completed", max_ticks=40)
-    codex_log = Path(fake_clis["codex_log"]).read_text(encoding="utf-8")
-    assert codex_log.count("'resume'") >= 1
-    bootstrap_count = sum(
-        1
-        for line in codex_log.splitlines()
-        if line.startswith("ARGS:") and "'--output-schema'" in line and "'resume'" not in line
-    )
-    assert bootstrap_count == 1
-    agent_log = Path(fake_clis["agent_log"]).read_text(encoding="utf-8")
-    assert agent_log.count("CREATE_CHAT:") == 1
-    with tick_continue.store.begin_read() as conn:
-        state, _, _ = tick_continue.store.load_validated_snapshot(conn, run_id)
-        assert state.cursor.chat_id == chat_id
-        assert state.codex.reviewer_session_id == reviewer_id
-        assert state.cursor.iteration >= iteration
-        assert state.codex.reviews_completed >= 2
-
-
 def test_reviewer_binding_artifact_written_before_db_bind_retries_safely(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
@@ -634,73 +526,6 @@ def test_reviewer_binding_artifact_written_before_db_bind_retries_safely(
     assert bootstrap_count == 1
 
 
-@pytest.mark.skip(reason="superseded Cursor CLI correction fixture")
-def test_second_findings_cycle_after_correction_usage_limit_completes(
-    git_repo: Path,
-    scheduler_paths: dict[str, Path],
-    fake_clis: dict[str, Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
-    monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
-    monkeypatch.setenv("FAKE_CODEX_REVIEW_SEQUENCE", "findings,findings,no_findings")
-    monkeypatch.setenv("FAKE_AGENT_RUN_SEQUENCE", "success,usage_limit,success,success")
-    monkeypatch.setenv(
-        "FAKE_AGENT_RUN_COUNTER",
-        str(Path(fake_clis["agent_log"]).parent / "two-cycle-usage-limit-counter.txt"),
-    )
-    monkeypatch.delenv("FAKE_CODEX_REVIEW_MODE", raising=False)
-    run_id = _submit(git_repo, scheduler_paths, max_reviews=3)
-    start_run(run_id, db_path=scheduler_paths["db_path"])
-    tick = _tick_service(
-        git_repo,
-        scheduler_paths,
-        now=datetime(2026, 9, 9, 18, 0, tzinfo=UTC),
-        backend=FakeAgentProcessBackend(
-            default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
-        ),
-    )
-    _run_until(tick, run_id, target_kind="waiting_for_cursor_fix")
-    for _ in range(12):
-        tick.run_once()
-        with tick.store.begin_read() as conn:
-            state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
-            if state.kind == "waiting_usage_limit":
-                break
-    assert state.kind == "waiting_usage_limit"
-    wait_until = datetime.fromisoformat(state.cursor.wait_until.replace("Z", "+00:00"))
-    reviewer_id = state.codex.reviewer_session_id
-    tick_continue = _tick_service(
-        git_repo,
-        scheduler_paths,
-        now=wait_until + timedelta(seconds=1),
-        backend=FakeAgentProcessBackend(
-            default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
-        ),
-    )
-    _run_until(tick_continue, run_id, target_kind="waiting_for_cursor_fix", max_ticks=60)
-    with tick_continue.store.begin_read() as conn:
-        state, _, _ = tick_continue.store.load_validated_snapshot(conn, run_id)
-        assert state.cursor.usage_limit_fingerprint_path is None
-        assert state.cursor.continuation_envelope_path is None
-        assert state.codex.reviewer_session_id == reviewer_id
-    tick_finish = _tick_service(
-        git_repo,
-        scheduler_paths,
-        now=wait_until + timedelta(seconds=2),
-        backend=FakeAgentProcessBackend(
-            default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
-        ),
-    )
-    _run_until(tick_finish, run_id, target_kind="completed", max_ticks=80)
-    codex_log = Path(fake_clis["codex_log"]).read_text(encoding="utf-8")
-    bootstrap_count = sum(
-        1 for line in codex_log.splitlines() if line.startswith("ARGS:") and "'resume'" not in line
-    )
-    assert bootstrap_count == 1
-    assert codex_log.count("'resume'") >= 2
-
-
 def test_invalid_review_json_blocks_without_sensitive_payload(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
@@ -735,38 +560,6 @@ def test_invalid_review_json_blocks_without_sensitive_payload(
 
 def test_codex_capture_stdout_limit_matches_events_artifact_bound() -> None:
     assert MAX_CODEX_CAPTURE_STDOUT_BYTES == MAX_CODEX_EVENTS_ARTIFACT_BYTES
-
-
-@pytest.mark.skip(reason="Cursor CLI timeout dispatch is retired")
-def test_launch_request_uses_frozen_ninety_minute_cursor_timeout(
-    git_repo: Path,
-    scheduler_paths: dict[str, Path],
-    fake_clis: dict[str, Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
-    run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, db_path=scheduler_paths["db_path"])
-    backend = FakeAgentProcessBackend(
-        default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
-    )
-    tick = _tick_service(
-        git_repo,
-        scheduler_paths,
-        now=datetime(2026, 9, 9, 18, 45, tzinfo=UTC),
-        backend=backend,
-    )
-    for _ in range(30):
-        tick.run_once()
-        cursor_launches = [
-            call
-            for call in backend.launch_calls
-            if any("cursor_attempt_runner" in part for part in call.agent_argv)
-        ]
-        if cursor_launches:
-            assert cursor_launches[0].execution_timeout_seconds == 90 * 60
-            return
-    pytest.fail("expected a cursor attempt launch")
 
 
 def test_launch_request_uses_frozen_ninety_minute_codex_timeout(

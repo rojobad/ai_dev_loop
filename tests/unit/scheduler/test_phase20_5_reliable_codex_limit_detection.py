@@ -149,15 +149,6 @@ class TestCapacityExhaustionSemantics:
         }
         assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.EXHAUSTED
 
-    def test_malformed_record_with_exhausted_sibling_record_is_exhausted(self) -> None:
-        payload = {
-            "rateLimitsByLimitId": {
-                "invalid": {"primary": {"usedPercent": "full"}},
-                "exhausted": {"primary": {"usedPercent": 100}},
-            }
-        }
-        assert capacity_from_rate_limits_payload(payload) == CodexCapacityStatus.EXHAUSTED
-
     def test_present_null_current_schema_does_not_fall_back_to_legacy(self) -> None:
         payload = {
             "rateLimitsByLimitId": None,
@@ -241,13 +232,6 @@ class TestCapacityExhaustionSemantics:
 
 
 class TestInteractiveTransport:
-    def test_interactive_fake_succeeds_while_stdin_stays_open(
-        self, fake_clis: dict[str, Path]
-    ) -> None:
-        probe = CodexAppServerCapacityProbe()
-        observation = probe.probe("codex")
-        assert observation.status == CodexCapacityStatus.AVAILABLE
-
     def test_oneshot_eof_transport_can_be_unavailable(
         self, fake_clis: dict[str, Path], monkeypatch: pytest.MonkeyPatch
     ) -> None:

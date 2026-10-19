@@ -767,7 +767,7 @@ def _run_bootstrap_with_durable_and_process_stdout(
         update={
             "codex": state.codex.model_copy(update={"command": "codex"}),
             "repository": state.repository.model_copy(update={"root": str(tmp_path / "repo")}),
-            "status": "reviewing",
+            "status": RunStatus.REVIEWING,
             "iterations": [
                 {
                     "number": 1,

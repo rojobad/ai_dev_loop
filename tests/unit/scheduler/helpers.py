@@ -9,9 +9,14 @@ from ai_dev_loop.scheduler.domain.state import (
     SUBMITTED_CONTEXT_SCHEMA_VERSION,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH,
+    AdmittedRunCheckpoint,
+    AuthorizedState,
+    AwaitingCodexReviewState,
     CodexRuntimeBinding,
+    CodexWorkflowCheckpoint,
     ControllerBinding,
     CursorBinding,
+    CursorWorkflowCheckpoint,
     EffectiveConfigBinding,
     FreshCodexReviewerBinding,
     PlanPromptBinding,
@@ -219,4 +224,35 @@ def sample_submitted_state(
         updated_at=now,
         idempotency_key="b" * 64,
         context=sample_submitted_context(repo_root=repo_root),
+    )
+
+
+def sample_final_review_state(authorized: AuthorizedState) -> AwaitingCodexReviewState:
+    """Build a final-review fixture preserving the authorized run's frozen context."""
+
+    iteration = authorized.context.workflow.max_review_iterations
+    return AwaitingCodexReviewState(
+        run_id=authorized.run_id,
+        version=authorized.version + 1,
+        submitted_at=authorized.submitted_at,
+        updated_at=authorized.updated_at,
+        idempotency_key=authorized.idempotency_key,
+        context=authorized.context,
+        checkpoint=AdmittedRunCheckpoint(
+            authorized_at=authorized.authorized_at,
+            authorized_controller_session_id=authorized.authorized_controller_session_id,
+            admitted_at=authorized.updated_at,
+            admission_status_artifact_path="git/status/01-admission.txt",
+            admission_status_sha256=DIGEST,
+        ),
+        cursor=CursorWorkflowCheckpoint(
+            iteration=iteration,
+            staged_patch_path=f"git/diffs/{iteration:02d}.patch",
+            staged_patch_sha256=DIGEST,
+        ),
+        codex=CodexWorkflowCheckpoint(
+            review_iteration=iteration - 1,
+            reviews_completed=iteration - 1,
+            reviewer_session_id=REVIEWER_SESSION,
+        ),
     )

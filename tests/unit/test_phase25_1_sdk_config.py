@@ -1,4 +1,4 @@
-"""Phase 25.1 config-v2 and temporary dispatch-boundary contracts."""
+"""Config-v2 validation, provider selection, and manifest compatibility contracts."""
 
 from __future__ import annotations
 
@@ -406,7 +406,7 @@ def test_v2_json_shape_contains_no_secret_value(tmp_path: Path) -> None:
     assert "api_key" not in json.dumps(payload).lower()
 
 
-def test_config_validate_reports_v2_and_only_warns_for_guarded_cursor(
+def test_config_validate_reports_v2_and_selected_cursor_runtime(
     git_repo: Path,
     isolated_xdg: Path,
 ) -> None:
@@ -415,9 +415,13 @@ def test_config_validate_reports_v2_and_only_warns_for_guarded_cursor(
     cursor_text = validate_config(repo_path=git_repo)
     cursor_json = json.loads(validate_config(repo_path=git_repo, output="json"))
     assert cursor_json["config_version"] == 2
-    assert "scheduler dispatch remains guarded until Phase 25.2" in cursor_text
+    assert cursor_json["implementer_provider"] == "cursor"
+    assert "Implementer provider: cursor" in cursor_text
+    assert "Cursor runtime: sdk-local." in cursor_text
+    assert "dispatch remains guarded" not in cursor_text
 
     _write_v2(git_repo, implementer=_CODEX_IMPLEMENTER)
     codex_text = validate_config(repo_path=git_repo)
     assert "Implementer provider: codex" in codex_text
+    assert "Cursor runtime:" not in codex_text
     assert "dispatch remains guarded" not in codex_text

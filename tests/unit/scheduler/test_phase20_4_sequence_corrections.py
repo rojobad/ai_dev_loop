@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from tests.unit.scheduler.helpers import sample_final_review_state
 from tests.unit.scheduler.test_phase20_1_sequence_prepare import FIXED_NOW
 from tests.unit.scheduler.test_phase20_2_sequence_start import _prepare_sequence, _start_service
 from tests.unit.scheduler.test_phase20_3_checkpoint_concurrency import (
@@ -43,6 +44,7 @@ from ai_dev_loop.scheduler.domain.checkpoint import (
 from ai_dev_loop.scheduler.domain.events import MaxIterationsReachedEvent, RunAbortedEvent
 from ai_dev_loop.scheduler.domain.reducer import apply_max_iterations_reached, apply_run_aborted
 from ai_dev_loop.scheduler.domain.sequence import (
+    AbortedSequenceState,
     ActiveSequenceState,
     AwaitingFinalizationSequenceState,
     BlockedSequenceState,
@@ -56,7 +58,6 @@ from ai_dev_loop.scheduler.domain.sequence_lifecycle_validation import (
 from ai_dev_loop.scheduler.domain.state import (
     AbortedState,
     AuthorizedState,
-    AwaitingCodexReviewState,
 )
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
@@ -152,23 +153,24 @@ def test_sequence_abort_on_max_iterations_reached_completes_without_run_abort(
         active = store.load_validated_sequence_state(conn, sequence_id)
         assert isinstance(active, ActiveSequenceState)
         state, version, _ = store.load_validated_snapshot(conn, start.run_id)
-        if not isinstance(state, AwaitingCodexReviewState):
-            pytest.skip("run did not reach awaiting_codex_review in this fixture")
+        assert isinstance(state, AuthorizedState)
+        state = sample_final_review_state(state)
+        iteration = state.cursor.iteration
         terminal = apply_max_iterations_reached(
             state,
             MaxIterationsReachedEvent(
                 run_id=start.run_id,
-                review_iteration=1,
-                review_result_path="codex/reviews/01.json",
+                review_iteration=iteration,
+                review_result_path=f"codex/reviews/{iteration:02d}.json",
                 review_result_sha256="a" * 64,
-                fix_prompt_path="prompts/fixes/01.txt",
+                fix_prompt_path=f"prompts/fixes/{iteration:02d}.txt",
                 fix_prompt_sha256="b" * 64,
-                correction_envelope_path="prompts/fixes/01.execution-envelope.txt",
+                correction_envelope_path=f"prompts/fixes/{iteration:02d}.execution-envelope.txt",
                 correction_envelope_sha256="c" * 64,
             ),
             now_text=FIXED_NOW.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
         )
-        store.compare_and_swap_state(
+        assert store.compare_and_swap_state(
             conn,
             run_id=start.run_id,
             expected_version=version,
@@ -192,7 +194,7 @@ def test_sequence_abort_on_max_iterations_reached_completes_without_run_abort(
             residual_risk_ordinals=active.residual_risk_ordinals,
             cancelled_ordinals=future_entry_ordinals(active.definition, active.current_ordinal),
         )
-        store.compare_and_swap_sequence_state(
+        assert store.compare_and_swap_sequence_state(
             conn,
             sequence_id=sequence_id,
             expected_version=active.version,
@@ -202,6 +204,15 @@ def test_sequence_abort_on_max_iterations_reached_completes_without_run_abort(
         receipt = reconcile.reconcile_run(conn, start.run_id)
     assert receipt is not None
     assert receipt.action == "sequence_aborted"
+    with store.begin_read() as conn:
+        sequence = store.load_validated_sequence_state(conn, sequence_id)
+        persisted, _, _ = store.load_validated_snapshot(conn, start.run_id)
+        reservation = store.get_reservation_for_run(conn, start.run_id)
+    assert isinstance(sequence, AbortedSequenceState)
+    assert sequence.cancelled_ordinals == (2,)
+    assert persisted == terminal
+    assert persisted.codex.reviews_completed == state.context.workflow.max_review_iterations
+    assert reservation is None
 
 
 def test_checkpoint_parent_mismatch_is_rejected(tmp_path: Path) -> None:

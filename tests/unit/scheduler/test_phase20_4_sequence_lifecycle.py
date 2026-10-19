@@ -6,6 +6,7 @@ from datetime import UTC
 from pathlib import Path
 
 import pytest
+from tests.unit.scheduler.helpers import sample_final_review_state
 from tests.unit.scheduler.test_phase20_1_sequence_prepare import (
     FIXED_NOW,
 )
@@ -77,19 +78,20 @@ def test_max_iterations_reached_leaves_sequence_active_for_budget_extend(
     store = SqliteSchedulerStore(scheduler_paths["db_path"])
     reconcile = SequenceReconcileService(store, now_factory=lambda: FIXED_NOW)
     with store.begin_immediate() as conn:
+        active = store.load_validated_sequence_state(conn, sequence_id)
+        assert isinstance(active, ActiveSequenceState)
         state, version, _ = store.load_validated_snapshot(conn, run_id)
-        from ai_dev_loop.scheduler.domain.state import AwaitingCodexReviewState
-
-        if not isinstance(state, AwaitingCodexReviewState):
-            pytest.skip("run did not reach awaiting_codex_review in this fixture")
+        assert isinstance(state, AuthorizedState)
+        state = sample_final_review_state(state)
+        iteration = state.cursor.iteration
         event = MaxIterationsReachedEvent(
             run_id=run_id,
-            review_iteration=1,
-            review_result_path="codex/reviews/01.json",
+            review_iteration=iteration,
+            review_result_path=f"codex/reviews/{iteration:02d}.json",
             review_result_sha256="a" * 64,
-            fix_prompt_path="prompts/fixes/01.txt",
+            fix_prompt_path=f"prompts/fixes/{iteration:02d}.txt",
             fix_prompt_sha256="b" * 64,
-            correction_envelope_path="prompts/fixes/01.execution-envelope.txt",
+            correction_envelope_path=f"prompts/fixes/{iteration:02d}.execution-envelope.txt",
             correction_envelope_sha256="c" * 64,
         )
         terminal = apply_max_iterations_reached(
@@ -97,7 +99,7 @@ def test_max_iterations_reached_leaves_sequence_active_for_budget_extend(
             event,
             now_text=FIXED_NOW.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
         )
-        store.compare_and_swap_state(
+        assert store.compare_and_swap_state(
             conn,
             run_id=run_id,
             expected_version=version,
@@ -108,7 +110,13 @@ def test_max_iterations_reached_leaves_sequence_active_for_budget_extend(
     assert receipt is None
     with store.begin_read() as conn:
         sequence = store.load_validated_sequence_state(conn, sequence_id)
+        persisted, _, _ = store.load_validated_snapshot(conn, run_id)
+        reservation = store.get_reservation_for_run(conn, run_id)
     assert isinstance(sequence, ActiveSequenceState)
+    assert sequence == active
+    assert persisted == terminal
+    assert persisted.codex.reviews_completed == state.context.workflow.max_review_iterations
+    assert reservation is not None
 
 
 def test_blocked_sequence_rejects_second_reconcile(

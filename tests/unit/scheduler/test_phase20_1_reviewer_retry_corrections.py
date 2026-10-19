@@ -43,10 +43,6 @@ from ai_dev_loop.scheduler.domain.codex_contract import (
     codex_implementer_latest_final_rel,
     codex_review_prompt_rel,
 )
-from ai_dev_loop.scheduler.domain.cursor_contract import (
-    cursor_attempt_events_rel,
-    cursor_attempt_final_rel,
-)
 from ai_dev_loop.scheduler.domain.state import BlockedState
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
@@ -279,33 +275,6 @@ def _legacy_cursor_outcome_fixture(
             """,
             (new_envelope_sha, attempt_id),
         )
-
-
-def _replace_unbound_cursor_review_inputs(
-    store: SqliteSchedulerStore,
-    artifacts: ProtectedArtifactStore,
-    run_id: str,
-    *,
-    final_text: str,
-    iteration: int = 1,
-) -> None:
-    _legacy_cursor_outcome_fixture(store, artifacts, run_id, iteration=iteration)
-    with store.begin_read() as conn:
-        attempt = store.get_cursor_turn_attempt_for_iteration(
-            conn,
-            run_id=run_id,
-            iteration=iteration,
-        )
-    assert attempt is not None
-    attempt_id = str(attempt["attempt_id"])
-    run_root = artifacts.run_root(run_id)
-    events_path = run_root / cursor_attempt_events_rel(iteration, attempt_id)
-    final_path = run_root / cursor_attempt_final_rel(iteration, attempt_id)
-    events_path.write_text(
-        json.dumps({"type": "result", "result": final_text}, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    final_path.write_text(final_text, encoding="utf-8")
 
 
 class TestIntegrityAuthentication:
@@ -672,46 +641,6 @@ class TestHistoricalRecoveryEligibility:
         _legacy_cursor_outcome_fixture(store, artifacts, run_id)
         with pytest.raises(SchedulerEngineError, match="authenticated final response binding"):
             analyze_blocked_review_recovery(store, artifacts, run_id)
-
-    @pytest.mark.skip(reason="superseded synthetic Cursor CLI execution fixture")
-    def test_consistent_unbound_cursor_review_input_replacement_rejects_recovery(
-        self,
-        git_repo: Path,
-        scheduler_paths: dict[str, Path],
-        fake_clis: dict[str, Path],
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        _, run_id, artifacts, store = _blocked_recovery_fixture(
-            git_repo, scheduler_paths, fake_clis, monkeypatch
-        )
-        with store.begin_read() as conn:
-            attempt = store.get_latest_recorded_codex_attempt(conn, run_id)
-            source_event_count = len(
-                store.list_events_for_run(conn, run_id, limit=500, newest_first=False)
-            )
-        assert attempt is not None
-        _replace_unbound_cursor_review_inputs(
-            store,
-            artifacts,
-            run_id,
-            final_text="replacement final response that would change review inputs",
-        )
-        with pytest.raises(SchedulerEngineError, match="authenticated final response binding"):
-            analyze_blocked_review_recovery(store, artifacts, run_id)
-        service = ReviewRetryService(store, artifacts)
-        with pytest.raises(SchedulerEngineError, match="authenticated final response binding"):
-            service.retry(run_id)
-        with store.begin_read() as conn:
-            assert (
-                store.get_review_recovery_successor(
-                    conn,
-                    source_run_id=run_id,
-                    recovery_key=f"codex_review_outcome_invalid:{attempt['attempt_id']}",
-                )
-                is None
-            )
-            events_after = store.list_events_for_run(conn, run_id, limit=500, newest_first=False)
-        assert len(events_after) == source_event_count
 
     def test_bootstrap_resume_blocked_run_recovers_without_cursor(
         self,

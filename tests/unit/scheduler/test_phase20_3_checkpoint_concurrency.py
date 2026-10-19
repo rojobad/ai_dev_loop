@@ -74,6 +74,7 @@ from ai_dev_loop.scheduler.domain.state import (
     ImplementerBinding,
     PlanPromptBinding,
     RepositoryTargetBinding,
+    SequenceRunBinding,
     WorkflowLimits,
 )
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
@@ -111,12 +112,12 @@ def _checkpoint_pending_state(run_id: str) -> AwaitingCodexReviewState:
     context = base.context.model_copy(
         update={
             "schema_version": 4,
-            "sequence": {
-                "sequence_id": "seq-1",
-                "ordinal": 1,
-                "total_phases": 2,
-                "entry_hash": "a" * 64,
-            },
+            "sequence": SequenceRunBinding(
+                sequence_id="seq-1",
+                ordinal=1,
+                total_phases=2,
+                entry_hash="a" * 64,
+            ),
         }
     )
     return AwaitingCodexReviewState(

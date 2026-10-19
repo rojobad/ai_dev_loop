@@ -44,12 +44,9 @@ def validate_config(
     }
     if output == "json":
         return json.dumps(payload, indent=2) + "\n"
-    dispatch_note = ""
+    runtime_note = ""
     if effective.version == 2 and effective.implementer.provider == "cursor":
-        dispatch_note = (
-            "Cursor SDK configuration is valid; scheduler dispatch remains guarded "
-            "until Phase 25.2.\n"
-        )
+        runtime_note = "Cursor runtime: sdk-local.\n"
     return (
         f"Configuration is valid for project '{effective.project.name}'.\n"
         f"Config path: {repo_config_path}\n"
@@ -57,7 +54,7 @@ def validate_config(
         "Codex review reasoning: "
         f"{format_codex_override(effective.codex.review_reasoning_effort)}\n"
         f"Implementer provider: {effective.implementer.provider}\n"
-        f"{dispatch_note}"
+        f"{runtime_note}"
     )
 
 

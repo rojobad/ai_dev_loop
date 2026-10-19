@@ -311,3 +311,19 @@ def test_mixed_historical_sequence_rejects_before_first_codex_materialization(
         assert store.load_validated_sequence_state(conn, state.sequence_id) == state
         assert conn.execute("SELECT COUNT(*) FROM scheduler_runs").fetchone()[0] == 0
     assert not artifacts.artifact_root.exists()
+
+
+def test_check_and_force_are_mutually_exclusive() -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["scheduler", "cursor-retry", "run", "--check", "--force"],
+    )
+    assert result.exit_code == 2
+    assert "mutually exclusive" in result.output
+
+
+def test_cursor_retry_help_mentions_sequence_leaf_recovery() -> None:
+    result = CliRunner().invoke(app, ["scheduler", "cursor-retry", "--help"])
+    assert result.exit_code == 0
+    assert "sequence" in result.output
