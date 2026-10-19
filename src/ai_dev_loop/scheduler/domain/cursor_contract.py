@@ -7,16 +7,22 @@ from ai_dev_loop.iterations import iteration_label
 PREFLIGHT_EFFECT_KIND = "cursor.preflight_and_probes"
 CREATE_CHAT_EFFECT_KIND = "cursor.create_chat"
 RUN_CURSOR_TURN_EFFECT_KIND = "cursor.run_turn"
+RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND = "cursor.reconcile_sdk_run"
 INGEST_CURSOR_RESULT_EFFECT_KIND = "cursor.ingest_result"
 NORMALIZE_STAGING_EFFECT_KIND = "cursor.normalize_staging"
 
 PREFLIGHT_EFFECT_ID = "cursor-preflight"
 CREATE_CHAT_EFFECT_ID = "cursor-create-chat"
 RUN_CURSOR_TURN_EFFECT_ID = "cursor-run-turn"
+RECONCILE_CURSOR_SDK_RUN_EFFECT_ID = "cursor-reconcile-sdk-run"
 INGEST_CURSOR_RESULT_EFFECT_ID = "cursor-ingest-result"
 NORMALIZE_STAGING_EFFECT_ID = "cursor-normalize-staging"
 
 CURSOR_CHAT_ARTIFACT = "cursor/chat.json"
+CURSOR_SDK_IDENTITY_ARTIFACT = "cursor/sdk-identity.json"
+CURSOR_SDK_CAPTURE_SCHEMA_VERSION = 1
+CURSOR_SDK_EVENT_STREAM_FORMAT = "cursor-sdk-envelope-ndjson-v1"
+CURSOR_SDK_TEXT_STREAM_FORMAT = "utf-8-text-v1"
 
 MAX_CURSOR_EVENTS_ARTIFACT_BYTES = 8 * 1024 * 1024
 
@@ -50,6 +56,28 @@ def cursor_attempt_metadata_rel(iteration_number: int, attempt_id: str) -> str:
 
 def cursor_attempt_final_rel(iteration_number: int, attempt_id: str) -> str:
     return f"{cursor_attempt_iteration_dir(iteration_number, attempt_id)}/final.txt"
+
+
+def cursor_sdk_attempt_journal_rel(attempt_id: str) -> str:
+    return f"cursor/sdk-attempts/{attempt_id}/dispatch-journal.jsonl"
+
+
+def cursor_sdk_reconciliation_record_rel(
+    source_attempt_id: str,
+    reconciliation_attempt_id: str | None = None,
+) -> str:
+    directory = f"cursor/sdk-reconciliation/{source_attempt_id}"
+    if reconciliation_attempt_id is None:
+        return f"{directory}/record-v1.json"
+    return f"{directory}/attempts/{reconciliation_attempt_id}/record-v1.json"
+
+
+def cursor_sdk_attempt_events_rel(iteration_number: int, attempt_id: str) -> str:
+    return f"{cursor_attempt_iteration_dir(iteration_number, attempt_id)}/sdk-envelopes.jsonl"
+
+
+def cursor_sdk_attempt_metadata_rel(iteration_number: int, attempt_id: str) -> str:
+    return f"{cursor_attempt_iteration_dir(iteration_number, attempt_id)}/sdk-metadata.json"
 
 
 def cursor_attempt_output_observation_rel(iteration_number: int, attempt_id: str) -> str:

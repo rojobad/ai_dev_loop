@@ -71,23 +71,32 @@ These contracts preserve the product's safety model across implementation phases
 
 ## Cursor Contracts
 
-- Cursor is the implementation agent for runs whose frozen provider is Cursor,
-  including historical contexts that omit implementer metadata.
-- A frozen Codex implementer in a standalone run or manifest v2 sequence leaf launches with its own model, reasoning,
+- Cursor SDK is the implementation agent for supported runs whose frozen provider
+  is Cursor. Historical contexts that omit implementer metadata still project as
+  Cursor for reads, but effective CLI-Cursor records cannot start or recover.
+- A frozen Codex implementer in a standalone run or legacy/v3 Codex-only sequence leaf launches with its own model, reasoning,
   timeout, prompt, attempt component, and authenticated session. Initial work and
   corrections resume that exact session; reviewer B is bootstrapped independently
-  only after successful staging. Sequence v1 remains Cursor-only; v2 entries
-  freeze provider/settings independently. Capacity waits preserve the current
+  only after successful staging. Historical sequence bytes remain immutable; v3
+  Codex-only and v4 SDK/mixed entries freeze provider/settings independently.
+  Capacity waits preserve the current
   leaf/ordinal/reservation and never authorize a checkpoint before acceptance.
-- Create at most one Cursor chat per run.
-- Persist the chat binding durably in the scheduler checkpoint and protected
-  `cursor/chat.json` artifact before dispatching a turn.
-- Reuse the stored chat ID on later turns and after recoverable failures.
-- Pass Cursor prompts as exact positional arguments without shell interpolation.
-- Use `stream-json` for auditability when configured.
-- Store raw Cursor output even when parsing fails.
+- Create at most one Cursor identity per supported run. Historical CLI chat
+  bindings are retained only as evidence; SDK v7/v8 contexts persist create intent
+  and the exact returned agent before send.
+- Persist SDK owner/key/agent binding in `cursor/sdk-identity.json` before relying
+  on implementation work. Persist SDK
+  send intent before inference and the returned native run ID immediately.
+- Reuse the stored chat/agent on later turns. SDK retry/reconciliation requires
+  proved owned-process termination plus authenticated exact-native observation,
+  cancellation/terminal confirmation, and durable scheduler authorization.
+  Ambiguous create/send evidence must not create an agent or resend a prompt.
+- Send SDK prompts through the typed adapter with the exact authenticated digest.
+- Use bounded SDK NDJSON envelopes for auditability. Keep
+  partial envelopes, final response and safe metadata separate.
+- Store raw Cursor output after redaction even when parsing fails.
 - Treat Cursor output as untrusted data and never execute it.
-- Automated tests must use fake `agent` executables and must not invoke real Cursor model activity.
+- Automated tests must use fake SDK transports/backends and must not invoke real Cursor model activity.
 
 ## Codex Implementer Contracts
 
@@ -142,6 +151,9 @@ These contracts preserve the product's safety model across implementation phases
 - When stdin text is supplied to a child process, open the child's stdin pipe explicitly and put stdin delivery under the same timeout as stdout/stderr collection.
 - Prefer a single `communicate(input=..., timeout=...)`-style operation, or an equivalently tested implementation, so large stdin payloads cannot block outside the configured timeout.
 - Terminate process groups, not only parent PIDs.
+- SDK attempts run in the owned transient unit with `KillMode=control-group`, so
+  timeout and abort cover the bridge and descendant tool processes as well as the
+  Python launcher.
 - Timeout handling must not duplicate partial stdout/stderr. After a timeout, terminate and reap the process group, then persist one canonical captured output set.
 - When a subprocess is launched with required external control metadata, any failure between `Popen` and the durable checkpoint must terminate and reap the child process group before returning an error.
 - Do not leave child processes running without the metadata, timeout, lock, or abort-control path that later commands rely on to manage them.

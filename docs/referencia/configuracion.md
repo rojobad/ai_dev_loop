@@ -6,10 +6,12 @@ Archivo:
 ai_dev_loop.yaml
 ```
 
-Version soportada:
+Versiones soportadas:
 
 ```yaml
-version: 1
+version: 1  # lector histórico; ejecución nueva solo con provider Codex efectivo
+# o
+version: 2  # seleccion Cursor SDK local, completamente explicita
 ```
 
 El flujo soportado usa `scheduler submit` con `--short-name`,
@@ -23,7 +25,15 @@ durante submit ni se infieren de `config.toml` o defaults de Codex CLI.
 `scheduler submit`. La seccion opcional `github` sigue siendo valida en el schema
 pero ya no tiene comandos CLI asociados tras Phase 17.7.
 
-## Schema
+Los defaults dependen de la version. `version: 1` conserva el contrato de lectura
+histórico y los campos inertes que necesita un implementer Codex efectivo. Una
+selección efectiva Cursor v1 se rechaza antes de publicar o ejecutar trabajo
+nuevo. `version: 2` no hereda `cursor.command`, modelo, output format ni
+ningun otro default Cursor de v1: exige todos los campos SDK que aparecen abajo.
+La configuracion global y la del repositorio deben usar la misma version; no se
+mezclan schemas.
+
+## Schema v1 histórico y ejecución Codex
 
 ```yaml
 version: 1
@@ -66,7 +76,7 @@ prompt:
 | --- | --- | --- |
 | `name` | Si | Slug del proyecto. Debe ser minuscula con guiones opcionales. |
 
-## `cursor`
+## `cursor` v1
 
 | Campo | Default | Descripcion |
 | --- | --- | --- |
@@ -77,14 +87,102 @@ prompt:
 | `trust_workspace` | `true` | Pasa `--trust` cuando aplica. |
 | `sandbox` | `disabled` | Sandbox Cursor. |
 
-El prompt se pasa como argumento posicional, no por stdin.
+Estos campos permiten parsear registros auténticos sin reescribir bytes ni
+hashes. Ya no hay una ruta de ejecución Cursor CLI: un submit o definición nueva
+con provider efectivo Cursor debe migrar explícitamente a config v2/manifest v4.
+Si el provider efectivo es Codex, `cursor.command` permanece inerte y no se
+resuelve ni exige que exista `agent`; se congelan solo el comando y settings
+Codex seleccionados.
 
-Al hacer `scheduler submit`, `cursor.command` se resuelve desde el entorno
-interactivo de A y se congela como una ruta absoluta canónica sólo en el contexto
-y la configuración efectiva protegidos del run. El YAML fuente no se modifica.
-Así, un worker invocado más tarde por systemd no depende de que su `PATH` coincida
-con el de la terminal que creó el run. El valor debe ser un único ejecutable (un
-nombre resoluble o una ruta), sin argumentos.
+## Schema v2 (Cursor SDK local)
+
+```yaml
+version: 2
+
+project:
+  name: my-project
+
+cursor:
+  runtime: sdk-local
+  sdk_version: 1.0.37
+  model: grok-4.7
+  parameters:
+    context: 256k
+    fast: false
+    reasoning_effort: high
+  credential_ref: cursor-default
+  setting_sources: [project]
+  sandbox: disabled
+
+codex:
+  command: codex
+  review_skill: review-staged-ai-dev-loop-execution
+  sandbox: workspace-write
+
+workflow:
+  max_review_iterations: 3
+  require_clean_worktree: true
+  stage_mode: all
+  cursor_timeout_minutes: 90
+  codex_timeout_minutes: 90
+
+prompt:
+  directory: docs/plans
+  filename_template: prompt_{plan_stem}.txt
+```
+
+Todos los campos de `cursor` son obligatorios y `extra: forbid` tambien aplica a
+esta seccion. El runtime es exactamente `sdk-local` y la version esta fijada a
+`cursor-sdk==1.0.37`; otra version falla en validacion o al abrir el adapter. El
+modelo es un string no vacio. `parameters` es un mapping no vacio, ordenado de
+forma canonica: `fast` es un boolean estricto, `context` y `reasoning_effort` son
+strings no vacios, y los demas parametros solo pueden ser strings no vacios o
+booleanos estrictos. No hay coercion entre `false` y `"false"`. Las fuentes
+admitidas son `project`, `user`, `team`, `mdm`, `plugins` y `all`, sin duplicados.
+El sandbox debe ser `enabled` o `disabled`.
+
+`credential_ref` es solo un nombre seguro, no un secreto ni una ruta. Resuelve a
+`$XDG_CONFIG_HOME/ai_dev_loop/credentials/<credential_ref>`; los directorios
+deben pertenecer al usuario y tener modo `0700`, y el archivo debe ser regular,
+no symlink, pertenecer al usuario y tener modo `0600`. El valor debe ser UTF-8 de
+una sola linea, como maximo 16 KiB. El YAML, ledger, artefactos, argv, salida y
+errores nunca contienen el valor.
+
+Cada conversacion SDK usa workspace explicito dentro del repositorio y dos roots
+privados separados bajo
+`$XDG_STATE_HOME/ai_dev_loop/cursor-sdk/<sha256-owner>/`: `bridge/` para
+`state_root` y `store/` para el store JSONL nativo. Ninguno puede solaparse con
+el repositorio. La identidad del owner se convierte en un digest SHA-256; no se
+usa un nombre inferido, path libre ni estado dentro del checkout.
+
+El flujo vigente permite que `scheduler submit` con implementer Cursor congele config v2
+en un contexto v7. `submit` no importa el SDK, abre el bridge, lee la credencial ni
+consulta el catalogo. El intento aislado hace ese preflight y persiste, antes de
+inferir, el intent de creación, el `agent_id` exacto y luego el intent de envío y
+el run nativo. Una selección Codex sigue siendo independiente y no requiere
+binario, package, credencial ni environment de Cursor.
+
+Las secuencias SDK nuevas usan manifest v4: conservan los `short_name` de v3 y
+exigen `runtime`, `model` y `parameters` completos en cada fase. La definición y
+entrada congeladas son v3 y cada hoja materializa contexto v8. Manifests v1-v3 ya
+aceptados conservan sus hashes y semántica de lectura; no se convierten a SDK.
+Una definición histórica Codex-only puede seguir ejecutando y recuperando. Si
+contiene una hoja Cursor CLI efectiva, start, materialización, handoff y recovery
+rechazan la secuencia completa sin modificar el registro.
+La recuperación SDK exige primero terminación comprobada del árbol de procesos y
+reconciliación pública del run nativo para el owner/key/agent exacto. Un run
+conocido terminal se reproduce sin otro prompt; uno conocido no terminal se
+cancela y confirma antes de aplicar la política normal de timeout/capacidad. Para
+un envío cuya respuesta se perdió, solo se adopta el único run nuevo respecto al
+inventario pre-envío. Cero o varios candidatos, o una creación cuya identidad no
+puede probarse, retienen la reserva para inspección o `scheduler abort` sin crear
+otro agente ni reenviar el prompt.
+
+El wheel publica el extra opcional `cursor-sdk` con pin exacto a 1.0.37. La
+instalacion base no importa ni instala ese package y conserva lectores históricos
+y ejecución Codex-only. El desarrollo no autoriza hot-install de este checkout en un
+scheduler estable; la instalación o actualización sigue siendo una acción
+separada del operador.
 
 ## `codex`
 
@@ -139,13 +237,25 @@ rechazan.
 
 El sandbox del implementer Codex queda congelado en `workspace-write`. La política
 de aprobación no interactiva queda congelada en `never`. No se acepta un bypass.
-En runs standalone y hojas de secuencia v2 el scheduler lanza la implementación inicial y reanuda la
+En runs standalone y hojas de secuencia históricas Codex-only el scheduler lanza la implementación inicial y reanuda la
 misma sesión autenticada para correcciones. Modelo, effort, timeout e identidad
-son independientes del reviewer. Los manifests de secuencia v1 siguen siendo
-Cursor-only; v2 permite elegir por fase. No existe cambio de provider durante el run.
+son independientes del reviewer. Un v3 nuevo debe ser Codex-only; v4 permite
+elegir Cursor SDK o Codex por fase. No existe cambio de provider durante el run.
 
-Los contextos antiguos sin metadata de implementer se leen como Cursor. Los runs
-nuevos persisten el provider de forma explícita.
+Los contextos antiguos sin metadata de implementer se leen como Cursor para
+consultas, pero su runtime CLI no se vuelve ejecutable. Los runs nuevos persisten
+el provider de forma explícita.
+
+La precedencia de configuracion es: defaults de la version, campos explicitos de
+`$XDG_CONFIG_HOME/ai_dev_loop/config.yaml`, campos explicitos del repositorio y,
+por ultimo, overrides CLI soportados. Un mapping `implementer` explicito sin
+`provider` selecciona Cursor. Cuando una capa cambia el provider, reemplaza la
+seccion completa en vez de conservar campos incompatibles del provider anterior.
+En secuencias v3/v4, la seleccion explicita de cada fase prevalece para ese ordinal;
+no cambia durante el run y no altera el reviewer independiente.
+
+Phase 24 continúa sin ejecutarse y no forma parte de este contrato. La telemetría
+numérica no cambia decisiones de review, autoridad Git, límites ni recovery.
 
 ## `workflow`
 
@@ -212,18 +322,18 @@ ai_dev_loop config validate --repo /path/al/repo
 ai_dev_loop config validate --repo /path/al/repo --output json
 ```
 
-## Manifests de secuencia v2 y v3
+## Manifests de secuencia históricos y v3/v4
 
-`schema_version: 2` permite `implementer` por fase, con los campos anteriores.
-Permanece aceptado para replay y materialización de secuencias ya preparadas.
-Una preparación nueva usa `schema_version: 3`, conserva esos mismos campos de
-implementer y requiere `short_name` tanto en la secuencia como en cada fase.
-Omitir la sección o su provider selecciona Cursor, incluso si YAML seleccionaba
-Codex. Para `provider: codex`, los campos de fase prevalecen sobre defaults YAML
+`schema_version: 2` permitía `implementer` por fase y permanece aceptado para
+replay de secuencias ya preparadas. Una preparación nueva Codex-only usa
+`schema_version: 3`, conserva esos campos de implementer y requiere `short_name`
+tanto en la secuencia como en cada fase. Una preparación con Cursor SDK usa v4.
+Omitir la sección o su provider selecciona Cursor y por ello requiere v4/config
+SDK, incluso si YAML seleccionaba Codex. Para `provider: codex`, los campos de fase prevalecen sobre defaults YAML
 del mismo provider; el modelo y effort deben quedar explícitamente resueltos.
-Cambiar de provider elimina los defaults incompatibles. Los campos Cursor
-explícitos (`cursor` o `workflow.cursor_timeout_minutes`, incluidos overrides
-CLI globales) entran en conflicto con una fase Codex y se rechazan.
+Cambiar de provider elimina los defaults incompatibles. Los campos Cursor CLI
+ya no tienen overrides globales nuevos. En v4, la selección SDK completa queda
+congelada por ordinal y no entra en conflicto con otra fase Codex independiente.
 Los campos reviewer `codex.review_model` y `codex.review_reasoning_effort` siguen
 siendo obligatorios por fase y no se heredan del implementer.
 
@@ -231,5 +341,6 @@ Prepare congela ejecutables, configuración, prompts y hashes independientes por
 ordinal sin ejecutar Git/agentes. Los cambios posteriores en YAML o manifest no
 alteran esa definición preparada. Un prepare con inputs distintos crea una nueva
 definición; no reemplaza la anterior. Manifest v1 y sus entradas congeladas
-históricas conservan Cursor y hashes, sin migración a Codex. Preparaciones nuevas
-con manifest v1/v2 se rechazan con una indicación de actualización a v3.
+históricas conservan Cursor y hashes, sin migración a Codex; si el runtime
+efectivo es CLI no se ejecutan. Preparaciones nuevas con manifest v1/v2 se
+rechazan con una indicación de actualización a v3 Codex-only o v4 SDK.

@@ -36,6 +36,7 @@ DASHBOARD_PROJECTS_DATA_SCHEMA = "integration-api-dashboard-projects-data-v1.jso
 DASHBOARD_SUMMARY_DATA_SCHEMA = "integration-api-dashboard-summary-data-v1.json"
 DASHBOARD_RUNS_DATA_SCHEMA = "integration-api-dashboard-runs-data-v1.json"
 DASHBOARD_ACTIVITY_DATA_SCHEMA = "integration-api-dashboard-activity-data-v1.json"
+USAGE_SHARED_SCHEMA = "integration-api-usage-shared-v1.json"
 
 
 def load_integration_schema(name: str) -> dict[str, object]:
@@ -70,6 +71,7 @@ def integration_schema_names() -> tuple[str, ...]:
         DASHBOARD_SUMMARY_DATA_SCHEMA,
         DASHBOARD_RUNS_DATA_SCHEMA,
         DASHBOARD_ACTIVITY_DATA_SCHEMA,
+        USAGE_SHARED_SCHEMA,
     )
 
 

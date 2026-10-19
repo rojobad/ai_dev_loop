@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+# Phase 25.5 removes new Cursor CLI execution. The SDK workflow and cutover
+# suites replace this module's synthetic CLI dispatch coverage.
+__test__ = False
+
 import itertools
 import json
 import subprocess

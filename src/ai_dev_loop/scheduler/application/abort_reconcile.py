@@ -69,13 +69,18 @@ def attempt_stop_action(
     *,
     unit_identity: str,
     attempt_id: str,
+    require_explicit_stop: bool = False,
 ) -> tuple[AbortProcessAction, ObserveResult]:
     observation = backend.observe(unit_identity=unit_identity, attempt_id=attempt_id)
     if observation.lifecycle_state == UnitLifecycleState.UNAVAILABLE:
         return AbortProcessAction.UNAVAILABLE, observation
-    if unit_observation_stopped(observation):
+    if unit_observation_stopped(observation) and not require_explicit_stop:
         return AbortProcessAction.NONE, observation
-    if observation.lifecycle_state == UnitLifecycleState.ACTIVE and observation.owned:
+    if (
+        observation.lifecycle_state
+        in {UnitLifecycleState.ACTIVE, UnitLifecycleState.INACTIVE, UnitLifecycleState.FAILED}
+        and observation.owned
+    ):
         try:
             backend.terminate(unit_identity=unit_identity, attempt_id=attempt_id)
         except RuntimeError:
@@ -198,6 +203,7 @@ def reconcile_run_abort_attempts(
     attempt_rows: Sequence[sqlite3.Row],
     now: datetime,
     event_id_factory: Callable[[], str],
+    before_finalize: Callable[[sqlite3.Connection, sqlite3.Row], bool] | None = None,
     emit_stale_events: bool = False,
     stale_rejection_kind: str = "run_aborted",
     stale_safe_summary: str = "attempt result arrived after scheduler abort",
@@ -226,13 +232,19 @@ def reconcile_run_abort_attempts(
             backend,
             unit_identity=str(unit_identity),
             attempt_id=attempt_id,
+            require_explicit_stop=True,
         )
         process_action = _merge_process_action(process_action, stop_action)
-        if not unit_observation_stopped(observation):
+        if not unit_observation_stopped(observation) or (
+            stop_action in {AbortProcessAction.REFUSED, AbortProcessAction.UNAVAILABLE}
+        ):
             termination_pending = True
             continue
 
         with store.begin_immediate() as conn:
+            if before_finalize is not None and not before_finalize(conn, row):
+                termination_pending = True
+                continue
             status = str(row["status"])
             if status in {
                 ATTEMPT_STATUS_LAUNCHING,

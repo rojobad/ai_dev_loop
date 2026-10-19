@@ -16,6 +16,10 @@ from ai_dev_loop.scheduler.application.contracts import (
     awaiting_codex_review_safe_next_action,
     waiting_codex_review_retry_safe_next_action,
 )
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import (
+    CURSOR_CLI_RETIRED_SUMMARY,
+    context_uses_cursor_cli,
+)
 from ai_dev_loop.scheduler.application.review_checkpoint_verify import (
     ReviewCheckpointVerificationError,
     verify_retry_state_repository,
@@ -82,6 +86,11 @@ class ReviewRetryService:
         now = self._now_factory()
         with self.store.begin_read() as conn:
             state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+        if context_uses_cursor_cli(state.context):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                f"scheduler review retry: {CURSOR_CLI_RETIRED_SUMMARY}",
+            )
 
         if isinstance(state, BlockedState):
             return self._recover_blocked_source(run_id, now=now)
@@ -383,6 +392,11 @@ class ReviewRetryService:
     ) -> ReviewRetryResult:
         with self.store.begin_immediate() as conn:
             current, version, _ = self.store.load_validated_snapshot(conn, run_id)
+            if context_uses_cursor_cli(current.context):
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.VALIDATION,
+                    f"scheduler review retry authorization: {CURSOR_CLI_RETIRED_SUMMARY}",
+                )
             if not isinstance(current, WaitingCodexReviewRetryState):
                 raise SchedulerEngineError(
                     SchedulerEngineErrorKind.VALIDATION,

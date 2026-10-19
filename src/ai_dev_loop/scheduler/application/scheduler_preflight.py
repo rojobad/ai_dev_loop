@@ -17,16 +17,16 @@ from ai_dev_loop.runners.probes import (
     probe_codex_model_compatibility,
     probe_version,
     require_probe_success,
-    run_start_probes,
-    run_tool_compatibility_probes,
 )
 from ai_dev_loop.scheduler.application.cursor_evidence import (
     frozen_repository_identity,
     validate_frozen_repository_identity,
 )
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import require_supported_context
 from ai_dev_loop.scheduler.application.scheduler_checkpoint import checkpoint_from_state
 from ai_dev_loop.scheduler.domain.state import (
     AdmittedRunCheckpoint,
+    CursorSdkBinding,
     RepositoryBinding,
     RepositoryTargetBinding,
     SubmittedRunContext,
@@ -261,11 +261,13 @@ def run_scheduler_preflight(
         )
         _validate_plan_prompt_artifacts(context, artifacts, run_id)
         _validate_baseline_if_present(context, artifacts, run_id, repo_root)
+        require_supported_context(context, action="scheduler preflight")
         provider = resolved_implementer_provider(context)
         if provider == "codex":
             implementer = context.implementer
             if implementer is None or implementer.reasoning_effort is None:
                 raise ValidationError("codex implementer binding is incomplete")
+            assert implementer.command is not None
             require_probe_success(
                 _codex_implementer_start_probes(
                     implementer_command=implementer.command,
@@ -279,20 +281,30 @@ def run_scheduler_preflight(
                 reviewer_command=context.codex.command,
                 reviewer_model=context.codex.review_model,
             )
-        else:
+        elif isinstance(context.cursor, CursorSdkBinding):
+            # SDK package/path/auth/catalog checks execute inside the owned attempt
+            # unit. Preflight stays inference-free while still checking Git and B.
             require_probe_success(
-                run_start_probes(
-                    cursor_command=context.cursor.command,
-                    cursor_model=context.cursor.model,
-                    codex_command=context.codex.command,
+                [
+                    item
+                    for item in (
+                        executable_probe("git", label="Git"),
+                        executable_probe(context.codex.command, label="Codex"),
+                        probe_codex_auth(context.codex.command),
+                    )
+                    if item is not None
+                ]
+            )
+            reviewer_version = probe_version(context.codex.command, tool="codex")
+            compat = [
+                probe_codex_model_compatibility(
+                    context.codex.command,
+                    required_model=context.codex.review_model,
+                    installed_version=reviewer_version.version,
                 )
-            )
-            compat, _versions = run_tool_compatibility_probes(
-                cursor_command=context.cursor.command,
-                cursor_model=context.cursor.model,
-                codex_command=context.codex.command,
-                codex_model=context.codex.review_model,
-            )
+            ]
+        else:
+            raise ValidationError("scheduler preflight: unsupported Cursor runtime")
         failure = _compatibility_failure(compat, reject_probe_failure=provider == "codex")
         if failure is not None:
             return failure

@@ -61,6 +61,13 @@ def _two_phase_manifest() -> str:
                 "plan_path": "docs/plans/sample-plan.md",
                 "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
                 "commit_message": "checkpoint after phase one",
+                "implementer": {
+                    "provider": "codex",
+                    "command": "codex",
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": "high",
+                    "timeout_minutes": 90,
+                },
                 "codex": {
                     "review_model": "gpt-5.6-sol",
                     "review_reasoning_effort": "high",
@@ -71,12 +78,19 @@ def _two_phase_manifest() -> str:
                 "short_name": "Phase two",
                 "plan_path": "docs/plans/sample-plan.md",
                 "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
+                "implementer": {
+                    "provider": "codex",
+                    "command": "codex",
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": "high",
+                    "timeout_minutes": 90,
+                },
                 "codex": {
                     "review_model": "gpt-5.6-sol",
                     "review_reasoning_effort": "high",
                 },
             },
-        ]
+        ],
     )
 
 

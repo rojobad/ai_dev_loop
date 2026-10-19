@@ -61,7 +61,7 @@ if TYPE_CHECKING:
         | AwaitingFinalizationSequenceState
     )
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 SEQUENCE_SCHEMA_VERSION = 5
 REVIEW_RETRY_SCHEMA_VERSION = 6
 SEQUENCE_RUN_LINEAGE_SCHEMA_VERSION = 9
@@ -83,11 +83,13 @@ MIGRATION_V14_NAME = "0014_codex_implementer_attempts"
 MIGRATION_V15_NAME = "0015_codex_implementer_recovery"
 MIGRATION_V16_NAME = "0016_sequence_implementer_replacement"
 MIGRATION_V17_NAME = "0017_presentation_short_names"
+MIGRATION_V18_NAME = "0018_cursor_sdk_reconciliation"
 SEQUENCE_REVIEW_RECOVERY_SCHEMA_VERSION = 11
 CURSOR_INITIAL_RECOVERY_SCHEMA_VERSION = 12
 CURSOR_SEQUENCE_REPLACEMENT_SCHEMA_VERSION = 13
 CODEX_IMPLEMENTER_RECOVERY_SCHEMA_VERSION = 15
 SEQUENCE_IMPLEMENTER_REPLACEMENT_SCHEMA_VERSION = 16
+CURSOR_SDK_RECONCILIATION_SCHEMA_VERSION = 18
 REQUIRED_TABLES = frozenset(
     {
         "scheduler_schema_migrations",
@@ -116,9 +118,11 @@ REQUIRED_TABLES = frozenset(
         "scheduler_run_presentation",
         "scheduler_sequence_presentation",
         "scheduler_planned_run_presentation",
+        "scheduler_cursor_sdk_reconciliations",
     }
 )
-REQUIRED_TABLES_V16 = REQUIRED_TABLES - {
+REQUIRED_TABLES_V17 = REQUIRED_TABLES - {"scheduler_cursor_sdk_reconciliations"}
+REQUIRED_TABLES_V16 = REQUIRED_TABLES_V17 - {
     "scheduler_run_presentation",
     "scheduler_sequence_presentation",
     "scheduler_planned_run_presentation",
@@ -162,10 +166,14 @@ REQUIRED_INDEXES = frozenset(
         "idx_scheduler_codex_implementer_recoveries_successor",
         "idx_scheduler_codex_implementer_recoveries_status",
         "idx_scheduler_sequence_implementer_replacements_sequence",
+        "idx_scheduler_cursor_sdk_reconciliations_run",
     }
 )
 REQUIRED_TABLES_V6 = REQUIRED_TABLES_V7 - {"scheduler_checkpoint_holds"}
-REQUIRED_INDEXES_V15 = REQUIRED_INDEXES - {
+REQUIRED_INDEXES_V17 = REQUIRED_INDEXES - {
+    "idx_scheduler_cursor_sdk_reconciliations_run",
+}
+REQUIRED_INDEXES_V15 = REQUIRED_INDEXES_V17 - {
     "idx_scheduler_sequence_implementer_replacements_sequence",
 }
 REQUIRED_INDEXES_V14 = REQUIRED_INDEXES_V15 - {
@@ -328,6 +336,10 @@ def _migration_v17_sql() -> str:
     return _migration_sql("0017_presentation_short_names.sql")
 
 
+def _migration_v18_sql() -> str:
+    return _migration_sql("0018_cursor_sdk_reconciliation.sql")
+
+
 def _split_sql_statements(sql: str) -> list[str]:
     statements: list[str] = []
     for chunk in sql.split(";"):
@@ -378,6 +390,8 @@ def migration_checksum(version: int) -> str:
         return hashlib.sha256(_migration_v16_sql().encode("utf-8")).hexdigest()
     if version == 17:
         return hashlib.sha256(_migration_v17_sql().encode("utf-8")).hexdigest()
+    if version == 18:
+        return hashlib.sha256(_migration_v18_sql().encode("utf-8")).hexdigest()
     raise ValueError(f"unsupported migration version {version}")
 
 
@@ -600,6 +614,10 @@ class SqliteSchedulerStore:
                 for migration_version in range(1, 17):
                     self._verify_migration_checksum(conn, migration_version)
                 self._migrate_v16_to_v17(conn)
+            elif version == 17:
+                for migration_version in range(1, 18):
+                    self._verify_migration_checksum(conn, migration_version)
+                self._migrate_v17_to_v18(conn)
             else:
                 self._verify_current_schema(conn)
             self._apply_database_permissions(self.db_path)
@@ -1044,7 +1062,7 @@ class SqliteSchedulerStore:
 
     def _migrate_v16_to_v17(self, conn: sqlite3.Connection) -> None:
         if self._user_version(conn) >= 17:
-            self._verify_current_schema(conn)
+            self._migrate_v17_to_v18(conn)
             return
         for migration_version in range(1, 17):
             self._verify_migration_checksum(conn, migration_version)
@@ -1068,6 +1086,34 @@ class SqliteSchedulerStore:
             conn.rollback()
             raise
         self._apply_database_permissions(self.db_path)
+        self._migrate_v17_to_v18(conn)
+
+    def _migrate_v17_to_v18(self, conn: sqlite3.Connection) -> None:
+        if self._user_version(conn) >= 18:
+            self._verify_current_schema(conn)
+            return
+        for migration_version in range(1, 18):
+            self._verify_migration_checksum(conn, migration_version)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for statement in _split_sql_statements(_migration_v18_sql()):
+                self._fault_maybe_raise_migration(statement)
+                conn.execute(statement)
+            applied_at = encode_utc_instant(datetime.now(tz=UTC))
+            conn.execute(
+                """
+                INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (18, MIGRATION_V18_NAME, migration_checksum(18), applied_at),
+            )
+            conn.execute("PRAGMA user_version = 18")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        self._apply_database_permissions(self.db_path)
+        self._verify_current_schema(conn)
 
     def _fault_maybe_raise_migration(self, statement: str) -> None:
         hook = self._migration_fault_hook
@@ -1108,9 +1154,12 @@ class SqliteSchedulerStore:
         if target >= SCHEMA_VERSION:
             tables = REQUIRED_TABLES
             indexes = REQUIRED_INDEXES
+        elif target >= 17:
+            tables = REQUIRED_TABLES_V17
+            indexes = REQUIRED_INDEXES_V17
         elif target >= 16:
             tables = REQUIRED_TABLES_V16
-            indexes = REQUIRED_INDEXES
+            indexes = REQUIRED_INDEXES_V17
         elif target >= 15:
             tables = REQUIRED_TABLES_V15
             indexes = REQUIRED_INDEXES_V15
@@ -1165,6 +1214,13 @@ class SqliteSchedulerStore:
     def schema_supports_presentation_names(self, conn: sqlite3.Connection) -> bool:
         return self._user_version(conn) >= 17 and self.schema_has_table(
             conn, "scheduler_run_presentation"
+        )
+
+    def schema_supports_cursor_sdk_reconciliation(self, conn: sqlite3.Connection) -> bool:
+        return self._user_version(
+            conn
+        ) >= CURSOR_SDK_RECONCILIATION_SCHEMA_VERSION and self.schema_has_table(
+            conn, "scheduler_cursor_sdk_reconciliations"
         )
 
     @staticmethod
@@ -1360,8 +1416,12 @@ class SqliteSchedulerStore:
     ) -> None:
         cleaned = self._validate_stored_short_name(short_name)
         now_text = encode_utc_instant(now)
-        conflict = "DO NOTHING" if if_absent else (
-            "DO UPDATE SET short_name = excluded.short_name, updated_at = excluded.updated_at"
+        conflict = (
+            "DO NOTHING"
+            if if_absent
+            else (
+                "DO UPDATE SET short_name = excluded.short_name, updated_at = excluded.updated_at"
+            )
         )
         conn.execute(
             f"""
@@ -1383,8 +1443,12 @@ class SqliteSchedulerStore:
     ) -> None:
         cleaned = self._validate_stored_short_name(short_name)
         now_text = encode_utc_instant(now)
-        conflict = "DO NOTHING" if if_absent else (
-            "DO UPDATE SET short_name = excluded.short_name, updated_at = excluded.updated_at"
+        conflict = (
+            "DO NOTHING"
+            if if_absent
+            else (
+                "DO UPDATE SET short_name = excluded.short_name, updated_at = excluded.updated_at"
+            )
         )
         conn.execute(
             f"""
@@ -1409,8 +1473,12 @@ class SqliteSchedulerStore:
     ) -> None:
         cleaned = self._validate_stored_short_name(short_name)
         now_text = encode_utc_instant(now)
-        conflict = "DO NOTHING" if if_absent else (
-            "DO UPDATE SET short_name = excluded.short_name, updated_at = excluded.updated_at"
+        conflict = (
+            "DO NOTHING"
+            if if_absent
+            else (
+                "DO UPDATE SET short_name = excluded.short_name, updated_at = excluded.updated_at"
+            )
         )
         conn.execute(
             f"""
@@ -2538,10 +2606,10 @@ class SqliteSchedulerStore:
             )
         sequence_filter = ""
         if kind == "standalone":
-            sequence_filter = " AND COALESCE(json_extract(state_payload, '$.context.schema_version'), 0) NOT IN (4, 6)"
+            sequence_filter = " AND COALESCE(json_extract(state_payload, '$.context.schema_version'), 0) NOT IN (4, 6, 8)"
         elif kind == "sequence":
             sequence_filter = (
-                " AND json_extract(state_payload, '$.context.schema_version') IN (4, 6)"
+                " AND json_extract(state_payload, '$.context.schema_version') IN (4, 6, 8)"
             )
         elif kind != "all":
             raise SchedulerEngineError(
@@ -3863,6 +3931,19 @@ class SqliteSchedulerStore:
             conn, run_id
         ):
             return True
+        if self.schema_supports_cursor_sdk_reconciliation(conn):
+            sdk_hold = conn.execute(
+                """
+                SELECT 1 FROM scheduler_cursor_sdk_reconciliations
+                WHERE run_id = ?
+                  AND abort_requested_at IS NOT NULL
+                  AND status NOT IN ('ready', 'cancelled')
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+            if sdk_hold is not None:
+                return True
         row = conn.execute(
             """
             SELECT 1 FROM scheduler_attempts
@@ -4421,7 +4502,7 @@ class SqliteSchedulerStore:
               AND scheduler_attempts.status IN (?, ?)
               AND scheduler_attempts.component = 'cursor'
               AND scheduler_attempts.ingested = 0
-              AND scheduler_effects.effect_kind IN (?, ?)
+              AND scheduler_effects.effect_kind IN (?, ?, ?)
             ORDER BY scheduler_attempts.completed_at DESC, scheduler_attempts.attempt_id DESC
             LIMIT 1
             """,
@@ -4431,6 +4512,7 @@ class SqliteSchedulerStore:
                 ATTEMPT_STATUS_FAILED,
                 "cursor.create_chat",
                 "cursor.run_turn",
+                "cursor.reconcile_sdk_run",
             ),
         ).fetchone()
         return cast(sqlite3.Row | None, row)
@@ -5264,7 +5346,9 @@ class SqliteSchedulerStore:
                     entry_digest,
                 ),
             )
-            short_name = None if planned_short_names is None else planned_short_names.get(entry.ordinal)
+            short_name = (
+                None if planned_short_names is None else planned_short_names.get(entry.ordinal)
+            )
             if supports_presentation_names:
                 self.insert_planned_run_short_name(
                     conn,
@@ -5709,6 +5793,153 @@ class SqliteSchedulerStore:
             ),
         )
         return cursor.rowcount == 1
+
+    def get_cursor_sdk_reconciliation_by_source_attempt(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_attempt_id: str,
+    ) -> sqlite3.Row | None:
+        if not self.schema_supports_cursor_sdk_reconciliation(conn):
+            return None
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_cursor_sdk_reconciliations
+            WHERE source_attempt_id = ?
+            """,
+            (source_attempt_id,),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def get_cursor_sdk_reconciliation_by_key(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        recovery_key: str,
+    ) -> sqlite3.Row | None:
+        if not self.schema_supports_cursor_sdk_reconciliation(conn):
+            return None
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_cursor_sdk_reconciliations
+            WHERE recovery_key = ?
+            """,
+            (recovery_key,),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def list_cursor_sdk_reconciliations(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        statuses: tuple[str, ...] = ("pending",),
+    ) -> list[sqlite3.Row]:
+        if not statuses or not self.schema_supports_cursor_sdk_reconciliation(conn):
+            return []
+        placeholders = ",".join("?" for _ in statuses)
+        rows = conn.execute(
+            f"""
+            SELECT * FROM scheduler_cursor_sdk_reconciliations
+            WHERE status IN ({placeholders})
+            ORDER BY created_at ASC, recovery_key ASC
+            """,  # noqa: S608 - placeholders are generated, never caller text
+            statuses,
+        ).fetchall()
+        return [cast(sqlite3.Row, row) for row in rows]
+
+    def insert_cursor_sdk_reconciliation(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        recovery_key: str,
+        run_id: str,
+        source_attempt_id: str,
+        source_dispatch_id: str,
+        intent_payload: str,
+        intent_payload_sha256: str,
+        now: datetime,
+    ) -> bool:
+        if not self.schema_supports_cursor_sdk_reconciliation(conn):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.SCHEMA,
+                "Cursor SDK reconciliation requires scheduler schema version 18",
+            )
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            INSERT INTO scheduler_cursor_sdk_reconciliations(
+                recovery_key, run_id, source_attempt_id, source_dispatch_id,
+                status, intent_payload, intent_payload_sha256,
+                result_artifact_path, result_sha256, abort_requested_at,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, 'pending', ?, ?, NULL, NULL, NULL, ?, ?)
+            ON CONFLICT(recovery_key) DO NOTHING
+            """,
+            (
+                recovery_key,
+                run_id,
+                source_attempt_id,
+                source_dispatch_id,
+                intent_payload,
+                intent_payload_sha256,
+                now_text,
+                now_text,
+            ),
+        )
+        return cursor.rowcount == 1
+
+    def update_cursor_sdk_reconciliation_status(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        recovery_key: str,
+        expected_statuses: tuple[str, ...],
+        status: str,
+        result_artifact_path: str | None,
+        result_sha256: str | None,
+        now: datetime,
+    ) -> bool:
+        if not expected_statuses:
+            return False
+        placeholders = ",".join("?" for _ in expected_statuses)
+        cursor = conn.execute(
+            f"""
+            UPDATE scheduler_cursor_sdk_reconciliations
+            SET status = ?, result_artifact_path = ?, result_sha256 = ?, updated_at = ?
+            WHERE recovery_key = ? AND status IN ({placeholders})
+            """,  # noqa: S608 - placeholders are generated, never caller text
+            (
+                status,
+                result_artifact_path,
+                result_sha256,
+                encode_utc_instant(now),
+                recovery_key,
+                *expected_statuses,
+            ),
+        )
+        return cursor.rowcount == 1
+
+    def request_cursor_sdk_reconciliation_abort(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        now: datetime,
+    ) -> int:
+        if not self.schema_supports_cursor_sdk_reconciliation(conn):
+            return 0
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            UPDATE scheduler_cursor_sdk_reconciliations
+            SET abort_requested_at = COALESCE(abort_requested_at, ?),
+                status = CASE WHEN status = 'blocked' THEN 'pending' ELSE status END,
+                updated_at = ?
+            WHERE run_id = ? AND status NOT IN ('ready', 'cancelled')
+            """,
+            (now_text, now_text, run_id),
+        )
+        return cursor.rowcount
 
     def get_codex_implementer_recovery_by_source_attempt(
         self,

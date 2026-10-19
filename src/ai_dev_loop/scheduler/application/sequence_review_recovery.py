@@ -14,6 +14,10 @@ from ai_dev_loop.scheduler.application.contracts import (
     SchedulerEngineErrorKind,
     TickRunReceipt,
 )
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import (
+    CURSOR_CLI_RETIRED_SUMMARY,
+    unsupported_sequence_cursor_cli_ordinals,
+)
 from ai_dev_loop.scheduler.application.review_recovery import (
     BlockedReviewRecoveryEvidence,
     _copy_recovery_artifacts,
@@ -729,6 +733,12 @@ def complete_sequence_review_recovery(
     run_id_factory: Callable[[str, datetime], str] | None = None,
     event_id_factory: Callable[[], str] | None = None,
 ) -> SequenceReviewRecoveryOutcome:
+    if ordinals := unsupported_sequence_cursor_cli_ordinals(blocked_sequence.definition):
+        raise SchedulerEngineError(
+            SchedulerEngineErrorKind.VALIDATION,
+            f"sequence review recovery: {CURSOR_CLI_RETIRED_SUMMARY} "
+            f"Unsupported sequence ordinals: {', '.join(map(str, ordinals))}.",
+        )
     recovery_key = evidence.recovery_key
     validated: object | None = None
     with store.begin_read() as conn:
@@ -939,6 +949,12 @@ def recover_blocked_sequence_review_run(
             sequence_id=binding.sequence_id,
             source_run_id=source_run_id,
         )
+        if ordinals := unsupported_sequence_cursor_cli_ordinals(blocked_sequence.definition):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                f"sequence review recovery: {CURSOR_CLI_RETIRED_SUMMARY} "
+                f"Unsupported sequence ordinals: {', '.join(map(str, ordinals))}.",
+            )
         recovery_binding = authenticate_sequence_review_recovery_binding(
             store,
             conn,

@@ -1,0 +1,89 @@
+# Fresh Codex implementation sequence; installed driver stays independent of source changes.
+schema_version: 3
+name: phase-25-sdk-replanned-after-phases-26-28
+short_name: Fase 25 SDK Cursor y tokens
+phases:
+- name: phase-25-1-sdk-foundation-and-configuration
+  short_name: 25.1 Base y configuración SDK
+  plan_path: archive/implementation-history/plans/phase-25-1-sdk-foundation-and-configuration.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-25-1-sdk-foundation-and-configuration.txt
+  commit_message: 'feat: implement Phase 25.1 SDK foundation'
+  implementer:
+    provider: codex
+    command: codex
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
+    timeout_minutes: 90
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: high
+  workflow:
+    max_review_iterations: 7
+    codex_timeout_minutes: 90
+- name: phase-25-2-sdk-identity-worker-and-evidence
+  short_name: 25.2 Identidad y worker SDK
+  plan_path: archive/implementation-history/plans/phase-25-2-sdk-identity-worker-and-evidence.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-25-2-sdk-identity-worker-and-evidence.txt
+  commit_message: 'feat: implement Phase 25.2 SDK identity and worker'
+  implementer:
+    provider: codex
+    command: codex
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
+    timeout_minutes: 90
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: xhigh
+  workflow:
+    max_review_iterations: 7
+    codex_timeout_minutes: 90
+- name: phase-25-3-sdk-continuity-and-recovery
+  short_name: 25.3 Continuidad y recuperación SDK
+  plan_path: archive/implementation-history/plans/phase-25-3-sdk-continuity-and-recovery.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-25-3-sdk-continuity-and-recovery.txt
+  commit_message: 'feat: implement Phase 25.3 SDK continuity and recovery'
+  implementer:
+    provider: codex
+    command: codex
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
+    timeout_minutes: 90
+  codex:
+    review_model: gpt-6-astra
+    review_reasoning_effort: high
+  workflow:
+    max_review_iterations: 7
+    codex_timeout_minutes: 90
+- name: phase-25-4-token-usage-and-historical-queries
+  short_name: 25.4 Tokens por rol e históricos
+  plan_path: archive/implementation-history/plans/phase-25-4-token-usage-and-historical-queries.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-25-4-token-usage-and-historical-queries.txt
+  commit_message: 'feat: implement Phase 25.4 role-aware token usage'
+  implementer:
+    provider: codex
+    command: codex
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
+    timeout_minutes: 90
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: high
+  workflow:
+    max_review_iterations: 7
+    codex_timeout_minutes: 90
+- name: phase-25-5-sdk-integration-and-cutover-acceptance
+  short_name: 25.5 Integración y corte Cursor SDK
+  plan_path: archive/implementation-history/plans/phase-25-5-sdk-integration-and-cutover-acceptance.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-25-5-sdk-integration-and-cutover-acceptance.txt
+  implementer:
+    provider: codex
+    command: codex
+    model: gpt-5.6-sol
+    reasoning_effort: xhigh
+    timeout_minutes: 90
+  codex:
+    review_model: gpt-6-astra
+    review_reasoning_effort: high
+  workflow:
+    max_review_iterations: 7
+    codex_timeout_minutes: 90

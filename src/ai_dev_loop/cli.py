@@ -82,6 +82,11 @@ from ai_dev_loop.scheduler.application.timer_ops import (
     install_scheduler_timer,
     scheduler_timer_status,
 )
+from ai_dev_loop.scheduler.application.token_usage_query import (
+    render_usage_report,
+    scheduler_sequence_usage,
+    scheduler_usage,
+)
 from ai_dev_loop.scheduler.domain.presentation import ShortNameUpdateResult
 
 app = typer.Typer(
@@ -151,6 +156,7 @@ def _render_short_name_update(
         return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
     status = "updated" if result.changed else "unchanged"
     return f"{result.owner_id}: short name {status} to {result.short_name!r}\n"
+
 
 TargetOption = Annotated[
     CodexIntegrationTarget,
@@ -245,18 +251,6 @@ def scheduler_submit_command(
             ),
         ),
     ] = None,
-    cursor_command: Annotated[
-        str | None,
-        typer.Option("--cursor-command", help="Override cursor.command."),
-    ] = None,
-    cursor_model: Annotated[
-        str | None,
-        typer.Option("--cursor-model", help="Override cursor.model."),
-    ] = None,
-    cursor_output_format: Annotated[
-        str | None,
-        typer.Option("--cursor-output-format", help="Override cursor.output_format."),
-    ] = None,
     codex_command: Annotated[
         str | None,
         typer.Option("--codex-command", help="Override codex.command."),
@@ -350,9 +344,6 @@ def scheduler_submit_command(
             prompt_source_path=prompt_source_path,
             codex_session_id=None,
             controller_session_id=controller_session_id,
-            cursor_command=cursor_command,
-            cursor_model=cursor_model,
-            cursor_output_format=cursor_output_format,
             codex_command=codex_command,
             codex_review_model=codex_review_model,
             codex_review_reasoning_effort=codex_review_reasoning_effort,
@@ -423,6 +414,20 @@ def scheduler_list_command(
     def run() -> None:
         summaries = scheduler_list()
         typer.echo(render_list_output(summaries, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@scheduler_app.command("usage")
+def scheduler_usage_command(
+    run_id: Annotated[str, typer.Argument(help="Exact scheduler run ID.")],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Show read-only provider token usage for one run and its recovery lineage."""
+
+    def run() -> None:
+        result = scheduler_usage(run_id)
+        typer.echo(render_usage_report(result, output=output.value), nl=False)
 
     _handle(run)
 
@@ -656,18 +661,6 @@ def scheduler_sequence_prepare_command(
             help="Optional controller Codex session ID provenance.",
         ),
     ] = None,
-    cursor_command: Annotated[
-        str | None,
-        typer.Option("--cursor-command", help="Default cursor.command override."),
-    ] = None,
-    cursor_model: Annotated[
-        str | None,
-        typer.Option("--cursor-model", help="Default cursor.model override."),
-    ] = None,
-    cursor_output_format: Annotated[
-        str | None,
-        typer.Option("--cursor-output-format", help="Default cursor.output_format override."),
-    ] = None,
     codex_command: Annotated[
         str | None,
         typer.Option("--codex-command", help="Default codex.command override."),
@@ -709,9 +702,6 @@ def scheduler_sequence_prepare_command(
             project_name=project_name,
             repo_path=repo_path,
             controller_session_id=controller_session_id,
-            cursor_command=cursor_command,
-            cursor_model=cursor_model,
-            cursor_output_format=cursor_output_format,
             codex_command=codex_command,
             review_skill=review_skill,
             max_review_iterations=max_review_iterations,
@@ -753,6 +743,20 @@ def scheduler_sequence_set_short_name_command(
     def run() -> None:
         result = set_sequence_short_name(sequence_id, short_name)
         typer.echo(_render_short_name_update(result, output=output), nl=False)
+
+    _handle(run)
+
+
+@sequence_app.command("usage")
+def scheduler_sequence_usage_command(
+    sequence_id: Annotated[str, typer.Argument(help="Exact scheduler sequence ID.")],
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Show read-only token usage over authenticated sequence run lineage."""
+
+    def run() -> None:
+        result = scheduler_sequence_usage(sequence_id)
+        typer.echo(render_usage_report(result, output=output.value), nl=False)
 
     _handle(run)
 

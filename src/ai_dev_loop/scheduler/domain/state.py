@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import Annotated, Literal
 
@@ -49,6 +50,18 @@ SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED = 3
 SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE = 4
 SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER = 5
 SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE = 6
+SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK = 7
+SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE = 8
+
+CURSOR_SDK_TOOL_POLICY = "scheduler-owned-no-shell"
+_CURSOR_SDK_AGENT_ID = re.compile(
+    r"^(?:agent-)?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
+    r"[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+)
+_CURSOR_SDK_RUN_ID = re.compile(
+    r"^run-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
+    r"[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+)
 
 
 class RepositoryTargetBinding(DomainModel):
@@ -121,6 +134,27 @@ class CursorBinding(DomainModel):
     sandbox: NonEmptyStr
 
 
+class CursorSdkBinding(DomainModel):
+    """Complete immutable SDK selection for one submitted implementation."""
+
+    schema_version: Literal[1] = 1
+    runtime: Literal["sdk-local"] = "sdk-local"
+    sdk_version: Literal["1.0.37"]
+    model: NonEmptyStr
+    parameters: dict[str, str | bool]
+    credential_ref: NonEmptyStr
+    setting_sources: tuple[NonEmptyStr, ...]
+    sandbox: Literal["enabled", "disabled"]
+    tool_policy: Literal["scheduler-owned-no-shell"] = "scheduler-owned-no-shell"
+
+    @field_validator("parameters", mode="before")
+    @classmethod
+    def canonical_parameters(cls, value: object) -> object:
+        if not isinstance(value, dict) or not value:
+            raise ValueError("SDK parameters must be a non-empty mapping")
+        return {key: value[key] for key in sorted(value)}
+
+
 class WorkflowLimits(DomainModel):
     max_review_iterations: int
     stage_mode: NonEmptyStr
@@ -167,10 +201,11 @@ class ImplementerBinding(DomainModel):
     durable ``purpose`` is always ``implementer`` and is never inferred.
     """
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     provider: Literal["cursor", "codex"]
     purpose: Literal["implementer"] = "implementer"
-    command: NonEmptyStr
+    runtime: Literal["sdk-local"] | None = None
+    command: NonEmptyStr | None = None
     model: NonEmptyStr
     reasoning_effort: NonEmptyStr | None = None
     timeout_minutes: int
@@ -194,6 +229,18 @@ class ImplementerBinding(DomainModel):
 
     @model_validator(mode="after")
     def provider_settings(self) -> ImplementerBinding:
+        if self.schema_version == 2:
+            if self.provider != "cursor" or self.runtime != "sdk-local":
+                raise ValueError("implementer schema v2 requires Cursor SDK runtime")
+            if self.command is not None:
+                raise ValueError("Cursor SDK implementer must not freeze a CLI command")
+            if self.reasoning_effort is not None or self.approval_policy is not None:
+                raise ValueError("Cursor SDK implementer must not include Codex settings")
+            return self
+        if self.runtime is not None:
+            raise ValueError("historical implementer binding must not include runtime")
+        if self.command is None:
+            raise ValueError("historical implementer binding requires command")
         if self.provider == "cursor":
             if self.reasoning_effort is not None or self.approval_policy is not None:
                 raise ValueError(
@@ -212,6 +259,18 @@ class ImplementerBinding(DomainModel):
             )
         return self
 
+    @model_serializer(mode="wrap")
+    def _serialize_implementer(
+        self,
+        handler: Callable[[ImplementerBinding], dict[str, object]],
+    ) -> dict[str, object]:
+        data = handler(self)
+        if self.schema_version == 1:
+            data.pop("runtime", None)
+        else:
+            data.pop("command", None)
+        return data
+
 
 class SubmittedRunContext(DomainModel):
     """Frozen immutable input context for a submitted scheduler run."""
@@ -222,7 +281,7 @@ class SubmittedRunContext(DomainModel):
     plan_prompt: PlanPromptBinding
     effective_config: EffectiveConfigBinding
     codex: CodexRuntimeBinding | FreshCodexReviewerBinding
-    cursor: CursorBinding
+    cursor: CursorBinding | CursorSdkBinding
     workflow: WorkflowLimits
     controller: ControllerBinding
     sequence: SequenceRunBinding | None = None
@@ -240,17 +299,26 @@ class SubmittedRunContext(DomainModel):
             SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE,
         }:
-            raise ValueError("schema_version must be 1, 2, 3, 4, 5, or 6")
+            raise ValueError("schema_version must be between 1 and 8")
         return value
 
     @model_validator(mode="after")
     def codex_binding_matches_schema(self) -> SubmittedRunContext:
         if (
+            self.schema_version <= SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE
+            and not isinstance(self.cursor, CursorBinding)
+        ):
+            raise ValueError("historical submitted contexts require CursorBinding")
+        if (
             self.schema_version
             not in {
                 SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER,
                 SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
+                SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK,
+                SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE,
             }
             and self.implementer is not None
         ):
@@ -318,6 +386,35 @@ class SubmittedRunContext(DomainModel):
                 raise ValueError("schema_version 6 requires sequence; version 5 must omit it")
             if self.implementer is None:
                 raise ValueError("schema_version 5 requires implementer binding")
+            if not isinstance(self.cursor, CursorBinding):
+                raise ValueError("schema versions 5 and 6 require Cursor CLI binding")
+        elif self.schema_version in {
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE,
+        }:
+            if not isinstance(self.codex, FreshCodexReviewerBinding):
+                raise ValueError("Cursor SDK contexts require a fresh Codex reviewer")
+            if not isinstance(self.repository, RepositoryTargetBinding):
+                raise ValueError("Cursor SDK contexts require a repository target")
+            if not isinstance(self.cursor, CursorSdkBinding):
+                raise ValueError("Cursor SDK contexts require the complete SDK binding")
+            if (
+                self.baseline_status_artifact_path is not None
+                or self.baseline_status_sha256 is not None
+            ):
+                raise ValueError("Cursor SDK contexts must not include baseline fields")
+            if self.implementer is None:
+                raise ValueError("Cursor SDK contexts require implementer metadata")
+            if self.schema_version == SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK and (
+                self.implementer.provider != "cursor" or self.implementer.schema_version != 2
+            ):
+                raise ValueError("standalone Cursor SDK context requires SDK implementer binding")
+            if self.implementer.provider == "cursor" and self.implementer.schema_version != 2:
+                raise ValueError("Cursor SDK implementer requires implementer schema v2")
+            if (self.schema_version == SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE) != (
+                self.sequence is not None
+            ):
+                raise ValueError("context v8 requires sequence; v7 must omit it")
         return self
 
     @model_serializer(mode="wrap")
@@ -331,17 +428,22 @@ class SubmittedRunContext(DomainModel):
             SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE,
         }:
             data.pop("baseline_status_artifact_path", None)
             data.pop("baseline_status_sha256", None)
         if self.schema_version not in {
             SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE,
         }:
             data.pop("sequence", None)
         if self.schema_version not in {
             SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE,
         }:
             data.pop("implementer", None)
         return data
@@ -441,6 +543,33 @@ def is_codex_implementer_reservation_hold(state: object) -> bool:
         and state.context.implementer is not None
         and state.context.implementer.provider == "codex"
         and state.block_reason_kind in CODEX_IMPLEMENTER_RESERVATION_HOLD_BLOCK_KINDS
+    )
+
+
+CURSOR_SDK_RESERVATION_HOLD_BLOCK_KINDS = frozenset(
+    {
+        "cursor_sdk_create_uncertain",
+        "cursor_sdk_send_uncertain",
+        "cursor_sdk_native_run_uncertain",
+        "cursor_sdk_recovery_deferred",
+        "cursor_sdk_termination_uncertain",
+        "cursor_sdk_reconciliation_failed",
+        "cursor_sdk_reconciliation_evidence_invalid",
+        "cursor_sdk_ambiguous_missing",
+        "cursor_sdk_ambiguous_multiple",
+        "cursor_sdk_native_unavailable",
+        "cursor_failure",
+    }
+)
+
+
+def is_cursor_sdk_reservation_hold(state: object) -> bool:
+    """Identify SDK uncertainty that retains repository ownership until abort."""
+
+    return (
+        isinstance(state, BlockedState)
+        and isinstance(state.context.cursor, CursorSdkBinding)
+        and state.block_reason_kind in CURSOR_SDK_RESERVATION_HOLD_BLOCK_KINDS
     )
 
 
@@ -724,6 +853,74 @@ class ReviewRecoveryLineage(DomainModel):
         return value
 
 
+class CursorSdkRuntimeBinding(DomainModel):
+    """Durable exact SDK agent/run identity without machine-local private paths."""
+
+    schema_version: Literal[1] = 1
+    runtime: Literal["sdk-local"] = "sdk-local"
+    conversation_owner_run_id: NonEmptyStr
+    conversation_key: Sha256Hex
+    agent_id: NonEmptyStr
+    native_run_id: NonEmptyStr | None = None
+    identity_artifact_path: NonEmptyStr
+    identity_artifact_sha256: Sha256Hex
+    latest_journal_path: NonEmptyStr
+    latest_journal_sha256: Sha256Hex
+
+    @field_validator("agent_id")
+    @classmethod
+    def valid_agent_id(cls, value: str) -> str:
+        if not _CURSOR_SDK_AGENT_ID.fullmatch(value):
+            raise ValueError("agent_id must be an exact Cursor SDK UUID identity")
+        return value
+
+    @field_validator("native_run_id")
+    @classmethod
+    def valid_native_run_id(cls, value: str | None) -> str | None:
+        if value is not None and not _CURSOR_SDK_RUN_ID.fullmatch(value):
+            raise ValueError("native_run_id must be an exact Cursor SDK run identity")
+        return value
+
+
+class CursorSdkRecoveryPending(DomainModel):
+    """Durable fence between a failed SDK worker and native reconciliation."""
+
+    schema_version: Literal[1] = 1
+    recovery_key: Sha256Hex
+    source_attempt_id: NonEmptyStr
+    source_dispatch_id: NonEmptyStr
+    turn_kind: Literal["initial", "correction"]
+    prompt_path: NonEmptyStr
+    prompt_sha256: Sha256Hex
+    source_journal_path: NonEmptyStr
+    source_journal_sha256: Sha256Hex
+    native_run_id: NonEmptyStr | None = None
+    failure_class: Literal["timeout", "capacity", "failure", "worker_lost", "ambiguous"]
+    retry_after_seconds: int | None = Field(default=None, ge=1, le=86_400)
+
+    @field_validator("native_run_id")
+    @classmethod
+    def valid_pending_native_run_id(cls, value: str | None) -> str | None:
+        if value is not None and not _CURSOR_SDK_RUN_ID.fullmatch(value):
+            raise ValueError("native_run_id must be an exact Cursor SDK run identity")
+        return value
+
+    @field_validator("retry_after_seconds", mode="before")
+    @classmethod
+    def strict_retry_after(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("retry_after_seconds must be a JSON integer")
+        return value
+
+    @model_validator(mode="after")
+    def retry_after_requires_capacity(self) -> CursorSdkRecoveryPending:
+        if self.retry_after_seconds is not None and self.failure_class != "capacity":
+            raise ValueError("retry_after_seconds requires capacity failure")
+        return self
+
+
 class CursorWorkflowCheckpoint(DomainModel):
     """Durable cursor/staging checkpoint carried across Phase 17.4 states."""
 
@@ -744,6 +941,10 @@ class CursorWorkflowCheckpoint(DomainModel):
     wait_until: NonEmptyStr | None = None
     timeout_attempt_id: NonEmptyStr | None = None
     timeout_automatic_retries: int = Field(default=0, ge=0, le=3)
+    sdk: CursorSdkRuntimeBinding | None = None
+    sdk_recovery_pending: CursorSdkRecoveryPending | None = None
+    sdk_reconciliation_path: NonEmptyStr | None = None
+    sdk_reconciliation_sha256: Sha256Hex | None = None
 
     @field_validator("iteration")
     @classmethod
@@ -751,6 +952,29 @@ class CursorWorkflowCheckpoint(DomainModel):
         if value < 1:
             raise ValueError("iteration must be >= 1")
         return value
+
+    @model_serializer(mode="wrap")
+    def _serialize_cursor_checkpoint(
+        self,
+        handler: Callable[[CursorWorkflowCheckpoint], dict[str, object]],
+    ) -> dict[str, object]:
+        data = handler(self)
+        if self.sdk is None:
+            data.pop("sdk", None)
+        if self.sdk_recovery_pending is None:
+            data.pop("sdk_recovery_pending", None)
+        if self.sdk_reconciliation_path is None:
+            data.pop("sdk_reconciliation_path", None)
+            data.pop("sdk_reconciliation_sha256", None)
+        return data
+
+    @model_validator(mode="after")
+    def sdk_recovery_bindings(self) -> CursorWorkflowCheckpoint:
+        if bool(self.sdk_reconciliation_path) != bool(self.sdk_reconciliation_sha256):
+            raise ValueError("SDK reconciliation path and digest must appear together")
+        if self.sdk_recovery_pending is not None and self.sdk is None:
+            raise ValueError("SDK reconciliation requires an exact SDK identity")
+        return self
 
 
 def _schema_version_is_four(value: int) -> int:
@@ -801,8 +1025,12 @@ class CursorReadyState(SchedulerRunBase):
     @model_validator(mode="after")
     def chat_id_required(self) -> CursorReadyState:
         if resolved_implementer_provider(self.context) == "codex":
-            if self.cursor.chat_id:
-                raise ValueError("codex implementer cursor_ready must not bind a Cursor chat")
+            if self.cursor.chat_id or self.cursor.sdk:
+                raise ValueError("codex implementer cursor_ready must not bind Cursor identity")
+            return self
+        if isinstance(self.context.cursor, CursorSdkBinding):
+            if self.cursor.chat_id or self.cursor.sdk is None:
+                raise ValueError("Cursor SDK ready state requires only SDK identity")
             return self
         if not self.cursor.chat_id:
             raise ValueError("cursor_ready requires chat_id")
@@ -825,6 +1053,16 @@ class WaitingUsageLimitState(SchedulerRunBase):
 
     @model_validator(mode="after")
     def usage_limit_fields_required(self) -> WaitingUsageLimitState:
+        if isinstance(self.context.cursor, CursorSdkBinding):
+            if self.cursor.sdk is None:
+                raise ValueError("Cursor SDK usage wait requires exact SDK identity")
+            if not self.cursor.wait_until:
+                raise ValueError("Cursor SDK usage wait requires wait_until")
+            if not self.cursor.original_prompt_path or not self.cursor.original_prompt_sha256:
+                raise ValueError("Cursor SDK usage wait requires exact prompt binding")
+            if not self.cursor.sdk_reconciliation_path or not self.cursor.sdk_reconciliation_sha256:
+                raise ValueError("Cursor SDK usage wait requires reconciliation evidence")
+            return self
         if not self.cursor.chat_id:
             raise ValueError("waiting_usage_limit requires chat_id")
         if not self.cursor.wait_until:

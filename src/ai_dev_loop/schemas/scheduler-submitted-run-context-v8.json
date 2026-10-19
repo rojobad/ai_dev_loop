@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/scheduler-submitted-run-context-v8.json",
+  "title": "SubmittedRunContextV8",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "project_name", "repository", "plan_prompt", "effective_config", "codex", "cursor", "workflow", "controller", "implementer", "sequence"],
+  "properties": {
+    "schema_version": {"const": 8},
+    "project_name": {"type": "string", "minLength": 1},
+    "repository": {"$ref": "scheduler-submitted-run-context-v3.json#/$defs/repository_target_binding"},
+    "plan_prompt": {"$ref": "scheduler-submitted-run-context-v3.json#/$defs/plan_prompt_binding"},
+    "effective_config": {"$ref": "scheduler-submitted-run-context-v3.json#/$defs/effective_config_binding"},
+    "codex": {"$ref": "scheduler-submitted-run-context-v3.json#/$defs/fresh_codex_reviewer_binding"},
+    "cursor": {"$ref": "scheduler-submitted-run-context-v7.json#/$defs/sdkCursorBinding"},
+    "workflow": {"$ref": "scheduler-submitted-run-context-v3.json#/$defs/workflow_limits"},
+    "controller": {"$ref": "scheduler-submitted-run-context-v3.json#/$defs/controller_binding"},
+    "implementer": {"oneOf": [{"$ref": "scheduler-submitted-run-context-v5.json#/$defs/implementer_binding"}, {"$ref": "scheduler-submitted-run-context-v7.json#/$defs/sdkImplementer"}]},
+    "sequence": {"$ref": "scheduler-submitted-run-context-v4.json#/$defs/sequence_run_binding"}
+  }
+}

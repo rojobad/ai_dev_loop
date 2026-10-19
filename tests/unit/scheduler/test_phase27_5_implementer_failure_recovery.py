@@ -21,9 +21,6 @@ from tests.integration.test_phase27_3_implementer_sequences import (
     prepare,
     sequence_state,
 )
-from tests.unit.scheduler.test_phase23_1_cursor_recovery_evidence import (
-    _blocked_initial_failure as _blocked_cursor_initial_failure,
-)
 from tests.unit.scheduler.test_phase27_2_codex_implementer import (
     IMPLEMENTER_ID,
     REVIEWER_ID,
@@ -220,7 +217,7 @@ def test_current_schema_and_real_cli_initial_recovery_preserve_prompt_identity_a
         "completed",
     )
 
-    assert SCHEMA_VERSION == 17
+    assert SCHEMA_VERSION == 18
     assert completed.codex.implementer_session_id == IMPLEMENTER_ID
     assert completed.codex.reviewer_session_id == REVIEWER_ID
     assert [path.read_bytes() for path in sorted(witness.glob("*.bin"))] == [
@@ -714,6 +711,7 @@ def test_v14_migration_adds_relation_without_rewriting_existing_runs(tmp_path: P
     store.bootstrap()
     with store.begin_immediate() as conn:
         before = conn.execute("SELECT COUNT(*) FROM scheduler_runs").fetchone()[0]
+        conn.execute("DROP TABLE scheduler_cursor_sdk_reconciliations")
         conn.execute("DROP TABLE scheduler_planned_run_presentation")
         conn.execute("DROP TABLE scheduler_run_presentation")
         conn.execute("DROP TABLE scheduler_sequence_presentation")
@@ -741,28 +739,6 @@ def test_v14_migration_adds_relation_without_rewriting_existing_runs(tmp_path: P
             )
             == 0
         )
-
-
-def test_shared_force_command_delegates_cursor_to_existing_recovery(
-    git_repo: Path,
-    scheduler_paths: dict[str, Path],
-    fake_clis: dict[str, Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = _blocked_cursor_initial_failure(
-        git_repo,
-        scheduler_paths,
-        fake_clis,
-        monkeypatch,
-    )
-    result = ImplementerRetryService(
-        SqliteSchedulerStore(scheduler_paths["db_path"]),
-        ProtectedArtifactStore(scheduler_paths["artifact_root"]),
-        now_factory=lambda: NOW,
-    ).retry(source, force=True)
-    assert result.provider == "cursor"
-    assert result.run_id != source
-    assert result.changed is True
 
 
 def test_correction_recovery_keeps_existing_b_budget_patch_and_exact_fix_bytes(
@@ -1099,7 +1075,7 @@ def test_sequence_leaf_force_adopts_successor_and_preserves_blocked_source(
     monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_SESSION_ID", IMPLEMENTER_ID)
     monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "sequence-partial.txt")
     monkeypatch.setenv("FAKE_CODEX_CAPACITY", "available")
-    prepared = prepare(git_repo, scheduler_paths, ("codex", "cursor"))
+    prepared = prepare(git_repo, scheduler_paths, ("codex", "codex"))
     started = start_sequence(prepared.sequence_id, db_path=scheduler_paths["db_path"])
     tick = _sequence_tick(git_repo, scheduler_paths)
     for _ in range(50):

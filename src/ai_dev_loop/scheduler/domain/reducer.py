@@ -74,6 +74,7 @@ from ai_dev_loop.scheduler.domain.state import (
     WaitingForCursorFixState,
     WaitingUsageLimitState,
     is_codex_implementer_reservation_hold,
+    is_cursor_sdk_reservation_hold,
 )
 
 
@@ -925,6 +926,8 @@ def apply_waiting_for_cursor_fix_entered(
         raise ValueError("event run_id disagrees with state")
     codex = state.codex.model_copy(
         update={
+            "latest_review_result_path": event.review_result_path,
+            "latest_review_result_sha256": event.review_result_sha256,
             "latest_fix_prompt_path": event.fix_prompt_path,
             "latest_fix_prompt_sha256": event.fix_prompt_sha256,
             "latest_correction_envelope_path": event.correction_envelope_path,
@@ -1237,7 +1240,9 @@ def apply_run_aborted(
         if state.abort_reason != event.reason or state.prior_state_kind != event.prior_state_kind:
             raise ValueError("aborted state disagrees with event")
         return state
-    held_implementer = is_codex_implementer_reservation_hold(state)
+    held_implementer = is_codex_implementer_reservation_hold(
+        state
+    ) or is_cursor_sdk_reservation_hold(state)
     if state.kind in SCHEDULER_TERMINAL_STATE_KINDS and not held_implementer:
         raise ValueError("run_aborted applies only to non-terminal runs")
     if state.kind not in SCHEDULER_ABORTABLE_STATE_KINDS and not held_implementer:

@@ -191,7 +191,7 @@ def test_verify_captured_review_prompt_rejects_substituted_latest_cursor_respons
         EXPECTED_LATEST_CURSOR_FINAL_RESPONSE_ITERATION_01,
         b"substituted-latest-response",
     )
-    with pytest.raises(AssertionError, match="latest Cursor final response"):
+    with pytest.raises(AssertionError, match="latest implementer final response"):
         verify_captured_review_prompt_bytes(bad, iteration=1)
 
 

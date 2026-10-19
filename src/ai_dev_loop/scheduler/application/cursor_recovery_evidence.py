@@ -20,7 +20,12 @@ from ai_dev_loop.scheduler.application.codex_evidence import (
     verify_codex_invocation_evidence,
     verify_pre_execution_codex_guards,
 )
-from ai_dev_loop.scheduler.application.contracts import AppModel
+from ai_dev_loop.scheduler.application.contracts import (
+    AppModel,
+)
+from ai_dev_loop.scheduler.application.contracts import (
+    SchedulerEngineError as SchedulerContractError,
+)
 from ai_dev_loop.scheduler.application.cursor_evidence import (
     CursorEvidenceError,
     frozen_repository_identity,
@@ -78,6 +83,7 @@ from ai_dev_loop.scheduler.domain.sequence import (
 from ai_dev_loop.scheduler.domain.state import (
     AdmittedRunCheckpoint,
     BlockedState,
+    CursorSdkBinding,
     SequenceRunBinding,
     SubmittedRunContext,
 )
@@ -2161,6 +2167,130 @@ def analyze_cursor_recovery_evidence(
     with store.begin_read() as conn:
         state, _, _ = store.load_validated_snapshot(conn, run_id)
 
+        if isinstance(state.context.cursor, CursorSdkBinding):
+            binding = state.context.sequence
+            sequence_id = None if binding is None else binding.sequence_id
+            ordinal = None if binding is None else binding.ordinal
+            if not isinstance(state, BlockedState):
+                return CursorRecoveryAnalysisResult(
+                    receipt=receipt(
+                        run_id,
+                        evidence_status="ineligible",
+                        turn_kind=None,
+                        reason_code="ineligible_not_blocked",
+                        safe_summary="Run is not in blocked state; Cursor failure evidence does not apply.",
+                        sequence_id=sequence_id,
+                        ordinal=ordinal,
+                    )
+                )
+            if state.block_reason_kind != "cursor_failure":
+                return CursorRecoveryAnalysisResult(
+                    receipt=receipt(
+                        run_id,
+                        evidence_status="ineligible",
+                        turn_kind=None,
+                        reason_code="ineligible_block_reason",
+                        safe_summary="Block reason is not cursor_failure.",
+                        sequence_id=sequence_id,
+                        ordinal=ordinal,
+                    )
+                )
+            if binding is not None:
+                issue = _verify_sequence_binding(
+                    store,
+                    conn,
+                    binding,
+                    require_current_ordinal=require_current_sequence_leaf,
+                )
+                if issue is not None:
+                    return CursorRecoveryAnalysisResult(
+                        receipt=receipt(
+                            run_id,
+                            evidence_status="ineligible",
+                            turn_kind=None,
+                            reason_code=issue,
+                            safe_summary="Sequence binding is not the current recoverable leaf.",
+                            sequence_id=sequence_id,
+                            ordinal=ordinal,
+                        )
+                    )
+            if (
+                store.get_nonterminal_attempt_for_run(conn, run_id) is not None
+                or store.has_abort_requested_for_run(conn, run_id)
+                or store.has_unresolved_abort_hold(conn, run_id)
+                or store.has_checkpoint_reconciliation_hold(conn, run_id)
+            ):
+                return CursorRecoveryAnalysisResult(
+                    receipt=receipt(
+                        run_id,
+                        evidence_status="ineligible",
+                        turn_kind=None,
+                        reason_code="ineligible_pending_termination",
+                        safe_summary="Owned process or abort reconciliation is not yet resolved.",
+                        sequence_id=sequence_id,
+                        ordinal=ordinal,
+                    )
+                )
+            active = store.get_active_reservation(conn, state.context.repository.worktree_key)
+            if active is None or (reservation_must_match_run and str(active["run_id"]) != run_id):
+                return CursorRecoveryAnalysisResult(
+                    receipt=receipt(
+                        run_id,
+                        evidence_status="ineligible",
+                        turn_kind=None,
+                        reason_code="ineligible_reservation_conflict",
+                        safe_summary="The blocked source no longer owns its repository reservation.",
+                        sequence_id=sequence_id,
+                        ordinal=ordinal,
+                    )
+                )
+            try:
+                from ai_dev_loop.scheduler.application.cursor_sdk_reconciliation import (
+                    decisive_ready_sdk_reconciliation,
+                )
+
+                _row, intent, result = decisive_ready_sdk_reconciliation(
+                    store,
+                    artifacts,
+                    conn,
+                    state=state,
+                )
+                if result.outcome != "continuation_ready":
+                    raise ValueError("SDK reconciliation authority disagrees with the run")
+            except (
+                KeyError,
+                ValueError,
+                ValidationError,
+                ProtectedArtifactError,
+                SchedulerContractError,
+                OSError,
+            ):
+                return CursorRecoveryAnalysisResult(
+                    receipt=receipt(
+                        run_id,
+                        evidence_status="corrupt",
+                        turn_kind=None,
+                        reason_code="corrupt_sdk_reconciliation",
+                        safe_summary="SDK reconciliation authority failed authentication.",
+                        sequence_id=sequence_id,
+                        ordinal=ordinal,
+                    )
+                )
+            return CursorRecoveryAnalysisResult(
+                receipt=receipt(
+                    run_id,
+                    evidence_status="authenticated",
+                    turn_kind=intent.turn_kind,
+                    reason_code="authenticated_cursor_sdk_reconciliation",
+                    safe_summary=(
+                        "Authenticated exact-agent SDK reconciliation; forced same-agent "
+                        "recovery is supported."
+                    ),
+                    sequence_id=sequence_id,
+                    ordinal=ordinal,
+                    recovery_supported=True,
+                )
+            )
         if not isinstance(state, BlockedState):
             return CursorRecoveryAnalysisResult(
                 receipt=receipt(

@@ -1,0 +1,146 @@
+{
+  "additionalProperties": false,
+  "description": "Private successor record authenticated before dispatch/adoption.",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "recovery_key": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Recovery Key",
+      "type": "string"
+    },
+    "source_run_id": {
+      "minLength": 1,
+      "title": "Source Run Id",
+      "type": "string"
+    },
+    "successor_run_id": {
+      "minLength": 1,
+      "title": "Successor Run Id",
+      "type": "string"
+    },
+    "failed_attempt_id": {
+      "minLength": 1,
+      "title": "Failed Attempt Id",
+      "type": "string"
+    },
+    "turn_kind": {
+      "enum": [
+        "initial",
+        "correction"
+      ],
+      "title": "Turn Kind",
+      "type": "string"
+    },
+    "iteration": {
+      "minimum": 1,
+      "title": "Iteration",
+      "type": "integer"
+    },
+    "conversation_owner_run_id": {
+      "minLength": 1,
+      "title": "Conversation Owner Run Id",
+      "type": "string"
+    },
+    "conversation_key": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Conversation Key",
+      "type": "string"
+    },
+    "agent_id": {
+      "minLength": 1,
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "base_prompt_path": {
+      "minLength": 1,
+      "title": "Base Prompt Path",
+      "type": "string"
+    },
+    "base_prompt_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Base Prompt Sha256",
+      "type": "string"
+    },
+    "effective_prompt_path": {
+      "minLength": 1,
+      "title": "Effective Prompt Path",
+      "type": "string"
+    },
+    "effective_prompt_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Effective Prompt Sha256",
+      "type": "string"
+    },
+    "reconciliation_artifact_path": {
+      "minLength": 1,
+      "title": "Reconciliation Artifact Path",
+      "type": "string"
+    },
+    "reconciliation_artifact_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Reconciliation Artifact Sha256",
+      "type": "string"
+    },
+    "reviews_completed": {
+      "minimum": 0,
+      "title": "Reviews Completed",
+      "type": "integer"
+    },
+    "submitted_max_review_iterations": {
+      "minimum": 1,
+      "title": "Submitted Max Review Iterations",
+      "type": "integer"
+    },
+    "effective_review_ceiling": {
+      "minimum": 1,
+      "title": "Effective Review Ceiling",
+      "type": "integer"
+    },
+    "pending_intent_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Pending Intent Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "recovery_key",
+    "source_run_id",
+    "successor_run_id",
+    "failed_attempt_id",
+    "turn_kind",
+    "iteration",
+    "conversation_owner_run_id",
+    "conversation_key",
+    "agent_id",
+    "base_prompt_path",
+    "base_prompt_sha256",
+    "effective_prompt_path",
+    "effective_prompt_sha256",
+    "reconciliation_artifact_path",
+    "reconciliation_artifact_sha256",
+    "reviews_completed",
+    "submitted_max_review_iterations",
+    "effective_review_ceiling",
+    "pending_intent_sha256"
+  ],
+  "title": "CursorSdkSuccessorRecordV1",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

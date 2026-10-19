@@ -5,7 +5,8 @@
 El flujo separa responsabilidades:
 
 - Codex mantiene el contexto arquitectónico, prepara el handoff y revisa los cambios.
-- Cursor implementa y corrige en un único chat local.
+- Cursor implementa y corrige con una única identidad local (chat CLI histórico o
+  agente SDK persistido).
 - `ai_dev_loop` valida, persiste estado en el ledger central, ejecuta CLIs locales, hace staging y coordina el loop mediante el scheduler.
 
 El resultado esperado de un run exitoso es simple: los cambios quedan staged en el repositorio objetivo, los reportes quedan guardados bajo XDG state, y el usuario decide si revisa, ajusta o commitea manualmente.
@@ -29,7 +30,7 @@ scheduler tick (manual o timer systemd)
   preflight, Cursor, staging, review, correcciones
         |
         v
-Cursor CLI, mismo chat
+Cursor seleccionado, misma identidad
   implementa o corrige
         |
         v
@@ -66,7 +67,7 @@ impacto y recuperaciones de problemas observados en operación real.
 ## Invariantes principales
 
 - Todo corre localmente en WSL/Linux; no hay workers remotos.
-- Cada run usa un solo Cursor chat.
+- Cada run Cursor usa una sola identidad: chat CLI histórico o agente SDK exacto.
 - El reviewer B se crea una vez en el primer review y se reanuda exactamente en correcciones posteriores.
 - Codex decide el resultado mediante JSON estructurado; el Markdown no se scrapea para tomar decisiones.
 - `ai_dev_loop` no genera prompts de correccion; solo valida y reenvia el prompt devuelto por Codex.

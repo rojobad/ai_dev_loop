@@ -38,7 +38,11 @@ from ai_dev_loop.scheduler.application.review_retry import ReviewRetryService
 from ai_dev_loop.scheduler.application.start import start_run
 from ai_dev_loop.scheduler.application.submission import SubmitOptions, submit_run
 from ai_dev_loop.scheduler.application.tick import TickService
-from ai_dev_loop.scheduler.domain.codex_contract import BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND
+from ai_dev_loop.scheduler.domain.codex_contract import (
+    BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND,
+    codex_implementer_latest_final_rel,
+    codex_review_prompt_rel,
+)
 from ai_dev_loop.scheduler.domain.cursor_contract import (
     cursor_attempt_events_rel,
     cursor_attempt_final_rel,
@@ -64,6 +68,11 @@ def scheduler_paths(isolated_xdg: Path) -> dict[str, Path]:
     }
 
 
+@pytest.fixture(autouse=True)
+def _codex_implementer_edit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
+
+
 def _submit(git_repo: Path, scheduler_paths: dict[str, Path]) -> str:
     prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
     options = SubmitOptions(
@@ -74,6 +83,11 @@ def _submit(git_repo: Path, scheduler_paths: dict[str, Path]) -> str:
         controller_session_id=CONTROLLER_SESSION,
         codex_review_model="gpt-5.6-sol",
         codex_review_reasoning_effort="high",
+        implementer_provider="codex",
+        implementer_command="codex",
+        implementer_model="gpt-5.6-sol",
+        implementer_reasoning_effort="high",
+        implementer_timeout_minutes=90,
         db_path=scheduler_paths["db_path"],
         artifact_root=scheduler_paths["artifact_root"],
         max_review_iterations=3,
@@ -190,6 +204,20 @@ def _blocked_recovery_fixture(
     return tick, run_id, artifacts, store
 
 
+def _implementer_final_path(
+    store: SqliteSchedulerStore, artifacts: ProtectedArtifactStore, run_id: str
+) -> Path:
+    with store.begin_read() as conn:
+        attempt = conn.execute(
+            "SELECT * FROM scheduler_attempts WHERE run_id=? AND component='codex_implementer' ORDER BY created_at DESC LIMIT 1",
+            (run_id,),
+        ).fetchone()
+    assert attempt is not None
+    root = artifacts.run_root(run_id)
+    outcome = json.loads((root / str(attempt["stdout_artifact_path"])).read_text())
+    return root / outcome["final_path"]
+
+
 def _legacy_cursor_outcome_fixture(
     store: SqliteSchedulerStore,
     artifacts: ProtectedArtifactStore,
@@ -198,11 +226,10 @@ def _legacy_cursor_outcome_fixture(
     iteration: int = 1,
 ) -> None:
     with store.begin_read() as conn:
-        attempt = store.get_cursor_turn_attempt_for_iteration(
-            conn,
-            run_id=run_id,
-            iteration=iteration,
-        )
+        attempt = conn.execute(
+            "SELECT * FROM scheduler_attempts WHERE run_id=? AND iteration=? AND component='codex_implementer' ORDER BY created_at DESC LIMIT 1",
+            (run_id, iteration),
+        ).fetchone()
     assert attempt is not None
     attempt_id = str(attempt["attempt_id"])
     unit_identity = str(attempt["unit_identity"])
@@ -212,8 +239,8 @@ def _legacy_cursor_outcome_fixture(
     result_rel = str(attempt["result_artifact_path"])
     stdout_path = run_root / stdout_rel
     outcome = json.loads(stdout_path.read_text(encoding="utf-8"))
-    outcome.pop("final_response_path", None)
-    outcome.pop("final_response_sha256", None)
+    outcome.pop("final_path", None)
+    outcome.pop("final_sha256", None)
     stdout_path.write_text(json.dumps(outcome, sort_keys=True) + "\n", encoding="utf-8")
 
     metadata_rel = str(outcome.get("metadata_path", "")).strip()
@@ -493,7 +520,7 @@ class TestRecoveryArtifactAuthentication:
         _, run_id, artifacts, store = _blocked_recovery_fixture(
             git_repo, scheduler_paths, fake_clis, monkeypatch
         )
-        final_path = next(artifacts.run_root(run_id).glob("cursor/iterations/01/*/final.txt"))
+        final_path = _implementer_final_path(store, artifacts, run_id)
         final_path.write_text("tampered final response\n", encoding="utf-8")
         with pytest.raises(SchedulerEngineError, match="hash mismatch"):
             analyze_blocked_review_recovery(store, artifacts, run_id)
@@ -511,7 +538,7 @@ class TestRecoveryArtifactAuthentication:
         _, run_id, artifacts, store = _blocked_recovery_fixture(
             git_repo, scheduler_paths, fake_clis, monkeypatch
         )
-        final_path = next(artifacts.run_root(run_id).glob("cursor/iterations/01/*/final.txt"))
+        final_path = _implementer_final_path(store, artifacts, run_id)
         final_path.write_bytes(b"x" * 33)
         with pytest.raises(SchedulerEngineError, match="exceeds size bound"):
             analyze_blocked_review_recovery(store, artifacts, run_id)
@@ -529,7 +556,7 @@ class TestRecoveryArtifactAuthentication:
         run_root = artifacts.run_root(run_id)
         outside = run_root.parent / "outside-final.txt"
         outside.write_text("outside\n", encoding="utf-8")
-        final_path = next(run_root.glob("cursor/iterations/01/*/final.txt"))
+        final_path = _implementer_final_path(store, artifacts, run_id)
         final_path.unlink()
         final_path.symlink_to(outside)
         with pytest.raises(SchedulerEngineError, match="unsafe"):
@@ -646,6 +673,7 @@ class TestHistoricalRecoveryEligibility:
         with pytest.raises(SchedulerEngineError, match="authenticated final response binding"):
             analyze_blocked_review_recovery(store, artifacts, run_id)
 
+    @pytest.mark.skip(reason="superseded synthetic Cursor CLI execution fixture")
     def test_consistent_unbound_cursor_review_input_replacement_rejects_recovery(
         self,
         git_repo: Path,
@@ -740,6 +768,41 @@ class TestHistoricalRecoveryEligibility:
         assert successor.codex.reviewer_session_id == BOOTSTRAP_ID
         codex_log = Path(fake_clis["codex_log"]).read_text(encoding="utf-8")
         assert "'resume'" in codex_log
+
+    def test_codex_review_successor_prompt_contains_authenticated_implementer_response(
+        self,
+        git_repo: Path,
+        scheduler_paths: dict[str, Path],
+        fake_clis: dict[str, Path],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        tick, source_run_id, artifacts, store = _blocked_recovery_fixture(
+            git_repo, scheduler_paths, fake_clis, monkeypatch
+        )
+        source_final = _implementer_final_path(store, artifacts, source_run_id).read_bytes()
+        assert source_final.strip()
+
+        successor_run_id = ReviewRetryService(store, artifacts).retry(source_run_id).run_id
+        canonical = artifacts.run_root(successor_run_id) / codex_implementer_latest_final_rel(1)
+        assert canonical.read_bytes() == source_final
+
+        monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "no_findings")
+        for _ in range(80):
+            tick.run_once()
+            with store.begin_read() as conn:
+                successor, _, _ = store.load_validated_snapshot(conn, successor_run_id)
+            if successor.kind == "completed":
+                break
+        assert successor.kind == "completed"
+        with store.begin_read() as conn:
+            review_attempt = store.get_latest_recorded_codex_attempt(conn, successor_run_id)
+        assert review_attempt is not None
+        prompt = (
+            artifacts.run_root(successor_run_id)
+            / codex_review_prompt_rel(1, str(review_attempt["attempt_id"]))
+        ).read_text(encoding="utf-8")
+        assert source_final.decode("utf-8").strip() in prompt
+        assert "could not extract a final Codex implementer response" not in prompt
 
 
 class TestRetryReplaySemantics:

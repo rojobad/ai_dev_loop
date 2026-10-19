@@ -82,6 +82,7 @@ from ai_dev_loop.scheduler.domain.state import (
     CursorWorkflowCheckpoint,
     PreflightCompleteState,
     WaitingForCursorFixState,
+    resolved_implementer_provider,
 )
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import (
     ProtectedArtifactError,
@@ -536,6 +537,9 @@ class CodexImplementerFailureRecoveryService:
 
     def force(self, run_id: str) -> tuple[str, bool]:
         with self.store.begin_read() as conn:
+            source_state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            if resolved_implementer_provider(source_state.context) != "codex":
+                raise _invalid("implementer retry applies only to the Codex implementer")
             rows = conn.execute(
                 """
                 SELECT * FROM scheduler_codex_implementer_recoveries
@@ -1118,6 +1122,8 @@ class CodexImplementerFailureRecoveryService:
         state = evidence.state
         implementer = state.context.implementer
         assert implementer is not None
+        if implementer.command is None:
+            raise _corrupt("source lost frozen Codex implementer command")
         assert implementer.reasoning_effort is not None
         baseline_path = state.context.baseline_status_artifact_path
         baseline_sha = state.context.baseline_status_sha256

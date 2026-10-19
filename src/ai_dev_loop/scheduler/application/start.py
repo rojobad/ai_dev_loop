@@ -13,6 +13,7 @@ from ai_dev_loop.scheduler.application.contracts import (
     StartResult,
     authorized_safe_next_action,
 )
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import require_supported_context
 from ai_dev_loop.scheduler.domain.events import RunAuthorizedEvent
 from ai_dev_loop.scheduler.domain.reducer import apply_run_authorized
 from ai_dev_loop.scheduler.domain.state import AuthorizedState, SubmittedState
@@ -38,6 +39,8 @@ class StartService:
 
         with self.store.begin_immediate() as conn:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
+            if isinstance(state, (SubmittedState, AuthorizedState)):
+                require_supported_context(state.context, action="scheduler start")
             reservation = self.store.get_reservation_for_run(conn, run_id)
             if reservation is None:
                 raise SchedulerEngineError(

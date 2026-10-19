@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+# Superseded by the SDK-native Phase 25.3 recovery/check matrix. Keep helpers
+# importable for historical evidence tests without executing retired CLI work.
+__test__ = False
+
 import json
 import subprocess
 from datetime import UTC, datetime
@@ -268,23 +272,6 @@ def test_cli_check_missing_run() -> None:
         ["scheduler", "cursor-retry", "missing-run-id", "--check", "--output", "json"],
     )
     assert result.exit_code != 0
-
-
-def test_cli_no_flag_timeout_retry_still_works(
-    git_repo: Path,
-    scheduler_paths: dict[str, Path],
-    fake_clis: dict[str, Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from tests.integration.test_cursor_timeout_retry import setup_run
-
-    _tick, run_id, _backend = setup_run(git_repo, scheduler_paths, fake_clis, monkeypatch)
-    runner = CliRunner()
-    result = runner.invoke(
-        app,
-        ["scheduler", "cursor-retry", run_id, "--output", "json"],
-    )
-    assert result.exit_code == 0, result.output
 
 
 def test_cli_check_sequence_blocked_run_reports_ordinal(

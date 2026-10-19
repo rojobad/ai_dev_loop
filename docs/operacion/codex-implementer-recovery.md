@@ -143,8 +143,9 @@ versión instalada y evidencia; no conviertas un test con fakes en resultado liv
 - [ ] Crear un repositorio Git desechable y limpio fuera del checkout de
   `ai_dev_loop`; no usar un repositorio con trabajo valioso.
 - [ ] Confirmar `git status --short`, branch y HEAD iniciales.
-- [ ] Validar build/gates del checkout aceptado y después actualizar el paquete
-  local de forma explícita con `uv tool install --force .`.
+- [ ] Validar build/gates del checkout aceptado y después instalar su wheel de
+  forma explícita; nunca hot-instalar un checkout cambiante. Para Cursor incluye
+  el extra como indica el [cutover SDK](cutover-cursor-sdk.md).
 - [ ] Ejecutar `ai_dev_loop --version` y
   `ai_dev_loop scheduler timer validate --output json`. Si el operador decidió
   refrescar las unidades, usar `scheduler timer install` y `timer status` según
@@ -191,7 +192,7 @@ ai_dev_loop scheduler submit \
 - [ ] Repetir `--force` y comprobar que devuelve el mismo sucesor. Confirmar origen
   inmutable, misma sesión/settings/prompt, reviewer independiente y presupuesto
   de reviews conservado.
-- [ ] Ejecutar una secuencia mixta v2 equivalente. Confirmar adopción en el mismo
+- [ ] Ejecutar una secuencia mixta v4 equivalente. Confirmar adopción en el mismo
   ordinal, un único checkpoint por fase no final aceptada, siguiente provider
   congelado y fase final staged sin commit.
 - [ ] En otro run desechable, abortar durante espera de capacidad o antes del
@@ -213,11 +214,12 @@ ai_dev_loop scheduler submit \
 
 ## Límites y compatibilidad
 
-- Los contextos históricos sin metadata de implementer siguen siendo Cursor.
-  `scheduler cursor-retry` permanece compatible y Cursor-only; el comando
-  compartido delega a esa política cuando el provider congelado es Cursor.
-- Manifest v1 permanece Cursor-only. Manifest v2 congela provider/settings por
-  fase; no hay switching dentro de un run.
+- Los contextos históricos sin metadata de implementer se leen como Cursor, pero
+  Cursor CLI no puede iniciar ni recuperar trabajo. `scheduler cursor-retry`
+  opera sobre Cursor SDK autenticado; Codex legacy mantiene su propia recuperación.
+- Manifests históricos conservan bytes/hashes; solo definiciones Codex-only
+  mantienen ejecución. Manifest v3 nuevo es Codex-only y v4 congela
+  provider/settings SDK o Codex por fase, sin switching dentro de un run.
 - No se recuperan bootstrap sin identidad, evidencia corrupta, hojas obsoletas,
   abortos ni outcomes inciertos mediante `--force`.
 - No se implementan fallback de provider/modelo, billing/quota management,

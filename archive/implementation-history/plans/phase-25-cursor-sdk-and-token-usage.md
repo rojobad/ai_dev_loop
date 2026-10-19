@@ -2,22 +2,26 @@
 
 ## Goals
 
-Replace Cursor CLI execution for new scheduler admissions with a supervised local
-Python SDK integration. Preserve the durable Cursor/Codex exchange, supported
+Replace Cursor CLI execution for new **Cursor-provider** scheduler admissions with
+a supervised local Python SDK integration. Preserve Codex CLI implementation,
+the durable implementer/reviewer exchange, supported
 recovery decisions, Git authority and read-only access to historical records.
 Record provider-specific token usage by attempt, iteration, run, phase and sequence
 with explicit coverage and idempotent aggregation.
 
-Planning baseline: `main`, commit
-`58944326a06cf319df521d595050fec091d870da`. Phase 23 implementation is present;
-Phase 24 consists of unexecuted plans and is **not a prerequisite**. Keep the
-existing fixed timeout budgets and retry policy. Recheck code and accepted
-predecessors in the actual execution checkout before dependent work.
+Replanning baseline: `main`, commit `558b799` (full identity in the replanning
+findings). Phase 27 dual implementers and authenticated recovery, Phase 26 local
+Dashboard, and Phase 28 names/inspection/filter refinements are implemented.
+Numbering follows the accepted repository artifacts. Phase 24 is unexecuted and
+is **not a prerequisite**. Preserve fixed timeouts and all existing provider
+retry policies. Recheck accepted code before dependent work.
 
-The operator approved the design below on 2026-10-09, requested these plans and
-authorized committing/pushing the planning artifacts to the existing `main` branch.
-That authorization does not start implementation, call models, install a package,
-configure credentials, change the timer or deploy the final runtime.
+The operator approved the SDK design on 2026-10-09 and on 2026-10-16 authorized
+updating these plans, committing them, preparing a fresh sequence and starting it
+with Codex `gpt-5.6-sol` / `xhigh` as implementer. Reviewer choices below stay
+unchanged. This authorizes real implementation/review turns through the installed
+scheduler, not live SDK smoke tests, package installation, credentials, timer
+changes, deployment or final Git publication.
 
 ## Non-Goals
 
@@ -32,8 +36,8 @@ implementation agents, custom orchestrator tools or changing reviewer B.
 | 25.1 | [SDK foundation and configuration](phase-25-1-sdk-foundation-and-configuration.md) | Pinned package, explicit configuration/credential/store adapter and offline contracts; existing CLI execution remains the intermediate runtime. |
 | 25.2 | [Identity, worker and evidence](phase-25-2-sdk-identity-worker-and-evidence.md) | Versioned SDK identities and supervised worker capture; fake-backed normal implementation/review/correction flow. SDK recovery remains explicitly guarded until 25.3. |
 | 25.3 | [Continuity and recovery](phase-25-3-sdk-continuity-and-recovery.md) | Exact-agent retry/recovery, full process-tree cleanup, ambiguous-dispatch safety, sequence lineage and eventual reconciliation. |
-| 25.4 | [Token usage and historical queries](phase-25-4-token-usage-and-historical-queries.md) | Cursor and Codex observations, coverage-aware aggregates, read-only usage CLI and historical query regression coverage. |
-| 25.5 | [Integration and cutover acceptance](phase-25-5-sdk-integration-and-cutover-acceptance.md) | Complete integration gate, SDK-only new admissions, retirement of CLI execution, operational documentation and manually reviewed project configuration. |
+| 25.4 | [Token usage and historical queries](phase-25-4-token-usage-and-historical-queries.md) | Cursor implementer plus Codex implementer/reviewer observations, coverage-aware role/provider aggregates, read-only usage CLI and historical/Dashboard query regressions. |
+| 25.5 | [Integration and cutover acceptance](phase-25-5-sdk-integration-and-cutover-acceptance.md) | Both-provider integration gate, SDK-only new Cursor admissions, Cursor CLI retirement, preserved Codex execution and Dashboard, operational docs and manually reviewed source configuration. |
 
 Each subphase owns its mandatory tests and affected documentation. Historical
 readers must remain functional **in every schema-changing slice**; 25.4 broadens
@@ -47,6 +51,22 @@ Concise implementation prompts: [25.1](prompt_phase-25-1-sdk-foundation-and-conf
 [25.5](prompt_phase-25-5-sdk-integration-and-cutover-acceptance.txt).
 These five prompts are deliberately included in the planning commit despite the
 general ignore convention, so the published plans have portable handoff inputs.
+
+The fresh execution manifest is [phase-25-replanned-sequence.yaml](phase-25-replanned-sequence.yaml).
+It uses the installed manifest v3, a meaningful short name for the sequence and
+each leaf, and independent explicit settings per phase:
+
+| Subphase | Implementer model / effort | Reviewer model / effort |
+| --- | --- | --- |
+| 25.1 | `gpt-5.6-sol` / `xhigh` | `gpt-6.1-sol` / `high` |
+| 25.2 | `gpt-5.6-sol` / `xhigh` | `gpt-6.1-sol` / `xhigh` |
+| 25.3 | `gpt-5.6-sol` / `xhigh` | `gpt-6-astra` / `high` |
+| 25.4 | `gpt-5.6-sol` / `xhigh` | `gpt-6.1-sol` / `high` |
+| 25.5 | `gpt-5.6-sol` / `xhigh` | `gpt-6-astra` / `high` |
+
+The manifest freezes seven completed reviews maximum and 90-minute role
+timeouts, following current project/sequence conventions. Only accepted
+non-final phases receive local checkpoints; final changes remain staged.
 
 ## Out of Scope
 
@@ -71,6 +91,15 @@ configuration; the current planning delivery leaves it unchanged.
   Paths here are relative to `src/ai_dev_loop/`.
 - Domain state/events/sequence/recovery models, `schemas/`, validated SQLite
   snapshot readers, protected artifacts and `integration_api/` readers.
+- Phase 27 `codex_implementer_attempt_runner.py`, role-specific Codex evidence,
+  `implementer_timeout_retry.py`, `implementer_failure_recovery.py`,
+  `sequence_implementer_recovery.py`, mixed-provider materialization and held
+  abort paths. Preserve implementer/reviewer identity and capacity separation.
+- `dashboard/`, `integration_api/dashboard_*`, `dashboard-web/`, Phase 26/28
+  rules, accepted findings and tests. Integration API is currently **1.11**;
+  SQLite is schema **17**, submitted contexts **1–6**, frozen definitions/entries
+  **v1/v2**, manifests **v1/v2/v3**. Inspect current versions before allocating new
+  ones; never reuse a Phase 27 version for a different SDK shape.
 - Current tests for configuration, schemas/history, attempts, abort, Phase 20
   sequences, Phase 21 inspection and Phase 23 recovery. The POC used Python 3.13;
   SDK operation on the project's minimum Python 3.11 remains a mandatory check.
@@ -82,7 +111,8 @@ documentation alone does not establish production parity.
 
 ## Cursor Rules And Skills
 
-Every subphase follows `AGENTS.md` and these `.cursor/rules/` files:
+Both Codex and Cursor implementers follow `AGENTS.md` and these ten
+`.cursor/rules/` files (the directory name does not limit their applicability):
 
 - `ai-dev-loop-governance.mdc`
 - `ai-dev-loop-orchestrator-contracts.mdc`
@@ -92,6 +122,8 @@ Every subphase follows `AGENTS.md` and these `.cursor/rules/` files:
 - `ai-dev-loop-codex-review-contracts.mdc`
 - `ai-dev-loop-docs-acceptance-contracts.mdc`
 - `ai-dev-loop-global-integrations-contracts.mdc`
+- `ai-dev-loop-dashboard-contracts.mdc`
+- `ai-dev-loop-dashboard-refinements-contracts.mdc`
 
 Read `.agents/skills/create-cursor-plan/SKILL.md`. The separate read-only reviewer
 uses `.agents/skills/review-staged-ai-dev-loop-execution/SKILL.md`; implementers
@@ -114,7 +146,7 @@ runtime in the tested Linux/WSL environment. Do not require external Node or
 install/change system Python. Add the SDK as an optional installation extra
 `cursor-sdk`, avoiding an SDK import requirement for historical inspection.
 
-New project configuration uses version 2 and an explicit SDK binding:
+New Cursor SDK project configuration uses version 2 and an explicit SDK binding:
 
 ```yaml
 version: 2
@@ -130,6 +162,28 @@ cursor:
   setting_sources: [project]
   sandbox: disabled
 ```
+
+Preserve `implementer` selection and its provider-specific merge/override rules
+from Phase 27. An omitted implementer still means Cursor; explicit Codex keeps
+its independent command/model/effort/timeout and enforced sandbox/approval policy.
+Codex-provider admissions with valid v1 config remain supported. They do not
+require Cursor CLI, the SDK extra, a Cursor key, catalog, bridge or native store.
+V2 can also select Codex; validate its configuration syntax but perform no Cursor
+runtime work for that selection. Temporary v2 dispatch guards in 25.1 apply only
+when the resolved implementer is Cursor. Never infer a provider from the required
+historical `context.cursor` field or config version alone.
+
+Do not shallow-merge legacy Cursor defaults into v2 SDK configuration. Resolve
+the config-version/runtime branch before applying compatible defaults; an omitted
+SDK selection cannot inherit a CLI alias. Frozen Codex bindings and historical
+v1 config serialization retain their existing semantics and hashes.
+
+In 25.2 introduce SDK-capable manifest v4 by extending v3's mandatory short names
+and independent implementer/reviewer selection, with explicit complete SDK
+model+parameter overrides. Keep new v3 Codex-only preparations supported; v3
+Cursor CLI definitions become historical at final cutover. Preserve accepted
+v1/v2/v3 replay and original frozen bytes. Allocate new SDK frozen-entry/context
+versions above existing versions rather than overwriting Phase 27 contracts.
 
 The SDK model/parameter choice is the POC-tested **new selection**, not a claim
 of exact equivalence to CLI alias `grok-4.7-high`. Other projects supply their own
@@ -202,8 +256,11 @@ SDK `SendOptions.local.force` must not inherit CLI `cursor.force` or automatical
 authorize expiring an active turn. Use the proved get-run/cancel/resume recovery.
 
 Keep current fixed timeout limits, three eligible automatic timeout retries and
-review ceilings; no Phase 24 activity policy. Cursor remains implementer and
-Codex final reviewer. Preserve exact reviewer B and explicit review model/effort,
+review ceilings; no Phase 24 activity policy. Cursor remains the default
+implementer; frozen Codex implementation and mixed-provider sequences remain
+supported. Codex stays final reviewer. Preserve separate authenticated Codex
+implementer/reviewer sessions, role-bound capacity waits, exact reviewer B and
+explicit independent model/effort,
 prompt/fix envelopes, staging normalization and authorized non-final checkpoints.
 No provider switching, autonomous commits, push, PR or merge enters the runtime.
 Preflight is admission, not continuous Git-status policing.
@@ -212,10 +269,16 @@ Preflight is admission, not continuous Git-status policing.
 
 Historical records remain byte/hash intact and readable through version-aware
 models/projections in every affected slice. No legacy run continuation is
-promised. At final cutover, reject attempts to start/retry/extend/handoff old
-CLI-backed execution with an actionable message, while read/inspection and safe
-non-agent cancellation of pending work remain available. Old prepared work must
-be cancelled/settled and freshly submitted/prepared, never rewritten in place.
+promised for Cursor CLI. At final cutover, reject attempts to
+start/retry/extend/handoff old **Cursor CLI-backed** execution with an actionable
+message, while read/inspection and safe
+non-agent cancellation of pending work remain available. Old prepared work
+containing Cursor CLI must be cancelled/settled and freshly prepared,
+never rewritten in place. Codex-only frozen inputs remain executable and
+recoverable; do not reject them merely because they contain v1 config or an
+unused legacy Cursor binding. Precheck all effective providers in a sequence at
+start; an old mixed definition with any CLI-Cursor leaf cannot partially start
+under the final runtime. Retain guards at materialization/recovery/handoff too.
 
 Numeric usage counters are provider-specific data. Cursor cache categories are
 additional to its `input_tokens` in the tested SDK; Codex cached input is a subset
@@ -225,6 +288,14 @@ Cancelled/crashed attempts can consume without counters: absent usage is unknown
 not zero. Deduplicate event/result/replay evidence by scheduler/native identity.
 Metrics remain observational and cannot authorize retries, influence reviews or
 change budgets. No billing API prerequisite, USD estimate or new model call.
+
+Codex usage includes **both roles**, identified by authenticated attempt
+component/effect and invocation evidence, never by shared model or session text.
+Expose provider+role breakdowns before optional combined totals. Initial and
+correction implementer turns are not reviews, and capacity probes are not
+inference attempts. Usage counters must not change existing Dashboard activity
+definitions, short-name metadata, linked selection, filters, paging or privacy.
+This revision preserves the Dashboard; it does not add a new token chart/UI.
 
 ## Implementation Plan
 
@@ -236,8 +307,11 @@ checkpoint guards remain explicit until their owning later slice replaces them.
 Implementation must use a stable installed scheduler runtime that is independent
 of the changing source checkout. Do not install editable WIP into the live worker
 environment. Each phase can be implemented/reviewed against its predecessor in
-an isolated checkout; these plans contain no automatically started sequence or
-chosen reviewer model. Submit/prepare require explicit reviewer choices later.
+the current checkout using the fresh manifest linked above. The operator has
+authorized preparation/start after the planning commit; record the resulting
+exact sequence/run IDs from scheduler receipts, never guess them. Do not
+hot-install source changes during this self-hosted sequence. Its driver and
+frozen v1 project configuration stay independent of the final v2 source YAML.
 
 ## Testing Criteria
 
@@ -265,11 +339,11 @@ mandatory behavior or coverage is incomplete scope, not residual risk.
 After correction rerun failed/affected checks; broaden only for concrete risk.
 The repository-wide suite belongs to the separate 25.5 integration gate.
 
-Planning-time `ruff check .` passed. `ruff format --check .` reported 23 existing
-unchanged source/test files as unformatted. Record that baseline separately;
-format changed maintained code, but do not expand a subphase into unrelated
-baseline reformatting merely to make a global command green. Archived verbatim
-POC scripts are excluded from maintained-code lint discovery and hash-checked.
+The original planning checks are recorded in the original planning findings;
+they do not describe this newer baseline. Record replanning checks separately
+in `../findings/phase-25-replanning-after-phases-26-28.md`. Format changed
+maintained code without unrelated reformatting. Archived verbatim POC scripts
+remain excluded from maintained-code lint discovery and hash-checked.
 
 ## Risks Or Recovery Notes
 
@@ -279,7 +353,8 @@ codes/context, not generic HTTP 500 or unreliable capability flags. No automatic
 fallback to a different SDK version or provider. Preserve source evidence in the
 durable POC directory; its original absolute paths are mapped by that index.
 
-Before deployment, settle all old runs, sequences, prepared definitions and
+Before deployment, settle old Cursor CLI runs, sequences containing such work and
+their prepared definitions and
 pending recovery/handoff intents through their existing supported actions.
 Confirm no outstanding owned processes or uncertain reservations. Preserve their
 records. Install only the fully accepted final package with the SDK extra after

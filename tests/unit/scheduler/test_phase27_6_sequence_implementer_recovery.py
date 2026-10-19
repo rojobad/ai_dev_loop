@@ -148,7 +148,7 @@ def _blocked_codex_leaf(
     monkeypatch.setenv("FAKE_CODEX_REVIEWER_SESSION_ID", REVIEWER_ID)
     monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "phase27-6-partial.txt")
     monkeypatch.setenv("FAKE_CODEX_CAPACITY", "available")
-    prepared = prepare(repo, paths, ("codex", "cursor"), payload=payload)
+    prepared = prepare(repo, paths, ("codex", "codex"), payload=payload)
     started = start_sequence(prepared.sequence_id, db_path=paths["db_path"])
     tick = _tick(repo, paths)
     blocked = _drive_sequence_leaf_to(tick, paths, prepared.sequence_id, "blocked")
@@ -162,7 +162,7 @@ def _blocked_codex_correction_leaf(
     paths: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[object, object, object]:
-    payload = manifest_payload(("codex", "cursor"))
+    payload = manifest_payload(("codex", "codex"))
     payload["phases"][0]["workflow"] = {"max_review_iterations": 1}
     monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_SEQUENCE", "success,fail,success")
     monkeypatch.setenv("FAKE_CODEX_REVIEW_SEQUENCE", "findings,no_findings")
@@ -170,7 +170,7 @@ def _blocked_codex_correction_leaf(
     monkeypatch.setenv("FAKE_CODEX_REVIEWER_SESSION_ID", REVIEWER_ID)
     monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "phase27-6-race.txt")
     monkeypatch.setenv("FAKE_CODEX_CAPACITY", "available")
-    prepared = prepare(repo, paths, ("codex", "cursor"), payload=payload)
+    prepared = prepare(repo, paths, ("codex", "codex"), payload=payload)
     started = start_sequence(prepared.sequence_id, db_path=paths["db_path"])
     tick = _tick(repo, paths)
     _drive_sequence_leaf_to(tick, paths, prepared.sequence_id, "max_iterations_reached")
@@ -239,7 +239,7 @@ def test_schema_v16_intent_and_initial_recovery_continue_checkpoint_and_final_st
         record = load_implementer_recovery_record(tick.store, tick.artifacts, conn, result.run_id)
         assert tick.store.run_short_name(conn, blocked.run_id) == "Edited retry source"
         assert tick.store.run_short_name(conn, result.run_id) == "Edited retry source"
-    assert SCHEMA_VERSION == 17
+    assert SCHEMA_VERSION == 18
     assert row is not None and row["adopted_at"] is not None and row["cancelled_at"] is None
     assert [attempt.attempt_kind for attempt in lineage.phase_executions[0].attempts] == [
         "planned_run",
@@ -296,7 +296,7 @@ def test_correction_recovery_preserves_reviewer_fix_and_extended_budget(
 ) -> None:
     fix = "Preserve this exact sequence correction Ω.\r\nSecond line.\n"
     witness = scheduler_paths["db_path"].parent / "sequence-correction-prompts"
-    payload = manifest_payload(("codex", "cursor"))
+    payload = manifest_payload(("codex", "codex"))
     payload["phases"][0]["workflow"] = {"max_review_iterations": 1}
     monkeypatch.setenv("FAKE_CODEX_FIX_PROMPT", fix)
     monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_STDIN_WITNESS_DIR", str(witness))
@@ -306,7 +306,7 @@ def test_correction_recovery_preserves_reviewer_fix_and_extended_budget(
     monkeypatch.setenv("FAKE_CODEX_REVIEWER_SESSION_ID", REVIEWER_ID)
     monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "phase27-6-correction.txt")
     monkeypatch.setenv("FAKE_CODEX_CAPACITY", "available")
-    prepared = prepare(git_repo, scheduler_paths, ("codex", "cursor"), payload=payload)
+    prepared = prepare(git_repo, scheduler_paths, ("codex", "codex"), payload=payload)
     started = start_sequence(prepared.sequence_id, db_path=scheduler_paths["db_path"])
     tick = _tick(git_repo, scheduler_paths)
     exhausted = _drive_sequence_leaf_to(
@@ -1398,6 +1398,7 @@ def test_v15_migration_adds_sequence_replacement_without_rewriting_runs(
     store.bootstrap()
     with store.begin_immediate() as conn:
         before = int(conn.execute("SELECT COUNT(*) FROM scheduler_runs").fetchone()[0])
+        conn.execute("DROP TABLE scheduler_cursor_sdk_reconciliations")
         conn.execute("DROP TABLE scheduler_planned_run_presentation")
         conn.execute("DROP TABLE scheduler_run_presentation")
         conn.execute("DROP TABLE scheduler_sequence_presentation")

@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+# Phase 25.3 replaced these Cursor CLI execution cases with SDK-native timeout,
+# reconciliation, retry and abort coverage. Later tests still import the
+# historical helpers and bounded backend, but this obsolete new-run suite must
+# not bypass the Phase 25.5 production retirement guard.
+__test__ = False
+
 import json
 import subprocess
 from datetime import UTC, datetime, timedelta

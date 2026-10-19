@@ -27,6 +27,7 @@ from ai_dev_loop.scheduler.domain.cursor_recovery_v2 import (
     CursorRecoveryRecordV2,
     ExtensionEvidenceV1,
 )
+from ai_dev_loop.scheduler.domain.cursor_sdk_recovery import CursorSdkSuccessorRecordV1
 from ai_dev_loop.scheduler.domain.events import (
     REVIEW_BUDGET_EXTENDED_EVENT_KIND,
     ReviewBudgetExtendedEvent,
@@ -105,6 +106,32 @@ def _intent_is_v2(row: sqlite3.Row) -> bool:
     if isinstance(version, bool) or not isinstance(version, int):
         raise _corrupt("cursor recovery publication intent version is invalid")
     return version == 2
+
+
+def _intent_version(row: sqlite3.Row) -> int:
+    payload = json.loads(str(row["intent_payload"]))
+    if not isinstance(payload, dict) or isinstance(payload.get("schema_version"), bool):
+        raise _corrupt("cursor recovery publication intent version is invalid")
+    version = payload.get("schema_version")
+    if not isinstance(version, int):
+        raise _corrupt("cursor recovery publication intent version is invalid")
+    return version
+
+
+def _sdk_record_for_run(
+    store: SqliteSchedulerStore,
+    artifacts: ProtectedArtifactStore,
+    conn: sqlite3.Connection,
+    run_id: str,
+) -> CursorSdkSuccessorRecordV1 | None:
+    row = _ready_cursor_row(store, conn, run_id)
+    if row is None or _intent_version(row) != 3:
+        return None
+    from ai_dev_loop.scheduler.application.cursor_sdk_successor import (
+        authenticate_sdk_successor_authority,
+    )
+
+    return authenticate_sdk_successor_authority(store, artifacts, conn, run_id)
 
 
 def _nearest_v2_ancestor(
@@ -295,6 +322,10 @@ def load_budget_carry_for_run(
     row = _ready_cursor_row(store, conn, run_id)
     if row is None:
         return None
+    if _intent_version(row) == 3:
+        if _sdk_record_for_run(store, artifacts, conn, run_id) is None:
+            raise _corrupt("Cursor SDK successor recovery record is missing")
+        return None
     if not _intent_is_v2(row):
         from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
             authenticate_required_initial_ancestors,
@@ -390,6 +421,9 @@ def inherited_ceiling_for_run(
     )
     if implementer_record is not None:
         return implementer_record.effective_review_ceiling
+    sdk_record = _sdk_record_for_run(store, artifacts, conn, state.run_id)
+    if sdk_record is not None:
+        return sdk_record.effective_review_ceiling
     carry = load_budget_carry_for_run(store, artifacts, conn, state.run_id)
     if carry is not None:
         return carry.inherited_effective_ceiling
@@ -441,6 +475,9 @@ def authenticated_reviews_completed(
     implementer_record = load_implementer_recovery_record(store, artifacts, conn, run_id)
     if implementer_record is not None:
         return implementer_record.reviews_completed + local
+    sdk_record = _sdk_record_for_run(store, artifacts, conn, run_id)
+    if sdk_record is not None:
+        return sdk_record.reviews_completed + local
     carry = load_budget_carry_for_run(store, artifacts, conn, run_id)
     if carry is not None:
         return carry.inherited_reviews_completed + local
@@ -477,6 +514,9 @@ def inherited_completed_for_blocked_run(
     implementer_record = load_implementer_recovery_record(store, artifacts, conn, run_id)
     if implementer_record is not None:
         return implementer_record.reviews_completed
+    sdk_record = _sdk_record_for_run(store, artifacts, conn, run_id)
+    if sdk_record is not None:
+        return sdk_record.reviews_completed
     carry = load_budget_carry_for_run(store, artifacts, conn, run_id)
     if carry is not None:
         return carry.inherited_reviews_completed

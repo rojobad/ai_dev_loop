@@ -470,6 +470,7 @@ def test_c262_2_real_provider_owned_output_and_reviewer_content_boundaries(
             {"runId": str(implementer["run_id"])},
         )["data"]
         assert inspect["implementerProvider"] == "codex"  # type: ignore[index]
+        assert inspect["tokenUsage"]["normalizationVersion"] == "provider-usage-v1"  # type: ignore[index]
         timeline = _post(
             server.port,
             "run.timeline",
@@ -486,6 +487,7 @@ def test_c262_2_real_provider_owned_output_and_reviewer_content_boundaries(
             "sequence.inspect",
             {"sequenceId": result.sequence_id},
         )["data"]
+        assert sequence["tokenUsage"]["normalizationVersion"] == "provider-usage-v1"  # type: ignore[index]
         assert [phase["implementerProvider"] for phase in sequence["phases"]] == [  # type: ignore[index]
             "codex",
             "cursor",

@@ -1,0 +1,412 @@
+{
+  "additionalProperties": false,
+  "description": "Copy-once publication authority for an SDK manual recovery successor.",
+  "properties": {
+    "schema_version": {
+      "const": 3,
+      "default": 3,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "recovery_key": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Recovery Key",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "pending",
+        "ready",
+        "cancelled"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "source_run_id": {
+      "minLength": 1,
+      "title": "Source Run Id",
+      "type": "string"
+    },
+    "successor_run_id": {
+      "minLength": 1,
+      "title": "Successor Run Id",
+      "type": "string"
+    },
+    "failed_attempt_id": {
+      "minLength": 1,
+      "title": "Failed Attempt Id",
+      "type": "string"
+    },
+    "dispatch_id": {
+      "minLength": 1,
+      "title": "Dispatch Id",
+      "type": "string"
+    },
+    "turn_kind": {
+      "enum": [
+        "initial",
+        "correction"
+      ],
+      "title": "Turn Kind",
+      "type": "string"
+    },
+    "iteration": {
+      "minimum": 1,
+      "title": "Iteration",
+      "type": "integer"
+    },
+    "conversation_owner_run_id": {
+      "minLength": 1,
+      "title": "Conversation Owner Run Id",
+      "type": "string"
+    },
+    "conversation_key": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Conversation Key",
+      "type": "string"
+    },
+    "agent_id": {
+      "minLength": 1,
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "identity_owner_run_id": {
+      "minLength": 1,
+      "title": "Identity Owner Run Id",
+      "type": "string"
+    },
+    "identity_artifact_path": {
+      "minLength": 1,
+      "title": "Identity Artifact Path",
+      "type": "string"
+    },
+    "identity_artifact_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Identity Artifact Sha256",
+      "type": "string"
+    },
+    "reconciliation_owner_run_id": {
+      "minLength": 1,
+      "title": "Reconciliation Owner Run Id",
+      "type": "string"
+    },
+    "reconciliation_artifact_path": {
+      "minLength": 1,
+      "title": "Reconciliation Artifact Path",
+      "type": "string"
+    },
+    "reconciliation_artifact_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Reconciliation Artifact Sha256",
+      "type": "string"
+    },
+    "base_prompt_owner_run_id": {
+      "minLength": 1,
+      "title": "Base Prompt Owner Run Id",
+      "type": "string"
+    },
+    "base_prompt_path": {
+      "minLength": 1,
+      "title": "Base Prompt Path",
+      "type": "string"
+    },
+    "base_prompt_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Base Prompt Sha256",
+      "type": "string"
+    },
+    "admitted_owner_run_id": {
+      "minLength": 1,
+      "title": "Admitted Owner Run Id",
+      "type": "string"
+    },
+    "admitted_artifact_path": {
+      "minLength": 1,
+      "title": "Admitted Artifact Path",
+      "type": "string"
+    },
+    "admitted_artifact_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Admitted Artifact Sha256",
+      "type": "string"
+    },
+    "reviews_completed": {
+      "minimum": 0,
+      "title": "Reviews Completed",
+      "type": "integer"
+    },
+    "submitted_max_review_iterations": {
+      "minimum": 1,
+      "title": "Submitted Max Review Iterations",
+      "type": "integer"
+    },
+    "effective_review_ceiling": {
+      "minimum": 1,
+      "title": "Effective Review Ceiling",
+      "type": "integer"
+    },
+    "reviewer_session_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reviewer Session Id"
+    },
+    "reviewer_binding_owner_run_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reviewer Binding Owner Run Id"
+    },
+    "reviewer_binding_artifact_path": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reviewer Binding Artifact Path"
+    },
+    "reviewer_binding_artifact_sha256": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reviewer Binding Artifact Sha256"
+    },
+    "fix_owner_run_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fix Owner Run Id"
+    },
+    "fix_prompt_path": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fix Prompt Path"
+    },
+    "fix_prompt_sha256": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fix Prompt Sha256"
+    },
+    "staged_owner_run_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Staged Owner Run Id"
+    },
+    "staged_patch_path": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Staged Patch Path"
+    },
+    "staged_patch_sha256": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Staged Patch Sha256"
+    },
+    "review_owner_run_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Review Owner Run Id"
+    },
+    "review_result_path": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Review Result Path"
+    },
+    "review_result_sha256": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Review Result Sha256"
+    },
+    "effective_prompt_path": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Effective Prompt Path"
+    },
+    "effective_prompt_sha256": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Effective Prompt Sha256"
+    },
+    "record_sha256": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Record Sha256"
+    }
+  },
+  "required": [
+    "recovery_key",
+    "status",
+    "source_run_id",
+    "successor_run_id",
+    "failed_attempt_id",
+    "dispatch_id",
+    "turn_kind",
+    "iteration",
+    "conversation_owner_run_id",
+    "conversation_key",
+    "agent_id",
+    "identity_owner_run_id",
+    "identity_artifact_path",
+    "identity_artifact_sha256",
+    "reconciliation_owner_run_id",
+    "reconciliation_artifact_path",
+    "reconciliation_artifact_sha256",
+    "base_prompt_owner_run_id",
+    "base_prompt_path",
+    "base_prompt_sha256",
+    "admitted_owner_run_id",
+    "admitted_artifact_path",
+    "admitted_artifact_sha256",
+    "reviews_completed",
+    "submitted_max_review_iterations",
+    "effective_review_ceiling"
+  ],
+  "title": "CursorSdkSuccessorIntentV1",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

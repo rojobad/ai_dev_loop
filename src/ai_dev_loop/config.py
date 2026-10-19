@@ -4,17 +4,23 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import yaml
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
     field_validator,
     model_serializer,
     model_validator,
 )
+from yaml.constructor import ConstructorError
+from yaml.nodes import MappingNode
+from yaml.resolver import BaseResolver
 
 from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.paths import global_config_path, project_config_filename
@@ -22,6 +28,8 @@ from ai_dev_loop.paths import global_config_path, project_config_filename
 PROJECT_SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 CURSOR_OUTPUT_FORMATS = frozenset({"stream-json", "json", "text"})
 CURSOR_SANDBOX_VALUES = frozenset({"enabled", "disabled"})
+CURSOR_SDK_VERSION = "1.0.37"
+CURSOR_CREDENTIAL_REF_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 CODEX_SANDBOX_VALUES = frozenset({"read-only", "workspace-write", "danger-full-access"})
 CODEX_REVIEW_REASONING_EFFORTS = frozenset(
     {"minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
@@ -104,6 +112,83 @@ class CursorSection(BaseModel):
         if value not in CURSOR_SANDBOX_VALUES:
             raise ValueError(f"cursor.sandbox must be one of: {sorted(CURSOR_SANDBOX_VALUES)}")
         return value
+
+
+SdkParameterValue: TypeAlias = StrictStr | StrictBool
+
+
+class CursorSdkSection(BaseModel):
+    """Complete explicit Cursor SDK selection for config version 2."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    runtime: Literal["sdk-local"]
+    sdk_version: Literal["1.0.37"]
+    model: StrictStr
+    parameters: dict[str, SdkParameterValue]
+    credential_ref: StrictStr
+    setting_sources: list[Literal["project", "user", "team", "mdm", "plugins", "all"]]
+    sandbox: Literal["enabled", "disabled"]
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, value: str) -> str:
+        if not value.strip() or value != value.strip():
+            raise ValueError("cursor.model must be a non-empty trimmed string")
+        return value
+
+    @field_validator("parameters", mode="before")
+    @classmethod
+    def validate_parameters(cls, value: object) -> object:
+        if not isinstance(value, dict) or not value:
+            raise ValueError("cursor.parameters must be a non-empty mapping")
+        canonical: dict[str, str | bool] = {}
+        for raw_key, raw_value in value.items():
+            if not isinstance(raw_key, str) or not raw_key.strip() or raw_key != raw_key.strip():
+                raise ValueError("cursor.parameters keys must be non-empty trimmed strings")
+            if raw_key == "fast":
+                if not isinstance(raw_value, bool):
+                    raise ValueError("cursor.parameters.fast must be a strict boolean")
+            elif raw_key in {"context", "reasoning_effort"}:
+                if not isinstance(raw_value, str) or not raw_value.strip():
+                    raise ValueError(f"cursor.parameters.{raw_key} must be a non-empty string")
+            elif not isinstance(raw_value, (str, bool)):
+                raise ValueError(
+                    "cursor parameter values must be non-empty strings or strict booleans"
+                )
+            if isinstance(raw_value, str) and (
+                not raw_value.strip() or raw_value != raw_value.strip()
+            ):
+                raise ValueError("cursor parameter string values must be non-empty and trimmed")
+            canonical[raw_key] = raw_value
+        return {key: canonical[key] for key in sorted(canonical)}
+
+    @field_validator("credential_ref")
+    @classmethod
+    def validate_credential_ref(cls, value: str) -> str:
+        if value in {".", ".."} or not CURSOR_CREDENTIAL_REF_PATTERN.fullmatch(value):
+            raise ValueError("cursor.credential_ref must be a safe simple name")
+        return value
+
+    @field_validator("setting_sources")
+    @classmethod
+    def validate_setting_sources(
+        cls,
+        value: list[Literal["project", "user", "team", "mdm", "plugins", "all"]],
+    ) -> list[Literal["project", "user", "team", "mdm", "plugins", "all"]]:
+        if not value:
+            raise ValueError("cursor.setting_sources must be a non-empty list")
+        if len(value) != len(set(value)):
+            raise ValueError("cursor.setting_sources must not contain duplicates")
+        return value
+
+    def wire_parameters(self) -> tuple[tuple[str, str], ...]:
+        """Return the pinned SDK wire form without truthiness coercion."""
+
+        return tuple(
+            (key, str(value).lower() if isinstance(value, bool) else value)
+            for key, value in self.parameters.items()
+        )
 
 
 class CodexSection(BaseModel):
@@ -499,9 +584,9 @@ def _validate_argv_safe_token(value: str, *, field: str) -> str:
 class ProjectConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    version: int = Field(alias="version")
+    version: StrictInt = Field(alias="version")
     project: ProjectSection
-    cursor: CursorSection
+    cursor: CursorSection | CursorSdkSection
     codex: CodexSection
     workflow: WorkflowSection
     prompt: PromptSection
@@ -518,9 +603,17 @@ class ProjectConfig(BaseModel):
     @field_validator("version")
     @classmethod
     def validate_version(cls, value: int) -> int:
-        if value != 1:
-            raise ValueError("unsupported config version; expected 1")
+        if value not in {1, 2}:
+            raise ValueError("unsupported config version; expected 1 or 2")
         return value
+
+    @model_validator(mode="after")
+    def validate_cursor_runtime_for_version(self) -> ProjectConfig:
+        if self.version == 1 and not isinstance(self.cursor, CursorSection):
+            raise ValueError("config version 1 requires the Cursor CLI section")
+        if self.version == 2 and not isinstance(self.cursor, CursorSdkSection):
+            raise ValueError("config version 2 requires cursor.runtime sdk-local")
+        return self
 
     def github_enabled(self) -> bool:
         return self.github is not None and self.github.enabled
@@ -552,6 +645,8 @@ class ConfigOverrides(BaseModel):
     cursor_command: str | None = None
     cursor_model: str | None = None
     cursor_output_format: str | None = None
+    cursor_sdk_model: str | None = None
+    cursor_sdk_parameters: dict[str, SdkParameterValue] | None = None
     codex_command: str | None = None
     codex_review_model: str | None = None
     codex_review_reasoning_effort: str | None = None
@@ -581,12 +676,48 @@ class ConfigOverrides(BaseModel):
         return value
 
 
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """Safe YAML loader that rejects duplicate settings before values are lost."""
+
+
+def _construct_unique_mapping(
+    loader: _UniqueKeyLoader,
+    node: MappingNode,
+    deep: bool = False,
+) -> dict[object, object]:
+    loader.flatten_mapping(node)
+    mapping: dict[object, object] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        try:
+            duplicate = key in mapping
+        except TypeError as exc:
+            raise ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                "found an unhashable mapping key",
+                key_node.start_mark,
+            ) from exc
+        if duplicate:
+            raise ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                f"found duplicate key {key!r}",
+                key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_UniqueKeyLoader.add_constructor(BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping)
+
+
 def _load_yaml_file(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise ValidationError(f"configuration file not found: {path}")
     try:
         with path.open(encoding="utf-8") as handle:
-            data = yaml.safe_load(handle)
+            data = yaml.load(handle, Loader=_UniqueKeyLoader)
     except yaml.YAMLError as exc:
         raise ValidationError(f"invalid YAML in {path}: {exc}") from exc
     if not isinstance(data, dict):
@@ -601,18 +732,12 @@ def _parse_config(data: dict[str, Any], *, source: str) -> ProjectConfig:
         raise ValidationError(f"invalid configuration ({source}): {exc}") from exc
 
 
-def default_config_dict() -> dict[str, Any]:
-    return {
-        "version": 1,
+def default_config_dict(*, version: int = 1) -> dict[str, Any]:
+    if version not in {1, 2}:
+        raise ValueError("default configuration version must be 1 or 2")
+    defaults: dict[str, Any] = {
+        "version": version,
         "project": {"name": "example-project"},
-        "cursor": {
-            "command": "agent",
-            "model": "composer-2.5-fast",
-            "output_format": "stream-json",
-            "force": True,
-            "trust_workspace": True,
-            "sandbox": "disabled",
-        },
         "codex": {
             "command": "codex",
             "review_model": None,
@@ -632,6 +757,16 @@ def default_config_dict() -> dict[str, Any]:
             "filename_template": "prompt_{plan_stem}.txt",
         },
     }
+    if version == 1:
+        defaults["cursor"] = {
+            "command": "agent",
+            "model": "composer-2.5-fast",
+            "output_format": "stream-json",
+            "force": True,
+            "trust_workspace": True,
+            "sandbox": "disabled",
+        }
+    return defaults
 
 
 def load_project_config(path: Path) -> ProjectConfig:
@@ -663,9 +798,13 @@ def resolve_effective_config(
     repo_config_path = resolve_repo_config_path(repo_root, config_path)
     source_repo_config = load_project_config(repo_config_path)
 
-    layers: list[dict[str, Any]] = [default_config_dict()]
+    layers: list[dict[str, Any]] = [default_config_dict(version=source_repo_config.version)]
     global_config = load_optional_global_config()
     if global_config is not None:
+        if global_config.version != source_repo_config.version:
+            raise ValidationError(
+                "global and repository configuration versions must match before merging"
+            )
         # Only merge fields that were explicitly present so omitted optional
         # values do not wipe earlier layers. Explicit YAML null remains set.
         layers.append(global_config.model_dump(by_alias=True, exclude_unset=True))
@@ -674,6 +813,21 @@ def resolve_effective_config(
     merged = _merge_config_layers(layers)
 
     if overrides is not None:
+        if source_repo_config.version == 2 and any(
+            value is not None
+            for value in (
+                overrides.cursor_command,
+                overrides.cursor_model,
+                overrides.cursor_output_format,
+            )
+        ):
+            raise ValidationError(
+                "Cursor CLI command/model/output overrides are not valid for config version 2"
+            )
+        if source_repo_config.version == 1 and (
+            overrides.cursor_sdk_model is not None or overrides.cursor_sdk_parameters is not None
+        ):
+            raise ValidationError("Cursor SDK overrides require config version 2")
         if overrides.project_name is not None:
             merged.setdefault("project", {})["name"] = overrides.project_name
         if overrides.cursor_command is not None:
@@ -682,6 +836,10 @@ def resolve_effective_config(
             merged.setdefault("cursor", {})["model"] = overrides.cursor_model
         if overrides.cursor_output_format is not None:
             merged.setdefault("cursor", {})["output_format"] = overrides.cursor_output_format
+        if overrides.cursor_sdk_model is not None:
+            merged.setdefault("cursor", {})["model"] = overrides.cursor_sdk_model
+        if overrides.cursor_sdk_parameters is not None:
+            merged.setdefault("cursor", {})["parameters"] = overrides.cursor_sdk_parameters
         if overrides.codex_command is not None:
             merged.setdefault("codex", {})["command"] = overrides.codex_command
         if overrides.codex_review_model is not None:

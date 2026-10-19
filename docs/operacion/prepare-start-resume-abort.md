@@ -40,9 +40,24 @@ Requisitos:
 - `--controller-session-id` es opcional (proveniencia A para lookup/control);
 - no admite `--codex-session-id` (reviewer B se crea en el primer review);
 - congela inputs inmutables; la admision del worktree ocurre en el primer tick.
-- resuelve `cursor.command` y `codex.command` en la terminal que hace submit y
-  congela sus rutas absolutas sólo en los artefactos protegidos del run; el YAML
-  del repositorio permanece portable y los workers no dependen del `PATH` de systemd.
+- siempre resuelve los comandos Codex seleccionados. Un implementer Codex con
+  config v1 no resuelve ni requiere Cursor. Un provider efectivo Cursor con
+  config v1 falla antes de publicar el run y debe migrar a config v2.
+
+Config v2 describe el Cursor SDK local fijado a 1.0.37. Con implementer Cursor,
+submit congela la selección completa en contexto v7; package, credencial, bridge,
+auth y catálogo se verifican dentro del intento aislado, no durante submit. Un
+implementer Codex explícito sigue admitiéndose sin ningún runtime Cursor y mantiene
+settings e identidad independientes del reviewer B. Las secuencias SDK requieren
+manifest v4 y materializan contexto v8; las preparaciones históricas no cambian.
+Un manifest v3 nuevo sigue válido si todas sus hojas son Codex; si una definición
+histórica contiene Cursor CLI, el precheck de secuencia la rechaza completa antes
+de start, materialización o checkpoint. Replay y consultas no reescriben hashes.
+La recuperación SDK conserva owner/key/agent y settings congelados. Antes de un
+retry, el scheduler prueba la terminación del intento, reconcilia el run nativo
+exacto y persiste el resultado. Una identidad de creación no comprobable o un
+envío con cero/varios candidatos conserva la reserva y solo ofrece inspección o
+abort; nunca causa un reenvío especulativo.
 
 Para flujos controller A, añade `--controller-session-id "<exact-controller-session-id>"`
 al submit. Los reenvios idempotentes sin A reutilizan runs historicos con la misma
@@ -55,6 +70,10 @@ Autoriza un run `queued` para que el scheduler pueda ejecutar ticks:
 ```bash
 ai_dev_loop scheduler start <run-id>
 ```
+
+Un run queued histórico con Cursor CLI efectivo se rechaza sin cambiar su estado,
+reserva ni artefactos. Los contextos históricos Codex-only conservan start y
+recovery aunque su campo Cursor inerte siga en el payload.
 
 ## `scheduler tick`
 
@@ -137,6 +156,11 @@ Solo habilita el timer en produccion tras aceptacion manual independiente. Para
 los requisitos de WSL/systemd, `linger`, persistencia tras reiniciar la
 distribucion, observabilidad, actualizaciones y desinstalacion, sigue
 [Timer del scheduler en WSL](timer-systemd-wsl.md).
+
+Para cambiar una instalación estable desde Cursor CLI histórico a SDK, no
+hot-instales este checkout. Sigue el [procedimiento de cutover Cursor
+SDK](cutover-cursor-sdk.md) después de la aceptación completa y con autorización
+operativa separada.
 
 La unidad de servicio fija un `PATH` acotado con `%h/.local/bin` para localizar el
 CLI instalado con `uv tool` desde un entorno systemd minimo, sin shell ni perfiles

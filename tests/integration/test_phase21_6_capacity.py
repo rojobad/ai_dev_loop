@@ -70,7 +70,7 @@ def test_c01_cli_available_capacity_with_fake_app_server(
     monkeypatch.setenv("FAKE_CODEX_CAPACITY_SHAPE", "primary_only")
     code, payload, stderr = _invoke(["integration", "codex-capacity"])
     assert code == 0
-    assert payload["apiVersion"] == {"major": 1, "minor": 11}
+    assert payload["apiVersion"] == {"major": 1, "minor": 12}
     data = payload["data"]
     assert data["status"] == "available"
     assert data["reason"] is None
@@ -161,6 +161,11 @@ def test_c02_capacity_cli_does_not_mutate_scheduler_ledger(
         controller_session_id=CONTROLLER_SESSION,
         codex_review_model="gpt-5.6-sol",
         codex_review_reasoning_effort="high",
+        implementer_provider="codex",
+        implementer_command="codex",
+        implementer_model="gpt-5.6-sol",
+        implementer_reasoning_effort="high",
+        implementer_timeout_minutes=90,
         db_path=scheduler_paths["db_path"],
         artifact_root=scheduler_paths["artifact_root"],
     )
@@ -395,6 +400,7 @@ def test_c05_scheduler_waiting_uses_frozen_codex_not_path_default(
     monkeypatch.setenv("FAKE_CODEX_CAPACITY", "exhausted")
     monkeypatch.setenv("FAKE_CODEX_CAPACITY_PROBE_TOUCH_FILE", str(frozen_marker))
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "usage_limit")
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
     prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
     options = SubmitOptions(
         short_name="Test run",
@@ -404,6 +410,11 @@ def test_c05_scheduler_waiting_uses_frozen_codex_not_path_default(
         controller_session_id=CONTROLLER_SESSION,
         codex_review_model="gpt-5.6-sol",
         codex_review_reasoning_effort="high",
+        implementer_provider="codex",
+        implementer_command=str(frozen_cmd),
+        implementer_model="gpt-5.6-sol",
+        implementer_reasoning_effort="high",
+        implementer_timeout_minutes=90,
         db_path=scheduler_paths["db_path"],
         artifact_root=scheduler_paths["artifact_root"],
         codex_command=str(frozen_cmd),

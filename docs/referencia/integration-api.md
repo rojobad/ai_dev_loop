@@ -5,7 +5,7 @@ futuro supervise el scheduler local sin acceder a SQLite ni rutas privadas.
 
 ## Versión del contrato
 
-- Versión actual de la API: **1.11** (`apiVersion.major` / `apiVersion.minor`).
+- Versión actual de la API: **1.12** (`apiVersion.major` / `apiVersion.minor`).
 - Misma major: compatible; campos desconocidos se ignoran en consumidores.
 - Major distinta: el consumidor debe detenerse con `UPDATE_REQUIRED` y no emitir
   más peticiones de recursos.
@@ -18,7 +18,7 @@ Todas las órdenes bajo `integration` escriben **un único documento JSON** en s
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 11 },
+  "apiVersion": { "major": 1, "minor": 12 },
   "ok": true,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": {},
@@ -30,7 +30,7 @@ Error:
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 11 },
+  "apiVersion": { "major": 1, "minor": 12 },
   "ok": false,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": null,
@@ -64,8 +64,8 @@ ai_dev_loop integration info [--output json]
 - No requiere ledger del scheduler, no crea directorios XDG y no sondea Codex.
 - `data.aiDevLoopVersion` es la versión del paquete instalado.
 - `data.capabilities` declara de forma honesta qué lecturas existen en esta
-  versión. En **1.11**, `runs`, `sequences`, `reviewInspection`, `processOutput`,
-  `codexCapacity`, `dashboard` y `shortNames` son `true`.
+  versión. En **1.12**, `runs`, `sequences`, `reviewInspection`, `processOutput`,
+  `codexCapacity`, `dashboard`, `shortNames` y `tokenUsage` son `true`.
 
 ## Capacidad Codex local (API 1.5)
 
@@ -227,7 +227,7 @@ API 1.10 añade `shortName` a las proyecciones de run, secuencia, fase e intento
 materializado, y `sequenceShortName` donde existe binding de secuencia. Son
 campos aditivos; los esquemas v1 siguen validando fixtures históricos sin esos
 campos. El productor actual siempre devuelve un valor no vacío mediante metadata
-schema 17 o el fallback de solo lectura para schema 16. Los nombres son solo
+schema 17 en adelante o el fallback de solo lectura para schema 16. Los nombres son solo
 presentación: IDs, estado, provider, proyecto y linaje siguen saliendo de campos
 autoritativos.
 
@@ -237,6 +237,16 @@ sigue usando el límite solicitado: si hay continuación, `nextOffset` es
 `offset + limit`. Un resultado que no cabe en el sobre existente de 240 KiB
 falla con el código tipado `PAGE_ENVELOPE_TOO_LARGE`; no se trunca ni aumenta el
 presupuesto. Este código es aditivo al sobre de error genérico de API major 1.
+
+API 1.12 agrega `tokenUsage` a `run inspect` y `sequence inspect`. El resumen de
+run contiene scopes `direct` y `recoveryLineage`; el de secuencia usa el linaje
+autoritativo de intentos de fase. Cada scope informa `knownTotalTokens`, cobertura,
+conteos de intentos, desglose provider/rol/etapa y cobertura por categoría normalizada
+y nativa. Un intento inferido sin contador es desconocido, no cero; si todos son
+desconocidos el total conocido es `null`. Cursor usa
+`input + cacheRead + cacheWrite + output`; Codex usa `input + output`, con cache de
+entrada y reasoning como subconjuntos. Las proyecciones históricas no migran ni
+backfillean el ledger y solo leen JSONL Codex cuyo origen está autenticado.
 
 ## Implementer, capacidad y timeout por rol (API 1.7+)
 

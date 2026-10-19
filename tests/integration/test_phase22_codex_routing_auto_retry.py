@@ -42,6 +42,11 @@ def scheduler_paths(isolated_xdg: Path) -> dict[str, Path]:
     }
 
 
+@pytest.fixture(autouse=True)
+def _codex_implementer_edit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
+
+
 def _invoke(args: list[str]) -> tuple[int, dict[str, object], str]:
     result = runner.invoke(app, args)
     payload = json.loads(result.stdout) if result.stdout.strip() else {}

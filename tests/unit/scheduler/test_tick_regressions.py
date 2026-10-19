@@ -28,11 +28,34 @@ from ai_dev_loop.scheduler.application.start import StartService
 from ai_dev_loop.scheduler.application.tick import TickService
 from ai_dev_loop.scheduler.domain.admission_contract import ADMISSION_STATUS_ARTIFACT
 from ai_dev_loop.scheduler.domain.events import RunSubmittedEvent
+from ai_dev_loop.scheduler.domain.state import ImplementerBinding
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import (
     ProtectedArtifactError,
     ProtectedArtifactStore,
 )
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
+
+
+def _codex_submitted_state(*, run_id: str, repo_root: str):
+    state = sample_submitted_state(run_id=run_id, repo_root=repo_root)
+    return state.model_copy(
+        update={
+            "context": state.context.model_copy(
+                update={
+                    "schema_version": 5,
+                    "implementer": ImplementerBinding(
+                        provider="codex",
+                        command="codex",
+                        model="gpt-5.6-sol",
+                        reasoning_effort="high",
+                        timeout_minutes=90,
+                        sandbox="workspace-write",
+                        approval_policy="never",
+                    ),
+                }
+            )
+        }
+    )
 
 
 def _tick(
@@ -285,7 +308,7 @@ def test_admission_git_failure_does_not_skip_other_runs(tmp_path: Path) -> None:
     now = datetime(2026, 9, 4, 12, 0, tzinfo=UTC)
 
     def insert_run(run_id: str, repo_root: str, idempotency_suffix: str) -> None:
-        base = sample_submitted_state(run_id=run_id, repo_root=repo_root)
+        base = _codex_submitted_state(run_id=run_id, repo_root=repo_root)
         state = base.model_copy(update={"idempotency_key": f"{idempotency_suffix}{'b' * 56}"})
         event = RunSubmittedEvent(
             run_id=state.run_id,
@@ -344,7 +367,7 @@ def test_admission_artifact_boundary_access_failure_blocks_and_continues_tick(
     now = datetime(2026, 9, 4, 12, 0, tzinfo=UTC)
 
     def insert_run(run_id: str, repo_root: str, idempotency_suffix: str) -> None:
-        base = sample_submitted_state(run_id=run_id, repo_root=repo_root)
+        base = _codex_submitted_state(run_id=run_id, repo_root=repo_root)
         state = base.model_copy(update={"idempotency_key": f"{idempotency_suffix}{'b' * 56}"})
         event = RunSubmittedEvent(
             run_id=state.run_id,
@@ -601,7 +624,9 @@ def test_controller_status_rejects_corrupt_scheduler_snapshot(
     db = tmp_path / "engine.sqlite3"
     store = SqliteSchedulerStore(db)
     repo_root = str(git_repo.resolve())
-    state = sample_submitted_state(repo_root=repo_root)
+    state = _codex_submitted_state(
+        run_id="fixture-project-20260904T120000Z-abc123", repo_root=repo_root
+    )
     event = RunSubmittedEvent(
         run_id=state.run_id,
         idempotency_key=state.idempotency_key,
@@ -649,7 +674,9 @@ def test_controller_lookup_read_failure_on_tampered_controller_identity(
     db = tmp_path / "engine.sqlite3"
     store = SqliteSchedulerStore(db)
     repo_root = str(git_repo.resolve())
-    state = sample_submitted_state(repo_root=repo_root)
+    state = _codex_submitted_state(
+        run_id="fixture-project-20260904T120000Z-abc123", repo_root=repo_root
+    )
     event = RunSubmittedEvent(
         run_id=state.run_id,
         idempotency_key=state.idempotency_key,

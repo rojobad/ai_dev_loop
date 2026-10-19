@@ -156,6 +156,11 @@ def submit_sample_run(
         controller_session_id=CONTROLLER_SESSION,
         codex_review_model="gpt-5.6-sol",
         codex_review_reasoning_effort="high",
+        implementer_provider="codex",
+        implementer_command="codex",
+        implementer_model="gpt-5.6-sol",
+        implementer_reasoning_effort="high",
+        implementer_timeout_minutes=90,
         db_path=scheduler_paths["db_path"],
         artifact_root=scheduler_paths["artifact_root"],
         max_review_iterations=max_reviews,
@@ -407,11 +412,15 @@ def codex_runner_launch_count(backend: FakeAgentProcessBackend) -> int:
 
 def codex_bootstrap_invocation_count(codex_log: str) -> int:
     return sum(
-        1 for line in codex_log.splitlines() if line.startswith("ARGS:") and "'resume'" not in line
+        1
+        for line in codex_log.splitlines()
+        if line.startswith("ARGS:") and "'--output-schema'" in line and "'resume'" not in line
     )
 
 
 def codex_resume_invocation_count(codex_log: str) -> int:
     return sum(
-        1 for line in codex_log.splitlines() if line.startswith("ARGS:") and "'resume'" in line
+        1
+        for line in codex_log.splitlines()
+        if line.startswith("ARGS:") and "'--output-schema'" in line and "'resume'" in line
     )

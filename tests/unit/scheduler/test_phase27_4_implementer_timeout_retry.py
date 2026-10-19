@@ -12,8 +12,6 @@ from unittest.mock import patch
 import jsonschema
 import pytest
 from tests.conftest import FIXTURE_REPO
-from tests.integration.test_cursor_timeout_retry import NOW as CURSOR_NOW
-from tests.integration.test_cursor_timeout_retry import setup_run as setup_cursor_timeout
 from tests.integration.test_phase27_3_implementer_sequences import (
     leaf_state,
     prepare,
@@ -419,29 +417,6 @@ def test_three_automatic_retries_are_spaced_and_manual_continues_after_exhaustio
             (run_id, RESUME_CODEX_IMPLEMENTER_EFFECT_KIND),
         ).fetchone()
     assert live is not None and live[0] == 1
-
-
-def test_shared_command_delegates_cursor_timeout_without_changing_legacy_policy(
-    git_repo: Path,
-    scheduler_paths: dict[str, Path],
-    fake_clis: dict[str, Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    tick, run_id, _backend = setup_cursor_timeout(
-        git_repo,
-        scheduler_paths,
-        fake_clis,
-        monkeypatch,
-    )
-    result = ImplementerRetryService(
-        tick.store,
-        tick.artifacts,
-        now_factory=lambda: CURSOR_NOW,
-    ).retry(run_id)
-    assert result.provider == "cursor"
-    assert result.changed is True
-    assert result.automatic_retries == 0
-    assert result.available_at == "2026-09-19T12:00:00.000000Z"
 
 
 def test_correction_timeout_starts_a_fresh_budget_and_binds_raw_correction(
@@ -1132,11 +1107,13 @@ def test_sequence_timeout_remains_the_same_current_leaf_and_projects_retry(
     scheduler_paths: dict[str, Path],
 ) -> None:
     payload = {
-        "schema_version": 2,
+        "schema_version": 3,
         "name": "timeout-current-leaf",
+        "short_name": "Timeout current leaf",
         "phases": [
             {
                 "name": "phase-1",
+                "short_name": "Timeout phase one",
                 "plan_path": "docs/plans/sample-plan.md",
                 "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
                 "implementer": {
@@ -1153,8 +1130,15 @@ def test_sequence_timeout_remains_the_same_current_leaf_and_projects_retry(
             },
             {
                 "name": "phase-2",
+                "short_name": "Timeout phase two",
                 "plan_path": "docs/plans/sample-plan.md",
                 "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
+                "implementer": {
+                    "provider": "codex",
+                    "model": "gpt-5.5",
+                    "reasoning_effort": "xhigh",
+                    "timeout_minutes": 15,
+                },
                 "codex": {
                     "review_model": "gpt-5.6-sol",
                     "review_reasoning_effort": "high",

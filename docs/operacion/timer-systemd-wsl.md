@@ -54,14 +54,21 @@ una decisión externa a `ai_dev_loop`.
 
 ## 2. Instalar y habilitar el timer
 
-Instala primero una versión local validada de `ai_dev_loop`. Si actualizaste un
-checkout local, la ruta habitual es:
+Instala primero un artefacto completamente aceptado de `ai_dev_loop`. Para
+workloads Cursor, incluye el extra fijado; no instales un checkout cambiante
+sobre el scheduler estable que lo está validando:
 
 ```bash
-uv tool install --force .
+uv tool install --force \
+  'ai-dev-loop[cursor-sdk] @ file:///ruta/absoluta/dist/ai_dev_loop-0.1.0-py3-none-any.whl'
 command -v ai_dev_loop
 ai_dev_loop --version
 ```
+
+El cambio desde Cursor CLI histórico requiere además quiescencia, backup
+consistente y conversión explícita de inputs. Sigue primero el
+[procedimiento de cutover Cursor SDK](cutover-cursor-sdk.md). Instalar el paquete
+no convierte definiciones preparadas.
 
 No apuntes `CODEX_HOME` ni `CODEX_SQLITE_HOME` a la home de Codex Desktop bajo
 `/mnt/c`. Si una shell heredó por error esos overrides de Windows, abre una
@@ -119,11 +126,12 @@ si esa es la decisión del operador.
 
 ## 4. Actualizar o recuperar unidades
 
-Tras actualizar el paquete, refresca las unidades empaquetadas y comprueba que
-coinciden con el paquete instalado:
+Tras una actualización explícitamente autorizada y quiescente, refresca las
+unidades empaquetadas y comprueba que coinciden con el paquete instalado:
 
 ```bash
-uv tool install --force .
+uv tool install --force \
+  'ai-dev-loop[cursor-sdk] @ file:///ruta/absoluta/dist/ai_dev_loop-0.1.0-py3-none-any.whl'
 ai_dev_loop scheduler timer validate --output json
 ai_dev_loop scheduler timer install --output json
 ai_dev_loop scheduler timer status --output json

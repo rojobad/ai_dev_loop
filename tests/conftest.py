@@ -718,11 +718,16 @@ def create_fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[st
             role_session_id = os.environ.get(role_session_env)
             if role_session_id is not None:
                 os.environ["FAKE_CODEX_BOOTSTRAP_SESSION_ID"] = role_session_id
-            elif "FAKE_CODEX_BOOTSTRAP_SESSION_ID" not in os.environ:
+            elif is_implementer:
+                # The historical generic bootstrap variable belongs to reviewer B.
+                # Codex implementer tests need a distinct identity unless they
+                # explicitly override the role-specific value.
                 os.environ["FAKE_CODEX_BOOTSTRAP_SESSION_ID"] = (
                     "019def00-0000-0000-0000-0000000000aa"
-                    if is_implementer
-                    else "019def00-0000-0000-0000-0000000000bb"
+                )
+            elif "FAKE_CODEX_BOOTSTRAP_SESSION_ID" not in os.environ:
+                os.environ["FAKE_CODEX_BOOTSTRAP_SESSION_ID"] = (
+                    "019def00-0000-0000-0000-0000000000bb"
                 )
 
             witness_root = os.environ.get("AI_DEV_LOOP_REVIEW_PROMPT_WITNESS_ROOT", "").strip()
@@ -825,13 +830,28 @@ def create_fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[st
                     "FAKE_CODEX_IMPLEMENTER_MODE" if is_implementer else "FAKE_CODEX_REVIEW_MODE",
                     "success" if is_implementer else "no_findings",
                 )
-            child_sentinel = os.environ.get("FAKE_CODEX_CHILD_STDOUT_SENTINEL", "")
+            child_sentinel = os.environ.get(
+                "FAKE_CODEX_IMPLEMENTER_CHILD_STDOUT_SENTINEL"
+                if is_implementer
+                else "FAKE_CODEX_CHILD_STDOUT_SENTINEL",
+                "",
+            )
             if child_sentinel:
                 print(child_sentinel, flush=True)
-            child_stderr = os.environ.get("FAKE_CODEX_CHILD_STDERR_SENTINEL", "")
+            child_stderr = os.environ.get(
+                "FAKE_CODEX_IMPLEMENTER_CHILD_STDERR_SENTINEL"
+                if is_implementer
+                else "FAKE_CODEX_CHILD_STDERR_SENTINEL",
+                "",
+            )
             if child_stderr:
                 print(child_stderr, file=sys.stderr, flush=True)
-            release = os.environ.get("FAKE_CODEX_CHILD_RELEASE_FILE", "")
+            release = os.environ.get(
+                "FAKE_CODEX_IMPLEMENTER_CHILD_RELEASE_FILE"
+                if is_implementer
+                else "FAKE_CODEX_CHILD_RELEASE_FILE",
+                "",
+            )
             if release and (child_sentinel or child_stderr):
                 while not os.path.exists(release):
                     time.sleep(0.01)
@@ -847,6 +867,8 @@ def create_fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[st
                     sys.exit(91)
             if is_implementer:
                 edit_path = os.environ.get("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "").strip()
+                if not edit_path and os.environ.get("FAKE_AGENT_MODIFY_MODE") == "tracked":
+                    edit_path = "tracked.txt"
                 if edit_path:
                     workspace = args[args.index("--cd") + 1]
                     target = os.path.join(workspace, edit_path)
@@ -995,6 +1017,20 @@ def create_fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[st
                         }}
                     )
                 )
+                usage_sequence = os.environ.get(
+                    "FAKE_CODEX_IMPLEMENTER_USAGE_SEQUENCE_JSON", ""
+                ).strip()
+                if usage_sequence:
+                    usage_values = json.loads(usage_sequence)
+                    usage = usage_values[min(counter, len(usage_values) - 1)]
+                    contributions = usage if isinstance(usage, list) else [usage]
+                    for contribution in contributions:
+                        print(
+                            json.dumps(
+                                {{"type": "turn.completed", "usage": contribution}}
+                            ),
+                            flush=True,
+                        )
                 sys.exit(0)
             if mode == "invalid_json":
                 if "resume" not in args:
@@ -1103,6 +1139,18 @@ def create_fake_clis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[st
                 )
                 print(json.dumps({{"type": "thread.started", "thread_id": bootstrap_id}}), flush=True)
             print(json.dumps({{"type": "message", "content": "review complete"}}))
+            usage_sequence = os.environ.get(
+                "FAKE_CODEX_REVIEW_USAGE_SEQUENCE_JSON", ""
+            ).strip()
+            if usage_sequence:
+                usage_values = json.loads(usage_sequence)
+                usage = usage_values[min(counter, len(usage_values) - 1)]
+                contributions = usage if isinstance(usage, list) else [usage]
+                for contribution in contributions:
+                    print(
+                        json.dumps({{"type": "turn.completed", "usage": contribution}}),
+                        flush=True,
+                    )
             sys.exit(0)
 
         if len(args) >= 2 and args[0] == "app-server" and args[1] == "--stdio":

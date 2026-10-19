@@ -16,8 +16,10 @@ up to 1000 with adaptive batches under the unchanged 240 KiB envelope.
 New named preparations require a chosen short_name of 1..35 trimmed Unicode code
 points; no implicit truncation for new inputs. Historical migration truncates
 without rewriting IDs, immutable payloads, artifact hashes or execution identity.
-Manifest v3 is the new named format; preserve accepted frozen v1/v2 replay and
-materialization. Read-only Dashboard paths never migrate or rename data.
+Manifest v3 is the named Codex-only format and v4 the named SDK/mixed format;
+preserve accepted frozen v1/v2 replay. Only Codex-only historical definitions
+remain materializable; effective Cursor CLI leaves are read-only. Read-only
+Dashboard paths never migrate or rename data.
 
 No selected run means no run card. Selected exact ID means one card, without
 page jumps. Attempts use stable per-run ordinal/iteration/authoritative role,

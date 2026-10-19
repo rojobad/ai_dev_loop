@@ -23,6 +23,7 @@ from ai_dev_loop.scheduler.domain.state import (
     SCHEDULER_TERMINAL_STATE_KINDS,
     AbortedState,
     is_codex_implementer_reservation_hold,
+    is_cursor_sdk_reservation_hold,
 )
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
@@ -110,10 +111,15 @@ class SequenceReconcileService:
         run_id: str,
     ) -> bool:
         state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+        sdk_hold = is_cursor_sdk_reservation_hold(state)
+        if sdk_hold and getattr(state, "block_reason_kind", None) == "cursor_failure":
+            # A reconciled generic SDK failure is intentionally terminal for the
+            # current sequence leaf.  Blocking the sequence does not release its
+            # reservation; the authenticated successor transition transfers it.
+            sdk_hold = False
         implementer_hold = (
-            is_codex_implementer_reservation_hold(state)
-            and self.store.get_reservation_for_run(conn, run_id) is not None
-        )
+            is_codex_implementer_reservation_hold(state) or sdk_hold
+        ) and self.store.get_reservation_for_run(conn, run_id) is not None
         return (
             implementer_hold
             or self.store.has_unresolved_abort_hold(conn, run_id)

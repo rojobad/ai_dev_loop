@@ -53,6 +53,7 @@ class IntegrationCapabilities(PublicWireModel):
     )
     dashboard: StrictBool = False
     short_names: StrictBool = Field(False, alias="shortNames")
+    token_usage: StrictBool = Field(False, alias="tokenUsage")
 
 
 class IntegrationInfoData(PublicWireModel):
@@ -200,14 +201,65 @@ class IntegrationRunListItem(PublicWireModel):
     )
 
 
+class IntegrationUsageCategory(PublicWireModel):
+    known_total: StrictInt | None = Field(None, alias="knownTotal", ge=0)
+    known_observations: StrictInt = Field(alias="knownObservations", ge=0)
+    observation_count: StrictInt = Field(alias="observationCount", ge=0)
+    coverage: str
+
+
+class IntegrationUsageBreakdown(PublicWireModel):
+    provider: str
+    role: str
+    stage: str
+    known_total_tokens: StrictInt | None = Field(None, alias="knownTotalTokens", ge=0)
+    inference_attempts: StrictInt = Field(alias="inferenceAttempts", ge=0)
+    known_attempts: StrictInt = Field(alias="knownAttempts", ge=0)
+    partial_attempts: StrictInt = Field(alias="partialAttempts", ge=0)
+    unknown_attempts: StrictInt = Field(alias="unknownAttempts", ge=0)
+    coverage: str
+    categories: dict[str, IntegrationUsageCategory]
+    native_categories: dict[str, IntegrationUsageCategory] = Field(alias="nativeCategories")
+
+
+class IntegrationUsageScope(PublicWireModel):
+    scope: str
+    run_ids: tuple[str, ...] = Field(alias="runIds")
+    known_total_tokens: StrictInt | None = Field(None, alias="knownTotalTokens", ge=0)
+    inference_attempts: StrictInt = Field(alias="inferenceAttempts", ge=0)
+    known_attempts: StrictInt = Field(alias="knownAttempts", ge=0)
+    partial_attempts: StrictInt = Field(alias="partialAttempts", ge=0)
+    unknown_attempts: StrictInt = Field(alias="unknownAttempts", ge=0)
+    coverage: str
+    breakdowns: tuple[IntegrationUsageBreakdown, ...]
+    diagnostics: tuple[str, ...] = ()
+
+
+class IntegrationRunUsage(PublicWireModel):
+    schema_version: StrictInt = Field(alias="schemaVersion")
+    normalization_version: str = Field(alias="normalizationVersion")
+    run_id: str = Field(alias="runId")
+    direct: IntegrationUsageScope
+    recovery_lineage: IntegrationUsageScope = Field(alias="recoveryLineage")
+
+
+class IntegrationSequenceUsage(PublicWireModel):
+    schema_version: StrictInt = Field(alias="schemaVersion")
+    normalization_version: str = Field(alias="normalizationVersion")
+    sequence_id: str = Field(alias="sequenceId")
+    sequence: IntegrationUsageScope
+
+
 class IntegrationRunInspectData(PublicWireModel):
     implementer_provider: str = Field("cursor", alias="implementerProvider")
     codex_pending_role: str | None = Field(None, alias="codexPendingRole")
     codex_pending_turn: str | None = Field(None, alias="codexPendingTurn")
     codex_capacity_reason: str | None = Field(None, alias="codexCapacityReason")
     run_id: str = Field(alias="runId")
-    short_name: str = Field(alias="shortName", min_length=1)
-    sequence_short_name: str | None = Field(alias="sequenceShortName")
+    # Additive Phase 28 presentation fields remain optional when ingesting an
+    # older public envelope; current services always emit scheduler-owned names.
+    short_name: str = Field("Historical run", alias="shortName", min_length=1)
+    sequence_short_name: str | None = Field(None, alias="sequenceShortName")
     project_name: str = Field(alias="projectName")
     repository_root: str = Field(alias="repositoryRoot")
     state: str
@@ -230,6 +282,7 @@ class IntegrationRunInspectData(PublicWireModel):
     )
     safe_next_action: IntegrationSafeNextAction = Field(alias="safeNextAction")
     attempt_count: StrictInt = Field(alias="attemptCount", ge=0)
+    token_usage: IntegrationRunUsage | None = Field(None, alias="tokenUsage")
     codex_review_retry_failure_kind: str | None = Field(
         None,
         alias="codexReviewRetryFailureKind",
@@ -433,6 +486,7 @@ class IntegrationSequenceInspectData(PublicWireModel):
     block_reason: str | None = Field(None, alias="blockReason")
     safe_next_action: IntegrationSafeNextAction = Field(alias="safeNextAction")
     report: IntegrationReportAvailability
+    token_usage: IntegrationSequenceUsage | None = Field(None, alias="tokenUsage")
     phases: tuple[IntegrationSequencePhaseSummary, ...]
 
 

@@ -20,10 +20,12 @@ from ai_dev_loop.scheduler.application.fake_attempt_backend import (
 from ai_dev_loop.scheduler.application.start import start_run
 from ai_dev_loop.scheduler.application.submission import SubmitOptions, submit_run
 from ai_dev_loop.scheduler.application.tick import TickService
+from ai_dev_loop.scheduler.domain.codex_contract import IMPLEMENTER_ATTEMPT_EFFECT_KINDS
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
 BOOTSTRAP_ID = "019def00-0000-0000-0000-0000000000bb"
+IMPLEMENTER_ID = "019def00-0000-0000-0000-0000000000aa"
 _ATTEMPT_COUNTER = itertools.count()
 
 
@@ -40,6 +42,11 @@ def scheduler_paths(isolated_xdg: Path) -> dict[str, Path]:
     }
 
 
+@pytest.fixture(autouse=True)
+def distinct_codex_implementer(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_SESSION_ID", IMPLEMENTER_ID)
+
+
 def _submit(git_repo: Path, scheduler_paths: dict[str, Path], *, max_reviews: int = 3) -> str:
     prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
     options = SubmitOptions(
@@ -50,6 +57,11 @@ def _submit(git_repo: Path, scheduler_paths: dict[str, Path], *, max_reviews: in
         controller_session_id=CONTROLLER_SESSION,
         codex_review_model="gpt-5.6-sol",
         codex_review_reasoning_effort="high",
+        implementer_provider="codex",
+        implementer_command="codex",
+        implementer_model="gpt-5.6-sol",
+        implementer_reasoning_effort="high",
+        implementer_timeout_minutes=90,
         db_path=scheduler_paths["db_path"],
         artifact_root=scheduler_paths["artifact_root"],
         max_review_iterations=max_reviews,
@@ -114,7 +126,7 @@ def test_no_findings_completes_with_fresh_bootstrap_and_resume_argv(
     fake_clis: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
     monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "no_findings")
     run_id = _submit(git_repo, scheduler_paths)
@@ -146,7 +158,7 @@ def test_findings_then_correction_then_no_findings(
     fake_clis: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
     monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
     monkeypatch.setenv("FAKE_CODEX_REVIEW_SEQUENCE", "findings,no_findings")
     monkeypatch.delenv("FAKE_CODEX_REVIEW_MODE", raising=False)
@@ -167,9 +179,8 @@ def test_findings_then_correction_then_no_findings(
     bootstrap_count = sum(
         1 for line in codex_log.splitlines() if line.startswith("ARGS:") and "'resume'" not in line
     )
-    assert bootstrap_count == 1
-    agent_log = Path(fake_clis["agent_log"]).read_text(encoding="utf-8")
-    assert agent_log.count("CREATE_CHAT:") == 1
+    assert bootstrap_count == 2
+    assert not Path(fake_clis["agent_log"]).exists()
 
 
 def test_max_iterations_reached_without_extra_cursor(
@@ -178,7 +189,7 @@ def test_max_iterations_reached_without_extra_cursor(
     fake_clis: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
     monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
     monkeypatch.setenv("FAKE_CODEX_REVIEW_SEQUENCE", "findings,findings,findings")
     monkeypatch.delenv("FAKE_CODEX_REVIEW_MODE", raising=False)
@@ -194,10 +205,15 @@ def test_max_iterations_reached_without_extra_cursor(
         backend=backend,
     )
     _run_until(tick, run_id, target_kind="max_iterations_reached", max_ticks=80)
-    agent_log = Path(fake_clis["agent_log"]).read_text(encoding="utf-8")
-    prompt_runs = sum(
-        1 for line in agent_log.splitlines() if line.startswith("ARGS:") and "'-p'" in line
-    )
+    effect_kinds = tuple(sorted(IMPLEMENTER_ATTEMPT_EFFECT_KINDS))
+    with tick.store.begin_read() as conn:
+        prompt_runs = conn.execute(
+            """
+            SELECT COUNT(*) FROM scheduler_effects
+            WHERE run_id = ? AND effect_kind IN (?, ?)
+            """,
+            (run_id, *effect_kinds),
+        ).fetchone()[0]
     assert prompt_runs == 2
 
 
@@ -207,7 +223,7 @@ def test_active_codex_attempt_tick_exits_without_wait(
     fake_clis: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
     monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "sleep")
     monkeypatch.setenv("FAKE_CODEX_SLEEP_SECONDS", "30")

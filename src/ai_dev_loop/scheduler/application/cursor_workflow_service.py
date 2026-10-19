@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import sqlite3
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -24,6 +25,8 @@ from ai_dev_loop.scheduler.application.cursor_evidence import (
     verify_recorded_usage_limit_fingerprint,
 )
 from ai_dev_loop.scheduler.application.cursor_retry_after import resolve_usage_limit_retry_seconds
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import context_uses_cursor_cli
+from ai_dev_loop.scheduler.application.cursor_sdk_journal import authenticate_sdk_journal
 from ai_dev_loop.scheduler.application.run_state_bridge import run_state_from_scheduler_context
 from ai_dev_loop.scheduler.application.scheduler_checkpoint import checkpoint_from_state
 from ai_dev_loop.scheduler.application.scheduler_preflight import (
@@ -40,10 +43,12 @@ from ai_dev_loop.scheduler.domain.cursor_contract import (
     CREATE_CHAT_EFFECT_ID,
     CREATE_CHAT_EFFECT_KIND,
     CURSOR_CHAT_ARTIFACT,
+    CURSOR_SDK_IDENTITY_ARTIFACT,
     INITIAL_CURSOR_ITERATION,
     NORMALIZE_STAGING_EFFECT_ID,
     NORMALIZE_STAGING_EFFECT_KIND,
     PREFLIGHT_EFFECT_KIND,
+    RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND,
     RUN_CURSOR_TURN_EFFECT_ID,
     RUN_CURSOR_TURN_EFFECT_KIND,
 )
@@ -51,6 +56,8 @@ from ai_dev_loop.scheduler.domain.events import (
     AwaitingCodexReviewEnteredEvent,
     CursorChatBlockedEvent,
     CursorChatCreatedEvent,
+    CursorSdkAgentCreatedEvent,
+    CursorSdkTurnCompletedEvent,
     CursorTurnBlockedEvent,
     CursorTurnCompletedEvent,
     CursorUsageLimitDetectedEvent,
@@ -74,11 +81,14 @@ from ai_dev_loop.scheduler.domain.reducer import (
 from ai_dev_loop.scheduler.domain.state import (
     AdmittedState,
     CursorReadyState,
+    CursorSdkBinding,
+    CursorSdkRuntimeBinding,
     PreflightCompleteState,
     WaitingForCursorFixState,
     WaitingUsageLimitState,
     resolved_implementer_provider,
 )
+from ai_dev_loop.scheduler.infrastructure.paths import resolve_run_relative_path
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import (
     ProtectedArtifactError,
     ProtectedArtifactStore,
@@ -120,6 +130,39 @@ class CursorWorkflowService:
         self._timer_id_factory = timer_id_factory or (lambda: f"tmr-{secrets.token_hex(16)}")
         self._preflight_port = preflight_port or DefaultSchedulerPreflightPort()
 
+    def _capacity_wait_is_correction(
+        self,
+        conn: sqlite3.Connection,
+        state: WaitingUsageLimitState,
+    ) -> bool:
+        ordinary_correction = bool(
+            state.codex.latest_correction_envelope_path
+            and state.codex.latest_correction_envelope_sha256
+            and state.cursor.original_prompt_path == state.codex.latest_correction_envelope_path
+            and state.cursor.original_prompt_sha256 == state.codex.latest_correction_envelope_sha256
+        )
+        if ordinary_correction:
+            return True
+        if not isinstance(state.context.cursor, CursorSdkBinding):
+            return False
+        from ai_dev_loop.scheduler.application.cursor_sdk_successor import (
+            authenticate_sdk_successor_authority,
+        )
+
+        authority = authenticate_sdk_successor_authority(
+            self.store,
+            self.artifacts,
+            conn,
+            state.run_id,
+        )
+        return bool(
+            authority is not None
+            and authority.turn_kind == "correction"
+            and authority.iteration == state.cursor.iteration
+            and state.cursor.original_prompt_path == authority.effective_prompt_path
+            and state.cursor.original_prompt_sha256 == authority.effective_prompt_sha256
+        )
+
     def process_run(
         self,
         tick_owner_id: str,
@@ -134,19 +177,24 @@ class CursorWorkflowService:
         with self.store.begin_read() as conn:
             if cursor_initial_recovery_blocks_dispatch(self.store, conn, run_id):
                 return receipts
-        usage_limit = self._maybe_schedule_usage_limit_continuation(
-            tick_owner_id,
-            tick_lease_generation,
-            run_id,
-        )
-        if usage_limit is not None:
-            receipts.append(usage_limit)
-        local = self._process_local_effect(tick_owner_id, tick_lease_generation, run_id)
-        if local is not None:
-            receipts.append(local)
+            state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            cursor_cli_retired = context_uses_cursor_cli(state.context)
+        if not cursor_cli_retired:
+            usage_limit = self._maybe_schedule_usage_limit_continuation(
+                tick_owner_id,
+                tick_lease_generation,
+                run_id,
+            )
+            if usage_limit is not None:
+                receipts.append(usage_limit)
+            local = self._process_local_effect(tick_owner_id, tick_lease_generation, run_id)
+            if local is not None:
+                receipts.append(local)
         ingest = self._maybe_ingest_completed_attempt(tick_owner_id, tick_lease_generation, run_id)
         if ingest is not None:
             receipts.append(ingest)
+        elif cursor_cli_retired:
+            receipts.append(TickRunReceipt(run_id=run_id, action="cursor_cli_runtime_retired"))
         return receipts
 
     def _maybe_schedule_usage_limit_continuation(
@@ -223,6 +271,15 @@ class CursorWorkflowService:
             ]
             if pending:
                 return None
+            try:
+                correction_capacity = self._capacity_wait_is_correction(conn, state)
+            except (SchedulerEngineError, ProtectedArtifactError, ValidationError) as exc:
+                return self._block_waiting_usage_limit(
+                    run_id,
+                    reason_kind="usage_limit_continuation_guard_failed",
+                    summary=str(exc)[:240],
+                )
+            observed_version = version
 
         with self.store.begin_immediate() as conn:
             commit_now = self._now_factory()
@@ -237,6 +294,8 @@ class CursorWorkflowService:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
             if not isinstance(state, WaitingUsageLimitState):
                 return None
+            if version != observed_version:
+                return TickRunReceipt(run_id=run_id, action="usage_limit_schedule_lost")
             fired_timer = self.store.get_fired_retry_timer_for_run(conn, run_id)
             if fired_timer is None:
                 return None
@@ -256,7 +315,8 @@ class CursorWorkflowService:
                 claimed_run_version=version,
                 now=commit_now,
             )
-            new_state = CursorReadyState(
+            resumed_type = WaitingForCursorFixState if correction_capacity else CursorReadyState
+            new_state = resumed_type(
                 run_id=state.run_id,
                 version=state.version + 1,
                 submitted_at=state.submitted_at,
@@ -673,6 +733,22 @@ class CursorWorkflowService:
             return self._ingest_create_chat(run_id, attempt)
         if effect_kind == RUN_CURSOR_TURN_EFFECT_KIND:
             return self._ingest_cursor_turn(run_id, attempt)
+        if effect_kind == RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND:
+            try:
+                outcome = self._authenticated_outcome(run_id, attempt)
+            except (CursorEvidenceError, ValueError, TypeError, KeyError, OSError):
+                outcome = {}
+            from ai_dev_loop.scheduler.application.cursor_sdk_reconciliation import (
+                CursorSdkReconciliationService,
+            )
+
+            return CursorSdkReconciliationService(
+                self.store,
+                self.artifacts,
+                now_factory=self._now_factory,
+                event_id_factory=self._event_id_factory,
+                dispatch_id_factory=self._dispatch_id_factory,
+            ).ingest(run_id, attempt=attempt, outcome=outcome)
         return None
 
     def _authenticated_outcome(self, run_id: str, attempt: object) -> dict[str, object]:
@@ -717,6 +793,8 @@ class CursorWorkflowService:
                 reason_kind="outcome_evidence_invalid",
                 summary="authenticated cursor chat outcome failed validation",
             )
+        if outcome.get("runtime") == "sdk-local":
+            return self._ingest_sdk_agent(run_id, attempt, outcome)
         failure_kind = str(outcome.get("failure_kind", ""))
         if failure_kind == "cursor_chat_create_failed":
             return self._block_from_ingest(
@@ -859,6 +937,8 @@ class CursorWorkflowService:
                 reason_kind="outcome_evidence_invalid",
                 summary="authenticated cursor outcome failed validation",
             )
+        if outcome.get("runtime") == "sdk-local":
+            return self._ingest_sdk_turn(run_id, attempt, outcome)
         iteration = _outcome_int(outcome, "iteration", INITIAL_CURSOR_ITERATION)
         timed_out = bool(outcome.get("timed_out"))
         failure_code = outcome.get("failure_code")
@@ -997,6 +1077,409 @@ class CursorWorkflowService:
                 now=now,
             )
         return TickRunReceipt(run_id=run_id, action="cursor_turn_completed")
+
+    def _ingest_sdk_agent(
+        self,
+        run_id: str,
+        attempt: object,
+        outcome: dict[str, object],
+    ) -> TickRunReceipt:
+        attempt_id = str(attempt["attempt_id"])  # type: ignore[index]
+        dispatch_id = str(attempt["dispatch_id"])  # type: ignore[index]
+        failure_kind = str(outcome.get("failure_kind", ""))
+        if failure_kind:
+            uncertain = failure_kind in {
+                "cursor_sdk_create_uncertain",
+                "cursor_sdk_recovery_deferred",
+            }
+            return self._block_from_ingest(
+                run_id,
+                dispatch_id=dispatch_id,
+                attempt_id=attempt_id,
+                kind="cursor_chat_blocked",
+                reason_kind=failure_kind,
+                summary=(
+                    "Cursor SDK create identity or timeout state is uncertain; "
+                    "inspect the protected evidence and abort"
+                    if uncertain
+                    else "Cursor SDK in-unit preflight failed before create intent"
+                ),
+                retain_reservation=uncertain,
+            )
+        agent_id = str(outcome.get("agent_id", ""))
+        owner = str(outcome.get("conversation_owner_run_id", ""))
+        conversation_key = str(outcome.get("conversation_key", ""))
+        journal_rel = str(outcome.get("journal_path", ""))
+        journal_sha = str(outcome.get("journal_sha256", ""))
+        run_root = self.artifacts.run_root(run_id)
+        try:
+            from ai_dev_loop.paths import cursor_conversation_key
+
+            expected_key = cursor_conversation_key(run_id)
+            if owner != run_id or conversation_key != expected_key:
+                raise ValueError("Cursor SDK create outcome ownership mismatch")
+            records = authenticate_sdk_journal(
+                resolve_run_relative_path(run_root, journal_rel),
+                expected_sha256=journal_sha,
+                operation="create",
+                expected_binding={
+                    "attempt_id": attempt_id,
+                    "dispatch_id": dispatch_id,
+                    "conversation_owner_run_id": run_id,
+                    "conversation_key": expected_key,
+                },
+            )
+            bound = records[1]
+            terminal = records[2]
+            if (
+                str(bound.get("agent_id", "")) != agent_id
+                or str(terminal.get("agent_id", "")) != agent_id
+                or terminal.get("outcome") != "success"
+            ):
+                raise ValueError("Cursor SDK create journal identity mismatch")
+            identity_payload = {
+                "schema_version": 1,
+                "runtime": "sdk-local",
+                "conversation_owner_run_id": owner,
+                "conversation_key": conversation_key,
+                "agent_id": agent_id,
+                "create_attempt_id": attempt_id,
+                "create_journal_path": journal_rel,
+                "create_journal_sha256": journal_sha,
+            }
+            stored = self.artifacts.write_text(
+                run_id,
+                CURSOR_SDK_IDENTITY_ARTIFACT,
+                json.dumps(identity_payload, sort_keys=True, separators=(",", ":")) + "\n",
+                max_bytes=32_768,
+            )
+            sdk_runtime = CursorSdkRuntimeBinding(
+                conversation_owner_run_id=owner,
+                conversation_key=conversation_key,
+                agent_id=agent_id,
+                identity_artifact_path=stored.relative_path,
+                identity_artifact_sha256=stored.sha256,
+                latest_journal_path=journal_rel,
+                latest_journal_sha256=journal_sha,
+            )
+        except (ValueError, OSError, ProtectedArtifactError) as exc:
+            return self._block_from_ingest(
+                run_id,
+                dispatch_id=dispatch_id,
+                attempt_id=attempt_id,
+                kind="cursor_chat_blocked",
+                reason_kind="cursor_sdk_create_uncertain",
+                summary=str(exc)[:240],
+                retain_reservation=True,
+            )
+        now = self._now_factory()
+        with self.store.begin_immediate() as conn:
+            state, version, _ = self.store.load_validated_snapshot(conn, run_id)
+            if not isinstance(state, PreflightCompleteState) or not isinstance(
+                state.context.cursor, CursorSdkBinding
+            ):
+                return TickRunReceipt(run_id=run_id, action="ingest_state_changed")
+            event = CursorSdkAgentCreatedEvent(
+                run_id=run_id,
+                agent_id=agent_id,
+                conversation_key=conversation_key,
+                identity_artifact_path=stored.relative_path,
+                identity_artifact_sha256=stored.sha256,
+                journal_path=journal_rel,
+                journal_sha256=journal_sha,
+            )
+            now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            new_state = CursorReadyState(
+                run_id=state.run_id,
+                version=state.version + 1,
+                submitted_at=state.submitted_at,
+                updated_at=now_text,
+                idempotency_key=state.idempotency_key,
+                context=state.context,
+                checkpoint=state.checkpoint,
+                cursor=state.cursor.model_copy(
+                    update={
+                        "sdk": sdk_runtime,
+                        "original_prompt_path": state.context.plan_prompt.prompt_artifact_path,
+                        "original_prompt_sha256": state.context.plan_prompt.prompt_sha256,
+                    }
+                ),
+            )
+            event_id = self._event_id_factory()
+            self.store.append_event(
+                conn,
+                event_id=event_id,
+                run_id=run_id,
+                sequence=self.store.next_event_sequence(conn, run_id),
+                event=event,
+                now=now,
+            )
+            if not self.store.compare_and_swap_state(
+                conn, run_id=run_id, expected_version=version, new_state=new_state, now=now
+            ):
+                return TickRunReceipt(run_id=run_id, action="ingest_cas_lost")
+            self.store.mark_attempt_ingested(conn, attempt_id=attempt_id, now=now)
+            self.store.insert_effect(
+                conn,
+                dispatch_id=self._dispatch_id_factory(),
+                source_event_id=event_id,
+                run_id=run_id,
+                effect_id=RUN_CURSOR_TURN_EFFECT_ID,
+                effect_kind=RUN_CURSOR_TURN_EFFECT_KIND,
+                effect_payload={"iteration": INITIAL_CURSOR_ITERATION},
+                available_at=now,
+                claimed_run_version=new_state.version,
+                now=now,
+            )
+        return TickRunReceipt(run_id=run_id, action="cursor_sdk_agent_created")
+
+    def _ingest_sdk_turn(
+        self,
+        run_id: str,
+        attempt: object,
+        outcome: dict[str, object],
+    ) -> TickRunReceipt:
+        attempt_id = str(attempt["attempt_id"])  # type: ignore[index]
+        dispatch_id = str(attempt["dispatch_id"])  # type: ignore[index]
+        failure_kind = str(outcome.get("failure_kind", ""))
+        if bool(outcome.get("timed_out")):
+            failure_kind = "cursor_sdk_native_run_uncertain"
+        raw_returncode = outcome.get("returncode", 0)
+        explicit_nonzero = (
+            isinstance(raw_returncode, int)
+            and not isinstance(raw_returncode, bool)
+            and raw_returncode != 0
+        ) or (
+            isinstance(raw_returncode, str)
+            and raw_returncode.lstrip("-").isdigit()
+            and int(raw_returncode) != 0
+        )
+        if (
+            not failure_kind
+            and explicit_nonzero
+            and outcome.get("parse_ok") is True
+            and outcome.get("journal_path")
+            and outcome.get("journal_sha256")
+        ):
+            failure_kind = "cursor_sdk_terminal_failed"
+        if failure_kind:
+            recoverable = failure_kind in {
+                "cursor_sdk_send_uncertain",
+                "cursor_sdk_native_run_uncertain",
+                "cursor_sdk_worker_lost",
+                "cursor_sdk_terminal_failed",
+            }
+            if recoverable:
+                failure = outcome.get("sdk_failure")
+                failure_code = str(failure.get("code", "")) if isinstance(failure, dict) else ""
+                failure_class = (
+                    "timeout"
+                    if bool(outcome.get("timed_out")) or failure_code == "timeout"
+                    else (
+                        "capacity"
+                        if failure_code == "rate_limited"
+                        else (
+                            "worker_lost" if failure_kind == "cursor_sdk_worker_lost" else "failure"
+                        )
+                    )
+                )
+                retry_after: int | None = None
+                if failure_class == "capacity" and isinstance(failure, dict):
+                    raw_retry = failure.get("retry_after")
+                    if isinstance(raw_retry, str) and raw_retry.isdigit():
+                        retry_after = max(1, min(int(raw_retry), 86_400))
+                from ai_dev_loop.scheduler.application.cursor_sdk_reconciliation import (
+                    CursorSdkReconciliationService,
+                )
+
+                try:
+                    return CursorSdkReconciliationService(
+                        self.store,
+                        self.artifacts,
+                        now_factory=self._now_factory,
+                        event_id_factory=self._event_id_factory,
+                        dispatch_id_factory=self._dispatch_id_factory,
+                    ).request(
+                        run_id,
+                        source_attempt_id=attempt_id,
+                        source_dispatch_id=dispatch_id,
+                        outcome=outcome,
+                        failure_class=failure_class,
+                        retry_after_seconds=retry_after,
+                    )
+                except (SchedulerEngineError, ValueError, OSError) as exc:
+                    return self._block_from_ingest(
+                        run_id,
+                        dispatch_id=dispatch_id,
+                        attempt_id=attempt_id,
+                        kind="cursor_turn_blocked",
+                        reason_kind="cursor_sdk_reconciliation_evidence_invalid",
+                        summary=str(exc)[:240],
+                        retain_reservation=True,
+                    )
+            return self._block_from_ingest(
+                run_id,
+                dispatch_id=dispatch_id,
+                attempt_id=attempt_id,
+                kind="cursor_turn_blocked",
+                reason_kind=failure_kind,
+                summary=("Cursor SDK in-unit preflight failed before send intent"),
+                retain_reservation=False,
+            )
+        iteration = _outcome_int(outcome, "iteration", INITIAL_CURSOR_ITERATION)
+        native_run_id = str(outcome.get("native_run_id", ""))
+        journal_rel = str(outcome.get("journal_path", ""))
+        journal_sha = str(outcome.get("journal_sha256", ""))
+        fingerprint_path = str(outcome.get("cursor_output_fingerprint_path", ""))
+        fingerprint_sha = str(outcome.get("cursor_output_fingerprint_sha256", ""))
+        run_root = self.artifacts.run_root(run_id)
+        try:
+            validate_cursor_turn_outcome_semantics(outcome)
+            with self.store.begin_read() as conn:
+                state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+                from ai_dev_loop.scheduler.application.cursor_sdk_successor import (
+                    authenticated_sdk_successor_launch,
+                )
+
+                sdk_recovery = authenticated_sdk_successor_launch(
+                    self.store,
+                    self.artifacts,
+                    conn,
+                    run_id,
+                )
+            if not isinstance(state, (CursorReadyState, WaitingForCursorFixState)):
+                raise ValueError("Cursor SDK turn state changed")
+            sdk = state.cursor.sdk
+            if sdk is None:
+                raise ValueError("Cursor SDK agent binding is missing")
+            expected_prompt_sha = (
+                state.codex.latest_correction_envelope_sha256
+                if isinstance(state, WaitingForCursorFixState)
+                else state.context.plan_prompt.prompt_sha256
+            )
+            if sdk_recovery is not None:
+                expected_prompt_sha = sdk_recovery.effective_prompt_sha256
+            if not expected_prompt_sha:
+                raise ValueError("Cursor SDK prompt binding is missing")
+            agent_id = str(outcome.get("agent_id", ""))
+            if iteration != state.cursor.iteration or agent_id != sdk.agent_id:
+                raise ValueError("Cursor SDK turn identity disagrees with scheduler state")
+            confirmed_sdk = CursorSdkRuntimeBinding.model_validate(
+                {**sdk.model_dump(mode="json"), "native_run_id": native_run_id}
+            )
+            records = authenticate_sdk_journal(
+                resolve_run_relative_path(run_root, journal_rel),
+                expected_sha256=journal_sha,
+                operation="send",
+                expected_binding={
+                    "attempt_id": attempt_id,
+                    "dispatch_id": dispatch_id,
+                    "conversation_owner_run_id": sdk.conversation_owner_run_id,
+                    "conversation_key": sdk.conversation_key,
+                    "agent_id": sdk.agent_id,
+                    "prompt_sha256": expected_prompt_sha,
+                },
+            )
+            if (
+                str(records[-2].get("native_run_id", "")) != native_run_id
+                or str(records[-1].get("native_run_id", "")) != native_run_id
+                or records[-1].get("outcome") != "success"
+            ):
+                raise ValueError("Cursor SDK native run identity mismatch")
+            run_state = run_state_from_scheduler_context(
+                run_id=run_id,
+                context=state.context,
+                repo_root=Path(state.context.repository.root),
+                checkpoint=checkpoint_from_state(state),
+                artifacts=self.artifacts,
+            )
+            verify_recorded_cursor_fingerprint(
+                run_state,
+                run_root,
+                iteration_number=iteration,
+                recorded_path=fingerprint_path,
+                recorded_sha256=fingerprint_sha,
+            )
+        except (CursorEvidenceError, ValueError, OSError, ProtectedArtifactError) as exc:
+            return self._block_from_ingest(
+                run_id,
+                dispatch_id=dispatch_id,
+                attempt_id=attempt_id,
+                kind="cursor_turn_blocked",
+                reason_kind="cursor_sdk_native_run_uncertain",
+                summary=str(exc)[:240],
+                retain_reservation=True,
+            )
+        now = self._now_factory()
+        with self.store.begin_immediate() as conn:
+            state, version, _ = self.store.load_validated_snapshot(conn, run_id)
+            if not isinstance(state, (CursorReadyState, WaitingForCursorFixState)):
+                return TickRunReceipt(run_id=run_id, action="ingest_state_changed")
+            sdk = state.cursor.sdk
+            if (
+                sdk is None
+                or state.cursor.iteration != iteration
+                or sdk.agent_id != str(outcome.get("agent_id", ""))
+            ):
+                return TickRunReceipt(run_id=run_id, action="ingest_state_changed")
+            event = CursorSdkTurnCompletedEvent(
+                run_id=run_id,
+                iteration=iteration,
+                native_run_id=native_run_id,
+                journal_path=journal_rel,
+                journal_sha256=journal_sha,
+                cursor_output_fingerprint_path=fingerprint_path,
+                cursor_output_fingerprint_sha256=fingerprint_sha,
+            )
+            new_state = CursorReadyState(
+                run_id=state.run_id,
+                version=state.version + 1,
+                submitted_at=state.submitted_at,
+                updated_at=now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                idempotency_key=state.idempotency_key,
+                context=state.context,
+                checkpoint=state.checkpoint,
+                cursor=state.cursor.model_copy(
+                    update={
+                        "cursor_output_fingerprint_path": fingerprint_path,
+                        "cursor_output_fingerprint_sha256": fingerprint_sha,
+                        "sdk": confirmed_sdk.model_copy(
+                            update={
+                                "latest_journal_path": journal_rel,
+                                "latest_journal_sha256": journal_sha,
+                            }
+                        ),
+                    }
+                ),
+                codex=state.codex,
+            )
+            event_id = self._event_id_factory()
+            self.store.append_event(
+                conn,
+                event_id=event_id,
+                run_id=run_id,
+                sequence=self.store.next_event_sequence(conn, run_id),
+                event=event,
+                now=now,
+            )
+            if not self.store.compare_and_swap_state(
+                conn, run_id=run_id, expected_version=version, new_state=new_state, now=now
+            ):
+                return TickRunReceipt(run_id=run_id, action="ingest_cas_lost")
+            self.store.mark_attempt_ingested(conn, attempt_id=attempt_id, now=now)
+            self.store.insert_effect(
+                conn,
+                dispatch_id=self._dispatch_id_factory(),
+                source_event_id=event_id,
+                run_id=run_id,
+                effect_id=NORMALIZE_STAGING_EFFECT_ID,
+                effect_kind=NORMALIZE_STAGING_EFFECT_KIND,
+                effect_payload={"iteration": iteration},
+                available_at=now,
+                claimed_run_version=new_state.version,
+                now=now,
+            )
+        return TickRunReceipt(run_id=run_id, action="cursor_sdk_turn_completed")
 
     def _handle_usage_limit(
         self,
@@ -1236,6 +1719,7 @@ class CursorWorkflowService:
         reason_kind: str,
         summary: str,
         state_kind: str | None = None,
+        retain_reservation: bool = False,
     ) -> TickRunReceipt:
         del dispatch_id, state_kind
         now = self._now_factory()
@@ -1259,6 +1743,7 @@ class CursorWorkflowService:
                     new_state=new_state,
                     version=version,
                     now=now,
+                    retain_reservation=retain_reservation,
                 )
             elif isinstance(
                 state, (CursorReadyState, WaitingUsageLimitState, WaitingForCursorFixState)
@@ -1280,6 +1765,7 @@ class CursorWorkflowService:
                     new_state=new_state,
                     version=version,
                     now=now,
+                    retain_reservation=retain_reservation,
                 )
             else:
                 return TickRunReceipt(run_id=run_id, action="ingest_block_state_changed")
@@ -1433,6 +1919,7 @@ class CursorWorkflowService:
         new_state: object,
         version: int,
         now: datetime,
+        retain_reservation: bool = False,
     ) -> None:
         event_id = self._event_id_factory()
         sequence = self.store.next_event_sequence(conn, run_id)  # type: ignore[arg-type]
@@ -1451,9 +1938,10 @@ class CursorWorkflowService:
             new_state=new_state,  # type: ignore[arg-type]
             now=now,
         )
-        worktree_key = new_state.context.repository.worktree_key  # type: ignore[attr-defined]
-        self.store.release_reservation(
-            conn,  # type: ignore[arg-type]
-            worktree_key=worktree_key,
-            now=now,
-        )
+        if not retain_reservation:
+            worktree_key = new_state.context.repository.worktree_key  # type: ignore[attr-defined]
+            self.store.release_reservation(
+                conn,  # type: ignore[arg-type]
+                worktree_key=worktree_key,
+                now=now,
+            )

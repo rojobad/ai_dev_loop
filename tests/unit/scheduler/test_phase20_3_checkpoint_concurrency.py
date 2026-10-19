@@ -71,6 +71,7 @@ from ai_dev_loop.scheduler.domain.state import (
     CursorWorkflowCheckpoint,
     EffectiveConfigBinding,
     FreshCodexReviewerBinding,
+    ImplementerBinding,
     PlanPromptBinding,
     RepositoryTargetBinding,
     WorkflowLimits,
@@ -1078,6 +1079,16 @@ def _frozen_sequence_entry(
     commit_message: str | None,
 ) -> FrozenSequenceEntry:
     return FrozenSequenceEntry(
+        schema_version=2,
+        implementer=ImplementerBinding(
+            provider="codex",
+            command="codex",
+            model="gpt-5.6-sol",
+            reasoning_effort="high",
+            timeout_minutes=90,
+            sandbox="workspace-write",
+            approval_policy="never",
+        ),
         ordinal=ordinal,
         phase_name=phase_name,
         planned_run_id=planned_run_id,
@@ -1146,6 +1157,7 @@ def _active_sequence_for_intent(
         commit_message=None,
     )
     definition = PreparedSequenceDefinition(
+        schema_version=2,
         sequence_id=intent.sequence_id,
         name="two-phase",
         project_name="fixture-project",

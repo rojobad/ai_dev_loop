@@ -7,11 +7,12 @@ from typing import Literal
 
 from pydantic import Field, TypeAdapter, field_validator, model_serializer, model_validator
 
-from ai_dev_loop.config import CODEX_REVIEW_REASONING_EFFORTS
+from ai_dev_loop.config import CODEX_REVIEW_REASONING_EFFORTS, SdkParameterValue
 from ai_dev_loop.scheduler.domain.common import DomainModel, GitObjectSha, NonEmptyStr, Sha256Hex
 from ai_dev_loop.scheduler.domain.state import (
     ControllerBinding,
     CursorBinding,
+    CursorSdkBinding,
     EffectiveConfigBinding,
     FreshCodexReviewerBinding,
     ImplementerBinding,
@@ -20,9 +21,9 @@ from ai_dev_loop.scheduler.domain.state import (
     WorkflowLimits,
 )
 
-SEQUENCE_MANIFEST_SCHEMA_VERSION = 3
-PREPARED_SEQUENCE_SCHEMA_VERSION = 2
-FROZEN_SEQUENCE_ENTRY_SCHEMA_VERSION = 2
+SEQUENCE_MANIFEST_SCHEMA_VERSION = 4
+PREPARED_SEQUENCE_SCHEMA_VERSION = 3
+FROZEN_SEQUENCE_ENTRY_SCHEMA_VERSION = 3
 PREPARED_SEQUENCE_STATE_KIND = "prepared"
 ACTIVE_SEQUENCE_STATE_KIND = "active"
 ABORT_PENDING_SEQUENCE_STATE_KIND = "abort_pending"
@@ -57,6 +58,39 @@ class SequenceManifestCursorOverrides(DomainModel):
     command: str | None = None
     model: str | None = None
     output_format: str | None = None
+    runtime: Literal["sdk-local"] | None = None
+    parameters: dict[str, SdkParameterValue] | None = None
+
+    @field_validator("parameters", mode="before")
+    @classmethod
+    def canonical_parameters(cls, value: object) -> object:
+        if value is None or not isinstance(value, dict):
+            return value
+        return {key: value[key] for key in sorted(value)}
+
+    @model_validator(mode="after")
+    def one_runtime_surface(self) -> SequenceManifestCursorOverrides:
+        if self.runtime == "sdk-local":
+            if self.command is not None or self.output_format is not None:
+                raise ValueError("SDK cursor overrides conflict with CLI fields")
+            if self.model is None or self.parameters is None:
+                raise ValueError("SDK cursor overrides require complete model and parameters")
+        elif self.parameters is not None:
+            raise ValueError("cursor.parameters requires runtime sdk-local")
+        return self
+
+    @model_serializer(mode="wrap")
+    def serialize_cursor_override(
+        self, handler: Callable[[SequenceManifestCursorOverrides], dict[str, object]]
+    ) -> dict[str, object]:
+        data = handler(self)
+        if self.runtime is None:
+            data.pop("runtime", None)
+            data.pop("parameters", None)
+        else:
+            data.pop("command", None)
+            data.pop("output_format", None)
+        return data
 
 
 class SequenceManifestCodexOverrides(DomainModel):
@@ -160,7 +194,7 @@ class SequenceManifestPhase(DomainModel):
 
 
 class SequenceManifest(DomainModel):
-    schema_version: Literal[1, 2, 3] = 1
+    schema_version: Literal[1, 2, 3, 4] = 1
     name: NonEmptyStr
     short_name: str | None = None
     phases: list[SequenceManifestPhase]
@@ -221,12 +255,25 @@ class SequenceManifest(DomainModel):
         )
         if self.schema_version < 3 and has_any_short_name:
             raise ValueError("short_name requires manifest v3")
-        if self.schema_version == 3:
+        if self.schema_version < 4 and any(
+            phase.cursor is not None
+            and (
+                "runtime" in phase.cursor.model_fields_set
+                or "parameters" in phase.cursor.model_fields_set
+            )
+            for phase in self.phases
+        ):
+            raise ValueError("cursor runtime and parameters require manifest v4")
+        if self.schema_version in {3, 4}:
             if self.short_name is None:
-                raise ValueError("manifest v3 requires sequence short_name")
+                raise ValueError("manifest v3/v4 requires sequence short_name")
             missing = [phase.name for phase in self.phases if phase.short_name is None]
             if missing:
-                raise ValueError("manifest v3 requires short_name for every phase")
+                raise ValueError("manifest v3/v4 requires short_name for every phase")
+        if self.schema_version == 4:
+            for phase in self.phases:
+                if phase.cursor is None or phase.cursor.runtime != "sdk-local":
+                    raise ValueError("manifest v4 requires complete SDK cursor settings per phase")
         total = len(self.phases)
         for index, phase in enumerate(self.phases, start=1):
             is_final = index == total
@@ -245,7 +292,7 @@ class SequenceManifest(DomainModel):
 
 
 class FrozenSequenceEntry(DomainModel):
-    schema_version: Literal[1, 2] = 1
+    schema_version: Literal[1, 2, 3] = 1
     ordinal: int
     phase_name: NonEmptyStr
     planned_run_id: NonEmptyStr
@@ -253,14 +300,25 @@ class FrozenSequenceEntry(DomainModel):
     plan_prompt: PlanPromptBinding
     effective_config: EffectiveConfigBinding
     codex: FreshCodexReviewerBinding
-    cursor: CursorBinding
+    cursor: CursorBinding | CursorSdkBinding
     workflow: WorkflowLimits
     implementer: ImplementerBinding | None = None
 
     @model_validator(mode="after")
     def validate_implementer_version(self) -> FrozenSequenceEntry:
-        if (self.schema_version == 2) != (self.implementer is not None):
-            raise ValueError("entry v2 requires implementer; v1 must omit it")
+        if (self.schema_version >= 2) != (self.implementer is not None):
+            raise ValueError("entry v2/v3 requires implementer; v1 must omit it")
+        if self.schema_version < 3 and not isinstance(self.cursor, CursorBinding):
+            raise ValueError("historical entries require Cursor CLI binding")
+        if self.schema_version == 3 and not isinstance(self.cursor, CursorSdkBinding):
+            raise ValueError("entry v3 requires Cursor SDK binding")
+        if (
+            self.schema_version == 3
+            and self.implementer is not None
+            and self.implementer.provider == "cursor"
+            and self.implementer.schema_version != 2
+        ):
+            raise ValueError("entry v3 Cursor implementer requires SDK binding")
         if self.implementer is not None and self.implementer.session_id is not None:
             raise ValueError("prepared implementer must not have a session")
         return self
@@ -283,7 +341,7 @@ class FrozenSequenceEntry(DomainModel):
 
 
 class PreparedSequenceDefinition(DomainModel):
-    schema_version: Literal[1, 2] = 1
+    schema_version: Literal[1, 2, 3] = 1
     sequence_id: NonEmptyStr
     name: NonEmptyStr
     project_name: NonEmptyStr

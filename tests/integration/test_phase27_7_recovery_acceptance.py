@@ -49,7 +49,6 @@ REVIEWER_ONE_ID = "019def00-0000-0000-0000-0000000007b1"
 REVIEWER_TWO_ID = "019def00-0000-0000-0000-0000000007b2"
 FIX_PROMPT = "Preserve this exact correction prompt.\r\nUnicode: 雪λ.\n"
 EXPECTED_RECOVERY_BYTES = b"1:timeout\n2:quota\n3:failure\n4:success\n5:success\n"
-EXPECTED_CURSOR_FINAL_APPEND = b"\n# modified by fake agent\n"
 
 
 @pytest.fixture
@@ -320,9 +319,15 @@ def _prepare_sequence(runner: CliRunner, repo: Path) -> tuple[str, str]:
                     },
                     {
                         "name": "cursor-final",
-                        "short_name": "Cursor final",
+                        "short_name": "Codex final",
                         "plan_path": "docs/plans/sample-plan.md",
                         "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
+                        "implementer": {
+                            "provider": "codex",
+                            "model": "gpt-5.6-sol",
+                            "reasoning_effort": "xhigh",
+                            "timeout_minutes": 19,
+                        },
                         "codex": {
                             "review_model": "gpt-6.1-sol",
                             "review_reasoning_effort": "high",
@@ -534,7 +539,7 @@ def test_standalone_timeout_capacity_force_correction_acceptance(
     assert "--last" not in fake_clis["codex_log"].read_text(encoding="utf-8")
 
 
-def test_mixed_sequence_recovery_keeps_current_ordinal_and_checkpoint_authority(
+def test_codex_only_v3_sequence_recovery_keeps_checkpoint_and_frozen_authority(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
@@ -547,8 +552,6 @@ def test_mixed_sequence_recovery_keeps_current_ordinal_and_checkpoint_authority(
     monkeypatch.setenv("FAKE_CODEX_FIX_PROMPT", FIX_PROMPT)
     monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
     base = _git(git_repo, "rev-parse", "HEAD")
-    admitted_cursor_config = (git_repo / "ai_dev_loop.yaml").read_bytes()
-    expected_cursor_final = admitted_cursor_config + EXPECTED_CURSOR_FINAL_APPEND
     sequence_id, source = _prepare_sequence(runner, git_repo)
 
     blocked = _drive_recovery_chain_to_blocked(runner, monkeypatch, scheduler_paths, script, source)
@@ -588,15 +591,16 @@ def test_mixed_sequence_recovery_keeps_current_ordinal_and_checkpoint_authority(
             monkeypatch.setenv("FAKE_CODEX_REVIEWER_SESSION_ID", REVIEWER_TWO_ID)
         _invoke(runner, ["scheduler", "tick", "--output", "json"])
     else:
-        raise AssertionError("mixed sequence did not reach awaiting_finalization")
+        raise AssertionError("Codex-only sequence did not reach awaiting_finalization")
 
     assert isinstance(sequence, AwaitingFinalizationSequenceState)
     assert len(sequence.materialized_entries) == 2
     assert _git(git_repo, "rev-list", "--count", f"{base}..HEAD") == "1"
     assert _git(git_repo, "log", "-1", "--pretty=%s") == "accepted recovery checkpoint"
     assert _git_bytes(git_repo, "show", "HEAD:phase27-7-recovery.txt") == EXPECTED_RECOVERY_BYTES
-    assert _git_bytes(git_repo, "show", "HEAD:ai_dev_loop.yaml") == admitted_cursor_config
-    assert _git_bytes(git_repo, "show", ":ai_dev_loop.yaml") == expected_cursor_final
+    assert _git_bytes(git_repo, "show", ":phase27-7-recovery.txt") == (
+        EXPECTED_RECOVERY_BYTES + b"6:success\n"
+    )
     assert _git(git_repo, "diff", "--cached", "--name-only")
     assert not _git(git_repo, "diff", "--name-only")
 
@@ -606,10 +610,11 @@ def test_mixed_sequence_recovery_keeps_current_ordinal_and_checkpoint_authority(
     assert recovered.codex.implementer_session_id == IMPLEMENTER_ID
     assert recovered.codex.reviewer_session_id == REVIEWER_ONE_ID
     assert final.kind == "completed"
-    assert final.context.implementer.provider == "cursor"
+    assert final.context.implementer.provider == "codex"
+    assert final.codex.implementer_session_id == IMPLEMENTER_ID
     assert final.codex.reviewer_session_id == REVIEWER_TWO_ID
     assert final.codex.reviewer_session_id != recovered.codex.reviewer_session_id
-    assert script.calls == 5
+    assert script.calls == 6
 
     store = SqliteSchedulerStore(scheduler_paths["db_path"])
     with store.begin_read() as conn:

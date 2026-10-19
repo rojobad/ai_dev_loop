@@ -464,6 +464,42 @@ class ProtectedArtifactStore:
                 )
             raise exc
 
+    def write_bytes_or_verify(
+        self,
+        run_id: str,
+        relative_path: str,
+        content: bytes,
+        *,
+        max_bytes: int,
+    ) -> StoredArtifact:
+        """Write bytes once or authenticate an existing identical artifact."""
+
+        if not content:
+            raise ProtectedArtifactError("artifact content is empty")
+        if len(content) > max_bytes:
+            raise ProtectedArtifactError("artifact exceeds size limit")
+        root = self.run_root(run_id)
+        destination = resolve_run_relative_path(root, relative_path)
+        digest = hashlib.sha256(content).hexdigest()
+        if destination.is_file():
+            return self._stored_artifact_from_verified_bytes(
+                run_id,
+                relative_path,
+                expected_sha256=digest,
+                expected_size=len(content),
+            )
+        try:
+            return self.write_bytes(run_id, relative_path, content, max_bytes=max_bytes)
+        except ProtectedArtifactError as exc:
+            if destination.is_file():
+                return self._stored_artifact_from_verified_bytes(
+                    run_id,
+                    relative_path,
+                    expected_sha256=digest,
+                    expected_size=len(content),
+                )
+            raise exc
+
     def write_yaml(
         self,
         run_id: str,

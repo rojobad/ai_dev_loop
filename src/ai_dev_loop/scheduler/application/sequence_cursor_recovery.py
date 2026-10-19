@@ -12,6 +12,10 @@ from ai_dev_loop.scheduler.application.contracts import (
     SchedulerEngineErrorKind,
     TickRunReceipt,
 )
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import (
+    CURSOR_CLI_RETIRED_SUMMARY,
+    unsupported_sequence_cursor_cli_ordinals,
+)
 from ai_dev_loop.scheduler.domain.cursor_sequence_replacement import (
     CursorSequenceReplacementIntent,
 )
@@ -177,6 +181,11 @@ def bind_pending_cursor_sequence_intent(
     blocked = find_blocked_sequence_for_run(store, conn, source_run_id)
     if blocked is None:
         raise _invalid("source run is not the current blocked sequence leaf")
+    if ordinals := unsupported_sequence_cursor_cli_ordinals(blocked.definition):
+        raise _invalid(
+            f"sequence cursor recovery: {CURSOR_CLI_RETIRED_SUMMARY} "
+            f"Unsupported sequence ordinals: {', '.join(map(str, ordinals))}."
+        )
     if blocked.sequence_id != binding.sequence_id or blocked.current_ordinal != binding.ordinal:
         raise _invalid("sequence binding disagrees with the blocked sequence leaf")
     if store.has_sequence_abort_requested_for_run(
@@ -310,6 +319,12 @@ def authenticate_cursor_publication_for_adoption(
         raise _corrupt("cursor recovery relation disagrees with the sequence replacement")
     if str(row["status"]) == "cancelled":
         raise _conflict("cursor recovery publication was cancelled")
+    if _intent_schema_version(row) == 3:
+        from ai_dev_loop.scheduler.application.cursor_sdk_successor import (
+            authenticate_sdk_successor_for_adoption,
+        )
+
+        return authenticate_sdk_successor_for_adoption(store, artifacts, conn, row)
     if _intent_schema_version(row) == 2:
         return authenticate_correction_publication_for_adoption(store, artifacts, conn, row)
     return authenticate_initial_publication_for_adoption(store, artifacts, conn, row)
@@ -339,6 +354,11 @@ def adopt_cursor_sequence_successor(
     if intent.adoption_state == "adopted" and intent.record_digest != record_digest:
         raise _corrupt("cursor sequence recovery record digest changed")
     sequence = store.load_validated_sequence_state(conn, intent.sequence_id)
+    if ordinals := unsupported_sequence_cursor_cli_ordinals(sequence.definition):
+        raise _invalid(
+            f"sequence cursor adoption: {CURSOR_CLI_RETIRED_SUMMARY} "
+            f"Unsupported sequence ordinals: {', '.join(map(str, ordinals))}."
+        )
     if (
         isinstance(sequence, ActiveSequenceState)
         and sequence.current_run_id == intent.successor_run_id
@@ -575,6 +595,7 @@ def _cancel_pending_recovery_row(
         CursorInitialRecoveryPublicationIntentV1,
     )
     from ai_dev_loop.scheduler.domain.cursor_recovery_v2 import CursorRecoveryPublicationIntentV2
+    from ai_dev_loop.scheduler.domain.cursor_sdk_recovery import CursorSdkSuccessorIntentV1
 
     raw = str(row["intent_payload"])
     try:
@@ -583,7 +604,13 @@ def _cancel_pending_recovery_row(
         raise _corrupt("cursor recovery publication intent is not valid JSON") from exc
     version = parsed.get("schema_version") if isinstance(parsed, dict) else None
     try:
-        if version == 2:
+        if version == 3:
+            intent_v3 = CursorSdkSuccessorIntentV1.model_validate_json(raw)
+            cancelled_v3 = intent_v3.model_copy(
+                update={"status": "cancelled", "record_sha256": None}
+            )
+            payload = cancelled_v3.canonical_bytes()
+        elif version == 2:
             intent_v2 = CursorRecoveryPublicationIntentV2.model_validate_json(raw)
             cancelled_v2 = intent_v2.model_copy(
                 update={"status": "cancelled", "record_sha256": None}

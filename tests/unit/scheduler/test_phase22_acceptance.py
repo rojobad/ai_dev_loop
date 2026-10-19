@@ -51,6 +51,11 @@ from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedAr
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
 
+@pytest.fixture(autouse=True)
+def _codex_implementer_edit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
+
+
 def _visit_run_only(
     tick: TickService,
     run_id: str,
@@ -801,14 +806,14 @@ def test_global_capacity_contention_blocks_routing_dispatch_then_resumes_exact_r
         assert _codex_attempt_ids(store, conn, run_id) == codex_before
         assert store.get_reservation_for_run(conn, run_id) is not None
 
-    cursor_launches = [
+    implementer_launches = [
         call
         for call in holder_backend.launch_calls
-        if any("cursor_attempt_runner" in part for part in call.agent_argv)
+        if any("codex_implementer_attempt_runner" in part for part in call.agent_argv)
     ]
-    assert cursor_launches
+    assert implementer_launches
     holder_backend.set_scenario(
-        cursor_launches[-1].attempt_id,
+        implementer_launches[-1].attempt_id,
         FakeAttemptScenario(active_ticks=0, exit_code=0),
     )
     for _ in range(80):

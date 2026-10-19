@@ -24,6 +24,10 @@ from ai_dev_loop.scheduler.application.contracts import (
     TickRunReceipt,
 )
 from ai_dev_loop.scheduler.application.cursor_evidence import verify_prompt_binding
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import (
+    CURSOR_CLI_RETIRED_SUMMARY,
+    context_uses_cursor_cli,
+)
 from ai_dev_loop.scheduler.application.cursor_timeout_retry import CursorTimeoutRetryService
 from ai_dev_loop.scheduler.domain.codex_contract import (
     CODEX_IMPLEMENTER_TIMEOUT_MAX_AUTOMATIC_RETRIES,
@@ -719,6 +723,8 @@ class ImplementerRetryService:
         with self.store.begin_read() as conn:
             state, _, _ = self.store.load_validated_snapshot(conn, run_id)
             provider = resolved_implementer_provider(state.context)
+            if context_uses_cursor_cli(state.context):
+                raise _invalid(f"scheduler implementer retry: {CURSOR_CLI_RETIRED_SUMMARY}")
         if force:
             if provider == "cursor":
                 from ai_dev_loop.scheduler.application.cursor_initial_recovery import (

@@ -33,6 +33,7 @@ def validate_config(
     payload = {
         "schema_version": 1,
         "status": "valid",
+        "config_version": effective.version,
         "project": effective.project.name,
         "config_path": str(repo_config_path),
         "source_project_name": source.project.name,
@@ -44,8 +45,11 @@ def validate_config(
     if output == "json":
         return json.dumps(payload, indent=2) + "\n"
     dispatch_note = ""
-    if effective.implementer.provider == "codex":
-        dispatch_note = "Codex implementer dispatch is not available in this phase.\n"
+    if effective.version == 2 and effective.implementer.provider == "cursor":
+        dispatch_note = (
+            "Cursor SDK configuration is valid; scheduler dispatch remains guarded "
+            "until Phase 25.2.\n"
+        )
     return (
         f"Configuration is valid for project '{effective.project.name}'.\n"
         f"Config path: {repo_config_path}\n"

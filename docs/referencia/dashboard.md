@@ -3,9 +3,10 @@
 ## Superficie instalada
 
 `ai_dev_loop dashboard serve --port 8765` sirve el frontend empaquetado y
-`POST /api/dashboard/read` en `127.0.0.1`. La API de integración actual es 1.11 y
-publica `capabilities.dashboard=true` y `capabilities.shortNames=true`. SQLite
-schema 17 almacena los nombres cortos; schema 16 sigue siendo legible mediante
+`POST /api/dashboard/read` en `127.0.0.1`. La API de integración actual es 1.12 y
+publica `capabilities.dashboard=true`, `capabilities.shortNames=true` y
+`capabilities.tokenUsage=true`. SQLite
+schema 17 en adelante almacena los nombres cortos; schema 16 sigue siendo legible mediante
 fallback sin migración ni escritura. El lector abre un snapshot validado de
 `engine.sqlite3` en modo solo lectura y usa los artefactos protegidos como autoridad.
 
@@ -153,3 +154,8 @@ ausencia de `dashboard` en capabilities significa que el productor instalado no
 ofrece esta superficie. Consulta [API de integración
 local](integration-api.md) para el sobre común y [Dashboard local](../operacion/dashboard-local.md)
 para operación y refresco.
+
+Los inspect de run/secuencia pueden incluir el resumen aditivo `tokenUsage`, pero
+el Dashboard no añade gráficos ni paneles de tokens en esta fase. Sus KPIs,
+review rounds y process-hours continúan derivándose solo del ledger de ejecución;
+la ausencia o cobertura parcial de uso no oculta runs ni cambia actividad.

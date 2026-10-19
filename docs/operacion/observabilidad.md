@@ -45,6 +45,21 @@ Limite por defecto: 50 filas. `--limit` acepta valores positivos hasta 200; por
 encima de 200 se trunca al maximo duro. Si hay mas intentos que el limite
 efectivo, `truncated` es `true` en salida JSON.
 
+## Uso de tokens observado
+
+```bash
+ai_dev_loop scheduler usage <run-id> --output text
+ai_dev_loop scheduler sequence usage <sequence-id> --output json
+```
+
+Estas consultas autentican intentos y artefactos ya capturados; no llaman Cursor,
+Codex ni servicios de billing. El scope directo se distingue del linaje de
+recuperación y del linaje de fases. Los totales son cotas inferiores con cobertura
+explícita: una captura ausente o interrumpida permanece `unknown`/`partial`, nunca
+se convierte en cero. Los JSONL Codex históricos solo se proyectan cuando el
+outcome autenticado fija ruta y hash; la lectura no crea observaciones ni cambia
+los bytes originales.
+
 ## Controller status
 
 ```bash

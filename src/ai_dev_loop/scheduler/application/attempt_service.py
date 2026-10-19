@@ -29,6 +29,9 @@ from ai_dev_loop.scheduler.application.attempt_envelope import (
     attempt_result_rel,
     attempt_stderr_rel,
     attempt_stdout_rel,
+    build_result_envelope,
+    envelope_sha256,
+    sha256_file,
     validate_completion_evidence,
 )
 from ai_dev_loop.scheduler.application.attempt_identity import (
@@ -46,6 +49,7 @@ from ai_dev_loop.scheduler.application.codex_evidence import (
 )
 from ai_dev_loop.scheduler.application.codex_workflow_service import CodexWorkflowService
 from ai_dev_loop.scheduler.application.contracts import (
+    AbortProcessAction,
     SchedulerEngineError,
     SchedulerEngineErrorKind,
     TickRunReceipt,
@@ -57,6 +61,11 @@ from ai_dev_loop.scheduler.application.cursor_evidence import (
     verify_cursor_invocation_evidence,
     verify_pre_execution_cursor_guards,
 )
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import (
+    context_uses_cursor_cli,
+    unsupported_sequence_cursor_cli_ordinals,
+)
+from ai_dev_loop.scheduler.application.cursor_sdk_journal import seal_interrupted_sdk_send_journal
 from ai_dev_loop.scheduler.application.cursor_workflow_service import CursorWorkflowService
 from ai_dev_loop.scheduler.application.review_budget import effective_review_ceiling_for_run
 from ai_dev_loop.scheduler.application.scheduler_checkpoint import checkpoint_from_state
@@ -71,7 +80,9 @@ from ai_dev_loop.scheduler.domain.codex_contract import (
 from ai_dev_loop.scheduler.domain.common import payload_sha256
 from ai_dev_loop.scheduler.domain.cursor_contract import (
     CREATE_CHAT_EFFECT_KIND,
+    RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND,
     RUN_CURSOR_TURN_EFFECT_KIND,
+    cursor_sdk_attempt_journal_rel,
     invocation_evidence_rel,
 )
 from ai_dev_loop.scheduler.domain.effects import (
@@ -89,6 +100,7 @@ from ai_dev_loop.scheduler.domain.state import (
     AdmittedState,
     AwaitingCodexReviewState,
     CursorReadyState,
+    CursorSdkBinding,
     PreflightCompleteState,
     WaitingForCursorFixState,
     WaitingUsageLimitState,
@@ -108,6 +120,7 @@ from ai_dev_loop.scheduler.infrastructure.sqlite_store import (
     ATTEMPT_STATUS_UNCERTAIN,
     SqliteSchedulerStore,
 )
+from ai_dev_loop.state import atomic_write_bytes, atomic_write_text
 
 _CURSOR_ATTEMPT_STATES = (
     PreflightCompleteState,
@@ -257,6 +270,18 @@ class AttemptService:
         )
         if reconcile is not None:
             return reconcile
+        with self.store.begin_read() as conn:
+            state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            if context_uses_cursor_cli(state.context):
+                return TickRunReceipt(run_id=run_id, action="cursor_cli_runtime_retired")
+            if state.context.sequence is not None:
+                sequence = self.store.load_validated_sequence_state(
+                    conn, state.context.sequence.sequence_id
+                )
+                if unsupported_sequence_cursor_cli_ordinals(sequence.definition):
+                    return TickRunReceipt(
+                        run_id=run_id, action="sequence_cursor_cli_runtime_retired"
+                    )
         return (
             self._maybe_launch_codex_implementer_attempt(
                 tick_owner_id,
@@ -679,8 +704,14 @@ class AttemptService:
             if (
                 authenticated_initial_recovery_launch(self.store, self.artifacts, conn, run_id)
                 is None
+                and authenticated_correction_launch(self.store, self.artifacts, conn, run_id)
+                is None
             ):
-                authenticated_correction_launch(self.store, self.artifacts, conn, run_id)
+                from ai_dev_loop.scheduler.application.cursor_sdk_successor import (
+                    authenticated_sdk_successor_launch,
+                )
+
+                authenticated_sdk_successor_launch(self.store, self.artifacts, conn, run_id)
         except (SchedulerEngineError, ModelValidationError) as exc:
             if (
                 self.store.get_cursor_initial_recovery_by_successor(conn, successor_run_id=run_id)
@@ -718,11 +749,14 @@ class AttemptService:
                     CursorReadyState,
                     WaitingUsageLimitState,
                     WaitingForCursorFixState,
+                    AbortedState,
                 ),
             ):
                 return None
             if resolved_implementer_provider(state.context) == "codex":
                 return None
+            if context_uses_cursor_cli(state.context):
+                return TickRunReceipt(run_id=run_id, action="cursor_cli_runtime_retired")
             if self.store.get_nonterminal_attempt_for_run(conn, run_id) is not None:
                 return TickRunReceipt(run_id=run_id, action="attempt_busy")
             effects = self.store.list_eligible_effects(conn, run_id=run_id, now=now)
@@ -734,6 +768,11 @@ class AttemptService:
             dispatch_row = cursor_effects[0]
             dispatch_id = str(dispatch_row["dispatch_id"])
             effect_kind = str(dispatch_row["effect_kind"])
+            if (
+                isinstance(state, AbortedState)
+                and effect_kind != RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND
+            ):
+                return None
             scheduled_version = int(dispatch_row["claimed_run_version"])
             cursor_state = state
 
@@ -744,20 +783,53 @@ class AttemptService:
         stdout_rel = attempt_stdout_rel(attempt_id)
         stderr_rel = attempt_stderr_rel(attempt_id)
         result_rel = attempt_result_rel(attempt_id)
-        if cursor_state.cursor.timeout_attempt_id and effect_kind == RUN_CURSOR_TURN_EFFECT_KIND:
-            from ai_dev_loop.scheduler.application.cursor_timeout_retry import timeout_binding
+        cursor_checkpoint = getattr(cursor_state, "cursor", None)
+        if (
+            cursor_checkpoint is not None
+            and cursor_checkpoint.timeout_attempt_id
+            and effect_kind == RUN_CURSOR_TURN_EFFECT_KIND
+        ):
+            if isinstance(cursor_state.context.cursor, CursorSdkBinding):
+                if isinstance(cursor_state, AbortedState):
+                    raise ValidationError("aborted SDK run cannot dispatch a timeout retry")
+                evidence = self._cursor_binding(
+                    cursor_state,
+                    effect_kind=effect_kind,
+                    run_id=run_id,
+                )
+                evidence["timeout_retry_of"] = cursor_checkpoint.timeout_attempt_id
+                evidence["sdk_reconciliation_path"] = cursor_checkpoint.sdk_reconciliation_path
+                evidence["sdk_reconciliation_sha256"] = cursor_checkpoint.sdk_reconciliation_sha256
+            else:
+                from ai_dev_loop.scheduler.application.cursor_timeout_retry import timeout_binding
+
+                with self.store.begin_read() as conn:
+                    evidence = timeout_binding(
+                        self.store,
+                        self.artifacts,
+                        conn,
+                        run_id,
+                        cursor_checkpoint.timeout_attempt_id,
+                    )
+                evidence["timeout_retry_of"] = cursor_checkpoint.timeout_attempt_id
+        elif effect_kind == RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND:
+            payload = json.loads(str(dispatch_row["effect_payload"]))
+            if not isinstance(payload, dict) or not isinstance(payload.get("recovery_key"), str):
+                raise ValidationError("Cursor SDK reconciliation effect payload is invalid")
+            from ai_dev_loop.scheduler.application.cursor_sdk_reconciliation import (
+                CursorSdkReconciliationService,
+            )
 
             with self.store.begin_read() as conn:
-                evidence = timeout_binding(
+                evidence = CursorSdkReconciliationService(
                     self.store,
                     self.artifacts,
-                    conn,
-                    run_id,
-                    cursor_state.cursor.timeout_attempt_id,
-                )
-            evidence["timeout_retry_of"] = cursor_state.cursor.timeout_attempt_id
+                    now_factory=self._now_factory,
+                ).binding(conn, run_id=run_id, recovery_key=str(payload["recovery_key"]))
         else:
             try:
+                if isinstance(cursor_state, AbortedState):
+                    raise ValidationError("aborted SDK run can only reconcile native state")
                 evidence = self._cursor_binding(
                     cursor_state, effect_kind=effect_kind, run_id=run_id
                 )
@@ -807,14 +879,21 @@ class AttemptService:
                     CursorReadyState,
                     WaitingUsageLimitState,
                     WaitingForCursorFixState,
+                    AbortedState,
                 ),
+            ):
+                return None
+            if (
+                isinstance(state, AbortedState)
+                and effect_kind != RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND
             ):
                 return None
             if version < scheduled_version:
                 return TickRunReceipt(run_id=run_id, action="attempt_stale")
-            blocked = self._reauthenticate_initial_recovery_launch(conn, run_id)
-            if blocked is not None:
-                return blocked
+            if effect_kind != RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND:
+                blocked = self._reauthenticate_initial_recovery_launch(conn, run_id)
+                if blocked is not None:
+                    return blocked
             from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
                 cursor_initial_recovery_blocks_dispatch,
             )
@@ -864,7 +943,7 @@ class AttemptService:
                 stdout_artifact_path=stdout_rel,
                 stderr_artifact_path=stderr_rel,
                 result_artifact_path=result_rel,
-                iteration=state.cursor.iteration if hasattr(state, "cursor") else 1,
+                iteration=cursor_checkpoint.iteration if cursor_checkpoint is not None else 1,
                 now=self._now_factory(),
             )
             event = AttemptLaunchRequestedEvent(
@@ -1146,7 +1225,115 @@ class AttemptService:
             artifacts=self.artifacts,
             checkpoint=checkpoint,
         )
-        binding: dict[str, object] = {
+        if isinstance(context.cursor, CursorSdkBinding):
+            from ai_dev_loop.paths import cursor_conversation_key
+
+            sdk = context.cursor
+            binding: dict[str, object] = {
+                "schema_version": 2,
+                "runtime": "sdk-local",
+                "effect_kind": effect_kind,
+                "repository_root": identity.root,
+                "repository_git_common_dir": identity.git_common_dir,
+                "repository_git_dir": identity.git_dir,
+                "repository_branch": identity.branch,
+                "repository_initial_head": identity.initial_head,
+                "cursor_model": sdk.model,
+                "cursor_sandbox": sdk.sandbox,
+                "sdk_version": sdk.sdk_version,
+                "sdk_parameters": sdk.parameters,
+                "sdk_credential_ref": sdk.credential_ref,
+                "sdk_setting_sources": list(sdk.setting_sources),
+                "sdk_tool_policy": sdk.tool_policy,
+                "conversation_owner_run_id": (
+                    state.cursor.sdk.conversation_owner_run_id
+                    if state.cursor.sdk is not None
+                    else run_id
+                ),
+                "conversation_key": (
+                    state.cursor.sdk.conversation_key
+                    if state.cursor.sdk is not None
+                    else cursor_conversation_key(run_id)
+                ),
+                "timeout_seconds": context.workflow.cursor_timeout_minutes * 60,
+            }
+            if effect_kind == CREATE_CHAT_EFFECT_KIND:
+                return binding
+            if state.cursor.sdk is None:
+                raise ValidationError("Cursor SDK turn requires a persisted agent identity")
+            if state.cursor.sdk.conversation_key != cursor_conversation_key(
+                state.cursor.sdk.conversation_owner_run_id
+            ):
+                raise ValidationError("Cursor SDK identity owner disagrees with conversation key")
+            if isinstance(state, WaitingForCursorFixState):
+                prompt_path = state.codex.latest_correction_envelope_path
+                prompt_sha = state.codex.latest_correction_envelope_sha256
+                if not prompt_path or not prompt_sha:
+                    raise ValidationError("SDK correction requires persisted execution envelope")
+                binding.update(
+                    {
+                        "fix_prompt_path": state.codex.latest_fix_prompt_path,
+                        "fix_prompt_sha256": state.codex.latest_fix_prompt_sha256,
+                        "staged_patch_path": state.cursor.staged_patch_path,
+                        "staged_patch_sha256": state.cursor.staged_patch_sha256,
+                    }
+                )
+            elif isinstance(state, WaitingUsageLimitState):
+                prompt_path = state.cursor.original_prompt_path
+                prompt_sha = state.cursor.original_prompt_sha256
+                if not prompt_path or not prompt_sha:
+                    raise ValidationError("SDK usage continuation requires persisted prompt")
+            else:
+                prompt_path = context.plan_prompt.prompt_artifact_path
+                prompt_sha = context.plan_prompt.prompt_sha256
+            binding.update(
+                {
+                    "iteration": state.cursor.iteration,
+                    "agent_id": state.cursor.sdk.agent_id,
+                    "prompt_path": prompt_path,
+                    "prompt_sha256": prompt_sha,
+                }
+            )
+            from ai_dev_loop.scheduler.application.cursor_sdk_successor import (
+                authenticate_sdk_successor_authority,
+                sdk_successor_prompt_applies,
+            )
+
+            with self.store.begin_read() as conn:
+                sdk_authority = authenticate_sdk_successor_authority(
+                    self.store, self.artifacts, conn, run_id
+                )
+                review_source = self.store.get_review_recovery_source_for_successor(
+                    conn, successor_run_id=run_id
+                )
+                if review_source is not None:
+                    source_state, _, _ = self.store.load_validated_snapshot(
+                        conn, str(review_source["source_run_id"])
+                    )
+                    if source_state.context != state.context:
+                        raise ValidationError("SDK review successor changed frozen inputs")
+            if review_source is not None:
+                binding["sdk_review_recovery_source_run_id"] = str(review_source["source_run_id"])
+            if sdk_authority is not None:
+                binding["sdk_successor_recovery_key"] = sdk_authority.recovery_key
+            if sdk_authority is not None and sdk_successor_prompt_applies(state, sdk_authority):
+                # The SDK successor record authenticates the complete correction
+                # ancestry.  The resumed public SDK send consumes the copy-once
+                # effective prompt rather than reinterpreting that prompt as a
+                # legacy correction-recovery envelope.
+                binding.pop("fix_prompt_path", None)
+                binding.pop("fix_prompt_sha256", None)
+                binding.pop("staged_patch_path", None)
+                binding.pop("staged_patch_sha256", None)
+                binding.update(
+                    {
+                        "prompt_path": sdk_authority.effective_prompt_path,
+                        "prompt_sha256": sdk_authority.effective_prompt_sha256,
+                        "iteration": sdk_authority.iteration,
+                    }
+                )
+            return binding
+        legacy_binding: dict[str, object] = {
             "effect_kind": effect_kind,
             "repository_root": identity.root,
             "repository_git_common_dir": identity.git_common_dir,
@@ -1162,7 +1349,7 @@ class AttemptService:
             "timeout_seconds": context.workflow.cursor_timeout_minutes * 60,
         }
         if effect_kind == CREATE_CHAT_EFFECT_KIND:
-            return binding
+            return legacy_binding
         assert effect_kind == RUN_CURSOR_TURN_EFFECT_KIND
         iteration = state.cursor.iteration
         if isinstance(state, WaitingForCursorFixState):
@@ -1172,7 +1359,7 @@ class AttemptService:
                 raise ValidationError(
                     "correction cursor turn requires persisted execution envelope binding"
                 )
-            binding.update(
+            legacy_binding.update(
                 {
                     "iteration": iteration,
                     "chat_id": state.cursor.chat_id,
@@ -1190,7 +1377,7 @@ class AttemptService:
                 if state.cursor.continuation_envelope_path
                 else context.plan_prompt.prompt_artifact_path
             )
-            binding.update(
+            legacy_binding.update(
                 {
                     "iteration": iteration,
                     "chat_id": state.cursor.chat_id,
@@ -1218,10 +1405,10 @@ class AttemptService:
                 recovery,
                 iteration=iteration,
             ):
-                binding["prompt_path"] = recovery.effective_prompt_path
-                binding["prompt_sha256"] = recovery.effective_prompt_sha256
-                binding["chat_id"] = recovery.chat_id
-                binding["iteration"] = recovery.iteration
+                legacy_binding["prompt_path"] = recovery.effective_prompt_path
+                legacy_binding["prompt_sha256"] = recovery.effective_prompt_sha256
+                legacy_binding["chat_id"] = recovery.chat_id
+                legacy_binding["iteration"] = recovery.iteration
             else:
                 from ai_dev_loop.scheduler.application.cursor_correction_recovery import (
                     authenticated_correction_launch,
@@ -1263,7 +1450,7 @@ class AttemptService:
                             )
                         prompt_path = continuation
                         prompt_sha = state.cursor.continuation_envelope_sha256
-                    binding.update(
+                    legacy_binding.update(
                         {
                             "prompt_path": prompt_path,
                             "prompt_sha256": prompt_sha,
@@ -1282,13 +1469,13 @@ class AttemptService:
             state.cursor.usage_limit_fingerprint_path
             and state.cursor.usage_limit_fingerprint_sha256
         ):
-            binding.update(
+            legacy_binding.update(
                 {
                     "usage_limit_fingerprint_path": state.cursor.usage_limit_fingerprint_path,
                     "usage_limit_fingerprint_sha256": state.cursor.usage_limit_fingerprint_sha256,
                 }
             )
-        return binding
+        return legacy_binding
 
     def _reconcile_existing_attempt(
         self,
@@ -1312,14 +1499,22 @@ class AttemptService:
                 attempt = self.store.get_cancelled_reconcile_attempt_for_run(conn, run_id)
             if attempt is None:
                 return None
-            if isinstance(state, AbortedState):
+            dispatch_id = str(attempt["dispatch_id"])
+            dispatch = self.store.get_effect_by_dispatch_id(conn, dispatch_id)
+            effect_kind = str(dispatch["effect_kind"]) if dispatch is not None else ""
+            aborted_sdk_reconciliation = (
+                isinstance(state, AbortedState)
+                and effect_kind == RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND
+                and str(attempt["status"]) != ATTEMPT_STATUS_CANCELLED
+            )
+            if isinstance(state, AbortedState) and not aborted_sdk_reconciliation:
                 return self._reconcile_aborted_attempt(
                     tick_owner_id=tick_owner_id,
                     tick_lease_generation=tick_lease_generation,
                     run_id=run_id,
                     attempt=attempt,
                 )
-            if not isinstance(state, _ATTEMPT_RECONCILE_STATES):
+            if not isinstance(state, _ATTEMPT_RECONCILE_STATES) and not aborted_sdk_reconciliation:
                 return TickRunReceipt(run_id=run_id, action="attempt_state_changed")
             attempt_id = str(attempt["attempt_id"])
             unit_identity = str(attempt["unit_identity"])
@@ -1331,19 +1526,17 @@ class AttemptService:
                     attempt_id=attempt_id,
                     unit_identity=unit_identity,
                 )
-            dispatch_id = str(attempt["dispatch_id"])
             claim_id = str(attempt["capacity_claim_id"])
             result_rel = str(attempt["result_artifact_path"])
             attempt_status = str(attempt["status"])
             capacity_tick_generation = int(attempt["capacity_tick_generation"])
             stdout_rel = str(attempt["stdout_artifact_path"])
             stderr_rel = str(attempt["stderr_artifact_path"])
-            dispatch = self.store.get_effect_by_dispatch_id(conn, dispatch_id)
-            effect_kind = str(dispatch["effect_kind"]) if dispatch is not None else ""
             cursor_attempt = effect_kind in CURSOR_ATTEMPT_EFFECT_KINDS
             codex_attempt = effect_kind in CODEX_ATTEMPT_EFFECT_KINDS
             codex_implementer_attempt = effect_kind in IMPLEMENTER_ATTEMPT_EFFECT_KINDS
             agent_attempt = cursor_attempt or codex_attempt or codex_implementer_attempt
+            sdk_attempt = cursor_attempt and isinstance(state.context.cursor, CursorSdkBinding)
 
         observation = self.backend.observe(unit_identity=unit_identity, attempt_id=attempt_id)
         if observation.lifecycle_state == UnitLifecycleState.UNAVAILABLE:
@@ -1379,6 +1572,169 @@ class AttemptService:
             return TickRunReceipt(run_id=run_id, action="attempt_active", detail=attempt_id)
 
         run_root = self.artifacts.run_root(run_id)
+
+        lost_sdk_envelope = (
+            sdk_attempt
+            and effect_kind in {RUN_CURSOR_TURN_EFFECT_KIND, RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND}
+            and observation.lifecycle_state
+            in {
+                UnitLifecycleState.MISSING,
+                UnitLifecycleState.INACTIVE,
+                UnitLifecycleState.FAILED,
+            }
+            and not (run_root / result_rel).is_file()
+        )
+        if lost_sdk_envelope:
+            if observation.lifecycle_state == UnitLifecycleState.MISSING:
+                stopped = observation.owned and observation.absence_proven
+            else:
+                stop_action, stopped_observation = attempt_stop_action(
+                    self.backend,
+                    unit_identity=unit_identity,
+                    attempt_id=attempt_id,
+                    require_explicit_stop=True,
+                )
+                stopped = stop_action == AbortProcessAction.TERMINATED and unit_observation_stopped(
+                    stopped_observation
+                )
+            if not stopped:
+                return self._persist_attempt_uncertain(
+                    tick_owner_id=tick_owner_id,
+                    tick_lease_generation=tick_lease_generation,
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                    dispatch_id=dispatch_id,
+                    claim_id=claim_id,
+                    capacity_tick_generation=capacity_tick_generation,
+                    safe_summary=(
+                        "SDK worker result is missing and owned process tree termination is unproved"
+                    ),
+                )
+            try:
+                invocation = verify_cursor_invocation_evidence(
+                    run_root,
+                    attempt_id=attempt_id,
+                    run_id=run_id,
+                    dispatch_id=dispatch_id,
+                    unit_identity=unit_identity,
+                    launch_nonce=str(attempt["launch_nonce"]),
+                    launch_intent_sha256=str(attempt["launch_intent_sha256"]),
+                    effect_kind=effect_kind,
+                )
+                verify_pre_execution_cursor_guards(run_root, invocation, run_id=run_id)
+                stdout_path = run_root / stdout_rel
+                stderr_path = run_root / stderr_rel
+                result_path = run_root / result_rel
+                payload: dict[str, object] = {
+                    "runtime": "sdk-local",
+                    "effect_kind": effect_kind,
+                    "attempt_id": attempt_id,
+                    "run_id": run_id,
+                    "dispatch_id": dispatch_id,
+                    "iteration": invocation["iteration"],
+                    "agent_id": invocation["agent_id"],
+                    "returncode": 137,
+                    "timed_out": False,
+                    "parse_ok": False,
+                    "has_completion_signal": False,
+                }
+                if effect_kind == RUN_CURSOR_TURN_EFFECT_KIND:
+                    journal_rel = cursor_sdk_attempt_journal_rel(attempt_id)
+                    journal_path = run_root / journal_rel
+                    if not seal_interrupted_sdk_send_journal(journal_path):
+                        raise ValueError("interrupted SDK send journal cannot be sealed")
+                    payload.update(
+                        {
+                            "failure_kind": "cursor_sdk_worker_lost",
+                            "journal_path": journal_rel,
+                            "journal_sha256": sha256_file(journal_path),
+                        }
+                    )
+                else:
+                    recovery_key = str(invocation.get("recovery_key", ""))
+                    if not recovery_key:
+                        raise ValueError("reconciliation invocation lacks recovery authority")
+                    from ai_dev_loop.scheduler.application.cursor_sdk_reconciliation import (
+                        authenticated_published_reconciliation_result,
+                    )
+
+                    with self.store.begin_read() as conn:
+                        published = authenticated_published_reconciliation_result(
+                            self.store,
+                            self.artifacts,
+                            conn,
+                            run_id=run_id,
+                            recovery_key=recovery_key,
+                            reconciliation_attempt_id=attempt_id,
+                            reconciliation_dispatch_id=dispatch_id,
+                        )
+                    if published is None:
+                        payload["failure_kind"] = "cursor_sdk_reconciliation_worker_lost"
+                    else:
+                        record_path, record_sha = published
+                        payload.update(
+                            {
+                                "parse_ok": True,
+                                "has_completion_signal": True,
+                                "reconciliation_record_path": record_path,
+                                "reconciliation_record_sha256": record_sha,
+                            }
+                        )
+                atomic_write_text(
+                    stdout_path,
+                    json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+                    sensitive=True,
+                )
+                atomic_write_text(
+                    stderr_path,
+                    "Cursor SDK worker stopped without publishing its result envelope.\n",
+                    sensitive=True,
+                )
+                envelope = build_result_envelope(
+                    attempt_id=attempt_id,
+                    unit_identity=unit_identity,
+                    exit_code=137,
+                    termination_class=TerminationClass.KILLED,
+                    stdout_artifact_path=stdout_rel,
+                    stdout_sha256=sha256_file(stdout_path),
+                    stderr_artifact_path=stderr_rel,
+                    stderr_sha256=sha256_file(stderr_path),
+                )
+                atomic_write_bytes(result_path, envelope, sensitive=True)
+            except (
+                CursorEvidenceError,
+                ProtectedArtifactError,
+                SchedulerEngineError,
+                OSError,
+                ValueError,
+                TypeError,
+                KeyError,
+                json.JSONDecodeError,
+            ):
+                return self._persist_attempt_uncertain(
+                    tick_owner_id=tick_owner_id,
+                    tick_lease_generation=tick_lease_generation,
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                    dispatch_id=dispatch_id,
+                    claim_id=claim_id,
+                    capacity_tick_generation=capacity_tick_generation,
+                    safe_summary="SDK worker stop was proved but recovery evidence is invalid",
+                )
+            return self._persist_attempt_completion(
+                tick_owner_id=tick_owner_id,
+                tick_lease_generation=tick_lease_generation,
+                run_id=run_id,
+                attempt_id=attempt_id,
+                dispatch_id=dispatch_id,
+                claim_id=claim_id,
+                unit_identity=unit_identity,
+                capacity_tick_generation=capacity_tick_generation,
+                exit_code=137,
+                termination_class=TerminationClass.KILLED,
+                envelope_sha256=envelope_sha256(envelope),
+                cleanup_unit=False,
+            )
 
         if observation.lifecycle_state == UnitLifecycleState.MISSING:
             if attempt_status == ATTEMPT_STATUS_LAUNCHING and observation.absence_proven:
@@ -1451,6 +1807,29 @@ class AttemptService:
                 safe_summary="result envelope failed validation",
             )
 
+        if sdk_attempt:
+            try:
+                self.backend.terminate(unit_identity=unit_identity, attempt_id=attempt_id)
+                terminated = self.backend.observe(
+                    unit_identity=unit_identity,
+                    attempt_id=attempt_id,
+                )
+                if not unit_observation_stopped(terminated):
+                    raise RuntimeError("owned SDK process tree remains active after stop")
+            except Exception:
+                return self._persist_attempt_uncertain(
+                    tick_owner_id=tick_owner_id,
+                    tick_lease_generation=tick_lease_generation,
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                    dispatch_id=dispatch_id,
+                    claim_id=claim_id,
+                    capacity_tick_generation=capacity_tick_generation,
+                    safe_summary=(
+                        "SDK attempt completed but owned process tree termination is unproved"
+                    ),
+                )
+
         return self._persist_attempt_completion(
             tick_owner_id=tick_owner_id,
             tick_lease_generation=tick_lease_generation,
@@ -1463,6 +1842,7 @@ class AttemptService:
             exit_code=validated.exit_code,
             termination_class=validated.termination_class,
             envelope_sha256=validated.envelope_sha256,
+            cleanup_unit=not sdk_attempt,
         )
 
     def _maybe_launch_fake_agent_attempt(
@@ -1641,7 +2021,7 @@ class AttemptService:
                 if not isinstance(state, _CODEX_ATTEMPT_STATES):
                     return TickRunReceipt(run_id=run_id, action="attempt_state_changed")
             elif cursor_attempt:
-                if not isinstance(state, _CURSOR_ATTEMPT_STATES):
+                if not isinstance(state, (*_CURSOR_ATTEMPT_STATES, AbortedState)):
                     return TickRunReceipt(run_id=run_id, action="attempt_state_changed")
             elif not isinstance(state, AdmittedState):
                 return TickRunReceipt(run_id=run_id, action="attempt_state_changed")
@@ -1682,6 +2062,11 @@ class AttemptService:
                     action="attempt_launch_blocked",
                     detail=attempt_id,
                 )
+            if (
+                isinstance(state, AbortedState)
+                and str(dispatch["effect_kind"]) != RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND
+            ):
+                return TickRunReceipt(run_id=run_id, action="attempt_state_changed")
             launch_intent_sha256 = str(attempt_row["launch_intent_sha256"])
             launch_nonce = str(attempt_row["launch_nonce"])
             dispatch_id_value = str(attempt_row["dispatch_id"])
@@ -2001,6 +2386,7 @@ class AttemptService:
         exit_code: int,
         termination_class: TerminationClass,
         envelope_sha256: str,
+        cleanup_unit: bool = True,
     ) -> TickRunReceipt:
         now = self._now_factory()
         terminal_status = (
@@ -2019,7 +2405,13 @@ class AttemptService:
             ):
                 return TickRunReceipt(run_id=run_id, action="attempt_stale")
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
-            if isinstance(state, AbortedState):
+            dispatch_row = self.store.get_effect_by_dispatch_id(conn, dispatch_id)
+            aborted_sdk_reconciliation = (
+                isinstance(state, AbortedState)
+                and dispatch_row is not None
+                and str(dispatch_row["effect_kind"]) == RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND
+            )
+            if isinstance(state, AbortedState) and not aborted_sdk_reconciliation:
                 self._reject_stale_attempt_result(
                     tick_owner_id=tick_owner_id,
                     tick_lease_generation=tick_lease_generation,
@@ -2041,7 +2433,7 @@ class AttemptService:
                     action="attempt_result_stale",
                     detail="run_aborted",
                 )
-            if not isinstance(state, _ATTEMPT_RECONCILE_STATES):
+            if not isinstance(state, _ATTEMPT_RECONCILE_STATES) and not aborted_sdk_reconciliation:
                 return TickRunReceipt(run_id=run_id, action="attempt_state_changed")
             attempt_row = self.store.get_attempt_by_id(conn, attempt_id)
             if attempt_row is not None and str(attempt_row["status"]) == ATTEMPT_STATUS_CANCELLED:
@@ -2123,7 +2515,8 @@ class AttemptService:
                 tick_lease_generation=capacity_tick_generation,
                 now=now,
             )
-        self._cleanup_completed_unit(unit_identity=unit_identity, attempt_id=attempt_id)
+        if cleanup_unit:
+            self._cleanup_completed_unit(unit_identity=unit_identity, attempt_id=attempt_id)
         return TickRunReceipt(run_id=run_id, action="attempt_completed", detail=attempt_id)
 
     def _persist_attempt_uncertain(
@@ -2268,6 +2661,7 @@ class AttemptService:
             self.backend,
             unit_identity=str(unit_identity),
             attempt_id=attempt_id,
+            require_explicit_stop=True,
         )
         if not unit_observation_stopped(observation):
             return TickRunReceipt(
@@ -2285,6 +2679,35 @@ class AttemptService:
                 now=now,
             ):
                 return TickRunReceipt(run_id=run_id, action="attempt_stale")
+            from ai_dev_loop.scheduler.application.cursor_sdk_reconciliation import (
+                ensure_aborted_sdk_turn_reconciliation,
+            )
+
+            try:
+                obligation_ready = ensure_aborted_sdk_turn_reconciliation(
+                    self.store,
+                    self.artifacts,
+                    conn,
+                    run_id=run_id,
+                    attempt=attempt,
+                    now=now,
+                    event_id_factory=self._event_id_factory,
+                )
+            except (
+                ProtectedArtifactError,
+                SchedulerEngineError,
+                OSError,
+                ValueError,
+                TypeError,
+                KeyError,
+            ):
+                obligation_ready = False
+            if not obligation_ready:
+                return TickRunReceipt(
+                    run_id=run_id,
+                    action="attempt_abort_pending",
+                    detail=attempt_id,
+                )
             finalize_resolved_abort_attempt(
                 self.store,
                 conn,

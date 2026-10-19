@@ -21,6 +21,7 @@ from ai_dev_loop.scheduler.domain.state import (
     WaitingCodexCapacityState,
     WaitingCodexReviewRetryState,
     is_codex_implementer_reservation_hold,
+    is_cursor_sdk_reservation_hold,
 )
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
@@ -42,9 +43,8 @@ def safe_next_action_for_scheduler_state(
             ),
         )
     if (
-        is_codex_implementer_reservation_hold(state)
-        and store.get_reservation_for_run(conn, state.run_id) is not None
-    ):
+        is_codex_implementer_reservation_hold(state) or is_cursor_sdk_reservation_hold(state)
+    ) and store.get_reservation_for_run(conn, state.run_id) is not None:
         return SafeNextAction(
             kind=SafeNextActionKind.SCHEDULER_ABORT,
             command=(

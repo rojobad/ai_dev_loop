@@ -34,6 +34,10 @@ from ai_dev_loop.scheduler.application.cursor_recovery_evidence import (
     analyze_cursor_recovery_evidence,
     resolve_authenticated_decisive_attempt,
 )
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import (
+    CURSOR_CLI_RETIRED_SUMMARY,
+    context_uses_cursor_cli,
+)
 from ai_dev_loop.scheduler.domain.cursor_contract import (
     RUN_CURSOR_TURN_EFFECT_ID,
     RUN_CURSOR_TURN_EFFECT_KIND,
@@ -58,6 +62,7 @@ from ai_dev_loop.scheduler.domain.state import (
     BlockedState,
     CodexWorkflowCheckpoint,
     CursorReadyState,
+    CursorSdkBinding,
     CursorWorkflowCheckpoint,
 )
 from ai_dev_loop.scheduler.infrastructure.paths import default_artifact_root, default_engine_db_path
@@ -202,6 +207,22 @@ class CursorInitialRecoveryService:
     def force(self, run_id: str) -> CursorInitialRecoveryResult:
         now = self._now_factory()
         with self.store.begin_read() as conn:
+            source_state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            if context_uses_cursor_cli(source_state.context):
+                raise _invalid(f"scheduler cursor forced recovery: {CURSOR_CLI_RETIRED_SUMMARY}")
+            if isinstance(source_state.context.cursor, CursorSdkBinding):
+                from ai_dev_loop.scheduler.application.cursor_sdk_successor import (
+                    CursorSdkSuccessorService,
+                )
+
+                return CursorSdkSuccessorService(
+                    self.store,
+                    self.artifacts,
+                    now_factory=self._now_factory,
+                    run_id_factory=self._run_id_factory,
+                    event_id_factory=self._event_id_factory,
+                    dispatch_id_factory=self._dispatch_id_factory,
+                ).force(run_id)
             existing_rows = self.store.list_cursor_initial_recoveries_for_source(
                 conn,
                 source_run_id=run_id,
@@ -241,6 +262,18 @@ class CursorInitialRecoveryService:
         receipts: list[TickRunReceipt] = []
         for row in rows:
             try:
+                with self.store.begin_read() as conn:
+                    source, _, _ = self.store.load_validated_snapshot(
+                        conn, str(row["source_run_id"])
+                    )
+                if context_uses_cursor_cli(source.context):
+                    receipts.append(
+                        TickRunReceipt(
+                            run_id=str(row["successor_run_id"]),
+                            action="cursor_cli_runtime_retired",
+                        )
+                    )
+                    continue
                 self._resume(row)
             except (
                 SchedulerEngineError,
@@ -489,6 +522,19 @@ class CursorInitialRecoveryService:
                 return self._resume_locked(current)
 
     def _resume_locked(self, row: sqlite3.Row) -> CursorInitialRecoveryResult:
+        if _intent_schema_version(row) == 3:
+            from ai_dev_loop.scheduler.application.cursor_sdk_successor import (
+                CursorSdkSuccessorService,
+            )
+
+            return CursorSdkSuccessorService(
+                self.store,
+                self.artifacts,
+                now_factory=self._now_factory,
+                run_id_factory=self._run_id_factory,
+                event_id_factory=self._event_id_factory,
+                dispatch_id_factory=self._dispatch_id_factory,
+            )._resume(row, replay=False)
         if _intent_schema_version(row) == 2:
             from ai_dev_loop.scheduler.application.cursor_correction_recovery import (
                 resume_correction_publication,
@@ -1034,11 +1080,11 @@ def authenticate_required_initial_ancestors(
 ) -> None:
     """Authenticate every ready initial recovery record required by this run.
 
-    v2 initial records are published with schema-1 intents. That intent version
-    does not skip the record, frozen configuration, budget-carry bytes, or
-    parent authority. A later logical turn stays eligible after those checks
-    succeed. Historical databases without the recovery table have no such
-    records.
+    v2 initial records are published with schema-1 intents and SDK successors
+    with schema-3 intents. Neither version skips its record, frozen
+    configuration, budget-carry bytes, or parent authority. A later logical
+    turn stays eligible after those checks succeed. Historical databases
+    without the recovery table have no such records.
     """
 
     from ai_dev_loop.scheduler.application.recovery_ancestry import (
@@ -1055,7 +1101,7 @@ def authenticate_required_initial_ancestors(
             candidate_ids = [run_id]
             candidate_ids.extend(edge.successor_run_id for edge in edges)
             candidate_ids.extend(edge.source_run_id for edge in edges)
-            rows: list[sqlite3.Row] = []
+            rows: list[tuple[int, sqlite3.Row]] = []
             seen: set[str] = set()
             for candidate in candidate_ids:
                 if candidate in seen:
@@ -1067,25 +1113,42 @@ def authenticate_required_initial_ancestors(
                 )
                 if row is None or str(row["status"]) != "ready":
                     continue
-                if _intent_schema_version(row) != 1:
+                schema_version = _intent_schema_version(row)
+                if schema_version not in {1, 3}:
                     continue
                 key = str(row["recovery_key"])
                 if key in seen:
                     continue
                 seen.add(key)
-                rows.append(row)
+                rows.append((schema_version, row))
     except sqlite3.OperationalError as exc:
         if "no such table" in str(exc):
             return
         raise
     active = _initial_ancestor_verification.get()
-    for row in rows:
+    for schema_version, row in rows:
         key = str(row["recovery_key"])
         if key in active:
             raise _corrupt("initial recovery ancestry cycle")
         token = _initial_ancestor_verification.set(active | {key})
         try:
-            _verified_record(store, artifacts, row)
+            if schema_version == 1:
+                _verified_record(store, artifacts, row)
+            else:
+                from ai_dev_loop.scheduler.application.cursor_sdk_successor import (
+                    authenticate_sdk_successor_authority,
+                )
+
+                if (
+                    authenticate_sdk_successor_authority(
+                        store,
+                        artifacts,
+                        None,
+                        str(row["successor_run_id"]),
+                    )
+                    is None
+                ):
+                    raise _corrupt("Cursor SDK successor ancestor is missing")
         finally:
             _initial_ancestor_verification.reset(token)
 

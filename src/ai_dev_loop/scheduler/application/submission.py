@@ -19,6 +19,8 @@ from ai_dev_loop.config import (
     CODEX_IMPLEMENTER_APPROVAL_POLICY,
     CODEX_IMPLEMENTER_SANDBOX,
     ConfigOverrides,
+    CursorSdkSection,
+    CursorSection,
     ProjectConfig,
     project_config_yaml_bytes,
     resolve_effective_config,
@@ -48,18 +50,23 @@ from ai_dev_loop.scheduler.application.contracts import (
     SchedulerEngineErrorKind,
     SubmitResult,
 )
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import (
+    require_supported_effective_config,
+)
 from ai_dev_loop.scheduler.application.safe_actions import safe_next_action_for_scheduler_state
 from ai_dev_loop.scheduler.domain.common import canonical_json_sha256, worktree_key
 from ai_dev_loop.scheduler.domain.events import RunSubmittedEvent
 from ai_dev_loop.scheduler.domain.state import (
     SUBMITTED_CONTEXT_SCHEMA_VERSION,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
+    SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER,
     AbortedState,
     CodexRuntimeBinding,
     ControllerBinding,
     CursorBinding,
+    CursorSdkBinding,
     EffectiveConfigBinding,
     FreshCodexReviewerBinding,
     ImplementerBinding,
@@ -96,6 +103,7 @@ EFFECTIVE_CONFIG_ARTIFACT = "effective-config.yaml"
 SOURCE_CONFIG_ARTIFACT = "source-config.yaml"
 BASELINE_STATUS_ARTIFACT = "git/baseline-status.txt"
 SESSION_RUNTIME_ARTIFACT = "codex/session-runtime.json"
+UNUSED_SDK_CURSOR_COMMAND = "sdk-local-not-dispatched"
 
 RepositoryDiscoverer = Callable[[Path], RepositoryTarget]
 SessionRuntimeReader = Callable[[str], CodexSessionRuntime]
@@ -122,9 +130,6 @@ class SubmitOptions:
     prompt_source_path: Path | None = None
     codex_session_id: str | None = None
     controller_session_id: str | None = None
-    cursor_command: str | None = None
-    cursor_model: str | None = None
-    cursor_output_format: str | None = None
     codex_command: str | None = None
     codex_review_model: str | None = None
     codex_review_reasoning_effort: str | None = None
@@ -243,9 +248,6 @@ def _read_stdin_prompt() -> str:
 def _build_overrides(options: SubmitOptions) -> ConfigOverrides:
     return ConfigOverrides(
         project_name=options.project_name,
-        cursor_command=options.cursor_command,
-        cursor_model=options.cursor_model,
-        cursor_output_format=options.cursor_output_format,
         codex_command=options.codex_command,
         codex_review_model=options.codex_review_model,
         codex_review_reasoning_effort=options.codex_review_reasoning_effort,
@@ -297,20 +299,9 @@ def _reject_conflicting_implementer_selection(
 ) -> None:
     if effective.implementer.provider != "codex":
         return
-    cursor_overrides = [
-        name
-        for name, value in (
-            ("--cursor-command", options.cursor_command),
-            ("--cursor-model", options.cursor_model),
-            ("--cursor-output-format", options.cursor_output_format),
-            ("--cursor-timeout-minutes", options.cursor_timeout_minutes),
-        )
-        if value is not None
-    ]
-    if cursor_overrides:
-        names = ", ".join(cursor_overrides)
+    if options.cursor_timeout_minutes is not None:
         raise ValidationError(
-            "Cursor overrides conflict with Codex implementer selection: " + names
+            "Cursor overrides conflict with Codex implementer selection: --cursor-timeout-minutes"
         )
 
 
@@ -325,8 +316,9 @@ def _freeze_execution_commands(effective: ProjectConfig) -> ProjectConfig:
         "codex": effective.codex.model_copy(update={"command": codex_command}),
     }
     if effective.implementer.provider == "cursor":
-        cursor_command = _resolve_frozen_command(effective.cursor.command, label="Cursor")
-        updates["cursor"] = effective.cursor.model_copy(update={"command": cursor_command})
+        if isinstance(effective.cursor, CursorSection):
+            cursor_command = _resolve_frozen_command(effective.cursor.command, label="Cursor")
+            updates["cursor"] = effective.cursor.model_copy(update={"command": cursor_command})
     else:
         implementer_command = effective.implementer.command or "codex"
         frozen_implementer = _resolve_frozen_command(
@@ -341,6 +333,20 @@ def _freeze_execution_commands(effective: ProjectConfig) -> ProjectConfig:
 
 def _implementer_binding(effective: ProjectConfig) -> ImplementerBinding:
     if effective.implementer.provider == "cursor":
+        if isinstance(effective.cursor, CursorSdkSection):
+            return ImplementerBinding(
+                schema_version=2,
+                provider="cursor",
+                purpose="implementer",
+                runtime="sdk-local",
+                command=None,
+                model=effective.cursor.model,
+                reasoning_effort=None,
+                timeout_minutes=effective.workflow.cursor_timeout_minutes,
+                sandbox=effective.cursor.sandbox,
+                approval_policy=None,
+                session_id=None,
+            )
         return ImplementerBinding(
             provider="cursor",
             purpose="implementer",
@@ -370,6 +376,44 @@ def _implementer_binding(effective: ProjectConfig) -> ImplementerBinding:
         sandbox=CODEX_IMPLEMENTER_SANDBOX,
         approval_policy=CODEX_IMPLEMENTER_APPROVAL_POLICY,
         session_id=None,
+    )
+
+
+def _cursor_binding(effective: ProjectConfig) -> CursorBinding | CursorSdkBinding:
+    """Freeze the complete selected Cursor runtime without private local paths."""
+
+    if isinstance(effective.cursor, CursorSection):
+        return CursorBinding(
+            command=effective.cursor.command,
+            model=effective.cursor.model,
+            output_format=effective.cursor.output_format,
+            force=effective.cursor.force,
+            trust_workspace=effective.cursor.trust_workspace,
+            sandbox=effective.cursor.sandbox,
+        )
+    return CursorSdkBinding(
+        sdk_version=effective.cursor.sdk_version,
+        model=effective.cursor.model,
+        parameters=effective.cursor.parameters,
+        credential_ref=effective.cursor.credential_ref,
+        setting_sources=tuple(effective.cursor.setting_sources),
+        sandbox=effective.cursor.sandbox,
+    )
+
+
+def _legacy_cursor_binding(effective: ProjectConfig) -> CursorBinding:
+    """Build the historical placeholder used only by pre-25.2 payload producers."""
+
+    binding = _cursor_binding(effective)
+    if isinstance(binding, CursorBinding):
+        return binding
+    return CursorBinding(
+        command=UNUSED_SDK_CURSOR_COMMAND,
+        model=binding.model,
+        output_format=binding.runtime,
+        force=False,
+        trust_workspace=False,
+        sandbox=binding.sandbox,
     )
 
 
@@ -435,7 +479,12 @@ def _build_agent_led_context(
 ) -> SubmittedRunContext:
     repo_root = str(repo_target.root)
     return SubmittedRunContext(
-        schema_version=SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER,
+        schema_version=(
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK
+            if isinstance(effective.cursor, CursorSdkSection)
+            and effective.implementer.provider == "cursor"
+            else SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER
+        ),
         project_name=effective.project.name,
         repository=RepositoryTargetBinding(
             root=repo_root,
@@ -466,13 +515,10 @@ def _build_agent_led_context(
             binding_artifact_path=FRESH_REVIEWER_INPUT_ARTIFACT,
             binding_sha256=artifact_hashes[FRESH_REVIEWER_INPUT_ARTIFACT],
         ),
-        cursor=CursorBinding(
-            command=effective.cursor.command,
-            model=effective.cursor.model,
-            output_format=effective.cursor.output_format,
-            force=effective.cursor.force,
-            trust_workspace=effective.cursor.trust_workspace,
-            sandbox=effective.cursor.sandbox,
+        cursor=(
+            _cursor_binding(effective)
+            if effective.implementer.provider == "cursor"
+            else _legacy_cursor_binding(effective)
         ),
         workflow=WorkflowLimits(
             max_review_iterations=effective.workflow.max_review_iterations,
@@ -534,14 +580,7 @@ def _build_fresh_context(
             binding_artifact_path=FRESH_REVIEWER_INPUT_ARTIFACT,
             binding_sha256=artifact_hashes[FRESH_REVIEWER_INPUT_ARTIFACT],
         ),
-        cursor=CursorBinding(
-            command=effective.cursor.command,
-            model=effective.cursor.model,
-            output_format=effective.cursor.output_format,
-            force=effective.cursor.force,
-            trust_workspace=effective.cursor.trust_workspace,
-            sandbox=effective.cursor.sandbox,
-        ),
+        cursor=_legacy_cursor_binding(effective),
         workflow=WorkflowLimits(
             max_review_iterations=effective.workflow.max_review_iterations,
             stage_mode=effective.workflow.stage_mode,
@@ -610,14 +649,7 @@ def _build_context(
             session_runtime_artifact_path=SESSION_RUNTIME_ARTIFACT,
             session_runtime_sha256=artifact_hashes[SESSION_RUNTIME_ARTIFACT],
         ),
-        cursor=CursorBinding(
-            command=effective.cursor.command,
-            model=effective.cursor.model,
-            output_format=effective.cursor.output_format,
-            force=effective.cursor.force,
-            trust_workspace=effective.cursor.trust_workspace,
-            sandbox=effective.cursor.sandbox,
-        ),
+        cursor=_legacy_cursor_binding(effective),
         workflow=WorkflowLimits(
             max_review_iterations=effective.workflow.max_review_iterations,
             stage_mode=effective.workflow.stage_mode,
@@ -715,6 +747,7 @@ class SubmissionService:
             overrides=_build_overrides(options),
         )
         _reject_conflicting_implementer_selection(options, effective)
+        require_supported_effective_config(effective, action="scheduler submit")
         effective = _freeze_execution_commands(effective)
         plan_path, prompt_source_path = _resolve_inputs(options, repo_target)
         controller_session_id = (

@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import (
+    require_supported_entry,
+    require_supported_sequence,
+)
 from ai_dev_loop.scheduler.domain.sequence import (
     FrozenSequenceEntry,
     PreparedSequenceDefinition,
 )
 from ai_dev_loop.scheduler.domain.state import (
+    SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
     ControllerBinding,
     CursorBinding,
+    CursorSdkBinding,
     EffectiveConfigBinding,
     FreshCodexReviewerBinding,
     PlanPromptBinding,
@@ -60,9 +66,13 @@ def build_sequence_run_context(
 ) -> SubmittedRunContext:
     return SubmittedRunContext(
         schema_version=(
-            SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE
-            if entry.schema_version == 2
-            else SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE
+            if entry.schema_version == 3
+            else (
+                SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE
+                if entry.schema_version == 2
+                else SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE
+            )
         ),
         implementer=entry.implementer,
         project_name=definition.project_name,
@@ -95,13 +105,10 @@ def build_sequence_run_context(
             binding_artifact_path=FRESH_REVIEWER_INPUT_ARTIFACT,
             binding_sha256=entry.codex.binding_sha256,
         ),
-        cursor=CursorBinding(
-            command=entry.cursor.command,
-            model=entry.cursor.model,
-            output_format=entry.cursor.output_format,
-            force=entry.cursor.force,
-            trust_workspace=entry.cursor.trust_workspace,
-            sandbox=entry.cursor.sandbox,
+        cursor=(
+            CursorSdkBinding.model_validate(entry.cursor.model_dump(mode="json"))
+            if isinstance(entry.cursor, CursorSdkBinding)
+            else CursorBinding.model_validate(entry.cursor.model_dump(mode="json"))
         ),
         workflow=WorkflowLimits(
             max_review_iterations=entry.workflow.max_review_iterations,
@@ -139,6 +146,8 @@ class SequenceRunMaterializer:
         definition: PreparedSequenceDefinition,
         entry: FrozenSequenceEntry,
     ) -> tuple[SubmittedRunContext, str]:
+        require_supported_entry(entry, action="sequence first-entry materialization")
+        require_supported_sequence(definition, action="sequence first-entry materialization")
         if entry.ordinal != 1:
             raise ValueError("Phase 20.2 materializes only ordinal 1")
         if entry.planned_run_id != definition.entries[0].planned_run_id:
@@ -165,6 +174,8 @@ class SequenceRunMaterializer:
         definition: PreparedSequenceDefinition,
         entry: FrozenSequenceEntry,
     ) -> tuple[SubmittedRunContext, str]:
+        require_supported_entry(entry, action="sequence next-entry materialization")
+        require_supported_sequence(definition, action="sequence next-entry materialization")
         if entry.ordinal < 2:
             raise ValueError("materialize_next_entry requires ordinal >= 2")
         expected = definition.entries[entry.ordinal - 1]

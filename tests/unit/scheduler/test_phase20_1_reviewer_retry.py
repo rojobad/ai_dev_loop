@@ -48,6 +48,11 @@ def scheduler_paths(isolated_xdg: Path) -> dict[str, Path]:
     }
 
 
+@pytest.fixture(autouse=True)
+def _codex_implementer_edit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
+
+
 def _submit(git_repo: Path, scheduler_paths: dict[str, Path], *, max_reviews: int = 3) -> str:
     prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
     options = SubmitOptions(
@@ -58,6 +63,11 @@ def _submit(git_repo: Path, scheduler_paths: dict[str, Path], *, max_reviews: in
         controller_session_id=CONTROLLER_SESSION,
         codex_review_model="gpt-5.6-sol",
         codex_review_reasoning_effort="high",
+        implementer_provider="codex",
+        implementer_command="codex",
+        implementer_model="gpt-5.6-sol",
+        implementer_reasoning_effort="high",
+        implementer_timeout_minutes=90,
         db_path=scheduler_paths["db_path"],
         artifact_root=scheduler_paths["artifact_root"],
         max_review_iterations=max_reviews,
@@ -125,7 +135,7 @@ class TestSchemaMigration:
     def test_v6_migration_adds_review_retry_tables(self, tmp_path: Path) -> None:
         db = tmp_path / "engine.sqlite3"
         store = SqliteSchedulerStore(db)
-        assert SCHEMA_VERSION == 17
+        assert SCHEMA_VERSION == 18
         with store.begin_read() as conn:
             tables = {
                 row[0]

@@ -207,7 +207,11 @@ class CodexWorkflowService:
             )
             if capacity_role == "implementer":
                 implementer = state.context.implementer
-                if implementer is None or implementer.provider != "codex":
+                if (
+                    implementer is None
+                    or implementer.provider != "codex"
+                    or implementer.command is None
+                ):
                     return TickRunReceipt(
                         run_id=run_id,
                         action="codex_capacity_state_changed",
@@ -477,7 +481,7 @@ class CodexWorkflowService:
         outcome: dict[str, object],
     ) -> tuple[str, str]:
         implementer = state.context.implementer
-        if implementer is None or implementer.provider != "codex":
+        if implementer is None or implementer.provider != "codex" or implementer.command is None:
             raise CodexEvidenceError("frozen Codex implementer binding is missing")
         if state.codex is not None and state.codex.reviewer_session_id == session_id:
             raise CodexEvidenceError("implementer identity collides with reviewer B")
@@ -620,13 +624,14 @@ class CodexWorkflowService:
         if not isinstance(state, (PreflightCompleteState, WaitingForCursorFixState)):
             return TickRunReceipt(run_id=run_id, action="implementer_ingest_state_changed")
         implementer = state.context.implementer
-        if implementer is None or implementer.provider != "codex":
+        if implementer is None or implementer.provider != "codex" or implementer.command is None:
             return self._block_implementer(
                 run_id,
                 attempt_id=attempt_id,
                 reason_kind="codex_implementer_binding_invalid",
                 summary="run does not have frozen Codex implementer settings",
             )
+        implementer_command = implementer.command
         effect_kind = str(outcome.get("effect_kind", ""))
         turn = str(outcome.get("turn", ""))
         expected_turn = "correction" if isinstance(state, WaitingForCursorFixState) else "initial"
@@ -757,7 +762,7 @@ class CodexWorkflowService:
             and str(attempt["termination_class"]) == TerminationClass.NONZERO_EXIT.value  # type: ignore[index]
             and effective_session is not None
         ):
-            observation = self._capacity_probe.probe(implementer.command)
+            observation = self._capacity_probe.probe(implementer_command)
             if observation.status == CodexCapacityStatus.EXHAUSTED:
                 # The adapter persisted the exact continuation before publishing
                 # completion. Only this contemporaneous exhausted observation
@@ -1529,6 +1534,8 @@ class CodexWorkflowService:
             fix_event = WaitingForCursorFixEnteredEvent(
                 run_id=run_id,
                 review_iteration=review_iteration,
+                review_result_path=result_path,
+                review_result_sha256=result_sha,
                 fix_prompt_path=fix_path,
                 fix_prompt_sha256=fix_sha,
                 correction_envelope_path=envelope_path,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import zipfile
 from pathlib import Path
 
@@ -49,8 +50,18 @@ def test_built_wheel_includes_integration_assets(tmp_path: Path) -> None:
     import subprocess
 
     subprocess.run(
-        ["uv", "run", "python", "-m", "build", "--outdir", str(tmp_path / "dist")],
+        [
+            "uv",
+            "run",
+            "--no-sync",
+            "python",
+            "-m",
+            "build",
+            "--outdir",
+            str(tmp_path / "dist"),
+        ],
         cwd=Path(__file__).resolve().parents[2],
+        env={**os.environ, "UV_CACHE_DIR": str(tmp_path / "uv-cache")},
         check=True,
         capture_output=True,
         text=True,

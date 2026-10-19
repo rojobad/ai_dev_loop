@@ -77,12 +77,15 @@ class FakeAgentProcessBackend(AgentProcessBackend):
         )
 
     def _execute_cursor_attempt(self, request: LaunchRequest) -> int:
+        child_env = os.environ.copy()
+        child_env.pop("AI_DEV_LOOP_REVIEW_PROMPT_WITNESS_ROOT", None)
         result = subprocess.run(
             request.agent_argv,
             cwd=request.working_directory,
             capture_output=True,
             text=True,
             check=False,
+            env=child_env,
         )
         if result.stdout:
             request.stdout_path.parent.mkdir(parents=True, exist_ok=True)

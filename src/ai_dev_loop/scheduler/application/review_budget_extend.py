@@ -17,6 +17,10 @@ from ai_dev_loop.scheduler.application.contracts import (
     waiting_for_cursor_fix_safe_next_action,
 )
 from ai_dev_loop.scheduler.application.cursor_budget_carry import inherited_ceiling_for_run
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import (
+    CURSOR_CLI_RETIRED_SUMMARY,
+    context_uses_cursor_cli,
+)
 from ai_dev_loop.scheduler.application.review_budget import (
     effective_review_ceiling_for_run,
     find_extension_event_for_target,
@@ -86,6 +90,11 @@ class ReviewBudgetExtendService:
             )
         with self.store.begin_read() as conn:
             state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            if context_uses_cursor_cli(state.context):
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.VALIDATION,
+                    f"scheduler extend: {CURSOR_CLI_RETIRED_SUMMARY}",
+                )
             extension_events = load_review_budget_extensions(self.store, conn, run_id)
             inherited_ceiling = inherited_ceiling_for_run(
                 self.store,

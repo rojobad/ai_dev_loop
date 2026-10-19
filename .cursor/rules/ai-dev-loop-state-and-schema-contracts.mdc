@@ -81,10 +81,13 @@ and `docs/operacion/estado-artefactos.md`.
 - At changed boundaries, connect durable intent, authorized effect, and verified
   postcondition to actual restart/abort callers. Test convergence after outcomes
   become known as well as safety while outcomes are uncertain.
-- Persist the Cursor chat before dispatch, or bind the Codex implementer from
-  authenticated bootstrap evidence, and bind reviewer B independently at first
-  review. Missing/conflicting identity must not cause silent creation of
-  replacement agents.
+- Persist the historical Cursor chat before dispatch, or for SDK persist create
+  intent, exact owner/key/agent binding, the pre-send native inventory, send intent
+  and native run binding at their causal barriers. Reconciliation intent/result
+  and manual successor authority are immutable ledger/artifact relations; bind a
+  Codex implementer from authenticated bootstrap
+  evidence and reviewer B independently at first review. Missing/conflicting
+  identity must not cause silent creation of replacement agents.
 - Preserve frozen repository identity, reviewed artifacts, and exact prompts
   required by the supported checkpoint. Do not add continuous clean-baseline
   requirements to normal implementation or partial-work continuation.
@@ -93,15 +96,22 @@ and `docs/operacion/estado-artefactos.md`.
 
 ## Sequence Versions
 
-- Manifest v1 and frozen definition/entry v1 remain Cursor-only, with unchanged
-  canonical hashes. Manifest v2 uses independently frozen definition/entry v2
-  implementer bindings; leaves materialize submitted context v6 with both
-  sequence and implementer. Existing lifecycle envelopes stay v1.
+- Manifest v1 and frozen definition/entry v1 remain historically Cursor-only,
+  with unchanged canonical hashes, but effective CLI-Cursor leaves are read-only.
+  Codex-only legacy definition/entry v2 remains executable. Manifest v2/v3 use independently frozen definition/entry v2
+  implementer bindings; named v3 preserves `short_name`, and leaves materialize
+  submitted context v6. Manifest v4 freezes complete per-phase SDK selection in
+  definition/entry v3 and materializes context v8. Standalone SDK uses context v7.
+  Existing lifecycle envelopes stay v1 and historical bytes are never upgraded.
+  Fresh v3 is Codex-only; fresh v4 is the SDK/mixed-provider surface.
 - Omitted v2 implementer means Cursor. A selected Codex phase can inherit YAML
   defaults of the same provider, with explicit phase fields taking precedence.
   Reviewer model/reasoning remain mandatory per phase. Null or conflicting
   provider fields are rejected. Prepared entries never re-read source settings
   at dispatch or handoff.
+- SDK bindings freeze version, model+parameters atomically, credential reference,
+  setting sources, sandbox and tool policy without host-private roots. Exact agent
+  and native run IDs live in runtime state/artifacts, independently of reviewer B.
 - Integration API 1.6 adds optional provider and pending-capacity role/turn
   summaries. Explicit process output reads authenticate provider-specific
   attempt evidence and confined paths; historical missing metadata stays honest.

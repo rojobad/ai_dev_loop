@@ -56,7 +56,7 @@ def test_adapter_forwards_authenticated_prompt_bytes_without_newline_translation
     turn: str,
     prompt: str,
 ) -> None:
-    run_root = tmp_path / f"run-{case}"
+    run_root = tmp_path / "artifacts" / "runs" / ("a" * 64)
     prompt_path = run_root / f"prompts/{case}.txt"
     prompt_path.parent.mkdir(parents=True)
     expected = prompt.encode("utf-8")
@@ -133,7 +133,7 @@ def test_adapter_records_timeout_identity_and_private_attempt_artifacts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    run_root = tmp_path / "run"
+    run_root = tmp_path / "artifacts" / "runs" / ("a" * 64)
     prompt_path = run_root / "prompts/initial.txt"
     prompt_path.parent.mkdir(parents=True)
     prompt = "implement the approved phase\n"

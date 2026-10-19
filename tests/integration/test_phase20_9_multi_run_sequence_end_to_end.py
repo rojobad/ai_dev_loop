@@ -101,13 +101,27 @@ def _four_phase_manifest() -> str:
             "name": name,
             "plan_path": "docs/plans/sample-plan.md",
             "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
+            "short_name": name.replace("-", " ").title(),
+            "implementer": {
+                "provider": "codex",
+                "command": "codex",
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "high",
+                "timeout_minutes": 90,
+            },
             "codex": {"review_model": "gpt-5.6-sol", "review_reasoning_effort": "high"},
         }
         if index < 4:
             phase["commit_message"] = f"checkpoint after {name}"
         phases.append(phase)
     return yaml.safe_dump(
-        {"schema_version": 1, "name": "four-phase", "phases": phases}, sort_keys=False
+        {
+            "schema_version": 3,
+            "name": "four-phase",
+            "short_name": "Four phase",
+            "phases": phases,
+        },
+        sort_keys=False,
     )
 
 
@@ -118,8 +132,9 @@ def test_two_phase_sequence_reaches_awaiting_finalization_with_cli_status(
     isolated_xdg: Path,
 ) -> None:
     monkeypatch.setenv("XDG_STATE_HOME", str(isolated_xdg / "state"))
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
     monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_SESSION_ID", "019def00-0000-0000-0000-0000000000aa")
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "no_findings")
     sequence_id = _prepare_sequence(git_repo, scheduler_paths)
     start = start_sequence(sequence_id, db_path=scheduler_paths["db_path"])
@@ -149,8 +164,9 @@ def test_four_phase_sequence_with_residual_risk_finalization(
     scheduler_paths: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
     monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_SESSION_ID", "019def00-0000-0000-0000-0000000000aa")
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "blocked_environment")
     _write_manifest(git_repo / "sequence.yaml", _four_phase_manifest())
     service = _prepare_service(
@@ -302,8 +318,9 @@ def test_three_phase_dual_review_recovery_reaches_awaiting_finalization(
     from tests.unit.scheduler.test_phase20_1_sequence_prepare import FIXED_SEQUENCE_ID
 
     del fake_clis
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
     monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_SESSION_ID", "019def00-0000-0000-0000-0000000000aa")
     monkeypatch.setenv("FAKE_CODEX_CAPACITY", "available")
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "message_only_usage_limit")
     _prepare_three_phase(git_repo, scheduler_paths)
@@ -351,8 +368,9 @@ def test_restart_reconcile_fault_injection_converges_on_second_tick(
 ) -> None:
     from datetime import UTC, datetime
 
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
     monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_SESSION_ID", "019def00-0000-0000-0000-0000000000aa")
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "no_findings")
     finalize_calls = 0
     original_finalize = SqliteSchedulerStore.finalize_sequence_state

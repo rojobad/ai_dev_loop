@@ -46,6 +46,7 @@ from ai_dev_loop.scheduler.application.cursor_evidence import (
     FrozenRepositoryIdentity,
     frozen_repository_identity,
 )
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import require_supported_sequence
 from ai_dev_loop.scheduler.application.git_checkpoint import (
     CheckpointFenceError,
     CheckpointMutationBoundary,
@@ -985,6 +986,12 @@ class SequenceHandoffService:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
             if not isinstance(state, CheckpointPendingState):
                 return None
+            sequence_binding = state.context.sequence
+            if sequence_binding is None:
+                raise ValidationError("checkpoint-pending run lost its sequence binding")
+            sequence = self.store.load_validated_sequence_state(conn, sequence_binding.sequence_id)
+            if isinstance(sequence, ActiveSequenceState):
+                require_supported_sequence(sequence.definition, action="sequence handoff")
         return self._reconcile_checkpoint(
             run_id,
             tick_owner_id=tick_owner_id,
@@ -1014,6 +1021,10 @@ class SequenceHandoffService:
             raise ValidationError("sequence abort pending blocks checkpoint")
         if not isinstance(sequence_state, ActiveSequenceState):
             raise ValidationError("sequence must be active for checkpoint pending")
+        require_supported_sequence(
+            sequence_state.definition,
+            action="sequence checkpoint handoff",
+        )
         if sequence_state.current_run_id != state.run_id:
             raise ValidationError("sequence current_run_id mismatch")
         predecessor_entry = sequence_state.definition.entries[sequence_binding.ordinal - 1]

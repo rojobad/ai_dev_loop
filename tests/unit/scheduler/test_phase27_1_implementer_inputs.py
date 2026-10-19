@@ -44,14 +44,15 @@ from ai_dev_loop.scheduler.application.start import start_run
 from ai_dev_loop.scheduler.application.submission import (
     SubmissionService,
     SubmitOptions,
-    _freeze_execution_commands,
-    historical_effective_config_sha256,
     submission_idempotency_key_candidates,
     submit_run,
 )
 from ai_dev_loop.scheduler.application.tick import TickService
 from ai_dev_loop.scheduler.domain.codex_contract import BOOTSTRAP_CODEX_IMPLEMENTER_EFFECT_KIND
-from ai_dev_loop.scheduler.domain.cursor_contract import CREATE_CHAT_EFFECT_KIND
+from ai_dev_loop.scheduler.domain.cursor_contract import (
+    CREATE_CHAT_EFFECT_KIND,
+    RUN_CURSOR_TURN_EFFECT_KIND,
+)
 from ai_dev_loop.scheduler.domain.implementer import (
     CODEX_IMPLEMENTER_NOT_IMPLEMENTED,
     assert_distinct_implementer_and_reviewer_sessions,
@@ -87,6 +88,22 @@ _BASE = (
 def _write_config(path: Path, extra: str = "") -> Path:
     path.write_text(_BASE + extra, encoding="utf-8")
     return path
+
+
+def _enable_sdk_cursor(repo: Path) -> None:
+    path = repo / "ai_dev_loop.yaml"
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    payload["version"] = 2
+    payload["cursor"] = {
+        "runtime": "sdk-local",
+        "sdk_version": "1.0.37",
+        "model": "grok-4.7",
+        "parameters": {"context": "256k", "reasoning_effort": "high", "fast": False},
+        "credential_ref": "cursor-default",
+        "setting_sources": ["project"],
+        "sandbox": "disabled",
+    }
+    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
 
 def _submit_options(repo: Path, paths: dict[str, Path], **overrides: object) -> SubmitOptions:
@@ -223,11 +240,13 @@ def test_reviewer_fields_stay_independent_of_implementer(
     assert caught.value.kind == SchedulerEngineErrorKind.CONFLICT
 
 
-def test_cursor_submit_is_schema_5_and_replays(
+def test_sdk_cursor_submit_is_schema_7_and_replays(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _enable_sdk_cursor(git_repo)
+
     def forbid_subprocess(*args: object, **kwargs: object) -> None:
         raise AssertionError("scheduler submit must not invoke subprocesses")
 
@@ -241,48 +260,27 @@ def test_cursor_submit_is_schema_5_and_replays(
     assert replay.run_id == first.run_id
     assert replay.reused_existing is True
     state = _load_state(scheduler_paths, first.run_id)
-    assert state.context.schema_version == 5
+    assert state.context.schema_version == 7
     assert state.context.implementer.provider == "cursor"
     assert state.context.implementer.session_id is None
     root = run_artifact_root(scheduler_paths["artifact_root"], first.run_id)
     effective = yaml.safe_load((root / "effective-config.yaml").read_text(encoding="utf-8"))
     source = yaml.safe_load((root / "source-config.yaml").read_text(encoding="utf-8"))
     assert effective["implementer"] == {"provider": "cursor"}
+    assert effective["cursor"]["runtime"] == "sdk-local"
     assert "implementer" not in source
 
 
-def test_historical_cursor_key_replays_schema_5_submit(
+def test_retired_cursor_config_rejects_before_publication(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
 ) -> None:
-    with patch("sys.stdin", StringIO(_prompt())):
-        submitted = submit_run(_submit_options(git_repo, scheduler_paths))
-    state = _load_state(scheduler_paths, submitted.run_id)
-    effective, _, _ = resolve_effective_config(
-        repo_root=git_repo,
-        overrides=ConfigOverrides(
-            codex_review_model="gpt-5.6-sol",
-            codex_review_reasoning_effort="high",
-        ),
-    )
-    frozen = _freeze_execution_commands(effective)
-    historical_sha = historical_effective_config_sha256(frozen)
-    keys = submission_idempotency_key_candidates(
-        state.context,
-        historical_effective_config_sha256=historical_sha,
-    )
-    assert len(keys) >= 2
-    assert keys[0] != keys[1]
-    store = SqliteSchedulerStore(scheduler_paths["db_path"])
-    with store.begin_immediate() as conn:
-        conn.execute(
-            "UPDATE scheduler_runs SET idempotency_key = ? WHERE run_id = ?",
-            (keys[1], submitted.run_id),
-        )
-    with patch("sys.stdin", StringIO(_prompt())):
-        replay = submit_run(_submit_options(git_repo, scheduler_paths))
-    assert replay.run_id == submitted.run_id
-    assert replay.reused_existing is True
+    with (
+        patch("sys.stdin", StringIO(_prompt())),
+        pytest.raises(ValidationError, match="Cursor CLI execution is retired"),
+    ):
+        submit_run(_submit_options(git_repo, scheduler_paths))
+    _assert_no_published_run(scheduler_paths["db_path"], scheduler_paths["artifact_root"])
 
 
 def test_codex_submit_does_not_require_cursor_or_reuse_cursor_run(
@@ -292,6 +290,7 @@ def test_codex_submit_does_not_require_cursor_or_reuse_cursor_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     (fake_clis["bin_dir"] / "agent").unlink()
+    _enable_sdk_cursor(git_repo)
 
     def forbid_subprocess(*args: object, **kwargs: object) -> None:
         raise AssertionError("scheduler submit must not invoke subprocesses")
@@ -391,7 +390,7 @@ def test_cursor_overrides_conflict_with_codex_selection(
                 implementer_provider="codex",
                 implementer_model="gpt-5.5",
                 implementer_reasoning_effort="high",
-                cursor_model="composer-2.5-fast",
+                cursor_timeout_minutes=31,
             )
         )
 
@@ -638,11 +637,12 @@ def test_ambiguous_effort_catalog_blocks_before_dispatch(
     assert backend.launch_calls == []
 
 
-def test_cursor_preflight_still_schedules_create_chat(
+def test_sdk_cursor_preflight_schedules_owned_worker_without_cli_execution(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
     fake_clis: dict[str, Path],
 ) -> None:
+    _enable_sdk_cursor(git_repo)
     with patch("sys.stdin", StringIO(_prompt())):
         submitted = submit_run(_submit_options(git_repo, scheduler_paths))
     start_run(submitted.run_id, db_path=scheduler_paths["db_path"])
@@ -660,7 +660,8 @@ def test_cursor_preflight_still_schedules_create_chat(
             )
         ]
     assert CREATE_CHAT_EFFECT_KIND in kinds
-    assert "CREATE_CHAT" in fake_clis["agent_log"].read_text(encoding="utf-8")
+    assert RUN_CURSOR_TURN_EFFECT_KIND not in kinds
+    assert not fake_clis["agent_log"].exists()
 
 
 def test_sequence_v1_new_prepare_requires_v3_and_stays_cursor_only(
@@ -772,15 +773,12 @@ def test_repo_cursor_overrides_global_codex_implementer(
     assert source.implementer.provider == "cursor"
     assert effective.implementer.provider == "cursor"
     assert effective.implementer.model is None
-    with patch("sys.stdin", StringIO(_prompt())):
-        submitted = submit_run(_submit_options(git_repo, scheduler_paths))
-    state = _load_state(scheduler_paths, submitted.run_id)
-    binding = state.context.implementer
-    assert binding.provider == "cursor"
-    assert binding.model == "composer-2.5-fast"
-    assert binding.reasoning_effort is None
-    assert binding.approval_policy is None
-    assert binding.command.endswith("agent")
+    with (
+        patch("sys.stdin", StringIO(_prompt())),
+        pytest.raises(ValidationError, match="Cursor CLI execution is retired"),
+    ):
+        submit_run(_submit_options(git_repo, scheduler_paths))
+    _assert_no_published_run(scheduler_paths["db_path"], scheduler_paths["artifact_root"])
 
 
 def test_empty_implementer_mapping_overrides_global_codex(
@@ -806,19 +804,12 @@ def test_empty_implementer_mapping_overrides_global_codex(
         ProtectedArtifactStore(scheduler_paths["artifact_root"]),
         repository_discoverer=lambda _path: RepositoryTarget(root=git_repo.resolve()),
     )
-    with patch("sys.stdin", StringIO(_prompt())):
-        submitted = service.submit(_submit_options(git_repo, scheduler_paths))
-    state = _load_state(scheduler_paths, submitted.run_id)
-    binding = state.context.implementer
-    assert binding.provider == "cursor"
-    assert binding.model == "composer-2.5-fast"
-    assert binding.reasoning_effort is None
-    assert binding.approval_policy is None
-    assert binding.timeout_minutes == 90
-    assert binding.command.endswith("agent")
-    root = run_artifact_root(scheduler_paths["artifact_root"], submitted.run_id)
-    effective_yaml = yaml.safe_load((root / "effective-config.yaml").read_text(encoding="utf-8"))
-    assert effective_yaml["implementer"] == {"provider": "cursor"}
+    with (
+        patch("sys.stdin", StringIO(_prompt())),
+        pytest.raises(ValidationError, match="Cursor CLI execution is retired"),
+    ):
+        service.submit(_submit_options(git_repo, scheduler_paths))
+    _assert_no_published_run(scheduler_paths["db_path"], scheduler_paths["artifact_root"])
 
 
 def test_cli_cursor_provider_drops_repository_codex_fields(
@@ -844,21 +835,12 @@ def test_cli_cursor_provider_drops_repository_codex_fields(
     assert effective.implementer.provider == "cursor"
     assert effective.implementer.model is None
     assert effective.implementer.reasoning_effort is None
-    with patch("sys.stdin", StringIO(_prompt())):
-        submitted = submit_run(
-            _submit_options(git_repo, scheduler_paths, implementer_provider="cursor")
-        )
-    state = _load_state(scheduler_paths, submitted.run_id)
-    binding = state.context.implementer
-    assert binding.provider == "cursor"
-    assert binding.model == "composer-2.5-fast"
-    assert binding.reasoning_effort is None
-    assert binding.timeout_minutes == 90
-    root = run_artifact_root(scheduler_paths["artifact_root"], submitted.run_id)
-    source = yaml.safe_load((root / "source-config.yaml").read_text(encoding="utf-8"))
-    assert source["implementer"]["provider"] == "codex"
-    effective_yaml = yaml.safe_load((root / "effective-config.yaml").read_text(encoding="utf-8"))
-    assert effective_yaml["implementer"] == {"provider": "cursor"}
+    with (
+        patch("sys.stdin", StringIO(_prompt())),
+        pytest.raises(ValidationError, match="Cursor CLI execution is retired"),
+    ):
+        submit_run(_submit_options(git_repo, scheduler_paths, implementer_provider="cursor"))
+    _assert_no_published_run(scheduler_paths["db_path"], scheduler_paths["artifact_root"])
 
 
 def test_cursor_timeout_conflicts_with_codex_implementer_before_publication(
@@ -925,6 +907,7 @@ def test_cursor_selection_accepts_cursor_timeout(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
 ) -> None:
+    _enable_sdk_cursor(git_repo)
     with patch("sys.stdin", StringIO(_prompt())):
         cursor = submit_run(_submit_options(git_repo, scheduler_paths, cursor_timeout_minutes=15))
     cursor_state = _load_state(scheduler_paths, cursor.run_id)

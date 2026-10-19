@@ -52,15 +52,29 @@ def _three_phase_manifest() -> str:
     for index, name in enumerate(("phase-one", "phase-two", "phase-final"), start=1):
         phase = {
             "name": name,
+            "short_name": name.replace("-", " ").title(),
             "plan_path": "docs/plans/sample-plan.md",
             "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
+            "implementer": {
+                "provider": "codex",
+                "command": "codex",
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "high",
+                "timeout_minutes": 90,
+            },
             "codex": {"review_model": "gpt-5.6-sol", "review_reasoning_effort": "high"},
         }
         if index < 3:
             phase["commit_message"] = f"checkpoint after {name}"
         phases.append(phase)
     return yaml.safe_dump(
-        {"schema_version": 1, "name": "three-phase", "phases": phases}, sort_keys=False
+        {
+            "schema_version": 3,
+            "name": "three-phase",
+            "short_name": "Three phase",
+            "phases": phases,
+        },
+        sort_keys=False,
     )
 
 
@@ -113,8 +127,9 @@ def test_three_phase_sequence_advances_through_checkpoints_and_finalizes(
     scheduler_paths: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
     monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_SESSION_ID", "019def00-0000-0000-0000-0000000000aa")
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "no_findings")
     _prepare_three_phase(git_repo, scheduler_paths)
     start = start_sequence(FIXED_SEQUENCE_ID, db_path=scheduler_paths["db_path"])

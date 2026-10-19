@@ -1,4 +1,201 @@
 {
+  "$defs": {
+    "CursorSdkRecoveryPending": {
+      "additionalProperties": false,
+      "description": "Durable fence between a failed SDK worker and native reconciliation.",
+      "properties": {
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "recovery_key": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Recovery Key",
+          "type": "string"
+        },
+        "source_attempt_id": {
+          "minLength": 1,
+          "title": "Source Attempt Id",
+          "type": "string"
+        },
+        "source_dispatch_id": {
+          "minLength": 1,
+          "title": "Source Dispatch Id",
+          "type": "string"
+        },
+        "turn_kind": {
+          "enum": [
+            "initial",
+            "correction"
+          ],
+          "title": "Turn Kind",
+          "type": "string"
+        },
+        "prompt_path": {
+          "minLength": 1,
+          "title": "Prompt Path",
+          "type": "string"
+        },
+        "prompt_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Prompt Sha256",
+          "type": "string"
+        },
+        "source_journal_path": {
+          "minLength": 1,
+          "title": "Source Journal Path",
+          "type": "string"
+        },
+        "source_journal_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Source Journal Sha256",
+          "type": "string"
+        },
+        "native_run_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Native Run Id"
+        },
+        "failure_class": {
+          "enum": [
+            "timeout",
+            "capacity",
+            "failure",
+            "worker_lost",
+            "ambiguous"
+          ],
+          "title": "Failure Class",
+          "type": "string"
+        },
+        "retry_after_seconds": {
+          "anyOf": [
+            {
+              "maximum": 86400,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retry After Seconds"
+        }
+      },
+      "required": [
+        "recovery_key",
+        "source_attempt_id",
+        "source_dispatch_id",
+        "turn_kind",
+        "prompt_path",
+        "prompt_sha256",
+        "source_journal_path",
+        "source_journal_sha256",
+        "failure_class"
+      ],
+      "title": "CursorSdkRecoveryPending",
+      "type": "object"
+    },
+    "CursorSdkRuntimeBinding": {
+      "additionalProperties": false,
+      "description": "Durable exact SDK agent/run identity without machine-local private paths.",
+      "properties": {
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "runtime": {
+          "const": "sdk-local",
+          "default": "sdk-local",
+          "title": "Runtime",
+          "type": "string"
+        },
+        "conversation_owner_run_id": {
+          "minLength": 1,
+          "title": "Conversation Owner Run Id",
+          "type": "string"
+        },
+        "conversation_key": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Conversation Key",
+          "type": "string"
+        },
+        "agent_id": {
+          "minLength": 1,
+          "title": "Agent Id",
+          "type": "string"
+        },
+        "native_run_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Native Run Id"
+        },
+        "identity_artifact_path": {
+          "minLength": 1,
+          "title": "Identity Artifact Path",
+          "type": "string"
+        },
+        "identity_artifact_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Identity Artifact Sha256",
+          "type": "string"
+        },
+        "latest_journal_path": {
+          "minLength": 1,
+          "title": "Latest Journal Path",
+          "type": "string"
+        },
+        "latest_journal_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Latest Journal Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "conversation_owner_run_id",
+        "conversation_key",
+        "agent_id",
+        "identity_artifact_path",
+        "identity_artifact_sha256",
+        "latest_journal_path",
+        "latest_journal_sha256"
+      ],
+      "title": "CursorSdkRuntimeBinding",
+      "type": "object"
+    }
+  },
   "additionalProperties": false,
   "description": "Durable cursor/staging checkpoint carried across Phase 17.4 states.",
   "properties": {
@@ -222,6 +419,56 @@
       "minimum": 0,
       "title": "Timeout Automatic Retries",
       "type": "integer"
+    },
+    "sdk": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CursorSdkRuntimeBinding"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "sdk_recovery_pending": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CursorSdkRecoveryPending"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "sdk_reconciliation_path": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sdk Reconciliation Path"
+    },
+    "sdk_reconciliation_sha256": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sdk Reconciliation Sha256"
     }
   },
   "title": "CursorWorkflowCheckpoint",

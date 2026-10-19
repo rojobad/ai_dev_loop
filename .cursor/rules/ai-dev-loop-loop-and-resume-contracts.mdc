@@ -35,8 +35,14 @@ existing references; it does not imply a public `resume` command.
 - Persist the selected implementer's identity before relying on completed work;
   reuse it for fixes and eligible continuation. Missing identity after recorded
   work is not permission to create another chat or session.
+- For Cursor SDK, durable create/send intents and exact agent/native-run bindings
+  precede reliance on work. Recovery first proves the owned attempt tree stopped,
+  then reconciles the exact native run with a fresh authenticated client. Unknown
+  or conflicting native ownership retains the reservation and never authorizes
+  speculative redispatch.
 - A frozen Codex implementer is a separate identity from reviewer B. Historical
-  contexts without implementer metadata remain Cursor. Standalone runs and manifest v2 sequence leaves launch the
+  contexts without implementer metadata remain Cursor for reads only. Standalone
+  runs and historical/v3 Codex-only sequence leaves launch the
   initial Codex turn and resume the exact authenticated session for corrections.
   Role-aware capacity continuation records the pending initial/correction prompt
   and never lets an implementer wait be retried as a reviewer wait.
@@ -77,16 +83,22 @@ existing references; it does not imply a public `resume` command.
 
 ## Cursor Continuation
 
+The automatic/manual continuation rules below apply, after authenticated
+native-run reconciliation, to context v7/v8 SDK bindings. Historical Cursor CLI
+evidence remains readable but cannot authorize continuation. SDK continuation retains the original owner/key/agent and uses the
+same scheduler retry limits; native reads or cancellation alone do not authorize
+a new prompt.
+
 - Classify usage limits from protected contemporaneous process evidence, never
   fuzzy `last_error` text. Preserve partial output, prompt, identity, and content
   evidence required by the existing continuation contract.
-- `waiting_usage_limit` continues the same run/chat/model after the bounded
-  structured retry-after, or the implemented five-hour fallback. The recovery
-  envelope embeds the exact previous prompt and preserves partial work.
+- A structured SDK capacity/timeout wait continues the same run/agent/model after
+  the bounded retry policy. The recovery envelope embeds the exact previous
+  prompt and preserves partial work.
 - Confirmed Cursor turn timeouts support three automatic retries per turn at
   30-minute intervals. `scheduler cursor-retry` can advance the wait or continue
   after automatic retries are exhausted, without creating a new chat or review.
-- `scheduler cursor-retry --force` publishes one same-chat successor for an
+- `scheduler cursor-retry --force` publishes one same-agent successor for an
   eligible terminated standalone `cursor_failure` or the current blocked sequence
   leaf, including a failed recovery successor. Initial turns and corrections both
   append one fixed note to the exact failed prompt and keep partial work.
@@ -99,6 +111,12 @@ existing references; it does not imply a public `resume` command.
 - A prior process must be confirmed terminated and the reservation retained.
   Abort, uncertain termination, integrity failures, and create-chat timeouts
   must not be bypassed through the timeout-retry command.
+- Before an SDK retry, compare the durable pre-send inventory with public runs
+  for the exact agent. Adopt only one uniquely attributable run. Replay a known
+  terminal result, or cancel and confirm a known stale nonterminal run, before
+  continuation. Zero/multiple candidates and uncertain create identity remain
+  blocked without a resend. Abort cancels and confirms all attributable
+  post-baseline candidates before ownership can be released.
 - Preserve each attempt's artifacts separately. Do not overwrite prior output,
   rerun admission, or confuse an attempt retry with a completed correction.
 

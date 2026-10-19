@@ -12,7 +12,7 @@ from typing import Literal
 import yaml
 from pydantic import ValidationError as PydanticValidationError
 
-from ai_dev_loop.config import ConfigOverrides, resolve_effective_config
+from ai_dev_loop.config import ConfigOverrides, CursorSdkSection, resolve_effective_config
 from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.fresh_codex_reviewer import (
     build_fresh_reviewer_input_artifact,
@@ -28,9 +28,15 @@ from ai_dev_loop.scheduler.application.contracts import (
     prepared_sequence_safe_next_action,
     prepared_sequence_start_next_action,
 )
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import (
+    CURSOR_CLI_RETIRED_SUMMARY,
+    effective_config_uses_cursor_cli,
+)
 from ai_dev_loop.scheduler.application.submission import (
+    _cursor_binding,
     _freeze_execution_commands,
     _implementer_binding,
+    _legacy_cursor_binding,
     require_resubmission_id,
 )
 from ai_dev_loop.scheduler.domain.common import canonical_json_sha256, worktree_key
@@ -48,7 +54,6 @@ from ai_dev_loop.scheduler.domain.sequence import (
 )
 from ai_dev_loop.scheduler.domain.state import (
     ControllerBinding,
-    CursorBinding,
     EffectiveConfigBinding,
     FreshCodexReviewerBinding,
     PlanPromptBinding,
@@ -204,15 +209,14 @@ def _phase_overrides(
         implementer_model=None if implementer is None else implementer.model,
         implementer_reasoning_effort=None if implementer is None else implementer.reasoning_effort,
         implementer_timeout_minutes=None if implementer is None else implementer.timeout_minutes,
-        cursor_command=pick_str(
-            global_options.cursor_command, None if cursor is None else cursor.command
+        cursor_command=None if manifest_version == 4 or cursor is None else cursor.command,
+        cursor_model=None if manifest_version == 4 or cursor is None else cursor.model,
+        cursor_output_format=(
+            None if manifest_version == 4 or cursor is None else cursor.output_format
         ),
-        cursor_model=pick_str(
-            global_options.cursor_model, None if cursor is None else cursor.model
-        ),
-        cursor_output_format=pick_str(
-            global_options.cursor_output_format,
-            None if cursor is None else cursor.output_format,
+        cursor_sdk_model=(None if manifest_version != 4 or cursor is None else cursor.model),
+        cursor_sdk_parameters=(
+            None if manifest_version != 4 or cursor is None else cursor.parameters
         ),
         codex_command=pick_str(global_options.codex_command, codex.command),
         codex_review_model=codex.review_model,
@@ -284,9 +288,6 @@ class SequencePrepareOptions:
     project_name: str | None = None
     repo_path: Path | None = None
     controller_session_id: str | None = None
-    cursor_command: str | None = None
-    cursor_model: str | None = None
-    cursor_output_format: str | None = None
     codex_command: str | None = None
     codex_review_model: str | None = None
     codex_review_reasoning_effort: str | None = None
@@ -386,8 +387,11 @@ class SequencePrepareService:
             raise ValidationError("resolved sequence manifest exceeds size limit")
 
         now = self._now_factory()
-        frozen_schema_version: Literal[1, 2] = 1 if manifest.schema_version == 1 else 2
+        frozen_schema_version: Literal[1, 2, 3] = (
+            1 if manifest.schema_version == 1 else (3 if manifest.schema_version == 4 else 2)
+        )
         frozen_entries: list[FrozenSequenceEntry] = []
+        retired_cursor_ordinals: list[int] = []
         phase_artifact_bytes: list[tuple[bytes, bytes, bytes, bytes, bytes]] = []
         project_name: str | None = None
         for ordinal, phase in enumerate(manifest.phases, start=1):
@@ -401,21 +405,23 @@ class SequencePrepareService:
             if manifest.schema_version == 1 and effective.implementer.provider == "codex":
                 raise ValidationError("v1 sequences stay Cursor-only; use manifest v2 for Codex")
             if effective.implementer.provider == "codex" and (
-                phase.cursor is not None
+                (manifest.schema_version < 4 and phase.cursor is not None)
                 or (
                     phase.workflow is not None and phase.workflow.cursor_timeout_minutes is not None
                 )
-                or any(
-                    value is not None
-                    for value in (
-                        options.cursor_command,
-                        options.cursor_model,
-                        options.cursor_output_format,
-                        options.cursor_timeout_minutes,
-                    )
-                )
+                or options.cursor_timeout_minutes is not None
             ):
                 raise ValidationError("Cursor overrides conflict with Codex implementer selection")
+            if manifest.schema_version == 4:
+                if not isinstance(effective.cursor, CursorSdkSection):
+                    raise ValidationError("manifest v4 requires repository config version 2")
+            elif (
+                isinstance(effective.cursor, CursorSdkSection)
+                and effective.implementer.provider == "cursor"
+            ):
+                raise ValidationError("Cursor SDK scheduler dispatch requires sequence manifest v4")
+            if effective_config_uses_cursor_cli(effective):
+                retired_cursor_ordinals.append(ordinal)
             effective = _freeze_execution_commands(effective)
             if project_name is None:
                 project_name = effective.project.name
@@ -502,13 +508,10 @@ class SequencePrepareService:
                         binding_artifact_path=_entry_fresh_reviewer_artifact(ordinal),
                         binding_sha256=artifact_hashes[_entry_fresh_reviewer_artifact(ordinal)],
                     ),
-                    cursor=CursorBinding(
-                        command=effective.cursor.command,
-                        model=effective.cursor.model,
-                        output_format=effective.cursor.output_format,
-                        force=effective.cursor.force,
-                        trust_workspace=effective.cursor.trust_workspace,
-                        sandbox=effective.cursor.sandbox,
+                    cursor=(
+                        _cursor_binding(effective)
+                        if manifest.schema_version == 4
+                        else _legacy_cursor_binding(effective)
                     ),
                     workflow=WorkflowLimits(
                         max_review_iterations=effective.workflow.max_review_iterations,
@@ -565,6 +568,12 @@ class SequencePrepareService:
                 raise ValidationError(
                     "fresh sequence preparation requires manifest v3 with short_name "
                     "on the sequence and every phase"
+                )
+            if retired_cursor_ordinals:
+                rendered = ", ".join(str(value) for value in retired_cursor_ordinals)
+                raise ValidationError(
+                    f"scheduler sequence prepare: {CURSOR_CLI_RETIRED_SUMMARY} "
+                    f"Unsupported sequence ordinals: {rendered}."
                 )
 
             idempotency_key = _sequence_idempotency_key(

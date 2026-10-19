@@ -17,6 +17,7 @@ from ai_dev_loop.scheduler.application.contracts import (
     active_sequence_safe_next_action,
     authorized_safe_next_action,
 )
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import require_supported_sequence
 from ai_dev_loop.scheduler.application.sequence_materializer import (
     SequenceRunMaterializer,
     sequence_run_idempotency_key,
@@ -81,6 +82,8 @@ class SequenceStartService:
         with self.store.begin_immediate() as conn:
             self.store.require_sequence_schema(conn)
             state = self._load_sequence(conn, sequence_id)
+            if isinstance(state, (PreparedSequenceState, ActiveSequenceState)):
+                require_supported_sequence(state.definition, action="scheduler sequence start")
             if isinstance(state, ActiveSequenceState):
                 return self._result_from_active(conn, state, idempotent_replay=True, changed=False)
             if not isinstance(state, PreparedSequenceState):

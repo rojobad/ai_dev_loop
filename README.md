@@ -56,14 +56,15 @@ Open `http://127.0.0.1:8765/`. The read-only server binds loopback only; see the
 User-level tool install:
 
 ```bash
-uv tool install .
+uv tool install '.[cursor-sdk]'
 ai_dev_loop --help
 ```
 
-Reinstall the current local build in WSL after validation:
+Install an accepted wheel in WSL after validation and separate operator approval:
 
 ```bash
-uv tool install --force .
+uv tool install --force \
+  'ai-dev-loop[cursor-sdk] @ file:///absolute/path/dist/ai_dev_loop-0.1.0-py3-none-any.whl'
 which ai_dev_loop
 ai_dev_loop --version
 ```
@@ -78,6 +79,7 @@ ai_dev_loop --version
 
 ```bash
 ai_dev_loop scheduler submit \
+  --short-name "My change" \
   --repo-path /path/to/repo \
   --plan-path docs/plans/my-plan.md \
   --prompt-source-path docs/plans/prompt_my-plan.txt \
@@ -87,10 +89,10 @@ ai_dev_loop scheduler submit \
   --output json < /path/to/repo/docs/plans/prompt_my-plan.txt
 ```
 
-4. Authorize the run from the same controller session:
+4. Authorize the run:
 
 ```bash
-ai_dev_loop scheduler start <run-id> --controller-session-id "<exact-controller-session-id>"
+ai_dev_loop scheduler start <run-id>
 ```
 
 5. Run `ai_dev_loop scheduler tick` manually during development, or follow the

@@ -10,6 +10,7 @@ from ai_dev_loop.scheduler.application.scheduler_checkpoint import checkpoint_fr
 from ai_dev_loop.scheduler.domain.state import (
     AdmittedRunCheckpoint,
     CodexRuntimeBinding,
+    CursorSdkBinding,
     RepositoryBinding,
     SubmittedRunContext,
 )
@@ -145,6 +146,28 @@ def run_state_from_scheduler_context(
         if isinstance(context.codex, SchedulerFreshCodexReviewerBinding)
         else 1
     )
+    cursor_binding = context.cursor
+    cursor_state = (
+        CursorState(
+            command="cursor-sdk-local",
+            model=cursor_binding.model,
+            output_format="sdk-ndjson",
+            force=False,
+            trust_workspace=False,
+            sandbox=cursor_binding.sandbox,
+            chat_id=None,
+        )
+        if isinstance(cursor_binding, CursorSdkBinding)
+        else CursorState(
+            command=cursor_binding.command,
+            model=cursor_binding.model,
+            output_format=cursor_binding.output_format,
+            force=cursor_binding.force,
+            trust_workspace=cursor_binding.trust_workspace,
+            sandbox=cursor_binding.sandbox,
+            chat_id=chat_id,
+        )
+    )
     return RunState(
         schema_version=schema_version,
         run_id=run_id,
@@ -170,14 +193,6 @@ def run_state_from_scheduler_context(
             codex_timeout_minutes=context.workflow.codex_timeout_minutes,
             current_review_iteration=0,
         ),
-        cursor=CursorState(
-            command=context.cursor.command,
-            model=context.cursor.model,
-            output_format=context.cursor.output_format,
-            force=context.cursor.force,
-            trust_workspace=context.cursor.trust_workspace,
-            sandbox=context.cursor.sandbox,
-            chat_id=chat_id,
-        ),
+        cursor=cursor_state,
         codex=_codex_state(context),
     )

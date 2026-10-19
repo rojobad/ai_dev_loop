@@ -1,6 +1,8 @@
 # Guia rapida
 
-Esta guia asume que estas en WSL, que el repositorio objetivo vive dentro de WSL y que `agent`, `codex` y `git` estan disponibles en `PATH`.
+Esta guia asume que estas en WSL, que el repositorio objetivo vive dentro de WSL
+y que `codex` y `git` estan disponibles en `PATH`. Cursor nuevo usa el SDK local,
+no Cursor CLI.
 
 ## 1. Instala la herramienta
 
@@ -14,7 +16,7 @@ uv run ai_dev_loop --help
 Para instalar el comando como herramienta de usuario:
 
 ```bash
-uv tool install .
+uv tool install '.[cursor-sdk]'
 ai_dev_loop --help
 ```
 
@@ -22,7 +24,8 @@ Tambien puedes instalar desde un wheel ya construido:
 
 ```bash
 uv run python -m build
-uv tool install --force dist/ai_dev_loop-0.1.0-py3-none-any.whl
+uv tool install --force \
+  'ai-dev-loop[cursor-sdk] @ file:///ruta/absoluta/dist/ai_dev_loop-0.1.0-py3-none-any.whl'
 ```
 
 ## 2. Instala la integracion correcta
@@ -53,22 +56,26 @@ Despues abre `/hooks` en Codex o Codex Desktop y confia el hook `ai_dev_loop` si
 En la raiz del repositorio que sera modificado por Cursor, crea `ai_dev_loop.yaml`:
 
 ```yaml
-version: 1
+version: 2
 
 project:
   name: my-project
 
 cursor:
-  command: agent
-  model: composer-2.5-fast
-  output_format: stream-json
-  force: true
-  trust_workspace: true
+  runtime: sdk-local
+  sdk_version: 1.0.37
+  model: grok-4.7
+  parameters:
+    context: 256k
+    fast: false
+    reasoning_effort: high
+  credential_ref: cursor-default
+  setting_sources: [project]
   sandbox: disabled
 
 codex:
   command: codex
-  review_skill: review-staged-cursor-execution
+  review_skill: review-staged-ai-dev-loop-execution
   sandbox: workspace-write
 
 workflow:
@@ -86,6 +93,9 @@ prompt:
 `--codex-review-model` y `--codex-review-reasoning-effort` se pasan en `scheduler submit`
 y quedan congelados en el ledger. No se infieren de `config.toml` ni del default local
 de Codex CLI.
+
+El operador crea la credencial privada por separado con directorios `0700` y
+archivo `0600`; nunca la guarda en YAML. Consulta [Configuración](../referencia/configuracion.md).
 
 Valida:
 
