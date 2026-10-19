@@ -1,14 +1,17 @@
 ---
-description: "Phase 26 local dashboard, shared Integration API reads, and chart/inspection boundaries."
+description: "Local Dashboard architecture, shared Integration API reads and chart/inspection boundaries."
 globs: ["src/ai_dev_loop/dashboard/**", "src/ai_dev_loop/integration_api/dashboard*", "src/ai_dev_loop/commands/dashboard.py", "dashboard-web/**", "tests/**/dashboard/**"]
 alwaysApply: false
 ---
 
 # Local dashboard contracts
 
-Use AGENTS.md and the active Phase 26 plan with
-`archive/implementation-history/plans/phase-26-dashboard-contract.md`.
-Codex owns this rule and the plans; implementation does not edit governance.
+Use AGENTS.md, `docs/referencia/dashboard.md`,
+`docs/referencia/dashboard-ux.md` and the active approved scope. Apply
+`ai-dev-loop-dashboard-refinements-contracts.mdc` to presentation changes.
+Archived Phase 26/28 plans explain history and bounds; their earlier UI does
+not override current DUX contracts or explicit operator decisions. Codex owns
+this rule and the plans; implementation does not edit governance.
 
 - Phase 26 explicitly introduces a loopback HTTP adapter and dashboard CLI;
   historical Phase 21's no-HTTP scope does not forbid this later approved work.

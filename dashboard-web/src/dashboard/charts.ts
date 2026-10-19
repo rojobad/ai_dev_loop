@@ -134,12 +134,10 @@ export function workloadOption(items: DashboardWorkloadItem[]): EChartsCoreOptio
         const project =
           typeof dataItem.projectName === "string" ? dataItem.projectName : name;
         const count = typeof item.value === "number" ? item.value : 0;
-        const sequenceId =
-          typeof dataItem.sequenceId === "string" ? dataItem.sequenceId : null;
         const sequenceName =
           typeof dataItem.sequenceName === "string" ? dataItem.sequenceName : null;
-        const details = sequenceId && sequenceName
-          ? `<br>${escapeHtml(sequenceName)} · ${escapeHtml(sequenceId)}`
+        const details = sequenceName
+          ? `<br>${escapeHtml(sequenceName)}`
           : "";
         return `<strong>${escapeHtml(project)}</strong><br>${escapeHtml(name)}: ${count} runs${details}`;
       },

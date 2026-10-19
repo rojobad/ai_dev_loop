@@ -40,6 +40,7 @@ nav:
       - CLI: referencia/cli.md
       - API de integración local: referencia/integration-api.md
       - Dashboard: referencia/dashboard.md
+      - Gobernanza de UX del Dashboard: referencia/dashboard-ux.md
       - Configuración: referencia/configuracion.md
       - Codex Desktop WSL Sessions: referencia/codex-desktop-wsl-sessions.md
       - Trazabilidad de fases: referencia/trazabilidad-fases.md

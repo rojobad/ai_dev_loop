@@ -49,7 +49,7 @@ async function applyMapScope(page: Page, fakeClock = false): Promise<void> {
   await page.getByLabel("Until (exclusive)").fill("05/01/2026 00:00");
   if (fakeClock) await page.clock.runFor(400);
   else await page.waitForTimeout(450);
-  await expect(page.getByText(/Loaded 28 of 28 started runs/)).toBeVisible();
+  await expect(page.getByText(/28\/28 loaded/)).toBeVisible();
 }
 
 function operation(route: Route): string | null {
@@ -230,7 +230,7 @@ test("F-01 paused manual Refresh retains compatible activity and first-page succ
   await page.goto(`${baseUrl}/`);
   await applyMapScope(page);
   await expect(page.getByText("Submissions total:")).toBeVisible();
-  await expect(page.getByText("Loaded 28 of 28 started runs")).toBeVisible();
+  await expect(page.getByText("28/28 loaded")).toBeVisible();
   const activitySuccess = await page.locator(".activity-panel .observation-line").textContent();
   const mapSuccess = await page.locator(".run-map-panel .observation-line").textContent();
 
@@ -249,7 +249,7 @@ test("F-01 paused manual Refresh retains compatible activity and first-page succ
   await expect(page.locator(".activity-panel [role=alert]")).toContainText(
     "showing the last successful observation",
   );
-  await expect(page.getByText("Loaded 28 of 28 started runs")).toBeVisible();
+  await expect(page.getByText("28/28 loaded")).toBeVisible();
   await expect(page.locator(".run-map-panel .observation-line")).toHaveText(mapSuccess ?? "");
   await expect(page.locator(".run-map-panel [role=alert]")).toContainText(
     "showing 28 distinct IDs from successful pages",
@@ -302,7 +302,7 @@ test("F-02 held initial capacity cannot gate a paused manual map refresh", async
     const callsBeforeRefresh = runCalls;
     await page.getByRole("button", { name: "Refresh current scope" }).click();
     await expect.poll(() => runCalls).toBe(callsBeforeRefresh + 1);
-    await expect(page.getByText("Loaded 28 of 28 started runs")).toBeVisible();
+    await expect(page.getByText("28/28 loaded")).toBeVisible();
     await expect(page.getByText("Automatic refresh: paused")).toBeVisible();
     await expect(page.getByRole("button", { name: "Resume automatic refresh" })).toBeVisible();
   } finally {
@@ -360,7 +360,8 @@ test("C266-3 failure recovery and filter retirement keep only current memory own
   await expect(page.locator(".activity-total strong")).toHaveText("29");
 
   await page.getByLabel("Select loaded run").selectOption("current-map-run");
-  await expect(page.getByText(/Selected run:/)).toContainText("current-map-run");
+  await page.locator(".attempt-details-disclosure > summary").click();
+  await expect(page.getByLabel("Selected run", { exact: true })).toHaveAttribute("data-run-id", "current-map-run");
   await page.getByRole("button", { name: /Attempt ID: attempt-current-map-run-execution/ }).click();
   const control = (name: string) => join(stateRoot, name);
   for (const name of ["hold-content-response", "release-content-response", "content-response-started"]) {

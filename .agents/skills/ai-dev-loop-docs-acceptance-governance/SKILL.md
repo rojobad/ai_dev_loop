@@ -15,6 +15,12 @@ Cursor implementation work is governed by `.cursor/rules/ai-dev-loop-docs-accept
 - Archived phase plans under `archive/implementation-history/plans/` preserve scope history.
 - Phase findings files under `archive/implementation-history/findings/` are audit artifacts and handoff context.
 - `.cursor/rules/*.mdc` are mandatory guardrails for Cursor-driven work.
+- For the Dashboard, `docs/referencia/dashboard-ux.md` is the current operator
+  presentation contract; `docs/referencia/dashboard.md` owns data/transport.
+  Apply affected DUX contracts to docs and acceptance, rather than restoring UI
+  from an archived phase. Keep planning/reviewer routing aligned when updating
+  this governance; governance-only changes need docs/link consistency, not new
+  runtime tests matching text.
 - Do not invent behavior in docs. Verify against code, schemas, CLI help, tests, plans, and findings.
 
 ## Phase 8 Boundary For Codex Review

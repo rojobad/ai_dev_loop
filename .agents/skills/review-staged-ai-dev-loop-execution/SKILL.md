@@ -68,9 +68,29 @@ Look for actionable defects in:
 - documentation claims that diverge from implementation;
 - missing or weak tests for changed behavior.
 
-Ignore style-only concerns unless they conceal a correctness or maintenance
-risk. Do not report speculative findings; put uncertainty and unavailable
-validation under residual risk.
+Ignore style-only preferences unless they conceal a correctness or maintenance
+risk. Explicit approved Dashboard UX behavior is a contract, not an optional
+style preference; evaluate affected requirements as described below. Do not
+report speculative findings; put uncertainty and unavailable validation under
+residual risk.
+
+## Dashboard Review
+
+For Dashboard changes, read `docs/referencia/dashboard-ux.md` (DUX-01..09),
+`docs/referencia/dashboard.md`, and the two Dashboard rules under `.cursor/rules/`.
+Use the current operator-approved scope; archived phase examples do not restore
+superseded presentation. Review affected contracts, not every unchanged widget.
+
+Check that graphs remain primary, explanations use the accessible circled `i`,
+resource detail lists start collapsed, names and attempt captions are human,
+IDs stay secondary and outside graph tooltips, and scope/time formatting follows
+the shared policy. Verify exact IDs still own selection/content reads.
+For changed scroll/loading behavior, inspect actual browser evidence with held
+responses and geometry assertions; screenshots/mocks alone cannot prove a stable
+viewport. Confirm unknown/partial/error states remain visible. Report a concrete
+regression against its applicable DUX ID and production path, without inventing
+new UI or requiring unrelated redesign. Keep the review read-only and use the
+existing result schema; policy-only edits need consistency/docs checks.
 
 ## Contract Coverage And Correction Closure
 

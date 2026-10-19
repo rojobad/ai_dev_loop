@@ -72,7 +72,8 @@ button:hover {
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
-.content-reader:focus-visible {
+.content-reader:focus-visible,
+summary:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--focus) 38%, transparent);
   outline-offset: 2px;
 }
@@ -119,6 +120,13 @@ h3 {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+}
+
+.panel-load-count {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 400;
+  white-space: nowrap;
 }
 
 .panel-heading-actions {
@@ -212,6 +220,7 @@ h3 {
 
 .filter-actions {
   justify-content: flex-start;
+  margin-top: 1rem;
 }
 
 .filter-actions span {
@@ -288,7 +297,12 @@ h3 {
   min-width: 0;
 }
 
+.overview-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .linked-inspection-grid {
+  align-items: start;
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
   margin-top: 0.85rem;
 }
@@ -316,8 +330,9 @@ h3 {
 
 .run-map-chart-scroll {
   max-width: 100%;
-  overflow-x: auto;
-  overscroll-behavior-inline: contain;
+  max-height: 500px;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .lineage-line,
@@ -432,8 +447,37 @@ h3 {
 }
 
 .information-trigger {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
   min-height: 36px;
-  padding-block: 0.35rem;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.information-icon {
+  font-family: Georgia, "Times New Roman", serif;
+  font-style: italic;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.attempt-timeline-panel > .panel-heading {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.selected-run-name {
+  overflow-wrap: anywhere;
+}
+
+.attempt-timeline-panel .panel-heading-actions {
+  font-size: 0.82rem;
+  color: var(--muted);
 }
 
 .attempt-modal {
@@ -562,11 +606,13 @@ button:disabled {
   overflow: hidden;
 }
 
-.activity-days-disclosure {
+.activity-days-disclosure,
+.attempt-details-disclosure {
   margin-top: 0.75rem;
 }
 
-.activity-days-disclosure summary {
+.activity-days-disclosure summary,
+.attempt-details-disclosure summary {
   width: fit-content;
   cursor: pointer;
   color: var(--accent-strong);
@@ -634,6 +680,16 @@ button:disabled {
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 700;
+}
+
+.activity-results {
+  display: flow-root;
+}
+
+.activity-loading {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
 }
 
 .activity-total {

@@ -245,7 +245,6 @@ export function runMapOption(
         const item = typeof event.data === "object" && event.data !== null
           ? (event.data as Record<string, unknown>)
           : {};
-        const runId = typeof item.runId === "string" ? item.runId : "Run";
         const shortName = typeof item.shortName === "string" ? item.shortName : "Run";
         const phase = typeof item.phase === "string" ? item.phase : "Unknown phase";
         const projectName = typeof item.projectName === "string" ? item.projectName : "Unknown project";
@@ -254,13 +253,12 @@ export function runMapOption(
           ? item.firstExecutionLaunchAt
           : "Unavailable";
         const sequenceName = typeof item.sequenceName === "string" ? item.sequenceName : null;
-        const sequenceId = typeof item.sequenceId === "string" ? item.sequenceId : null;
         const state = typeof item.state === "string" ? item.state : "unknown";
         const provider = typeof item.provider === "string" ? item.provider : "unknown";
-        const sequence = sequenceName && sequenceId
-          ? `<br>${escapeHtml(sequenceName)}<br>Sequence ID: ${escapeHtml(sequenceId)}`
+        const sequence = sequenceName
+          ? `<br>${escapeHtml(sequenceName)}`
           : "";
-        return `<strong>${escapeHtml(shortName)}</strong><br>${escapeHtml(projectName)} · ${escapeHtml(provider)} · ${escapeHtml(state)}<br>Submitted: ${escapeHtml(submittedAt)}<br>First launch: ${escapeHtml(launchedAt)}<br>${escapeHtml(phase)}${sequence}<br>Run ID: ${escapeHtml(runId)}`;
+        return `<strong>${escapeHtml(shortName)}</strong><br>${escapeHtml(projectName)} · ${escapeHtml(provider)} · ${escapeHtml(state)}<br>Submitted: ${escapeHtml(submittedAt)}<br>First launch: ${escapeHtml(launchedAt)}<br>${escapeHtml(phase)}${sequence}`;
       },
     },
     xAxis: {
@@ -268,7 +266,6 @@ export function runMapOption(
       min: 0.5,
       max: maxColumns + 0.5,
       minInterval: 1,
-      name: "Distinct run position within group",
     },
     yAxis: {
       type: "category",
@@ -616,9 +613,9 @@ export function RunMap({
       <div className="panel-heading">
         <h2 id="map-heading">Sequence and run map</h2>
         <div className="panel-heading-actions">
-          <strong aria-live="polite">
-            Loaded {state.items.length} of {state.totalCount} started runs
-          </strong>
+          <span className="panel-load-count" aria-live="polite">
+            {state.items.length}/{state.totalCount} loaded
+          </span>
           <InformationControl label="Sequence and run map">
             <p>Every cell is one authoritative run ID; replacement generations are never collapsed.</p>
             <p>The client requests up to 1000 rows, reduces only a typed oversized page, and follows each returned continuation automatically. Distinct pages can be observed at different times and are not presented as one atomic snapshot.</p>
@@ -656,7 +653,12 @@ export function RunMap({
       ) : null}
       {state.items.length ? (
         <>
-          <div className="run-map-chart-scroll">
+          <div
+            className="run-map-chart-scroll"
+            role="region"
+            aria-label="Scrollable sequence and run map"
+            tabIndex={0}
+          >
             <div style={{ minWidth: chartMinWidth }}>
               <DashboardChart
                 ariaLabel="Selectable chart cells for authoritative run IDs"

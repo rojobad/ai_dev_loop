@@ -200,7 +200,7 @@ describe("C282-1 compact authoritative run map", () => {
       />,
     );
 
-    expect(await screen.findByText("Loaded 28 of 28 started runs")).toBeInTheDocument();
+    expect(await screen.findByText("28/28 loaded")).toBeInTheDocument();
     expect(document.querySelector(".run-map-rows")).toBeNull();
     expect(screen.getByRole("option", { name: /old-replacement · cursor · old-replacement/ }))
       .toBeInTheDocument();
@@ -266,6 +266,9 @@ describe("C282-1 compact authoritative run map", () => {
       "&lt;img src=x onerror=&quot;boom&quot;&gt;",
     );
     expect(formatter({ data: series[0].data[0] })).not.toContain(malicious);
+    expect(formatter({ data: series[0].data[0] })).not.toContain("exact-a");
+    expect(formatter({ data: series[0].data[0] })).not.toMatch(/Run ID:|Sequence ID:/);
+    expect(option.xAxis).not.toHaveProperty("name");
   });
 
   it("keeps one timestamp per retained page across repeated first-page refreshes", async () => {
@@ -282,7 +285,7 @@ describe("C282-1 compact authoritative run map", () => {
         theme="light"
       />,
     );
-    expect(await screen.findByText("Loaded 28 of 28 started runs")).toBeInTheDocument();
+    expect(await screen.findByText("28/28 loaded")).toBeInTheDocument();
 
     for (let refresh = 0; refresh < 4; refresh += 1) {
       coordinator.refreshAll();
@@ -352,7 +355,7 @@ describe("C282-1 compact authoritative run map", () => {
       />,
     );
 
-    expect(await screen.findByText("Loaded 1005 of 1005 started runs")).toBeInTheDocument();
+    expect(await screen.findByText("1005/1005 loaded")).toBeInTheDocument();
     const options = screen.getAllByRole("option");
     expect(options).toHaveLength(1006);
     expect(new Set(options.slice(1).map((option) => option.getAttribute("value"))).size).toBe(1005);
@@ -439,13 +442,13 @@ describe("C282-1 compact authoritative run map", () => {
         theme="light"
       />,
     );
-    expect(await screen.findByText("Loaded 3 of 3 started runs")).toBeInTheDocument();
+    expect(await screen.findByText("3/3 loaded")).toBeInTheDocument();
 
     dataSource.mode = "failed-contraction";
     coordinator.refreshAll();
     expect(await screen.findByRole("option", { name: /Fresh A · cursor · exact-a/ }))
       .toBeInTheDocument();
-    expect(screen.getByText("Loaded 3 of 3 started runs")).toBeInTheDocument();
+    expect(screen.getByText("3/3 loaded")).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Old B · codex · exact-b/ }))
       .toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Old C · cursor · exact-c/ }))
@@ -454,16 +457,16 @@ describe("C282-1 compact authoritative run map", () => {
       .toEqual(["", "exact-a", "exact-b", "exact-c"]);
     await act(async () => dataSource.heldContinuation.reject(new Error("held continuation failed")));
     expect(await screen.findByRole("alert")).toHaveTextContent("held continuation failed");
-    expect(screen.getByText("Loaded 3 of 3 started runs")).toBeInTheDocument();
+    expect(screen.getByText("3/3 loaded")).toBeInTheDocument();
 
     dataSource.mode = "single";
     await userEvent.setup().click(screen.getByRole("button", { name: "Retry run loading" }));
-    expect(await screen.findByText("Loaded 1 of 1 started runs")).toBeInTheDocument();
+    expect(await screen.findByText("1/1 loaded")).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /exact-b/ })).not.toBeInTheDocument();
 
     dataSource.mode = "expanded";
     coordinator.refreshAll();
-    expect(await screen.findByText("Loaded 3 of 3 started runs")).toBeInTheDocument();
+    expect(await screen.findByText("3/3 loaded")).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Fresh A · cursor · exact-a/ }))
       .toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Fresh B · codex · exact-b/ }))
@@ -542,7 +545,7 @@ describe("C282-1 compact authoritative run map", () => {
     );
 
     expect(await screen.findByRole("alert")).toHaveTextContent("initial tail unavailable");
-    expect(screen.getByText("Loaded 2 of 3 started runs")).toBeInTheDocument();
+    expect(screen.getByText("2/3 loaded")).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Old A · cursor · partial-a/ }))
       .toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Old B · codex · partial-b/ }))
@@ -555,13 +558,13 @@ describe("C282-1 compact authoritative run map", () => {
       .toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Old B · codex · partial-b/ }))
       .toBeInTheDocument();
-    expect(screen.getByText("Loaded 2 of 3 started runs")).toBeInTheDocument();
+    expect(screen.getByText("2/3 loaded")).toBeInTheDocument();
     expect(screen.getAllByRole("option").map((option) => option.getAttribute("value")))
       .toEqual(["", "partial-a", "partial-b"]);
 
     await act(async () => dataSource.heldPoll.reject(new Error("automatic continuation failed")));
     expect(await screen.findByRole("alert")).toHaveTextContent("automatic continuation failed");
-    expect(screen.getByText("Loaded 2 of 3 started runs")).toBeInTheDocument();
+    expect(screen.getByText("2/3 loaded")).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Fresh A · cursor · partial-a/ }))
       .toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Old B · codex · partial-b/ }))
@@ -569,7 +572,7 @@ describe("C282-1 compact authoritative run map", () => {
 
     dataSource.mode = "retry";
     await userEvent.setup().click(screen.getByRole("button", { name: "Retry run loading" }));
-    expect(await screen.findByText("Loaded 3 of 3 started runs")).toBeInTheDocument();
+    expect(await screen.findByText("3/3 loaded")).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Retry A · cursor · partial-a/ }))
       .toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Retry B · codex · partial-b/ }))
@@ -774,7 +777,7 @@ describe("C282-1 compact authoritative run map", () => {
       "showing 1 distinct IDs from successful pages",
     );
     expect(screen.getByRole("option", { name: /retained-run · codex/ })).toBeInTheDocument();
-    expect(screen.getByText("Loaded 1 of 1 started runs")).toBeInTheDocument();
+    expect(screen.getByText("1/1 loaded")).toBeInTheDocument();
   });
 
   it("clears an incompatible first-page success and never labels a failed scope as empty", async () => {

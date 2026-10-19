@@ -172,7 +172,7 @@ describe("C264-2 selected run ownership and race fencing", () => {
         }),
       );
     });
-    expect(await screen.findByText(/Selected run:/)).toHaveTextContent("current-replacement");
+    expect(await screen.findByLabelText("Selected run")).toHaveAttribute("data-run-id", "current-replacement");
     expect(screen.getByText("Attempt ID: cursor-implementer")).toBeInTheDocument();
 
     await act(async () => {
@@ -188,7 +188,7 @@ describe("C264-2 selected run ownership and race fencing", () => {
       );
     });
     expect(screen.queryByText("late-old")).not.toBeInTheDocument();
-    expect(screen.getByText(/Selected run:/)).toHaveTextContent("current-replacement");
+    expect(screen.getByLabelText("Selected run")).toHaveAttribute("data-run-id", "current-replacement");
   });
 
   it("keeps the selected run metadata owner alive while paging only the timeline", async () => {
@@ -234,6 +234,7 @@ describe("C264-2 selected run ownership and race fencing", () => {
     await act(async () => {
       metadata.resolve(observation(inspectData("standalone-run")));
     });
+    await user.click(screen.getByRole("button", { name: "Information about Attempt timeline" }));
     expect(await screen.findByText("project-a")).toBeInTheDocument();
   });
 
@@ -297,7 +298,7 @@ describe("C264-2 selected run ownership and race fencing", () => {
       expect(dataSource.inspectCalls).toBe(2);
       expect(dataSource.timelineCalls).toBe(2);
       expect(screen.getByText("Attempt ID: cursor-implementer")).toBeInTheDocument();
-      expect(screen.getByText("project-a")).toBeInTheDocument();
+      expect(screen.getByText("1 loaded / 1 recorded attempts")).toBeInTheDocument();
     } finally {
       view.unmount();
       vi.useRealTimers();
@@ -351,7 +352,7 @@ describe("C264-2 selected run ownership and race fencing", () => {
       expect(dataSource.timelineCalls.get(olderRun.runId)).toBe(1);
       expect(dataSource.inspectCalls.get(currentRun.runId)).toBe(1);
       expect(dataSource.timelineCalls.get(currentRun.runId)).toBe(1);
-      expect(screen.getByText(/Selected run:/)).toHaveTextContent(currentRun.runId);
+      expect(screen.getByLabelText("Selected run")).toHaveAttribute("data-run-id", currentRun.runId);
       expect(screen.getByText("Attempt ID: cursor-implementer")).toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     } finally {
@@ -513,6 +514,11 @@ describe("C264-3 attempt timeline semantics", () => {
       "4 - Iteration 1 - Implementer",
       "5 - Iteration 1 - Implementer",
     ]);
+    expect(option.xAxis).toMatchObject({
+      splitNumber: 4,
+      minInterval: 60_000,
+      axisLabel: { rotate: 90, hideOverlap: true },
+    });
     const chartData = (option.series as Array<{ data: Array<Record<string, unknown>> }>)[0].data;
     expect(chartData[2]).toMatchObject({
       caption: "3 - Iteration 1 - Reviewer",
@@ -522,6 +528,10 @@ describe("C264-3 attempt timeline semantics", () => {
       completedAt: "01/01/2026 00:30",
       duration: "00 h 30 m",
     });
+    const tooltip = (option.tooltip as { formatter: (event: unknown) => string }).formatter;
+    expect(tooltip({ data: chartData[2] })).toContain("3 - Iteration 1 - Reviewer");
+    expect(tooltip({ data: chartData[2] })).not.toContain("codex-reviewer");
+    expect(tooltip({ data: chartData[2] })).not.toContain("Attempt ID:");
     expect(attemptIdFromChartEvent({ data: { attemptId: "codex-reviewer" } })).toBe(
       "codex-reviewer",
     );
@@ -534,7 +544,11 @@ describe("C264-3 attempt timeline semantics", () => {
     expect(await screen.findByText("Codex implementer · active")).toBeInTheDocument();
     expect(screen.getByText(/Launched 01\/01\/2026 06:00; no observed end/)).toBeInTheDocument();
     expect(screen.getAllByText(/Created 01\/01\/2026 00:00; not launched/)).toHaveLength(21);
+    expect(screen.queryByText("implementer / correction")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Information about Attempt timeline" }));
     expect(screen.getByText("implementer / correction")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await user.click(screen.getByText("Attempt details", { selector: "summary" }));
     expect(dataSource.calls).toEqual([{ runId: "standalone-run", offset: 0 }]);
 
     await user.click(screen.getByRole("button", { name: /^2 - Iteration 1 - Implementer/ }));
@@ -566,6 +580,30 @@ describe("C264-3 attempt timeline semantics", () => {
       .toBeInTheDocument();
   });
 
+  it("keeps details collapsed and returns chart-opened modal focus to the summary", async () => {
+    const user = userEvent.setup();
+    render(
+      <AttemptTimeline
+        coordinator={new RefreshCoordinator()}
+        dataSource={new PagedTimelineDataSource()}
+        selectedRun={standaloneRun}
+        theme="light"
+      />,
+    );
+    await user.click(await screen.findByRole("button", { name: "Load more attempts" }));
+    const summary = screen.getByText("Attempt details", { selector: "summary" });
+    expect(summary.closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText("Attempt ID: review-retry")).not.toBeVisible();
+    expect(screen.queryByText("Run ID")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Selected run")).toHaveTextContent("Standalone run");
+
+    await user.click(screen.getByRole("button", { name: "Gantt timeline for standalone-run" }));
+    expect(screen.getByRole("button", { name: "Close attempt details" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Close attempt details" }));
+    await waitFor(() => expect(summary).toHaveFocus());
+    expect(summary.closest("details")).not.toHaveAttribute("open");
+  });
+
   it("keeps chart-opened modal focus inside after animation frames and restores the exact row without scrolling", async () => {
     const user = userEvent.setup();
     const frames: FrameRequestCallback[] = [];
@@ -592,6 +630,7 @@ describe("C264-3 attempt timeline semantics", () => {
         />,
       );
       await user.click(await screen.findByRole("button", { name: "Load more attempts" }));
+      await user.click(screen.getByText("Attempt details", { selector: "summary" }));
       const row = await screen.findByRole("button", {
         name: /^26 - Iteration 1 - Reviewer.*Attempt ID: review-retry/,
       });
@@ -641,6 +680,7 @@ describe("C264-3 attempt timeline semantics", () => {
     }
 
     expect(dataSource.calls.map((call) => call.offset)).toEqual([0, 25, 0, 0, 0, 0]);
+    await user.click(screen.getByText("Attempt details", { selector: "summary" }));
     expect(
       screen.getByRole("button", { name: /^26 - Iteration 1 - Reviewer.*Attempt ID: review-retry/ }),
     ).toBeInTheDocument();

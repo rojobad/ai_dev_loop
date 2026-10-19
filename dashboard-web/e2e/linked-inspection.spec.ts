@@ -50,7 +50,7 @@ async function applyMapScope(page: Page, fakeClock = false): Promise<void> {
   await page.getByLabel("Until (exclusive)").fill("05/01/2026 00:00");
   if (fakeClock) await page.clock.runFor(400);
   else await page.waitForTimeout(450);
-  await expect(page.getByText("Loaded 28 of 28 started runs")).toBeVisible();
+  await expect(page.getByText("28/28 loaded")).toBeVisible();
 }
 
 async function clickReplacementChartCell(page: Page, position: 1 | 2): Promise<void> {
@@ -158,6 +158,129 @@ test.afterAll(async () => {
   if (stateRoot) rmSync(stateRoot, { recursive: true, force: true });
 });
 
+test("map scroll stays inside its viewport and metric loading preserves page position", async ({ page }) => {
+  test.setTimeout(45_000);
+  await page.setViewportSize({ width: 1095, height: 884 });
+  let pendingMetric: string | null = null;
+  let metricStarted = false;
+  let releaseMetric: (() => void) | undefined;
+  let metricGate = Promise.resolve();
+  await page.route("**/api/dashboard/read", async (route) => {
+    const request = JSON.parse(route.request().postData() ?? "{}");
+    if (request.operation === "dashboard.activity" && request.parameters.metric === pendingMetric) {
+      metricStarted = true;
+      await metricGate;
+    }
+    if (request.operation === "dashboard.runs") {
+      const response = await route.fetch();
+      const payload = await response.json();
+      if (payload.ok && payload.data.items.length) {
+        const binding = payload.data.items.find((item: { sequenceBinding: unknown }) => item.sequenceBinding)?.sequenceBinding;
+        if (binding) {
+          payload.data.items.forEach((item: { sequenceBinding: unknown }, index: number) => {
+            item.sequenceBinding = {
+              ...binding,
+              sequenceId: `scroll-sequence-${index}`,
+              sequenceName: `Scroll sequence ${index}`,
+              sequenceShortName: `Scroll sequence ${index}`,
+            };
+          });
+        }
+      }
+      await route.fulfill({ response, json: payload });
+      return;
+    }
+    await route.continue();
+  });
+  await applyMapScope(page);
+  const map = page.getByRole("region", { name: "Scrollable sequence and run map" });
+  await map.scrollIntoViewIfNeeded();
+  const dimensions = await map.evaluate((element) => ({
+    height: element.getBoundingClientRect().height,
+    contentHeight: element.scrollHeight,
+  }));
+  expect(dimensions.height).toBeLessThanOrEqual(500);
+  expect(dimensions.contentHeight).toBeGreaterThan(500);
+  const beforeMapScroll = await page.evaluate(() => window.scrollY);
+  await map.hover();
+  await page.mouse.wheel(0, 250);
+  await expect.poll(() => map.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  expect(await page.evaluate(() => window.scrollY)).toBe(beforeMapScroll);
+
+  const activity = page.locator(".activity-panel");
+  for (const [metric, label] of [
+    ["review-rounds", "Review rounds"],
+    ["process-hours", "Process hours"],
+    ["submissions", "Submissions"],
+  ]) {
+    await activity.evaluate((element) => element.scrollIntoView({ block: "end" }));
+    const before = await page.evaluate(() => ({ scroll: window.scrollY, height: document.documentElement.scrollHeight }));
+    pendingMetric = metric;
+    metricStarted = false;
+    metricGate = new Promise<void>((resolve) => { releaseMetric = resolve; });
+    try {
+      await page.getByLabel("Activity metric").selectOption(metric);
+      await expect.poll(() => metricStarted).toBe(true);
+      await expect(activity.locator(".activity-results")).toHaveAttribute("aria-busy", "true");
+      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      expect(Math.abs(await page.evaluate(() => window.scrollY) - before.scroll)).toBeLessThanOrEqual(1);
+      expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeGreaterThanOrEqual(before.height - 1);
+    } finally {
+      pendingMetric = null;
+      releaseMetric?.();
+    }
+    const chart = page.getByRole("img", { name: `${label} activity calendar in UTC` });
+    await expect(chart).toBeVisible();
+    const after = await chart.boundingBox();
+    expect(after).not.toBeNull();
+    expect(after!.y).toBeGreaterThanOrEqual(0);
+    expect(after!.y + after!.height).toBeLessThanOrEqual(884);
+    expect(Math.abs(await page.evaluate(() => window.scrollY) - before.scroll)).toBeLessThanOrEqual(1);
+  }
+});
+
+test("compact panels keep full-width charts, spaced filters and collapsed attempts", async ({ page }) => {
+  await applyMapScope(page);
+  await expect(page.locator(".overview-grid")).toBeVisible();
+  for (const width of [1095, 390]) {
+    await page.setViewportSize({ width, height: 884 });
+    const geometry = await page.evaluate(() => {
+      const overview = document.querySelector<HTMLElement>(".overview-grid")!;
+      const panels = [...overview.children].map((element) => element.getBoundingClientRect());
+      const fields = [...document.querySelectorAll(".filter-grid input, .filter-grid select")]
+        .map((element) => element.getBoundingClientRect().bottom);
+      const actions = document.querySelector(".filter-actions")!.getBoundingClientRect();
+      return {
+        widths: panels.map((box) => box.width),
+        overviewWidth: overview.getBoundingClientRect().width,
+        separated: panels[1].top >= panels[0].bottom,
+        filterGap: actions.top - Math.max(...fields),
+        icons: [...document.querySelectorAll(".information-trigger")].every((element) =>
+          element.textContent?.trim() === "i" && getComputedStyle(element).borderRadius === "50%",
+        ),
+      };
+    });
+    expect(geometry.widths.every((width) => Math.abs(width - geometry.overviewWidth) < 2)).toBe(true);
+    expect(geometry.separated).toBe(true);
+    expect(geometry.filterGap).toBeGreaterThanOrEqual(12);
+    expect(geometry.icons).toBe(true);
+  }
+  await page.setViewportSize({ width: 1095, height: 884 });
+  await page.getByLabel("Select loaded run").selectOption("current-map-run");
+  await expect(page.getByLabel("Selected run", { exact: true })).toHaveAttribute("data-run-id", "current-map-run");
+  await expect(page.locator(".run-metadata")).toHaveCount(0);
+  await expect(page.locator(".lineage-line")).toHaveCount(0);
+  await expect(page.locator(".attempt-details-disclosure")).not.toHaveAttribute("open");
+  await expect(page.locator(".attempt-rows")).not.toBeVisible();
+  await clickTimelineInterval(page, "current-map-run");
+  await page.getByRole("button", { name: "Close attempt details" }).click();
+  const summary = page.locator(".attempt-details-disclosure > summary");
+  await expect(summary).toBeFocused();
+  await expect(page.locator(".attempt-details-disclosure")).not.toHaveAttribute("open");
+  await summary.click();
+  await expect(page.getByRole("button", { name: /Attempt ID: attempt-current-map-run-execution/ })).toBeVisible();
+});
+
 test("C282-1..2 real chart keeps one selected run and stable paged attempt captions", async ({
   page,
 }) => {
@@ -175,21 +298,27 @@ test("C282-1..2 real chart keeps one selected run and stable paged attempt capti
 
   await applyMapScope(page);
   const projectSelect = page.locator(".filters select");
-  await expect(page.getByText("Loaded 28 of 28 started runs")).toBeVisible();
+  await expect(page.getByText("28/28 loaded")).toBeVisible();
   await expect(page.locator(".run-metadata")).toHaveCount(0);
 
   await clickReplacementChartCell(page, 1);
   const firstSelectionScroll = await page.evaluate(() => window.scrollY);
-  await expect(page.getByText(/Selected run:/)).toContainText("older-map-run");
-  await expect(page.locator(".run-metadata")).toHaveCount(1);
+  await expect(page.getByLabel("Selected run", { exact: true })).toHaveAttribute("data-run-id", "older-map-run");
+  await expect(page.locator(".run-metadata")).toHaveCount(0);
+  await page.getByRole("button", { name: "Information about Attempt timeline" }).click();
   await expect(page.locator(".lineage-line")).toContainText("generation 1 · planned_run");
+  await page.getByRole("button", { name: "Close", exact: true }).click();
   await clickReplacementChartCell(page, 2);
   expect(await page.evaluate(() => window.scrollY)).toBe(firstSelectionScroll);
-  await expect(page.getByText(/Selected run:/)).toContainText("current-map-run");
-  await expect(page.locator(".run-metadata")).toHaveCount(1);
+  await expect(page.getByLabel("Selected run", { exact: true })).toHaveAttribute("data-run-id", "current-map-run");
+  await expect(page.locator(".run-metadata")).toHaveCount(0);
+  await page.getByRole("button", { name: "Information about Attempt timeline" }).click();
   await expect(page.locator(".lineage-line")).toContainText(
     "generation 2 · implementer_retry",
   );
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(page.locator(".attempt-rows")).not.toBeVisible();
+  await page.locator(".attempt-details-disclosure > summary").click();
   const currentAttemptRow = page.getByRole("button", {
     name: /Attempt ID: attempt-current-map-run-execution/,
   });
@@ -208,8 +337,9 @@ test("C282-1..2 real chart keeps one selected run and stable paged attempt capti
   expect(await page.evaluate(() => window.scrollY)).toBe(timelineScroll);
 
   await page.getByLabel("Select loaded run").selectOption("older-map-run");
-  await expect(page.getByText(/Selected run:/)).toContainText("older-map-run");
+  await expect(page.getByLabel("Selected run", { exact: true })).toHaveAttribute("data-run-id", "older-map-run");
   await expect(page.getByText("25 loaded / 27 recorded attempts")).toBeVisible();
+  await page.locator(".attempt-details-disclosure > summary").click();
   await page.getByRole("button", { name: "Load more attempts" }).click();
   const reviewerRow = page.getByRole("button", {
     name: /Attempt ID: attempt-older-map-run-review-retry/,
@@ -291,7 +421,10 @@ test("F-03 refreshes the exact current selection at the normal cadence after sat
     await page.waitForTimeout(100);
     await page.clock.runFor(10_000);
 
-    await expect(page.getByText(/Selected run:/)).toContainText("current-map-run");
+    await expect(page.getByLabel("Selected run", { exact: true })).toHaveAttribute("data-run-id", "current-map-run");
+    await expect(page.getByRole("img", { name: "Gantt timeline for current-map-run" })).toBeVisible();
+    await expect(page.locator(".attempt-rows")).not.toBeVisible();
+    await page.locator(".attempt-details-disclosure > summary").click();
     await expect(page.getByText("Attempt ID: attempt-current-map-run-execution")).toBeVisible();
     await expect(page.getByText("Attempt ID: attempt-older-map-run-execution")).toHaveCount(0);
     await expect

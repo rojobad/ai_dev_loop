@@ -113,6 +113,28 @@ Separate `Non-Goals` from `Out of Scope`:
 
 Call out phase boundaries explicitly when the request is part of a multi-phase plan.
 
+## Dashboard Plans
+
+When the approved work changes the ai_dev_loop Dashboard, load
+`docs/referencia/dashboard-ux.md`, `docs/referencia/dashboard.md`, and both
+`.cursor/rules/ai-dev-loop-dashboard-contracts.mdc` and
+`.cursor/rules/ai-dev-loop-dashboard-refinements-contracts.mdc`. Reference them
+in the plan and concise handoff prompt for any selected implementer.
+
+Map only the affected DUX contracts to scope and acceptance evidence. Preserve
+chart-first presentation, circled-information explanations, collapsed resource
+lists, short-name labels, exact-ID selection, stable scroll, automatic valid
+scope and selected-IANA human time. A new widget must fit these decisions;
+archived examples are not permission to restore earlier UI. Explicit operator
+changes to a decision belong in the approved scope and its governance update.
+
+For changed scroll/layout, specify real browser geometry or scroll evidence.
+When request timing affects that behavior, include a held response and
+before/during/after assertions. For time,
+use fixed expected values in a zone different from the browser and affected
+DST/day/duration cases. Keep checks proportional; governance-only plans need
+consistency and links rather than new runtime wording tests.
+
 ## Testing Requirements
 
 Always include `Testing Criteria` as a separate plan section. It must state what evidence should prove the implementation is correct.
@@ -208,11 +230,13 @@ Report the plan path and prompt path. Include the prompt text in the final respo
 
 Phase 28 introduces scheduler-owned presentation names. Once the installed CLI
 supports named preparation, every new standalone submission must explicitly
-supply --short-name, and every new sequence must use manifest v3 with short_name
-on the sequence and each planned phase. Choose meaningful names of at most 35
+supply --short-name, and every new sequence must include short_name on the
+sequence and each planned phase. Use the installed CLI's supported named format: v3 for Codex-only and
+v4 for SDK/mixed sequences. Choose meaningful names of at most 35
 Unicode code points after trimming; do not derive new names by truncating IDs.
-IDs retain identity. Historical already-prepared v1/v2 sequences remain valid;
-never rewrite frozen inputs or install changing code into a live self-hosted
+IDs retain identity. Historical v1/v2 stay readable and replayable; execution
+eligibility follows the current provider contract, not the alias.
+Never rewrite frozen inputs or install changing code into a live self-hosted
 sequence to add labels. Only the explicit metadata command renames existing
 records; a Dashboard read never does. Do not send unsupported flags to older
-installed drivers. See archive/implementation-history/plans/phase-28-dashboard-refinements.md.
+installed drivers. See docs/referencia/dashboard-ux.md and docs/referencia/cli.md.

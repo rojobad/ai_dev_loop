@@ -54,12 +54,20 @@ Los indicadores de cobertura distinguen datos completos, parciales y vacíos. Un
 run sin lanzamiento no entra en la cohorte. Un intento sin duración resuelta no
 recibe una duración inventada.
 
-Cada panel ofrece `Information` para consultar por teclado sus definiciones y
-procedencia sin mantener párrafos instructivos abiertos. Escape/cerrar devuelve
-el foco. Warnings, progreso, frescura y errores accionables siguen visibles. La
-actividad diaria mantiene su equivalente textual dentro de un disclosure bajo
-demanda. Los tooltips de los gráficos aparecen sobre los paneles y se confinan al
-viewport también en pantallas estrechas.
+Cada panel ofrece un botón con una *i* en un círculo para consultar por teclado
+sus definiciones y procedencia sin mantener párrafos instructivos abiertos.
+Escape/cerrar devuelve el foco. Warnings, progreso, frescura y errores
+accionables siguen visibles. La ficha del run y su linaje se consultan desde
+ese botón; el timeline muestra solo el nombre seleccionado, el contador y el
+gráfico. Sus tarjetas de intentos quedan cerradas por defecto en `Attempt details`.
+Los dos gráficos de resumen ocupan cada uno el ancho completo. La actividad
+diaria mantiene su equivalente textual dentro de un disclosure bajo demanda.
+Los tooltips de los gráficos aparecen sobre los paneles y se confinan al
+viewport también en pantallas estrechas. Muestran nombres legibles; los IDs
+técnicos permanecen en los detalles de inspección. El mapa de secuencias tiene scroll
+interno vertical y horizontal, con un alto máximo de 500 px. Al cambiar la
+métrica de actividad, su espacio se reserva durante la carga para evitar
+saltos de página.
 
 Los instantes se muestran como `DD/MM/yyyy HH:mm` en la zona elegida, los días
 como `DD/MM/yyyy` y las duraciones resueltas como horas/minutos (`<1 m` cuando
@@ -137,5 +145,6 @@ inicio de proceso, comando y grupo siguen coincidiendo. Esos modos son para la
 aceptación desde fuentes, no para controlar el scheduler del operador.
 
 Consulta [Referencia del dashboard](../referencia/dashboard.md) para las
-definiciones y límites, y [Seguridad y privacidad](seguridad-privacidad.md) para
+definiciones y límites, [Gobernanza de UX](../referencia/dashboard-ux.md) para
+los criterios de futuras modificaciones, y [Seguridad y privacidad](seguridad-privacidad.md) para
 la frontera de exposición local.

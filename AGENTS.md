@@ -118,15 +118,31 @@ user-systemd scheduler timer in WSL, follow
 explicit operator actions; do not perform them during implementation or tests
 unless the active phase and user explicitly authorize real workstation work.
 
+## Dashboard governance
+
+For Dashboard planning, implementation and review, read
+[Dashboard UX governance](docs/referencia/dashboard-ux.md) and
+[Dashboard data contracts](docs/referencia/dashboard.md), then apply
+`.cursor/rules/ai-dev-loop-dashboard-contracts.mdc` and
+`.cursor/rules/ai-dev-loop-dashboard-refinements-contracts.mdc`.
+The DUX contracts record the operator's current decisions: graphs first,
+explanations behind the italic circled information icon, details on demand,
+short names and secondary IDs, stable scroll/layout, automatic valid scope,
+and shared selected-IANA date/duration formatting. Historical phase plans do
+not restore superseded presentation. Apply relevant contracts to the approved
+change; this guidance does not authorize unrelated implementation or deployment.
+
 ## Chosen short names for named preparation
 
 Phase 28 introduces scheduler-owned presentation names. Once the installed CLI
 supports named preparation, every new standalone submission must explicitly
-supply --short-name, and every new sequence must use manifest v3 with short_name
-on the sequence and each planned phase. Choose meaningful names of at most 35
+supply --short-name, and every new sequence must include short_name on the
+sequence and each planned phase. Use the installed CLI's supported named format: v3 for Codex-only and
+v4 for SDK/mixed sequences. Choose meaningful names of at most 35
 Unicode code points after trimming; do not derive new names by truncating IDs.
-IDs retain identity. Historical already-prepared v1/v2 sequences remain valid;
-never rewrite frozen inputs or install changing code into a live self-hosted
+IDs retain identity. Historical v1/v2 stay readable and replayable; execution
+eligibility follows the current provider contract, not the alias.
+Never rewrite frozen inputs or install changing code into a live self-hosted
 sequence to add labels. Only the explicit metadata command renames existing
 records; a Dashboard read never does. Do not send unsupported flags to older
-installed drivers. See archive/implementation-history/plans/phase-28-dashboard-refinements.md.
+installed drivers. See docs/referencia/dashboard-ux.md and docs/referencia/cli.md.
