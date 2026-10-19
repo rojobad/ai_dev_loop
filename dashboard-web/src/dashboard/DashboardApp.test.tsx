@@ -424,12 +424,12 @@ describe("C263 overview shell", () => {
     const dataSource = new ImmediateDataSource();
     render(<DashboardApp dataSource={dataSource} />);
     await user.selectOptions(await screen.findByLabelText("Select loaded run"), "standalone-run");
-    expect(await screen.findByText(/Selected run:/)).toHaveTextContent("standalone-run");
+    expect(await screen.findByLabelText("Selected run")).toHaveAttribute("data-run-id", "standalone-run");
     expect(await screen.findByText("Attempt ID: attempt-cursor")).toBeInTheDocument();
 
     await user.selectOptions(screen.getByLabelText("Project"), "project-b");
     await waitFor(() =>
-      expect(screen.queryByText(/Selected run:/)).not.toBeInTheDocument(),
+      expect(screen.queryByLabelText("Selected run")).not.toBeInTheDocument(),
     );
     expect(
       screen.getByText("Select an exact run cell or the loaded-run control to inspect it."),

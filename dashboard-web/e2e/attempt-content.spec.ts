@@ -119,6 +119,7 @@ test("C265-1 deliberate controls preserve exact implementer and reviewer ownersh
 
   await applyMapScope(page);
   await page.getByLabel("Select loaded run").selectOption("current-map-run");
+  await page.locator(".attempt-details-disclosure > summary").click();
   await page.getByRole("button", { name: /Attempt ID: attempt-current-map-run-execution/ }).click();
   await expect(page.getByRole("dialog")).toContainText("codex.implementer_bootstrap");
   expect(
@@ -138,6 +139,7 @@ test("C265-1 deliberate controls preserve exact implementer and reviewer ownersh
   await page.getByRole("button", { name: "Close attempt details" }).click();
 
   await page.getByLabel("Select loaded run").selectOption("older-map-run");
+  await page.locator(".attempt-details-disclosure > summary").click();
   await page.getByRole("button", { name: "Load more attempts" }).click();
   await page.getByRole("button", { name: /Attempt ID: attempt-older-map-run-review-retry/ }).click();
   const sensitiveBeforeReviewerAction = operations.filter((call) =>
@@ -187,6 +189,7 @@ test("C265-3 Escape retires an in-flight sensitive body and late success cannot 
   }
   await applyMapScope(page);
   await page.getByLabel("Select loaded run").selectOption("current-map-run");
+  await page.locator(".attempt-details-disclosure > summary").click();
   const row = page.getByRole("button", { name: /Attempt ID: attempt-current-map-run-execution/ });
   await row.click();
   writeFileSync(join(stateRoot, "hold-content-response"), "hold\n", "utf-8");
@@ -229,6 +232,7 @@ test("C265-3 paging keeps focus contained through loading and terminal completio
   try {
     await applyMapScope(page);
     await page.getByLabel("Select loaded run").selectOption("current-map-run");
+    await page.locator(".attempt-details-disclosure > summary").click();
     const row = page.getByRole("button", { name: /Attempt ID: attempt-current-map-run-execution/ });
     await row.click();
     const dialog = page.getByRole("dialog");

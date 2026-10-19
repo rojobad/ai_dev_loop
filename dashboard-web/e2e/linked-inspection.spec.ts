@@ -158,6 +158,47 @@ test.afterAll(async () => {
   if (stateRoot) rmSync(stateRoot, { recursive: true, force: true });
 });
 
+test("compact panels keep full-width charts, spaced filters and collapsed attempts", async ({ page }) => {
+  await applyMapScope(page);
+  for (const width of [1095, 390]) {
+    await page.setViewportSize({ width, height: 884 });
+    const geometry = await page.evaluate(() => {
+      const overview = document.querySelector<HTMLElement>(".overview-grid")!;
+      const panels = [...overview.children].map((element) => element.getBoundingClientRect());
+      const fields = [...document.querySelectorAll(".filter-grid input, .filter-grid select")]
+        .map((element) => element.getBoundingClientRect().bottom);
+      const actions = document.querySelector(".filter-actions")!.getBoundingClientRect();
+      return {
+        widths: panels.map((box) => box.width),
+        overviewWidth: overview.getBoundingClientRect().width,
+        separated: panels[1].top >= panels[0].bottom,
+        filterGap: actions.top - Math.max(...fields),
+        icons: [...document.querySelectorAll(".information-trigger")].every((element) =>
+          element.textContent?.trim() === "i" && getComputedStyle(element).borderRadius === "50%",
+        ),
+      };
+    });
+    expect(geometry.widths.every((width) => Math.abs(width - geometry.overviewWidth) < 2)).toBe(true);
+    expect(geometry.separated).toBe(true);
+    expect(geometry.filterGap).toBeGreaterThanOrEqual(12);
+    expect(geometry.icons).toBe(true);
+  }
+  await page.setViewportSize({ width: 1095, height: 884 });
+  await page.getByLabel("Select loaded run").selectOption("current-map-run");
+  await expect(page.getByLabel("Selected run", { exact: true })).toHaveAttribute("data-run-id", "current-map-run");
+  await expect(page.locator(".run-metadata")).toHaveCount(0);
+  await expect(page.locator(".lineage-line")).toHaveCount(0);
+  await expect(page.locator(".attempt-details-disclosure")).not.toHaveAttribute("open");
+  await expect(page.locator(".attempt-rows")).not.toBeVisible();
+  await clickTimelineInterval(page, "current-map-run");
+  await page.getByRole("button", { name: "Close attempt details" }).click();
+  const summary = page.locator(".attempt-details-disclosure > summary");
+  await expect(summary).toBeFocused();
+  await expect(page.locator(".attempt-details-disclosure")).not.toHaveAttribute("open");
+  await summary.click();
+  await expect(page.getByRole("button", { name: /Attempt ID: attempt-current-map-run-execution/ })).toBeVisible();
+});
+
 test("C282-1..2 real chart keeps one selected run and stable paged attempt captions", async ({
   page,
 }) => {
@@ -180,16 +221,22 @@ test("C282-1..2 real chart keeps one selected run and stable paged attempt capti
 
   await clickReplacementChartCell(page, 1);
   const firstSelectionScroll = await page.evaluate(() => window.scrollY);
-  await expect(page.getByText(/Selected run:/)).toContainText("older-map-run");
-  await expect(page.locator(".run-metadata")).toHaveCount(1);
+  await expect(page.getByLabel("Selected run", { exact: true })).toHaveAttribute("data-run-id", "older-map-run");
+  await expect(page.locator(".run-metadata")).toHaveCount(0);
+  await page.getByRole("button", { name: "Information about Attempt timeline" }).click();
   await expect(page.locator(".lineage-line")).toContainText("generation 1 · planned_run");
+  await page.getByRole("button", { name: "Close", exact: true }).click();
   await clickReplacementChartCell(page, 2);
   expect(await page.evaluate(() => window.scrollY)).toBe(firstSelectionScroll);
-  await expect(page.getByText(/Selected run:/)).toContainText("current-map-run");
-  await expect(page.locator(".run-metadata")).toHaveCount(1);
+  await expect(page.getByLabel("Selected run", { exact: true })).toHaveAttribute("data-run-id", "current-map-run");
+  await expect(page.locator(".run-metadata")).toHaveCount(0);
+  await page.getByRole("button", { name: "Information about Attempt timeline" }).click();
   await expect(page.locator(".lineage-line")).toContainText(
     "generation 2 · implementer_retry",
   );
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(page.locator(".attempt-rows")).not.toBeVisible();
+  await page.locator(".attempt-details-disclosure > summary").click();
   const currentAttemptRow = page.getByRole("button", {
     name: /Attempt ID: attempt-current-map-run-execution/,
   });
@@ -208,8 +255,9 @@ test("C282-1..2 real chart keeps one selected run and stable paged attempt capti
   expect(await page.evaluate(() => window.scrollY)).toBe(timelineScroll);
 
   await page.getByLabel("Select loaded run").selectOption("older-map-run");
-  await expect(page.getByText(/Selected run:/)).toContainText("older-map-run");
+  await expect(page.getByLabel("Selected run", { exact: true })).toHaveAttribute("data-run-id", "older-map-run");
   await expect(page.getByText("25 loaded / 27 recorded attempts")).toBeVisible();
+  await page.locator(".attempt-details-disclosure > summary").click();
   await page.getByRole("button", { name: "Load more attempts" }).click();
   const reviewerRow = page.getByRole("button", {
     name: /Attempt ID: attempt-older-map-run-review-retry/,
@@ -291,7 +339,10 @@ test("F-03 refreshes the exact current selection at the normal cadence after sat
     await page.waitForTimeout(100);
     await page.clock.runFor(10_000);
 
-    await expect(page.getByText(/Selected run:/)).toContainText("current-map-run");
+    await expect(page.getByLabel("Selected run", { exact: true })).toHaveAttribute("data-run-id", "current-map-run");
+    await expect(page.getByRole("img", { name: "Gantt timeline for current-map-run" })).toBeVisible();
+    await expect(page.locator(".attempt-rows")).not.toBeVisible();
+    await page.locator(".attempt-details-disclosure > summary").click();
     await expect(page.getByText("Attempt ID: attempt-current-map-run-execution")).toBeVisible();
     await expect(page.getByText("Attempt ID: attempt-older-map-run-execution")).toHaveCount(0);
     await expect

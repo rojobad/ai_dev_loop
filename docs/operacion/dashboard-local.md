@@ -54,11 +54,15 @@ Los indicadores de cobertura distinguen datos completos, parciales y vacíos. Un
 run sin lanzamiento no entra en la cohorte. Un intento sin duración resuelta no
 recibe una duración inventada.
 
-Cada panel ofrece `Information` para consultar por teclado sus definiciones y
-procedencia sin mantener párrafos instructivos abiertos. Escape/cerrar devuelve
-el foco. Warnings, progreso, frescura y errores accionables siguen visibles. La
-actividad diaria mantiene su equivalente textual dentro de un disclosure bajo
-demanda. Los tooltips de los gráficos aparecen sobre los paneles y se confinan al
+Cada panel ofrece un botón con una *i* en un círculo para consultar por teclado
+sus definiciones y procedencia sin mantener párrafos instructivos abiertos.
+Escape/cerrar devuelve el foco. Warnings, progreso, frescura y errores
+accionables siguen visibles. La ficha del run y su linaje se consultan desde
+ese botón; el timeline muestra solo el nombre seleccionado, el contador y el
+gráfico. Sus tarjetas de intentos quedan cerradas por defecto en `Attempt details`.
+Los dos gráficos de resumen ocupan cada uno el ancho completo. La actividad
+diaria mantiene su equivalente textual dentro de un disclosure bajo demanda.
+Los tooltips de los gráficos aparecen sobre los paneles y se confinan al
 viewport también en pantallas estrechas.
 
 Los instantes se muestran como `DD/MM/yyyy HH:mm` en la zona elegida, los días

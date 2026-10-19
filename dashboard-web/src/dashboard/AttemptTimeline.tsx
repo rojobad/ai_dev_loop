@@ -183,7 +183,7 @@ export function attemptTimelineOption(
   const rows = buildTimelineRows(items);
   return {
     animation: false,
-    grid: { left: 18, right: 22, top: 18, bottom: 68, containLabel: true },
+    grid: { left: 18, right: 22, top: 18, bottom: 24, containLabel: true },
     tooltip: {
       renderMode: "html",
       formatter: (value: unknown) => {
@@ -203,9 +203,13 @@ export function attemptTimelineOption(
     },
     xAxis: {
       type: "time",
-      name: `Observed scheduler timestamps · ${timeZone}`,
+      splitNumber: 4,
+      minInterval: 60_000,
       axisLabel: {
         formatter: (value: number) => formatAxisInstant(value, timeZone),
+        rotate: 90,
+        hideOverlap: true,
+        margin: 12,
       },
     },
     yAxis: {
@@ -287,6 +291,8 @@ export function AttemptTimeline({
   const generation = useRef(0);
   const pageController = useRef<AbortController | null>(null);
   const attemptButtons = useRef(new Map<string, HTMLButtonElement>());
+  const attemptDisclosure = useRef<HTMLDetailsElement>(null);
+  const attemptSummary = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const requestGeneration = ++generation.current;
@@ -444,7 +450,10 @@ export function AttemptTimeline({
     setSelectedAttemptId(null);
     if (attemptId !== null) {
       requestAnimationFrame(() => {
-        attemptButtons.current.get(attemptId)?.focus({ preventScroll: true });
+        const target = attemptDisclosure.current?.open
+          ? attemptButtons.current.get(attemptId)
+          : attemptSummary.current;
+        target?.focus({ preventScroll: true });
       });
     }
   };
@@ -483,13 +492,38 @@ export function AttemptTimeline({
       <div className="panel-heading">
         <div>
           <h2 id="timeline-heading">Attempt timeline</h2>
-          <p>Selected run: <strong>{selectedRun.shortName}</strong> · Run ID: {selectedRun.runId}</p>
+          <p className="selected-run-name" aria-label="Selected run" data-run-id={selectedRun.runId}>
+            <strong>{selectedRun.shortName}</strong>
+          </p>
         </div>
         <div className="panel-heading-actions">
           <span>{timeline.items.length} loaded / {metadata?.attemptCount ?? "?"} recorded attempts</span>
           <InformationControl label="Attempt timeline">
             <p>Rows follow the producer&apos;s chronological ordering and stable tie-breaker. Page exhaustion does not imply an active or unknown attempt completed.</p>
             <p>Roles come from authoritative component/effect pairs, not IDs. Selecting a row opens metadata only; prompt, review, and process output remain explicit reads.</p>
+            {metadata ? (
+              <dl className="run-metadata">
+                <div><dt>Short name</dt><dd>{metadata.shortName}</dd></div>
+                <div><dt>Project</dt><dd>{metadata.projectName}</dd></div>
+                <div><dt>Raw state</dt><dd>{metadata.state}</dd></div>
+                <div><dt>Implementer</dt><dd>{metadata.implementerProvider}</dd></div>
+                <div><dt>Submitted</dt><dd>{formatInstant(metadata.submittedAt, timeZone)}</dd></div>
+                <div><dt>Updated</dt><dd>{formatInstant(metadata.updatedAt, timeZone)}</dd></div>
+                <div><dt>Review budget</dt><dd>{metadata.reviewBudget.completed} / {metadata.reviewBudget.max}</dd></div>
+                <div><dt>Pending Codex role / turn</dt><dd>{formatOptional(metadata.codexPendingRole)} / {formatOptional(metadata.codexPendingTurn)}</dd></div>
+                <div><dt>Capacity reason</dt><dd>{formatOptional(metadata.codexCapacityReason)}</dd></div>
+                <div><dt>Implementer retry wait</dt><dd>{metadata.implementerRetryWaitUntil === null ? "not recorded" : formatInstant(metadata.implementerRetryWaitUntil, timeZone)}</dd></div>
+                <div><dt>Timeout retries</dt><dd>{metadata.implementerTimeoutAutomaticRetries ?? "not recorded"} / {metadata.implementerTimeoutRetryLimit ?? "not recorded"}</dd></div>
+                <div><dt>Recorded next action</dt><dd>{metadata.safeNextAction.kind}</dd></div>
+                <div><dt>Run ID</dt><dd>{metadata.runId}</dd></div>
+              </dl>
+            ) : inspect.loading ? <p className="loading-line">Reading selected run metadata…</p> : null}
+            {selectedRun.sequenceBinding ? (
+              <p className="lineage-line">
+                {selectedRun.sequenceBinding.sequenceShortName} · {selectedRun.sequenceBinding.sequenceName} · {selectedRun.sequenceBinding.sequenceId} · phase {selectedRun.sequenceBinding.ordinal} {selectedRun.sequenceBinding.phaseName} · generation {selectedRun.sequenceBinding.generation} · {selectedRun.sequenceBinding.attemptKind}
+                {selectedRun.sequenceBinding.sourceRunId ? ` · replaces ${selectedRun.sequenceBinding.sourceRunId}` : ""}
+              </p>
+            ) : <p className="lineage-line">Standalone run</p>}
             {timeline.observations.length ? (
               <ul>
                 {timeline.observations.map((item) => (
@@ -511,29 +545,6 @@ export function AttemptTimeline({
             : ""}
         </p>
       ) : null}
-      {metadata ? (
-        <dl className="run-metadata">
-          <div><dt>Short name</dt><dd>{metadata.shortName}</dd></div>
-          <div><dt>Project</dt><dd>{metadata.projectName}</dd></div>
-          <div><dt>Raw state</dt><dd>{metadata.state}</dd></div>
-          <div><dt>Implementer</dt><dd>{metadata.implementerProvider}</dd></div>
-          <div><dt>Submitted</dt><dd>{formatInstant(metadata.submittedAt, timeZone)}</dd></div>
-          <div><dt>Updated</dt><dd>{formatInstant(metadata.updatedAt, timeZone)}</dd></div>
-          <div><dt>Review budget</dt><dd>{metadata.reviewBudget.completed} / {metadata.reviewBudget.max}</dd></div>
-          <div><dt>Pending Codex role / turn</dt><dd>{formatOptional(metadata.codexPendingRole)} / {formatOptional(metadata.codexPendingTurn)}</dd></div>
-          <div><dt>Capacity reason</dt><dd>{formatOptional(metadata.codexCapacityReason)}</dd></div>
-          <div><dt>Implementer retry wait</dt><dd>{metadata.implementerRetryWaitUntil === null ? "not recorded" : formatInstant(metadata.implementerRetryWaitUntil, timeZone)}</dd></div>
-          <div><dt>Timeout retries</dt><dd>{metadata.implementerTimeoutAutomaticRetries ?? "not recorded"} / {metadata.implementerTimeoutRetryLimit ?? "not recorded"}</dd></div>
-          <div><dt>Recorded next action</dt><dd>{metadata.safeNextAction.kind}</dd></div>
-          <div><dt>Run ID</dt><dd>{metadata.runId}</dd></div>
-        </dl>
-      ) : inspect.loading ? <p className="loading-line">Reading selected run metadata…</p> : null}
-      {selectedRun.sequenceBinding ? (
-        <p className="lineage-line">
-          {selectedRun.sequenceBinding.sequenceShortName} · {selectedRun.sequenceBinding.sequenceName} · {selectedRun.sequenceBinding.sequenceId} · phase {selectedRun.sequenceBinding.ordinal} {selectedRun.sequenceBinding.phaseName} · generation {selectedRun.sequenceBinding.generation} · {selectedRun.sequenceBinding.attemptKind}
-          {selectedRun.sequenceBinding.sourceRunId ? ` · replaces ${selectedRun.sequenceBinding.sourceRunId}` : ""}
-        </p>
-      ) : <p className="lineage-line">Standalone run</p>}
       {timeline.error ? (
         <p className="error-banner" role="alert">
           Timeline: {timeline.error}
@@ -542,47 +553,49 @@ export function AttemptTimeline({
             : ""}
         </p>
       ) : null}
-      {timeline.observations.length ? (
-        <p className="observation-line">
-          Latest successful timeline page · {formatAge(timeline.observations.at(-1)!.receivedAt)}
-        </p>
-      ) : null}
       {timeline.items.length ? (
         <>
           <DashboardChart
             ariaLabel={`Gantt timeline for ${selectedRun.runId}`}
-            height={Math.max(260, timeline.items.length * 40)}
+            height={Math.max(320, timeline.items.length * 40 + 130)}
             onEvents={chartEvents}
             option={option}
             ownershipKey={selectedRun.runId}
             theme={theme}
           />
-          <div className="attempt-rows" aria-label="Keyboard-selectable attempt timeline rows">
-            {rows.map((row) => (
-              <button
-                type="button"
-                key={row.attempt.attemptId}
-                ref={(node) => {
-                  if (node) attemptButtons.current.set(row.attempt.attemptId, node);
-                  else attemptButtons.current.delete(row.attempt.attemptId);
-                }}
-                aria-pressed={selectedAttemptId === row.attempt.attemptId}
-                onClick={() => selectAttempt(row.attempt.attemptId)}
-              >
-                <span className="run-row-title">{row.caption}</span>
-                <span>{row.role} · {row.attempt.status}</span>
-                <span>{row.attempt.component} · {row.attempt.effectKind ?? "no recorded effect"}</span>
-                <span>
-                  {row.shape === "interval"
-                    ? `${formatInstant(row.attempt.launchRequestedAt!, timeZone)} → ${formatInstant(row.attempt.completedAt!, timeZone)} · ${formatDuration(row.attempt.observedDurationSeconds)}`
-                    : row.shape === "launch-marker"
-                      ? `Launched ${formatInstant(row.attempt.launchRequestedAt!, timeZone)}; no observed end`
-                      : `Created ${formatInstant(row.attempt.createdAt, timeZone)}; not launched`}
-                </span>
-                <span>Attempt ID: {row.attempt.attemptId}</span>
-              </button>
-            ))}
-          </div>
+          <details
+            key={selectedRun.runId}
+            ref={attemptDisclosure}
+            className="attempt-details-disclosure"
+          >
+            <summary ref={attemptSummary}>Attempt details</summary>
+            <div className="attempt-rows" aria-label="Keyboard-selectable attempt timeline rows">
+              {rows.map((row) => (
+                <button
+                  type="button"
+                  key={row.attempt.attemptId}
+                  ref={(node) => {
+                    if (node) attemptButtons.current.set(row.attempt.attemptId, node);
+                    else attemptButtons.current.delete(row.attempt.attemptId);
+                  }}
+                  aria-pressed={selectedAttemptId === row.attempt.attemptId}
+                  onClick={() => selectAttempt(row.attempt.attemptId)}
+                >
+                  <span className="run-row-title">{row.caption}</span>
+                  <span>{row.role} · {row.attempt.status}</span>
+                  <span>{row.attempt.component} · {row.attempt.effectKind ?? "no recorded effect"}</span>
+                  <span>
+                    {row.shape === "interval"
+                      ? `${formatInstant(row.attempt.launchRequestedAt!, timeZone)} → ${formatInstant(row.attempt.completedAt!, timeZone)} · ${formatDuration(row.attempt.observedDurationSeconds)}`
+                      : row.shape === "launch-marker"
+                        ? `Launched ${formatInstant(row.attempt.launchRequestedAt!, timeZone)}; no observed end`
+                        : `Created ${formatInstant(row.attempt.createdAt, timeZone)}; not launched`}
+                  </span>
+                  <span>Attempt ID: {row.attempt.attemptId}</span>
+                </button>
+              ))}
+            </div>
+          </details>
           {selectedAttempt ? (
             <>
               <p className="selected-attempt" aria-live="polite">

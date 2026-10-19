@@ -360,7 +360,8 @@ test("C266-3 failure recovery and filter retirement keep only current memory own
   await expect(page.locator(".activity-total strong")).toHaveText("29");
 
   await page.getByLabel("Select loaded run").selectOption("current-map-run");
-  await expect(page.getByText(/Selected run:/)).toContainText("current-map-run");
+  await page.locator(".attempt-details-disclosure > summary").click();
+  await expect(page.getByLabel("Selected run", { exact: true })).toHaveAttribute("data-run-id", "current-map-run");
   await page.getByRole("button", { name: /Attempt ID: attempt-current-map-run-execution/ }).click();
   const control = (name: string) => join(stateRoot, name);
   for (const name of ["hold-content-response", "release-content-response", "content-response-started"]) {

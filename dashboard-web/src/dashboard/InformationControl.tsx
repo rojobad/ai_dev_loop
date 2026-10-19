@@ -80,9 +80,10 @@ export function InformationControl({
         aria-controls={dialogId}
         aria-expanded={open}
         aria-label={`Information about ${label}`}
+        title={`Information about ${label}`}
         onClick={() => setOpen(true)}
       >
-        Information
+        <span className="information-icon" aria-hidden="true">i</span>
       </button>
       {open
         ? createPortal(

@@ -20,6 +20,8 @@ describe("C283-4 shared information control", () => {
 
     const trigger = screen.getByRole("button", { name: "Information about Test panel" });
     const background = screen.getByRole("button", { name: "Background action" });
+    expect(trigger).toHaveTextContent(/^i$/);
+    expect(trigger).toHaveAttribute("title", "Information about Test panel");
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("Detailed explanation")).not.toBeInTheDocument();
 

@@ -57,7 +57,7 @@ async function loadAllRuns(page: Page): Promise<void> {
 
 async function selectRun(page: Page, runId: string): Promise<void> {
   await page.getByLabel("Select loaded run").selectOption(runId);
-  await expect(page.getByText(/Selected run:/)).toContainText(runId);
+  await expect(page.getByLabel("Selected run", { exact: true })).toHaveAttribute("data-run-id", runId);
 }
 
 async function loadAllAttempts(page: Page): Promise<void> {
@@ -134,9 +134,12 @@ test("C267-1 installed wheel serves the complete offline provider-aware journey"
 
   await loadAllRuns(page);
   await selectRun(page, fixture.replacementRunId);
+  await page.getByRole("button", { name: "Information about Attempt timeline" }).click();
   await expect(page.locator(".lineage-line")).toContainText("implementer_retry");
+  await page.getByRole("button", { name: "Close", exact: true }).click();
   await expect(page.getByText(`${fixture.timelineTotal > 25 ? 25 : fixture.timelineTotal} loaded / ${fixture.timelineTotal} recorded attempts`)).toBeVisible();
   await loadAllAttempts(page);
+  await page.locator(".attempt-details-disclosure > summary").click();
 
   const sensitiveBefore = operations.filter((call) =>
     ["run.initial-prompt", "run.review", "run.review-content", "run.output"].includes(
