@@ -25,6 +25,7 @@ from ai_dev_loop.scheduler.application.cursor_evidence import (
     verify_recorded_usage_limit_fingerprint,
 )
 from ai_dev_loop.scheduler.application.cursor_retry_after import resolve_usage_limit_retry_seconds
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import context_uses_cursor_cli
 from ai_dev_loop.scheduler.application.cursor_sdk_journal import authenticate_sdk_journal
 from ai_dev_loop.scheduler.application.run_state_bridge import run_state_from_scheduler_context
 from ai_dev_loop.scheduler.application.scheduler_checkpoint import checkpoint_from_state
@@ -176,19 +177,24 @@ class CursorWorkflowService:
         with self.store.begin_read() as conn:
             if cursor_initial_recovery_blocks_dispatch(self.store, conn, run_id):
                 return receipts
-        usage_limit = self._maybe_schedule_usage_limit_continuation(
-            tick_owner_id,
-            tick_lease_generation,
-            run_id,
-        )
-        if usage_limit is not None:
-            receipts.append(usage_limit)
-        local = self._process_local_effect(tick_owner_id, tick_lease_generation, run_id)
-        if local is not None:
-            receipts.append(local)
+            state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            cursor_cli_retired = context_uses_cursor_cli(state.context)
+        if not cursor_cli_retired:
+            usage_limit = self._maybe_schedule_usage_limit_continuation(
+                tick_owner_id,
+                tick_lease_generation,
+                run_id,
+            )
+            if usage_limit is not None:
+                receipts.append(usage_limit)
+            local = self._process_local_effect(tick_owner_id, tick_lease_generation, run_id)
+            if local is not None:
+                receipts.append(local)
         ingest = self._maybe_ingest_completed_attempt(tick_owner_id, tick_lease_generation, run_id)
         if ingest is not None:
             receipts.append(ingest)
+        elif cursor_cli_retired:
+            receipts.append(TickRunReceipt(run_id=run_id, action="cursor_cli_runtime_retired"))
         return receipts
 
     def _maybe_schedule_usage_limit_continuation(

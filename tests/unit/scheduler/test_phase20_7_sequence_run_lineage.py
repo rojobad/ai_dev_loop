@@ -139,37 +139,49 @@ def _prepare_sequence_without_migration(
     manifest_path: Path | None = None,
     sequence_id: str = FIXED_SEQUENCE_ID,
     run_ids: tuple[str, str] = FIXED_RUN_IDS,
+    codex_implementer: bool = False,
 ) -> str:
     manifest_file = manifest_path or git_repo / "sequence.yaml"
+    phases: list[dict[str, object]] = [
+        {
+            "name": "phase-one",
+            "short_name": "phase-one",
+            "plan_path": "docs/plans/sample-plan.md",
+            "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
+            "commit_message": "checkpoint after phase one",
+            "codex": {
+                "review_model": "gpt-5.6-sol",
+                "review_reasoning_effort": "high",
+            },
+        },
+        {
+            "name": "phase-two",
+            "short_name": "phase-two",
+            "plan_path": "docs/plans/sample-plan.md",
+            "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
+            "codex": {
+                "review_model": "gpt-5.6-sol",
+                "review_reasoning_effort": "high",
+            },
+        },
+    ]
+    if codex_implementer:
+        implementer = {
+            "provider": "codex",
+            "command": "codex",
+            "model": "gpt-5.6-sol",
+            "reasoning_effort": "high",
+            "timeout_minutes": 90,
+        }
+        for phase in phases:
+            phase["implementer"] = implementer
     manifest = _write_manifest(
         manifest_file,
         _manifest_yaml(
             name=manifest_name,
             schema_version=3,
             short_name=manifest_name,
-            phases=[
-                {
-                    "name": "phase-one",
-                    "short_name": "phase-one",
-                    "plan_path": "docs/plans/sample-plan.md",
-                    "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
-                    "commit_message": "checkpoint after phase one",
-                    "codex": {
-                        "review_model": "gpt-5.6-sol",
-                        "review_reasoning_effort": "high",
-                    },
-                },
-                {
-                    "name": "phase-two",
-                    "short_name": "phase-two",
-                    "plan_path": "docs/plans/sample-plan.md",
-                    "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
-                    "codex": {
-                        "review_model": "gpt-5.6-sol",
-                        "review_reasoning_effort": "high",
-                    },
-                },
-            ],
+            phases=phases,
         ),
     )
     run_counter = {"value": 0}
@@ -697,7 +709,9 @@ def test_v9_migration_backfills_blocked_and_abort_pending_sequences(
         "db_path": db,
         "artifact_root": tmp_path / "artifacts",
     }
-    sequence_id = _prepare_sequence_without_migration(git_repo, scheduler_paths)
+    sequence_id = _prepare_sequence_without_migration(
+        git_repo, scheduler_paths, codex_implementer=True
+    )
     start = _start_sequence_without_migration(scheduler_paths, sequence_id)
     reconcile = SequenceReconcileService(store, now_factory=lambda: FIXED_NOW)
     with store.begin_immediate() as conn:
@@ -732,6 +746,7 @@ def test_v9_migration_backfills_blocked_and_abort_pending_sequences(
             "fixture-project-20260912T120000Z-run100",
             "fixture-project-20260912T120000Z-run101",
         ),
+        codex_implementer=True,
     )
     pending_start = _start_sequence_without_migration(scheduler_paths, pending_sequence_id)
     with store.begin_immediate() as conn:
@@ -804,7 +819,9 @@ def test_v9_migration_backfills_finalized_multi_phase_sequence_with_distinct_tim
         "db_path": db,
         "artifact_root": tmp_path / "artifacts",
     }
-    sequence_id = _prepare_sequence_without_migration(git_repo, scheduler_paths)
+    sequence_id = _prepare_sequence_without_migration(
+        git_repo, scheduler_paths, codex_implementer=True
+    )
     start = _start_sequence_without_migration(scheduler_paths, sequence_id)
     start_at = FIXED_NOW.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     handoff_at = (FIXED_NOW + timedelta(hours=2)).astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -1142,7 +1159,9 @@ def test_open_readonly_v8_database_restores_planned_run_binding_check(
 ) -> None:
     db = _pause_v8_database(tmp_path)
     scheduler_paths = {"db_path": db, "artifact_root": tmp_path / "artifacts"}
-    sequence_id = _prepare_sequence_without_migration(git_repo, scheduler_paths)
+    sequence_id = _prepare_sequence_without_migration(
+        git_repo, scheduler_paths, codex_implementer=True
+    )
     _start_sequence_without_migration(scheduler_paths, sequence_id)
     store = SqliteSchedulerStore(db, bootstrap=False)
     with store.begin_immediate() as conn:

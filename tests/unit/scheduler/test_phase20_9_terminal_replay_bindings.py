@@ -49,7 +49,11 @@ from ai_dev_loop.scheduler.domain.sequence import (
     PreparedSequenceDefinition,
     RepositoryTargetBinding,
 )
-from ai_dev_loop.scheduler.domain.state import CheckpointPendingState, CompletedState
+from ai_dev_loop.scheduler.domain.state import (
+    CheckpointPendingState,
+    CompletedState,
+    ImplementerBinding,
+)
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
 FIXED_NOW = datetime(2026, 9, 17, 12, 30, tzinfo=UTC)
@@ -132,6 +136,24 @@ def _install_finalize_ready_peer_sequence(
     peer_state = sample_submitted_state(run_id=peer_run_id, repo_root=str(peer_repo.resolve()))
     peer_state = peer_state.model_copy(
         update={
+            "context": peer_state.context.model_copy(
+                update={
+                    "schema_version": 5,
+                    "implementer": ImplementerBinding(
+                        provider="codex",
+                        command="codex",
+                        model="gpt-5.6-sol",
+                        reasoning_effort="high",
+                        timeout_minutes=90,
+                        sandbox="workspace-write",
+                        approval_policy="never",
+                    ),
+                }
+            )
+        }
+    )
+    peer_state = peer_state.model_copy(
+        update={
             "idempotency_key": secrets.token_hex(32),
             "context": peer_state.context.model_copy(
                 update={
@@ -202,6 +224,7 @@ def _install_finalize_ready_peer_sequence(
         commit_message=None,
     )
     definition = PreparedSequenceDefinition(
+        schema_version=2,
         sequence_id=peer_sequence_id,
         name="peer-finalize",
         project_name="fixture-project",

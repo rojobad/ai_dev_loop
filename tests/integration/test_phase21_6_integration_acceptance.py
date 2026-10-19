@@ -275,7 +275,7 @@ def test_c04_residual_risk_run_inspect_via_public_cli(
     monkeypatch.setenv("XDG_STATE_HOME", str(isolated_xdg / "state"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(isolated_xdg / "config"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(isolated_xdg / "cache"))
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "blocked_environment")
     run_id = submit_sample_run(git_repo, scheduler_paths)
     start_run(run_id, db_path=scheduler_paths["db_path"])
@@ -297,7 +297,7 @@ def test_c04_waiting_codex_capacity_run_inspect_via_public_cli(
     monkeypatch.setenv("XDG_STATE_HOME", str(isolated_xdg / "state"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(isolated_xdg / "config"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(isolated_xdg / "cache"))
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "usage_limit")
     monkeypatch.setenv("FAKE_CODEX_CAPACITY", "exhausted")
     run_id = submit_sample_run(git_repo, scheduler_paths)
@@ -320,17 +320,8 @@ def test_c04_live_codex_stdout_before_and_after_release_via_bridge_client(
     monkeypatch.setenv("XDG_STATE_HOME", str(isolated_xdg / "state"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(isolated_xdg / "config"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(isolated_xdg / "cache"))
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
-    monkeypatch.setenv(
-        "FAKE_CODEX_CHILD_STDOUT_SENTINEL",
-        BRIDGE_CHILD_STDOUT_SENTINEL.decode("utf-8"),
-    )
-    monkeypatch.setenv(
-        "FAKE_CODEX_CHILD_STDERR_SENTINEL",
-        BRIDGE_CHILD_STDERR_SENTINEL.decode("utf-8"),
-    )
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
     release_path = tmp_path / "bridge-live-release"
-    monkeypatch.setenv("FAKE_CODEX_CHILD_RELEASE_FILE", str(release_path))
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "no_findings")
     run_id = submit_sample_run(git_repo, scheduler_paths)
     start_run(run_id, db_path=scheduler_paths["db_path"])
@@ -340,6 +331,15 @@ def test_c04_live_codex_stdout_before_and_after_release_via_bridge_client(
     tick = make_tick_service(git_repo, scheduler_paths, backend=backend)
     client = PublicIntegrationBridgeClient(env=_bridge_env(isolated_xdg, fake_clis))
     run_until(tick, run_id, target_kind="awaiting_codex_review", max_ticks=80)
+    monkeypatch.setenv(
+        "FAKE_CODEX_CHILD_STDOUT_SENTINEL",
+        BRIDGE_CHILD_STDOUT_SENTINEL.decode("utf-8"),
+    )
+    monkeypatch.setenv(
+        "FAKE_CODEX_CHILD_STDERR_SENTINEL",
+        BRIDGE_CHILD_STDERR_SENTINEL.decode("utf-8"),
+    )
+    monkeypatch.setenv("FAKE_CODEX_CHILD_RELEASE_FILE", str(release_path))
     _drive_live_codex_output_via_bridge(
         client,
         tick,
@@ -420,7 +420,7 @@ def test_c04_full_supervision_traversal_public_cli_only(
     monkeypatch.setenv("XDG_STATE_HOME", str(isolated_xdg / "state"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(isolated_xdg / "config"))
     monkeypatch.setenv("XDG_CACHE_HOME", str(isolated_xdg / "cache"))
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
     monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
     monkeypatch.setenv(
         "FAKE_CODEX_CHILD_STDOUT_SENTINEL",

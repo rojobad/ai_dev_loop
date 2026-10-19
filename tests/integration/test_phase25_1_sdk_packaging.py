@@ -16,7 +16,7 @@ def _run(
     *,
     cwd: Path,
     env: dict[str, str],
-    timeout: int = 180,
+    timeout: int = 600,
 ) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
         argv,

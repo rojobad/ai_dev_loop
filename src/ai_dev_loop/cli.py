@@ -251,18 +251,6 @@ def scheduler_submit_command(
             ),
         ),
     ] = None,
-    cursor_command: Annotated[
-        str | None,
-        typer.Option("--cursor-command", help="Override cursor.command."),
-    ] = None,
-    cursor_model: Annotated[
-        str | None,
-        typer.Option("--cursor-model", help="Override cursor.model."),
-    ] = None,
-    cursor_output_format: Annotated[
-        str | None,
-        typer.Option("--cursor-output-format", help="Override cursor.output_format."),
-    ] = None,
     codex_command: Annotated[
         str | None,
         typer.Option("--codex-command", help="Override codex.command."),
@@ -356,9 +344,6 @@ def scheduler_submit_command(
             prompt_source_path=prompt_source_path,
             codex_session_id=None,
             controller_session_id=controller_session_id,
-            cursor_command=cursor_command,
-            cursor_model=cursor_model,
-            cursor_output_format=cursor_output_format,
             codex_command=codex_command,
             codex_review_model=codex_review_model,
             codex_review_reasoning_effort=codex_review_reasoning_effort,
@@ -676,18 +661,6 @@ def scheduler_sequence_prepare_command(
             help="Optional controller Codex session ID provenance.",
         ),
     ] = None,
-    cursor_command: Annotated[
-        str | None,
-        typer.Option("--cursor-command", help="Default cursor.command override."),
-    ] = None,
-    cursor_model: Annotated[
-        str | None,
-        typer.Option("--cursor-model", help="Default cursor.model override."),
-    ] = None,
-    cursor_output_format: Annotated[
-        str | None,
-        typer.Option("--cursor-output-format", help="Default cursor.output_format override."),
-    ] = None,
     codex_command: Annotated[
         str | None,
         typer.Option("--codex-command", help="Default codex.command override."),
@@ -729,9 +702,6 @@ def scheduler_sequence_prepare_command(
             project_name=project_name,
             repo_path=repo_path,
             controller_session_id=controller_session_id,
-            cursor_command=cursor_command,
-            cursor_model=cursor_model,
-            cursor_output_format=cursor_output_format,
             codex_command=codex_command,
             review_skill=review_skill,
             max_review_iterations=max_review_iterations,

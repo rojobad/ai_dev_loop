@@ -339,6 +339,10 @@ def _install_fake_sdk(root: Path) -> None:
                 def observe(self, after_offset=None):
                     if os.environ.get("FAKE_CURSOR_SDK_REPLAY_SUCCESS") != "1":
                         raise RuntimeError("synthetic replay transport failure")
+                    if os.environ.get("FAKE_CURSOR_SDK_DISCOVER_UNIQUE_RUN") == "1":
+                        target = self.workspace / "tracked.txt"
+                        prior = target.read_text(encoding="utf-8") if target.is_file() else ""
+                        target.write_text(prior + "sdk implementation\\n", encoding="utf-8")
                     replay_usage_sequence = os.environ.get("FAKE_CURSOR_SDK_REPLAY_USAGE_SEQUENCE_JSON")
                     if replay_usage_sequence is not None:
                         usages = json.loads(replay_usage_sequence)
@@ -403,7 +407,21 @@ def _install_fake_sdk(root: Path) -> None:
                 def resume_agent(self, agent_id, options): return Agent(options.local.cwd)
                 def list_runs(self, agent_id, **kwargs):
                     class Page(list): next_cursor = None
-                    return Page()
+                    send_counter = os.environ.get("FAKE_CURSOR_SDK_SEND_COUNTER", "")
+                    send_completed = (
+                        bool(send_counter)
+                        and Path(send_counter).is_file()
+                        and Path(send_counter).read_text() == "1"
+                    )
+                    runs = (
+                        [Run(self.workspace)]
+                        if (
+                            os.environ.get("FAKE_CURSOR_SDK_DISCOVER_UNIQUE_RUN") == "1"
+                            and send_completed
+                        )
+                        else []
+                    )
+                    return Page(runs)
                 def get_run(self, run_id, options):
                     _block_reconciliation()
                     if os.environ.get("FAKE_CURSOR_SDK_NATIVE_UNAVAILABLE") == "1":

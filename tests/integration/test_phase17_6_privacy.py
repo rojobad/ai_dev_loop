@@ -41,6 +41,11 @@ def _submit(git_repo: Path, scheduler_paths: dict[str, Path]) -> str:
         controller_session_id=CONTROLLER_SESSION,
         codex_review_model="gpt-5.6-sol",
         codex_review_reasoning_effort="high",
+        implementer_provider="codex",
+        implementer_command="codex",
+        implementer_model="gpt-5.6-sol",
+        implementer_reasoning_effort="high",
+        implementer_timeout_minutes=90,
         db_path=scheduler_paths["db_path"],
         artifact_root=scheduler_paths["artifact_root"],
     )

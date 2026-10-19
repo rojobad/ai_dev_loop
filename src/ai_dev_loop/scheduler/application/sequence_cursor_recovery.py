@@ -12,6 +12,10 @@ from ai_dev_loop.scheduler.application.contracts import (
     SchedulerEngineErrorKind,
     TickRunReceipt,
 )
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import (
+    CURSOR_CLI_RETIRED_SUMMARY,
+    unsupported_sequence_cursor_cli_ordinals,
+)
 from ai_dev_loop.scheduler.domain.cursor_sequence_replacement import (
     CursorSequenceReplacementIntent,
 )
@@ -177,6 +181,11 @@ def bind_pending_cursor_sequence_intent(
     blocked = find_blocked_sequence_for_run(store, conn, source_run_id)
     if blocked is None:
         raise _invalid("source run is not the current blocked sequence leaf")
+    if ordinals := unsupported_sequence_cursor_cli_ordinals(blocked.definition):
+        raise _invalid(
+            f"sequence cursor recovery: {CURSOR_CLI_RETIRED_SUMMARY} "
+            f"Unsupported sequence ordinals: {', '.join(map(str, ordinals))}."
+        )
     if blocked.sequence_id != binding.sequence_id or blocked.current_ordinal != binding.ordinal:
         raise _invalid("sequence binding disagrees with the blocked sequence leaf")
     if store.has_sequence_abort_requested_for_run(
@@ -345,6 +354,11 @@ def adopt_cursor_sequence_successor(
     if intent.adoption_state == "adopted" and intent.record_digest != record_digest:
         raise _corrupt("cursor sequence recovery record digest changed")
     sequence = store.load_validated_sequence_state(conn, intent.sequence_id)
+    if ordinals := unsupported_sequence_cursor_cli_ordinals(sequence.definition):
+        raise _invalid(
+            f"sequence cursor adoption: {CURSOR_CLI_RETIRED_SUMMARY} "
+            f"Unsupported sequence ordinals: {', '.join(map(str, ordinals))}."
+        )
     if (
         isinstance(sequence, ActiveSequenceState)
         and sequence.current_run_id == intent.successor_run_id

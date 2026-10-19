@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+# Superseded by the SDK-native Phase 25.3 recovery/check matrix. Keep helpers
+# importable for historical evidence tests without executing retired CLI work.
+__test__ = False
+
 import ast
 import hashlib
 import json

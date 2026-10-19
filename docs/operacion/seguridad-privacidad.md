@@ -151,7 +151,11 @@ recomienda quitar la passphrase de la llave para evitar ese aviso.
 
 Sin el ciclo GitHub, el usuario decide manualmente si commitea despues de revisar el resultado final.
 
-## Clasificacion de limite de uso de Cursor
+## Clasificacion histórica de limite de uso de Cursor CLI
+
+Esta evidencia sigue siendo legible para auditoría, pero ya no autoriza otro
+turno Cursor CLI. Los runs Cursor nuevos usan fallos estructurados del SDK y la
+misma política durable de espera/recovery sin convertir telemetría en autoridad.
 
 - La clasificacion usa stderr crudo capturado en artefactos protegidos del scheduler,
   no el texto resumido de `last_error`.
@@ -187,7 +191,8 @@ solo revalida los inputs congelados y los checkpoints durablemente registrados.
 
 ## Identidad de agentes
 
-- Un run cuyo implementer es Cursor crea o reutiliza exactamente un Cursor chat ID.
+- Un run cuyo implementer es Cursor SDK crea o reutiliza exactamente un
+  `agent_id` y su conversación/store owned; no usa un chat Cursor CLI.
 - Un implementer Codex, cuando se selecciona, es una identidad distinta del reviewer B.
   Su session ID queda vacío hasta una captura autenticada y no se adivina. El
   scheduler la persiste en un artefacto protegido, reanuda exactamente esa sesión
@@ -209,7 +214,7 @@ solo revalida los inputs congelados y los checkpoints durablemente registrados.
 - Nunca se usa `--last`.
 - El orquestador no adivina session IDs.
 - Nunca se infieren valores heredados desde WSL `config.toml` ni desde el default de Codex CLI.
-- No uses la UI del reviewer (B) en paralelo con el worker; en legacy, no uses la UI de la sesion unica con `start`/`resume`.
+- No uses la UI del reviewer (B) en paralelo con el worker.
 
 ## Prompts y findings
 
@@ -238,13 +243,11 @@ Los artefactos crudos se guardan localmente con permisos restrictivos cuando el 
 
 `prepare` puede leer rollouts JSONL de una sesion UUID exacta, pero solo procesa eventos allowlisted (`session_meta`, `thread_settings_applied`, `turn_context`, incluidos wrappers `event_msg`). No retiene mensajes, prompts, herramientas ni payloads arbitrarios. `codex/session-runtime.json` contiene solo metadata permitida, un prefijo del session ID y ninguna ruta absoluta al rollout.
 
-## Actualizaciones de CLIs
+## Actualizaciones de Codex CLI
 
-- Solo flags de `start`/`resume` o consentimiento interactivo autorizan updates; `ai_dev_loop.yaml` nunca puede autorizarlos.
-- Se ejecuta unicamente `[configured_command, "update"]` con `shell=False`.
-- Non-TTY nunca pregunta ni actualiza implicitamente.
-- Un abort pendiente impide prompts y lanzamientos de updater.
-- Solo se actualizan CLIs WSL, no aplicaciones Desktop de Windows.
+- La actualización de Codex CLI es una acción explícita del operador;
+  `ai_dev_loop.yaml` nunca puede autorizarla.
+- El scheduler no actualiza implícitamente Codex ni Cursor Desktop/SDK.
 
 ## Hooks
 

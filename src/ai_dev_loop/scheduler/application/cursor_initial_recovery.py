@@ -34,6 +34,10 @@ from ai_dev_loop.scheduler.application.cursor_recovery_evidence import (
     analyze_cursor_recovery_evidence,
     resolve_authenticated_decisive_attempt,
 )
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import (
+    CURSOR_CLI_RETIRED_SUMMARY,
+    context_uses_cursor_cli,
+)
 from ai_dev_loop.scheduler.domain.cursor_contract import (
     RUN_CURSOR_TURN_EFFECT_ID,
     RUN_CURSOR_TURN_EFFECT_KIND,
@@ -204,6 +208,8 @@ class CursorInitialRecoveryService:
         now = self._now_factory()
         with self.store.begin_read() as conn:
             source_state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            if context_uses_cursor_cli(source_state.context):
+                raise _invalid(f"scheduler cursor forced recovery: {CURSOR_CLI_RETIRED_SUMMARY}")
             if isinstance(source_state.context.cursor, CursorSdkBinding):
                 from ai_dev_loop.scheduler.application.cursor_sdk_successor import (
                     CursorSdkSuccessorService,
@@ -256,6 +262,18 @@ class CursorInitialRecoveryService:
         receipts: list[TickRunReceipt] = []
         for row in rows:
             try:
+                with self.store.begin_read() as conn:
+                    source, _, _ = self.store.load_validated_snapshot(
+                        conn, str(row["source_run_id"])
+                    )
+                if context_uses_cursor_cli(source.context):
+                    receipts.append(
+                        TickRunReceipt(
+                            run_id=str(row["successor_run_id"]),
+                            action="cursor_cli_runtime_retired",
+                        )
+                    )
+                    continue
                 self._resume(row)
             except (
                 SchedulerEngineError,

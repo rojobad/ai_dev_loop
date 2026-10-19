@@ -96,12 +96,14 @@ and `docs/operacion/estado-artefactos.md`.
 
 ## Sequence Versions
 
-- Manifest v1 and frozen definition/entry v1 remain Cursor-only, with unchanged
-  canonical hashes. Manifest v2/v3 use independently frozen definition/entry v2
+- Manifest v1 and frozen definition/entry v1 remain historically Cursor-only,
+  with unchanged canonical hashes, but effective CLI-Cursor leaves are read-only.
+  Codex-only legacy definition/entry v2 remains executable. Manifest v2/v3 use independently frozen definition/entry v2
   implementer bindings; named v3 preserves `short_name`, and leaves materialize
   submitted context v6. Manifest v4 freezes complete per-phase SDK selection in
   definition/entry v3 and materializes context v8. Standalone SDK uses context v7.
   Existing lifecycle envelopes stay v1 and historical bytes are never upgraded.
+  Fresh v3 is Codex-only; fresh v4 is the SDK/mixed-provider surface.
 - Omitted v2 implementer means Cursor. A selected Codex phase can inherit YAML
   defaults of the same provider, with explicit phase fields taking precedence.
   Reviewer model/reasoning remain mandatory per phase. Null or conflicting

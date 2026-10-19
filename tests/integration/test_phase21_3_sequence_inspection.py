@@ -746,13 +746,8 @@ def test_f04_safe_next_action_wait_until_from_run_state(
     isolated_xdg: Path,
 ) -> None:
     monkeypatch.setenv("XDG_STATE_HOME", str(isolated_xdg / "state"))
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
-    monkeypatch.setenv("FAKE_AGENT_RETRY_AFTER_SECONDS", "120")
-    monkeypatch.setenv("FAKE_AGENT_RUN_SEQUENCE", "usage_limit_retry,success")
-    monkeypatch.setenv(
-        "FAKE_AGENT_RUN_COUNTER",
-        str(fake_clis["agent_log"].parent / "seq-usage-limit-counter.txt"),
-    )
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_MODE", "usage_limit")
+    monkeypatch.setenv("FAKE_CODEX_CAPACITY", "exhausted")
     sequence_id = _prepare_sequence(git_repo, scheduler_paths)
     run_id = _start_service(scheduler_paths).start(sequence_id).run_id
     now = datetime(2026, 9, 18, 12, 0, tzinfo=UTC)
@@ -760,19 +755,17 @@ def test_f04_safe_next_action_wait_until_from_run_state(
         default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
     )
     tick = _run_tick_service(git_repo, scheduler_paths, now=now, backend=backend)
-    _run_until(tick, run_id, target_kind="waiting_usage_limit")
+    _run_until(tick, run_id, target_kind="waiting_codex_capacity")
     with tick.store.begin_read() as conn:
         state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
-    wait_until = state.cursor.wait_until
-    assert wait_until is not None
+    assert state.codex.capacity_continuation is not None
     code, payload, _ = _invoke(["integration", "sequence", "inspect", sequence_id])
     assert code == 0
     action = payload["data"]["safeNextAction"]
-    assert action["kind"] == "wait_until"
+    assert action["kind"] == "scheduler_tick"
     assert action["runId"] == run_id
     assert action["sequenceId"] == sequence_id
-    assert action["waitUntil"] == wait_until
-    assert wait_until not in (action.get("command") or "")
+    assert action["waitUntil"] is None
 
 
 def test_f05_phase_input_errors_use_integration_envelopes(
@@ -829,7 +822,9 @@ def test_f02_v8_pre_lineage_database_projects_via_integration_cli(
         )
         .fetchone()
     )
-    sequence_id = _prepare_sequence_without_migration(git_repo, scheduler_paths)
+    sequence_id = _prepare_sequence_without_migration(
+        git_repo, scheduler_paths, codex_implementer=True
+    )
     start = _start_sequence_without_migration(scheduler_paths, sequence_id)
     run_id = start.run_id
     ledger_before = _logical_ledger_snapshot(scheduler_paths["db_path"])

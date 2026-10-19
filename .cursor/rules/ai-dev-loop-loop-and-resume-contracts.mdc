@@ -41,7 +41,8 @@ existing references; it does not imply a public `resume` command.
   or conflicting native ownership retains the reservation and never authorizes
   speculative redispatch.
 - A frozen Codex implementer is a separate identity from reviewer B. Historical
-  contexts without implementer metadata remain Cursor. Standalone runs and manifest v2 sequence leaves launch the
+  contexts without implementer metadata remain Cursor for reads only. Standalone
+  runs and historical/v3 Codex-only sequence leaves launch the
   initial Codex turn and resume the exact authenticated session for corrections.
   Role-aware capacity continuation records the pending initial/correction prompt
   and never lets an implementer wait be retried as a reviewer wait.
@@ -82,22 +83,22 @@ existing references; it does not imply a public `resume` command.
 
 ## Cursor Continuation
 
-The automatic/manual continuation rules below apply to historical Cursor CLI
-bindings and, after authenticated native-run reconciliation, context v7/v8 SDK
-bindings. SDK continuation retains the original owner/key/agent and uses the
+The automatic/manual continuation rules below apply, after authenticated
+native-run reconciliation, to context v7/v8 SDK bindings. Historical Cursor CLI
+evidence remains readable but cannot authorize continuation. SDK continuation retains the original owner/key/agent and uses the
 same scheduler retry limits; native reads or cancellation alone do not authorize
 a new prompt.
 
 - Classify usage limits from protected contemporaneous process evidence, never
   fuzzy `last_error` text. Preserve partial output, prompt, identity, and content
   evidence required by the existing continuation contract.
-- `waiting_usage_limit` continues the same run/chat/model after the bounded
-  structured retry-after, or the implemented five-hour fallback. The recovery
-  envelope embeds the exact previous prompt and preserves partial work.
+- A structured SDK capacity/timeout wait continues the same run/agent/model after
+  the bounded retry policy. The recovery envelope embeds the exact previous
+  prompt and preserves partial work.
 - Confirmed Cursor turn timeouts support three automatic retries per turn at
   30-minute intervals. `scheduler cursor-retry` can advance the wait or continue
   after automatic retries are exhausted, without creating a new chat or review.
-- `scheduler cursor-retry --force` publishes one same-chat successor for an
+- `scheduler cursor-retry --force` publishes one same-agent successor for an
   eligible terminated standalone `cursor_failure` or the current blocked sequence
   leaf, including a failed recovery successor. Initial turns and corrections both
   append one fixed note to the exact failed prompt and keep partial work.

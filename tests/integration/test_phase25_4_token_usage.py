@@ -140,7 +140,12 @@ def test_f01_usage_cli_missing_database_creates_no_state(
 
 
 @pytest.fixture
-def scheduler_paths(isolated_xdg: Path, fake_clis: dict[str, Path]) -> dict[str, Path]:
+def scheduler_paths(
+    isolated_xdg: Path,
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> dict[str, Path]:
     fake_clis["codex_models_file"].write_text(
         json.dumps(
             {
@@ -156,6 +161,12 @@ def scheduler_paths(isolated_xdg: Path, fake_clis: dict[str, Path]) -> dict[str,
         ),
         encoding="utf-8",
     )
+    fake_sdk = tmp_path / "shared-fake-sdk"
+    fake_sdk.mkdir()
+    _install_fake_sdk(fake_sdk)
+    _credential(isolated_xdg)
+    prior = os.environ.get("PYTHONPATH", "")
+    monkeypatch.setenv("PYTHONPATH", str(fake_sdk) + ((":" + prior) if prior else ""))
     state = isolated_xdg / "state" / "ai_dev_loop"
     return {"db_path": state / "engine.sqlite3", "artifact_root": state / "artifacts"}
 
@@ -1068,7 +1079,6 @@ def test_f05_sparse_replay_counts_once_in_sequence_cli_and_inspection(
     fake_sdk = tmp_path / "sequence-fake-sdk"
     fake_sdk.mkdir()
     _install_fake_sdk(fake_sdk)
-    _credential(isolated_xdg)
     prior = os.environ.get("PYTHONPATH", "")
     monkeypatch.setenv("PYTHONPATH", str(fake_sdk) + (":" + prior if prior else ""))
     marker = tmp_path / "sequence-stream-interrupted"
@@ -1739,14 +1749,17 @@ def test_f06_adopted_sequence_replacement_and_shared_ancestry_count_once(
     ]
     assert str(lineage[1]["source_run_id"]) == blocked.run_id
     assert set(first.sequence.run_ids) == {str(row["run_id"]) for row in lineage}
-    assert first.sequence.known_total_tokens == 170
+    # The recovery fixture is now a supported Codex-only v3 sequence. Its
+    # second phase contributes one additional 110-token implementer turn and
+    # one 30-token review while shared recovery ancestry remains counted once.
+    assert first.sequence.known_total_tokens == 280
     implementer = next(
         item
         for item in first.sequence.breakdowns
         if item.provider == "codex" and item.role == "implementer"
     )
-    assert implementer.known_total_tokens == 110
-    assert implementer.inference_attempts == 2
+    assert implementer.known_total_tokens == 220
+    assert implementer.inference_attempts == 3
     assert implementer.unknown_attempts == 1
 
     # Materialize an authenticated, token-bearing run in another repository and
@@ -1777,5 +1790,5 @@ def test_f06_adopted_sequence_replacement_and_shared_ancestry_count_once(
             ),
         )
     after_unadopted = service.sequence_report(prepared.sequence_id)
-    assert after_unadopted.sequence.known_total_tokens == 170
+    assert after_unadopted.sequence.known_total_tokens == 280
     assert unrelated_id not in after_unadopted.sequence.run_ids

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import (
+    require_supported_entry,
+    require_supported_sequence,
+)
 from ai_dev_loop.scheduler.domain.sequence import (
     FrozenSequenceEntry,
     PreparedSequenceDefinition,
@@ -142,6 +146,8 @@ class SequenceRunMaterializer:
         definition: PreparedSequenceDefinition,
         entry: FrozenSequenceEntry,
     ) -> tuple[SubmittedRunContext, str]:
+        require_supported_entry(entry, action="sequence first-entry materialization")
+        require_supported_sequence(definition, action="sequence first-entry materialization")
         if entry.ordinal != 1:
             raise ValueError("Phase 20.2 materializes only ordinal 1")
         if entry.planned_run_id != definition.entries[0].planned_run_id:
@@ -168,6 +174,8 @@ class SequenceRunMaterializer:
         definition: PreparedSequenceDefinition,
         entry: FrozenSequenceEntry,
     ) -> tuple[SubmittedRunContext, str]:
+        require_supported_entry(entry, action="sequence next-entry materialization")
+        require_supported_sequence(definition, action="sequence next-entry materialization")
         if entry.ordinal < 2:
             raise ValueError("materialize_next_entry requires ordinal >= 2")
         expected = definition.entries[entry.ordinal - 1]

@@ -61,6 +61,10 @@ from ai_dev_loop.scheduler.application.cursor_evidence import (
     verify_cursor_invocation_evidence,
     verify_pre_execution_cursor_guards,
 )
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import (
+    context_uses_cursor_cli,
+    unsupported_sequence_cursor_cli_ordinals,
+)
 from ai_dev_loop.scheduler.application.cursor_sdk_journal import seal_interrupted_sdk_send_journal
 from ai_dev_loop.scheduler.application.cursor_workflow_service import CursorWorkflowService
 from ai_dev_loop.scheduler.application.review_budget import effective_review_ceiling_for_run
@@ -266,6 +270,18 @@ class AttemptService:
         )
         if reconcile is not None:
             return reconcile
+        with self.store.begin_read() as conn:
+            state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            if context_uses_cursor_cli(state.context):
+                return TickRunReceipt(run_id=run_id, action="cursor_cli_runtime_retired")
+            if state.context.sequence is not None:
+                sequence = self.store.load_validated_sequence_state(
+                    conn, state.context.sequence.sequence_id
+                )
+                if unsupported_sequence_cursor_cli_ordinals(sequence.definition):
+                    return TickRunReceipt(
+                        run_id=run_id, action="sequence_cursor_cli_runtime_retired"
+                    )
         return (
             self._maybe_launch_codex_implementer_attempt(
                 tick_owner_id,
@@ -739,6 +755,8 @@ class AttemptService:
                 return None
             if resolved_implementer_provider(state.context) == "codex":
                 return None
+            if context_uses_cursor_cli(state.context):
+                return TickRunReceipt(run_id=run_id, action="cursor_cli_runtime_retired")
             if self.store.get_nonterminal_attempt_for_run(conn, run_id) is not None:
                 return TickRunReceipt(run_id=run_id, action="attempt_busy")
             effects = self.store.list_eligible_effects(conn, run_id=run_id, now=now)
@@ -1285,6 +1303,17 @@ class AttemptService:
                 sdk_authority = authenticate_sdk_successor_authority(
                     self.store, self.artifacts, conn, run_id
                 )
+                review_source = self.store.get_review_recovery_source_for_successor(
+                    conn, successor_run_id=run_id
+                )
+                if review_source is not None:
+                    source_state, _, _ = self.store.load_validated_snapshot(
+                        conn, str(review_source["source_run_id"])
+                    )
+                    if source_state.context != state.context:
+                        raise ValidationError("SDK review successor changed frozen inputs")
+            if review_source is not None:
+                binding["sdk_review_recovery_source_run_id"] = str(review_source["source_run_id"])
             if sdk_authority is not None:
                 binding["sdk_successor_recovery_key"] = sdk_authority.recovery_key
             if sdk_authority is not None and sdk_successor_prompt_applies(state, sdk_authority):

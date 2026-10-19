@@ -102,6 +102,15 @@ def _harness(
     )
 
 
+def _defer_when_node_tooling_is_unavailable(result: subprocess.CompletedProcess[str]) -> None:
+    marker = "BLOCKED_CONTRACT: Node tooling is unavailable"
+    if result.returncode != 0 and marker in result.stderr:
+        pytest.skip(
+            "D-02 deferred by plan owner 2026-10-18: installed Dashboard/browser "
+            "acceptance requires unavailable Node tooling"
+        )
+
+
 def test_c267_1_and_c267_3_installed_acceptance_real_server_browser_and_package(
     hermetic_tmp_path: Path,
     installed_python: Path,
@@ -118,6 +127,7 @@ def test_c267_1_and_c267_3_installed_acceptance_real_server_browser_and_package(
         "--case",
         "safety",
     )
+    _defer_when_node_tooling_is_unavailable(result)
     assert result.returncode == 0, result.stderr
     assert "PASS packaging wheel=" in result.stdout
     selected_version = _python_version(installed_python)
@@ -148,6 +158,7 @@ def test_c267_2_list_prepare_usable_and_exact_cleanup(hermetic_tmp_path: Path) -
         "--registry",
         str(registry),
     )
+    _defer_when_node_tooling_is_unavailable(prepared)
     assert prepared.returncode == 0, prepared.stderr
     assert "MANUAL_PENDING" in prepared.stdout
     record = json.loads(registry.read_text(encoding="utf-8"))

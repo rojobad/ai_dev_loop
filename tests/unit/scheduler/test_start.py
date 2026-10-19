@@ -14,13 +14,36 @@ from tests.unit.scheduler.helpers import CONTROLLER_SESSION, sample_submitted_st
 from ai_dev_loop.scheduler.application.start import StartService
 from ai_dev_loop.scheduler.application.submission import SubmissionService, SubmitOptions
 from ai_dev_loop.scheduler.domain.events import RunSubmittedEvent
+from ai_dev_loop.scheduler.domain.state import ImplementerBinding
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
 from ai_dev_loop.scheduler.infrastructure.repository_target import RepositoryTarget
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
 
-def _insert_queued_run(store: SqliteSchedulerStore, *, run_id: str = "fixture-run") -> None:
+def _codex_state(*, run_id: str = "fixture-run"):
     state = sample_submitted_state(run_id=run_id)
+    return state.model_copy(
+        update={
+            "context": state.context.model_copy(
+                update={
+                    "schema_version": 5,
+                    "implementer": ImplementerBinding(
+                        provider="codex",
+                        command="codex",
+                        model="gpt-5.6-sol",
+                        reasoning_effort="high",
+                        timeout_minutes=90,
+                        sandbox="workspace-write",
+                        approval_policy="never",
+                    ),
+                }
+            )
+        }
+    )
+
+
+def _insert_queued_run(store: SqliteSchedulerStore, *, run_id: str = "fixture-run") -> None:
+    state = _codex_state(run_id=run_id)
     event = RunSubmittedEvent(
         run_id=state.run_id,
         idempotency_key=state.idempotency_key,
@@ -65,7 +88,7 @@ def test_start_is_idempotent(tmp_path: Path) -> None:
 
 def test_submit_created_reservation_required_at_start(tmp_path: Path) -> None:
     store = SqliteSchedulerStore(tmp_path / "engine.sqlite3")
-    state = sample_submitted_state(run_id="fixture-run")
+    state = _codex_state(run_id="fixture-run")
     with store.begin_immediate() as conn:
         kind, payload, digest = store.dump_state(state)
         conn.execute(
@@ -111,6 +134,11 @@ def test_submit_time_reservation_conflict(tmp_path: Path, monkeypatch: pytest.Mo
         controller_session_id=CONTROLLER_SESSION,
         codex_review_model="gpt-5.6-sol",
         codex_review_reasoning_effort="high",
+        implementer_provider="codex",
+        implementer_command="codex",
+        implementer_model="gpt-5.6-sol",
+        implementer_reasoning_effort="high",
+        implementer_timeout_minutes=90,
         db_path=db,
         artifact_root=artifacts,
     )
@@ -126,6 +154,11 @@ def test_submit_time_reservation_conflict(tmp_path: Path, monkeypatch: pytest.Mo
                 controller_session_id=CONTROLLER_SESSION,
                 codex_review_model="gpt-5.6-sol",
                 codex_review_reasoning_effort="high",
+                implementer_provider="codex",
+                implementer_command="codex",
+                implementer_model="gpt-5.6-sol",
+                implementer_reasoning_effort="high",
+                implementer_timeout_minutes=90,
                 db_path=db,
                 artifact_root=artifacts,
                 project_name="other-name",

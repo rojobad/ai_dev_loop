@@ -25,16 +25,8 @@ from ai_dev_loop.integrations.cursor_sdk.port import (
     CursorSdkTerminalRun,
 )
 from ai_dev_loop.paths import cursor_conversation_key
-from ai_dev_loop.runners.cursor import (
-    CREATE_CHAT_METADATA_REL,
-    CREATE_CHAT_STDERR_REL,
-    CREATE_CHAT_STDOUT_REL,
-    create_chat,
-    execute_prompt,
-)
 from ai_dev_loop.runners.cursor_output import (
     capture_cursor_output_fingerprint,
-    capture_usage_limit_failure_fingerprint,
 )
 from ai_dev_loop.runners.probes import capture_git_status
 from ai_dev_loop.scheduler.application.attempt_backend import TerminationClass
@@ -52,7 +44,6 @@ from ai_dev_loop.scheduler.application.cursor_sdk_journal import (
     append_sdk_journal,
     authenticate_sdk_recovery_journal,
 )
-from ai_dev_loop.scheduler.application.output_observation import write_cursor_output_observation
 from ai_dev_loop.scheduler.application.token_usage_capture import (
     CursorUsageEvent,
     capture_cursor_usage_evidence_safely,
@@ -64,9 +55,7 @@ from ai_dev_loop.scheduler.domain.cursor_contract import (
     CURSOR_SDK_TEXT_STREAM_FORMAT,
     RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND,
     RUN_CURSOR_TURN_EFFECT_KIND,
-    cursor_attempt_events_rel,
     cursor_attempt_final_rel,
-    cursor_attempt_metadata_rel,
     cursor_attempt_stderr_rel,
     cursor_sdk_attempt_events_rel,
     cursor_sdk_attempt_journal_rel,
@@ -302,165 +291,6 @@ def _finalize_success_artifacts(
     result_path.write_bytes(envelope)
     _ = envelope_sha256(envelope)
     return exit_code
-
-
-def _run_create_chat(evidence: dict[str, object], run_root: Path, run_id: str) -> dict[str, object]:
-    cursor_command = str(evidence["cursor_command"])
-    repository_root = str(evidence["repository_root"])
-    timeout_seconds = _binding_float(evidence, "timeout_seconds")
-    chat_id = create_chat(
-        cursor_command,
-        repo_root=repository_root,
-        timeout_seconds=timeout_seconds,
-        run_directory=run_root,
-        run_id=run_id,
-    )
-    stdout_path = run_root / CREATE_CHAT_STDOUT_REL
-    stderr_path = run_root / CREATE_CHAT_STDERR_REL
-    outcome: dict[str, object] = {
-        "effect_kind": CREATE_CHAT_EFFECT_KIND,
-        "chat_id": chat_id,
-        "create_chat_metadata_path": CREATE_CHAT_METADATA_REL,
-        "create_chat_stdout_artifact_path": CREATE_CHAT_STDOUT_REL,
-        "create_chat_stderr_artifact_path": CREATE_CHAT_STDERR_REL,
-        "has_completion_signal": True,
-        **_outcome_identity(evidence),
-    }
-    if stdout_path.is_file() and not stdout_path.is_symlink():
-        outcome["create_chat_stdout_sha256"] = sha256_file(stdout_path)
-    if stderr_path.is_file() and not stderr_path.is_symlink():
-        outcome["create_chat_stderr_sha256"] = sha256_file(stderr_path)
-    return outcome
-
-
-def _run_cursor_turn(
-    evidence: dict[str, object],
-    run_root: Path,
-    run_id: str,
-    *,
-    attempt_id: str,
-) -> dict[str, object]:
-    iteration_number = _binding_int(evidence, "iteration")
-    repository_root = str(evidence["repository_root"])
-    chat_id = str(evidence["chat_id"])
-    prompt_path = run_root / str(evidence["prompt_path"])
-    prompt = prompt_path.read_text(encoding="utf-8")
-    timeout_seconds = _binding_float(evidence, "timeout_seconds")
-    cursor = CursorState(
-        command=str(evidence["cursor_command"]),
-        model=str(evidence["cursor_model"]),
-        output_format=str(evidence["cursor_output_format"]),
-        force=bool(evidence.get("cursor_force", True)),
-        trust_workspace=bool(evidence.get("cursor_trust_workspace", True)),
-        sandbox=str(evidence["cursor_sandbox"]),
-        chat_id=chat_id,
-    )
-    before_status_rel = git_status_before_cursor_rel(iteration_number, attempt_id)
-    after_status_rel = git_status_after_cursor_rel(iteration_number, attempt_id)
-    events_rel = cursor_attempt_events_rel(iteration_number, attempt_id)
-    stderr_rel = cursor_attempt_stderr_rel(iteration_number, attempt_id)
-    metadata_rel = cursor_attempt_metadata_rel(iteration_number, attempt_id)
-    final_rel = cursor_attempt_final_rel(iteration_number, attempt_id)
-    before_status_path = run_root / before_status_rel
-    after_status_path = run_root / after_status_rel
-    events_path = run_root / events_rel
-    stderr_path = run_root / stderr_rel
-    events_path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(before_status_path, capture_git_status(repository_root) + "\n")
-    execution = execute_prompt(
-        cursor,
-        repo_root=repository_root,
-        chat_id=chat_id,
-        prompt=prompt,
-        timeout_seconds=timeout_seconds,
-        stdout_path=events_path,
-        stderr_path=stderr_path,
-        run_directory=run_root,
-        run_id=run_id,
-        iteration_number=iteration_number,
-    )
-    atomic_write_text(after_status_path, capture_git_status(repository_root) + "\n")
-    after_status = after_status_path.read_text(encoding="utf-8")
-    has_completion_signal = bool(execution.parse.final_text)
-    metadata_payload: dict[str, object] = {
-        "args": execution.metadata_args,
-        "exit_code": execution.process.returncode,
-        "elapsed_seconds": execution.process.elapsed_seconds,
-        "timed_out": execution.process.timed_out,
-        "parse_ok": execution.parse.parse_ok,
-        "has_completion_signal": has_completion_signal,
-        "errors": list(execution.parse.errors),
-        "structured_errors": _structured_error_records(execution.process.stdout),
-    }
-    if execution.failure_code:
-        metadata_payload["failure_code"] = execution.failure_code
-    final_response_sha256: str | None = None
-    if has_completion_signal and execution.parse.final_text:
-        atomic_write_text(run_root / final_rel, execution.parse.final_text, sensitive=True)
-        final_response_sha256 = hashlib.sha256(
-            execution.parse.final_text.encode("utf-8")
-        ).hexdigest()
-        metadata_payload["final_response_path"] = final_rel
-        metadata_payload["final_response_sha256"] = final_response_sha256
-    atomic_write_json(run_root / metadata_rel, metadata_payload, sensitive=True)
-    stdout_stored = events_path.stat().st_size if events_path.is_file() else 0
-    stderr_stored = stderr_path.stat().st_size if stderr_path.is_file() else 0
-    write_cursor_output_observation(
-        run_root,
-        run_id=run_id,
-        attempt_id=attempt_id,
-        iteration=iteration_number,
-        stdout_stored_bytes=stdout_stored,
-        stderr_stored_bytes=stderr_stored,
-        stdout_truncated=execution.process.stdout_truncated,
-        stderr_truncated=execution.process.stderr_truncated,
-    )
-
-    run_state = _run_state_from_binding(evidence)
-    fingerprint_path = ""
-    fingerprint_sha = ""
-    usage_limit_fingerprint_path = ""
-    usage_limit_fingerprint_sha = ""
-    if execution.failure_code == "cursor_usage_limit":
-        usage_fp = capture_usage_limit_failure_fingerprint(
-            run_state,
-            run_root,
-            iteration_number=iteration_number,
-            status_text=after_status,
-            artifact_id=attempt_id,
-        )
-        usage_limit_fingerprint_path = usage_fp.relative_path
-        usage_limit_fingerprint_sha = usage_fp.aggregate_sha256
-    elif execution.process.returncode == 0 and not execution.process.timed_out:
-        post_fp = capture_cursor_output_fingerprint(
-            run_state,
-            run_root,
-            iteration_number=iteration_number,
-            status_text=after_status,
-            artifact_id=attempt_id,
-        )
-        fingerprint_path = post_fp.relative_path
-        fingerprint_sha = post_fp.aggregate_sha256
-
-    return {
-        "effect_kind": RUN_CURSOR_TURN_EFFECT_KIND,
-        "iteration": iteration_number,
-        "returncode": execution.process.returncode,
-        "timed_out": execution.process.timed_out,
-        "parse_ok": execution.parse.parse_ok,
-        "has_completion_signal": has_completion_signal,
-        "failure_code": execution.failure_code,
-        "metadata_path": metadata_rel,
-        "after_status_path": after_status_rel,
-        "structured_errors": metadata_payload["structured_errors"],
-        "cursor_output_fingerprint_path": fingerprint_path,
-        "cursor_output_fingerprint_sha256": fingerprint_sha,
-        "usage_limit_fingerprint_path": usage_limit_fingerprint_path,
-        "usage_limit_fingerprint_sha256": usage_limit_fingerprint_sha,
-        "final_response_path": final_rel if final_response_sha256 else None,
-        "final_response_sha256": final_response_sha256,
-        **_outcome_identity(evidence),
-    }
 
 
 def _sdk_selection(evidence: dict[str, object]) -> CursorSdkSection:
@@ -1553,6 +1383,8 @@ def main(argv: list[str] | None = None) -> int:
             effect_kind=effect_kind,
         )
         verify_pre_execution_cursor_guards(run_root, evidence, run_id=args.run_id)
+        if evidence.get("runtime") != "sdk-local":
+            raise ValueError("Cursor CLI execution is retired; freshly submit sdk-local inputs")
     except Exception as exc:
         return _write_attempt_artifacts(
             stdout_path=stdout_path,
@@ -1572,31 +1404,17 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     try:
-        sdk_runtime = evidence.get("runtime") == "sdk-local"
         if effect_kind == CREATE_CHAT_EFFECT_KIND:
-            cursor_outcome = (
-                _run_sdk_create(evidence, run_root, attempt_id=args.attempt_id)
-                if sdk_runtime
-                else _run_create_chat(evidence, run_root, args.run_id)
-            )
+            cursor_outcome = _run_sdk_create(evidence, run_root, attempt_id=args.attempt_id)
             raw_returncode = cursor_outcome.get("returncode", 0)
             if isinstance(raw_returncode, bool) or not isinstance(
                 raw_returncode, (int, float, str)
             ):
                 raise TypeError("Cursor SDK create returncode must be numeric")
-            if sdk_runtime and int(raw_returncode) != 0:
+            if int(raw_returncode) != 0:
                 exit_code = int(raw_returncode)
         elif effect_kind == RUN_CURSOR_TURN_EFFECT_KIND:
-            cursor_outcome = (
-                _run_sdk_turn(evidence, run_root, attempt_id=args.attempt_id)
-                if sdk_runtime
-                else _run_cursor_turn(
-                    evidence,
-                    run_root,
-                    args.run_id,
-                    attempt_id=args.attempt_id,
-                )
-            )
+            cursor_outcome = _run_sdk_turn(evidence, run_root, attempt_id=args.attempt_id)
             raw_returncode = cursor_outcome.get("returncode", 0)
             returncode = (
                 int(raw_returncode)
@@ -1613,7 +1431,7 @@ def main(argv: list[str] | None = None) -> int:
             ):
                 exit_code = 1
         else:
-            if not sdk_runtime or effect_kind != RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND:
+            if effect_kind != RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND:
                 raise ValueError("Cursor SDK reconciliation requires the sdk-local runtime")
             cursor_outcome = _run_sdk_reconciliation(
                 evidence,

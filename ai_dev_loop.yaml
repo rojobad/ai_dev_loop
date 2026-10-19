@@ -1,14 +1,19 @@
-version: 1
+version: 2
 
 project:
   name: ai-dev-loop
 
 cursor:
-  command: agent
-  model: grok-4.7-high
-  output_format: stream-json
-  force: true
-  trust_workspace: true
+  runtime: sdk-local
+  sdk_version: 1.0.37
+  model: grok-4.7
+  parameters:
+    context: 256k
+    reasoning_effort: high
+    fast: false
+  credential_ref: cursor-default
+  setting_sources:
+    - project
   sandbox: disabled
 
 codex:

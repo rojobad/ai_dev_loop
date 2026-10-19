@@ -148,7 +148,7 @@ def _blocked_codex_leaf(
     monkeypatch.setenv("FAKE_CODEX_REVIEWER_SESSION_ID", REVIEWER_ID)
     monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "phase27-6-partial.txt")
     monkeypatch.setenv("FAKE_CODEX_CAPACITY", "available")
-    prepared = prepare(repo, paths, ("codex", "cursor"), payload=payload)
+    prepared = prepare(repo, paths, ("codex", "codex"), payload=payload)
     started = start_sequence(prepared.sequence_id, db_path=paths["db_path"])
     tick = _tick(repo, paths)
     blocked = _drive_sequence_leaf_to(tick, paths, prepared.sequence_id, "blocked")
@@ -162,7 +162,7 @@ def _blocked_codex_correction_leaf(
     paths: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[object, object, object]:
-    payload = manifest_payload(("codex", "cursor"))
+    payload = manifest_payload(("codex", "codex"))
     payload["phases"][0]["workflow"] = {"max_review_iterations": 1}
     monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_SEQUENCE", "success,fail,success")
     monkeypatch.setenv("FAKE_CODEX_REVIEW_SEQUENCE", "findings,no_findings")
@@ -170,7 +170,7 @@ def _blocked_codex_correction_leaf(
     monkeypatch.setenv("FAKE_CODEX_REVIEWER_SESSION_ID", REVIEWER_ID)
     monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "phase27-6-race.txt")
     monkeypatch.setenv("FAKE_CODEX_CAPACITY", "available")
-    prepared = prepare(repo, paths, ("codex", "cursor"), payload=payload)
+    prepared = prepare(repo, paths, ("codex", "codex"), payload=payload)
     started = start_sequence(prepared.sequence_id, db_path=paths["db_path"])
     tick = _tick(repo, paths)
     _drive_sequence_leaf_to(tick, paths, prepared.sequence_id, "max_iterations_reached")
@@ -296,7 +296,7 @@ def test_correction_recovery_preserves_reviewer_fix_and_extended_budget(
 ) -> None:
     fix = "Preserve this exact sequence correction Ω.\r\nSecond line.\n"
     witness = scheduler_paths["db_path"].parent / "sequence-correction-prompts"
-    payload = manifest_payload(("codex", "cursor"))
+    payload = manifest_payload(("codex", "codex"))
     payload["phases"][0]["workflow"] = {"max_review_iterations": 1}
     monkeypatch.setenv("FAKE_CODEX_FIX_PROMPT", fix)
     monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_STDIN_WITNESS_DIR", str(witness))
@@ -306,7 +306,7 @@ def test_correction_recovery_preserves_reviewer_fix_and_extended_budget(
     monkeypatch.setenv("FAKE_CODEX_REVIEWER_SESSION_ID", REVIEWER_ID)
     monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "phase27-6-correction.txt")
     monkeypatch.setenv("FAKE_CODEX_CAPACITY", "available")
-    prepared = prepare(git_repo, scheduler_paths, ("codex", "cursor"), payload=payload)
+    prepared = prepare(git_repo, scheduler_paths, ("codex", "codex"), payload=payload)
     started = start_sequence(prepared.sequence_id, db_path=scheduler_paths["db_path"])
     tick = _tick(git_repo, scheduler_paths)
     exhausted = _drive_sequence_leaf_to(

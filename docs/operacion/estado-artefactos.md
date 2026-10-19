@@ -52,7 +52,8 @@ $XDG_STATE_HOME/ai_dev_loop/
   del reviewer. La admisión prueba ese Codex sin exigir el binario Cursor. El tick
   captura una sesión implementer autenticada, conserva cada intento bajo
   `implementer/`, normaliza staging al completar el turno y solo entonces crea el
-  reviewer B independiente. Los contextos históricos sin esa metadata siguen Cursor.
+  reviewer B independiente. Los contextos históricos sin esa metadata se
+  proyectan como Cursor para lectura; su runtime CLI ya no puede iniciar trabajo.
 - Un submit Cursor con config v2 congela runtime SDK, versión, modelo+parámetros,
   referencia de credencial, fuentes, sandbox y policy en contexto v7. El worker
   persiste `create_intent` antes de crear, liga el agent exacto antes del primer
@@ -121,6 +122,11 @@ No existe `recover` publico en el scheduler central. Ante fallos:
   explícitos (controller A sigue siendo opcional);
   repetir submit sin esa opcion reutiliza el run terminal existente.
 
+Los comandos mutantes anteriores aplican a Cursor SDK o Codex según su contrato.
+Para Cursor CLI histórico, `cursor-retry --check` devuelve una clasificación
+read-only `ineligible_cursor_cli_runtime_retired` sin abrir SDK, CLI, credencial,
+store ni repositorio; start/retry/review-retry/extend y successors se rechazan.
+
 Los contratos de recovery legacy (`recover`, sucesores `interrupted`, checkpoints
 `cursor`/`staging`) aplicaban solo al motor `runs/` retirado.
 
@@ -159,8 +165,10 @@ completos por fase; definición/entrada v3 y contexto v8 congelan esa selección
 incluso en secuencias mixtas Cursor-SDK/Codex. Los envelopes de ciclo de vida de
 secuencia siguen v1.
 Entradas históricas v1 y contextos v4 conservan Cursor, identidad y hashes.
-Preparaciones v1/v2 ya aceptadas conservan replay/materialización exactos; inputs
-legacy nuevos deben actualizarse a v3.
+Preparaciones v1/v2 ya aceptadas conservan replay exacto. Si tienen una hoja
+Cursor CLI efectiva no pueden start/materializar/handoff/recovery; una definición
+Codex-only histórica conserva esas operaciones. Inputs nuevos deben usar v3
+Codex-only o v4 SDK-capable.
 El layout protegido `implementer/` aplica igualmente a hojas Codex. Una espera
 inicial o de corrección conserva hoja, ordinal, reserva, prompt exacto, sesión y
 trabajo parcial entre ticks/reinicio. Solo aceptación de review autoriza el

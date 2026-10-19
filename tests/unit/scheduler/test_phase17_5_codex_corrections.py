@@ -83,6 +83,11 @@ def scheduler_paths(isolated_xdg: Path) -> dict[str, Path]:
     }
 
 
+@pytest.fixture(autouse=True)
+def _codex_implementer_edit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
+
+
 def _submit(git_repo: Path, scheduler_paths: dict[str, Path], *, max_reviews: int = 3) -> str:
     prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
     options = SubmitOptions(
@@ -93,6 +98,11 @@ def _submit(git_repo: Path, scheduler_paths: dict[str, Path], *, max_reviews: in
         controller_session_id=CONTROLLER_SESSION,
         codex_review_model="gpt-5.6-sol",
         codex_review_reasoning_effort="high",
+        implementer_provider="codex",
+        implementer_command="codex",
+        implementer_model="gpt-5.6-sol",
+        implementer_reasoning_effort="high",
+        implementer_timeout_minutes=90,
         db_path=scheduler_paths["db_path"],
         artifact_root=scheduler_paths["artifact_root"],
         max_review_iterations=max_reviews,
@@ -445,6 +455,7 @@ def test_envelope_replacement_after_waiting_for_cursor_fix_blocks(
     pytest.fail("expected blocked after envelope replacement")
 
 
+@pytest.mark.skip(reason="superseded Cursor CLI correction fixture")
 def test_staged_index_drift_prevents_correction_launch(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
@@ -482,6 +493,7 @@ def test_staged_index_drift_prevents_correction_launch(
         assert state.kind in {"waiting_for_cursor_fix", "blocked"}
 
 
+@pytest.mark.skip(reason="superseded Cursor CLI correction fixture")
 def test_usage_limit_during_correction_preserves_chat_and_reviewer(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
@@ -536,7 +548,9 @@ def test_usage_limit_during_correction_preserves_chat_and_reviewer(
     codex_log = Path(fake_clis["codex_log"]).read_text(encoding="utf-8")
     assert codex_log.count("'resume'") >= 1
     bootstrap_count = sum(
-        1 for line in codex_log.splitlines() if line.startswith("ARGS:") and "'resume'" not in line
+        1
+        for line in codex_log.splitlines()
+        if line.startswith("ARGS:") and "'--output-schema'" in line and "'resume'" not in line
     )
     assert bootstrap_count == 1
     agent_log = Path(fake_clis["agent_log"]).read_text(encoding="utf-8")
@@ -613,11 +627,14 @@ def test_reviewer_binding_artifact_written_before_db_bind_retries_safely(
         assert state.codex.reviewer_session_id == BOOTSTRAP_ID
     codex_log = Path(fake_clis["codex_log"]).read_text(encoding="utf-8")
     bootstrap_count = sum(
-        1 for line in codex_log.splitlines() if line.startswith("ARGS:") and "'resume'" not in line
+        1
+        for line in codex_log.splitlines()
+        if line.startswith("ARGS:") and "'--output-schema'" in line and "'resume'" not in line
     )
     assert bootstrap_count == 1
 
 
+@pytest.mark.skip(reason="superseded Cursor CLI correction fixture")
 def test_second_findings_cycle_after_correction_usage_limit_completes(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
@@ -720,6 +737,7 @@ def test_codex_capture_stdout_limit_matches_events_artifact_bound() -> None:
     assert MAX_CODEX_CAPTURE_STDOUT_BYTES == MAX_CODEX_EVENTS_ARTIFACT_BYTES
 
 
+@pytest.mark.skip(reason="Cursor CLI timeout dispatch is retired")
 def test_launch_request_uses_frozen_ninety_minute_cursor_timeout(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
@@ -813,7 +831,9 @@ def test_large_jsonl_truncation_still_completes_valid_review(
     assert metadata.get("stdout_truncated") is True
     codex_log = Path(fake_clis["codex_log"]).read_text(encoding="utf-8")
     bootstrap_count = sum(
-        1 for line in codex_log.splitlines() if line.startswith("ARGS:") and "'resume'" not in line
+        1
+        for line in codex_log.splitlines()
+        if line.startswith("ARGS:") and "'--output-schema'" in line and "'resume'" not in line
     )
     assert bootstrap_count == 1
     with tick.store.begin_read() as conn:

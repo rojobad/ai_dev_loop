@@ -50,6 +50,9 @@ from ai_dev_loop.scheduler.application.contracts import (
     SchedulerEngineErrorKind,
     SubmitResult,
 )
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import (
+    require_supported_effective_config,
+)
 from ai_dev_loop.scheduler.application.safe_actions import safe_next_action_for_scheduler_state
 from ai_dev_loop.scheduler.domain.common import canonical_json_sha256, worktree_key
 from ai_dev_loop.scheduler.domain.events import RunSubmittedEvent
@@ -127,9 +130,6 @@ class SubmitOptions:
     prompt_source_path: Path | None = None
     codex_session_id: str | None = None
     controller_session_id: str | None = None
-    cursor_command: str | None = None
-    cursor_model: str | None = None
-    cursor_output_format: str | None = None
     codex_command: str | None = None
     codex_review_model: str | None = None
     codex_review_reasoning_effort: str | None = None
@@ -248,9 +248,6 @@ def _read_stdin_prompt() -> str:
 def _build_overrides(options: SubmitOptions) -> ConfigOverrides:
     return ConfigOverrides(
         project_name=options.project_name,
-        cursor_command=options.cursor_command,
-        cursor_model=options.cursor_model,
-        cursor_output_format=options.cursor_output_format,
         codex_command=options.codex_command,
         codex_review_model=options.codex_review_model,
         codex_review_reasoning_effort=options.codex_review_reasoning_effort,
@@ -302,20 +299,9 @@ def _reject_conflicting_implementer_selection(
 ) -> None:
     if effective.implementer.provider != "codex":
         return
-    cursor_overrides = [
-        name
-        for name, value in (
-            ("--cursor-command", options.cursor_command),
-            ("--cursor-model", options.cursor_model),
-            ("--cursor-output-format", options.cursor_output_format),
-            ("--cursor-timeout-minutes", options.cursor_timeout_minutes),
-        )
-        if value is not None
-    ]
-    if cursor_overrides:
-        names = ", ".join(cursor_overrides)
+    if options.cursor_timeout_minutes is not None:
         raise ValidationError(
-            "Cursor overrides conflict with Codex implementer selection: " + names
+            "Cursor overrides conflict with Codex implementer selection: --cursor-timeout-minutes"
         )
 
 
@@ -391,12 +377,6 @@ def _implementer_binding(effective: ProjectConfig) -> ImplementerBinding:
         approval_policy=CODEX_IMPLEMENTER_APPROVAL_POLICY,
         session_id=None,
     )
-
-
-def _reject_cursor_sdk_dispatch(effective: ProjectConfig) -> None:
-    """Compatibility hook retained for callers; SDK dispatch is supported in Phase 25.2."""
-
-    del effective
 
 
 def _cursor_binding(effective: ProjectConfig) -> CursorBinding | CursorSdkBinding:
@@ -767,7 +747,7 @@ class SubmissionService:
             overrides=_build_overrides(options),
         )
         _reject_conflicting_implementer_selection(options, effective)
-        _reject_cursor_sdk_dispatch(effective)
+        require_supported_effective_config(effective, action="scheduler submit")
         effective = _freeze_execution_commands(effective)
         plan_path, prompt_source_path = _resolve_inputs(options, repo_target)
         controller_session_id = (

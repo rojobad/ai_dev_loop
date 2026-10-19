@@ -19,7 +19,8 @@ al run sucesor sin liberar el repositorio. La fase final pasa a
   y controla el run.
 - **Codex B:** revisor tecnico creado una vez por el scheduler en el primer review.
   Su sesion exacta se reanuda en todas las revisiones posteriores.
-- **Cursor:** implementa y corrige en un unico chat por run.
+- **Implementer:** Cursor SDK local o Codex CLI implementa y corrige en una única
+  conversación autenticada por run. Nunca comparte identidad con reviewer B.
 - **Scheduler:** conserva artefactos fuera del repositorio, controla los limites y
   ejecuta las acciones Git autorizadas (staging normalizado con `git add -A`).
 
@@ -44,8 +45,8 @@ ai_dev_loop config validate --repo /ruta/al/proyecto
 ## 2. Diseñar el cambio con Codex
 
 Usa Codex en el repositorio target para discutir el cambio, aprobar un plan y
-redactar el prompt exacto para Cursor. El skill `ai-dev-loop-handoff` guia el
-submit desde la sesion controller A.
+redactar el prompt exacto para el implementer. El skill `ai-dev-loop-handoff`
+guia el submit desde la sesion controller A.
 
 ## 3. Congelar y autorizar el run
 
@@ -84,6 +85,13 @@ ai_dev_loop scheduler abort <run-id>   # si hace falta cancelar
 ```
 
 Los cambios quedan staged en el repositorio. El usuario revisa y commitea manualmente.
+
+Para Cursor nuevo, el repositorio usa config v2 y el runtime `sdk-local`; el
+Cursor CLI histórico no admite start, retry, extend ni nueva materialización.
+Los flujos Codex-only con configuración histórica siguen soportados sin SDK,
+credencial o binario Cursor. Una secuencia nueva usa manifest v3 si es Codex-only
+y v4 si contiene Cursor SDK. Consulta [Configuración](../referencia/configuracion.md)
+y el [cutover Cursor SDK](../operacion/cutover-cursor-sdk.md).
 
 ## Estado legacy
 

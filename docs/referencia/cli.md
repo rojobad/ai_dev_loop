@@ -61,9 +61,6 @@ Opciones principales:
 --controller-session-id TEXT   (opcional; proveniencia A)
 --codex-review-model TEXT      (obligatorio)
 --codex-review-reasoning-effort TEXT (obligatorio)
---cursor-command TEXT
---cursor-model TEXT
---cursor-output-format TEXT
 --codex-command TEXT
 --review-skill TEXT
 --max-review-iterations INTEGER
@@ -89,26 +86,28 @@ esa misma sesion con `codex exec resume` (nunca `--last` ni un segundo B).
 Modelo y razonamiento del reviewer deben ser explícitos en los flags de submit.
 Los campos YAML `codex.review_model` y `codex.review_reasoning_effort`, los datos
 de A y los defaults del CLI no sustituyen esos flags. Los valores quedan
-congelados para bootstrap, correcciones y reintentos. `--cursor-model` selecciona
-por separado el modelo del ejecutor Cursor; no cambia el modelo ni el reasoning
-del reviewer.
+congelados para bootstrap, correcciones y reintentos. El modelo Cursor se declara
+en la selección SDK de config v2 o manifest v4; no cambia el modelo ni el
+razonamiento del reviewer.
 
 `--implementer-provider` elige `cursor` (default) o `codex`. Si se omite, el run
 sigue siendo Cursor. Para `codex`, `--implementer-model` y
 `--implementer-reasoning-effort` son obligatorios y quedan congelados aparte del
 reviewer. `--implementer-command` default `codex` y `--implementer-timeout-minutes`
-default 90. Esos campos se rechazan si el proveedor es Cursor. Los flags
-`--cursor-*` se rechazan cuando la selección es Codex. El sandbox del implementer
-Codex es `workspace-write` y la política de aprobación no interactiva es explícita
+default 90. Esos campos se rechazan si el proveedor es Cursor. Los flags nuevos
+que elegían comando/modelo/formato de Cursor CLI ya no existen. El sandbox del
+implementer Codex es `workspace-write` y la política de aprobación no interactiva es explícita
 (`never`); no hay bypass. En un run standalone o una hoja con definición congelada v2, los ticks ejecutan la
 implementación inicial, normalizan staging, crean un reviewer B independiente y
 reanudan la sesión implementer exacta para correcciones. Una cuota detectada por
 evidencia estructurada/provider, o por un probe post-fallo `EXHAUSTED` con identidad
 autenticada y terminación resuelta,
 entra en `waiting_codex_capacity` y se reanuda automáticamente solo cuando el
-probe actual informa capacidad. Los manifests de secuencia v1 siguen siendo solo
-Cursor; no hay provider switching. Los timeouts Codex confirmados usan la política
-acotada compartida de tres reintentos automáticos por turno.
+probe actual informa capacidad. Un contexto v1 histórico sigue ejecutándose si
+su provider efectivo es Codex; una selección efectiva Cursor CLI se conserva
+para lectura, pero no puede start/retry/extend ni originar trabajo nuevo. Los
+timeouts Codex confirmados usan la política acotada compartida de tres reintentos
+automáticos por turno.
 
 El scheduler impone `workspace-write` al proceso Codex. El wrapper y la skill de
 review siguen exigiendo revisar únicamente el staged y no editar, stagear ni
@@ -123,7 +122,6 @@ ai_dev_loop scheduler submit \
   --repo-path /path/al/repo \
   --plan-path docs/plans/mi-plan.md \
   --prompt-source-path docs/plans/prompt_mi-plan.txt \
-  --cursor-model "<cursor-model>" \
   --codex-review-model "<review-model>" \
   --codex-review-reasoning-effort high \
   --output json < docs/plans/prompt_mi-plan.txt
@@ -138,14 +136,14 @@ ai_dev_loop scheduler sequence status <sequence-id> [--output text|json]
 ai_dev_loop scheduler sequence abort <sequence-id> [--output text|json]
 ```
 
-Todo prepare nuevo exige un manifest con nombres: v3 para los runtimes históricos
-o v4 para Cursor SDK. V3 conserva la selección de implementer de v2 y añade un
-`short_name` explícito para la secuencia y para cada fase:
+Todo prepare nuevo exige un manifest con nombres: v3 para secuencias efectivamente
+Codex-only o v4 para Cursor SDK y mezclas. V3 conserva la selección de implementer
+de v2 y añade un `short_name` explícito para la secuencia y para cada fase:
 
 ```yaml
 schema_version: 3
-name: codex-then-cursor
-short_name: Entrega autenticada
+name: codex-only
+short_name: Entrega Codex autenticada
 phases:
   - name: implementation
     short_name: Implementación
@@ -164,8 +162,11 @@ phases:
     short_name: Validación final
     plan_path: docs/plans/final-validation.md
     prompt_source_path: docs/plans/prompt_final-validation.txt
-    cursor:
-      model: grok-4.7-high
+    implementer:
+      provider: codex
+      model: gpt-5.6-sol
+      reasoning_effort: xhigh
+      timeout_minutes: 90
     codex:
       review_model: gpt-6.1-sol
       review_reasoning_effort: high
@@ -209,8 +210,11 @@ phases:
 Los `short_name` se recortan en los extremos, deben tener 1..35 code points
 Unicode y no admiten controles. No tienen que ser únicos. Manifest v1/v2 nuevo
 falla indicando el upgrade antes de publicar una secuencia; una preparación
-v1/v2 ya aceptada se puede repetir exactamente y materializar sin reescribir sus
-bytes, hashes, identidades ni un alias editado posteriormente.
+v1/v2 ya aceptada se puede repetir exactamente sin reescribir sus bytes, hashes,
+identidades ni un alias editado posteriormente. Si cualquier hoja efectiva usa
+Cursor CLI, `sequence start` y los límites posteriores de materialización,
+handoff y recovery la rechazan antes de trabajo o checkpoint. Una definición
+Codex-only histórica conserva ejecución y recovery.
 
 Los nombres de presentación se editan localmente, fuera de los inputs
 congelados:
@@ -431,8 +435,8 @@ ai_dev_loop scheduler implementer-retry <run-id> [--force] [--output text|json]
 ```
 
 Sin flags, autoriza la continuación de un timeout terminal autenticado del
-implementador seleccionado. Para Cursor delega a la política existente de
-`cursor-retry`; ese comando histórico sigue siendo Cursor-only. Para Codex conserva
+implementador seleccionado. Para Cursor SDK delega a la política existente de
+`cursor-retry`; un binding Cursor CLI histórico se rechaza. Para Codex conserva
 el mismo run, sesión autenticada, provider, modelo, effort, timeout y bytes del prompt.
 El scheduler permite como máximo tres reintentos automáticos por turno, separados por
 30 minutos. El consumo acompaña a un sucesor `--force` que continúa el mismo turno y

@@ -86,6 +86,11 @@ def scheduler_paths(isolated_xdg: Path) -> dict[str, Path]:
     }
 
 
+@pytest.fixture(autouse=True)
+def _codex_implementer_edit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
+
+
 def _submit(git_repo: Path, scheduler_paths: dict[str, Path], *, max_reviews: int = 3) -> str:
     prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
     options = SubmitOptions(
@@ -96,6 +101,11 @@ def _submit(git_repo: Path, scheduler_paths: dict[str, Path], *, max_reviews: in
         controller_session_id=CONTROLLER_SESSION,
         codex_review_model="gpt-5.6-sol",
         codex_review_reasoning_effort="high",
+        implementer_provider="codex",
+        implementer_command="codex",
+        implementer_model="gpt-5.6-sol",
+        implementer_reasoning_effort="high",
+        implementer_timeout_minutes=90,
         db_path=scheduler_paths["db_path"],
         artifact_root=scheduler_paths["artifact_root"],
         max_review_iterations=max_reviews,
@@ -330,7 +340,7 @@ def _extension_correction_effect_count(store: SqliteSchedulerStore, run_id: str)
               ON events.event_id = effects.source_event_id
             WHERE effects.run_id = ?
               AND events.event_kind = ?
-              AND effects.effect_kind = 'cursor.run_turn'
+              AND effects.effect_kind IN ('cursor.run_turn', 'codex.implementer_resume')
             """,
             (run_id, REVIEW_BUDGET_EXTENDED_EVENT_KIND),
         ).fetchone()
@@ -817,27 +827,30 @@ class TestReviewBudgetExtendIntegration:
                 "SELECT effect_kind, effect_payload FROM scheduler_effects WHERE run_id = ?",
                 (run_id,),
             ).fetchall()
-        cursor_effects = [
+        implementer_effects = [
             json.loads(row[1])
             for row in effects
-            if row[0] == "cursor.run_turn" and json.loads(row[1]).get("iteration") == 3
+            if row[0] in {"cursor.run_turn", "codex.implementer_resume"}
+            and json.loads(row[1]).get("iteration") == 3
         ]
-        assert cursor_effects
-        agent_log_before = Path(fake_clis["agent_log"]).read_text(encoding="utf-8")
-        prompt_runs_before = sum(
+        assert implementer_effects
+        codex_log_path = Path(fake_clis["codex_log"])
+        codex_log_before = (
+            codex_log_path.read_text(encoding="utf-8") if codex_log_path.is_file() else ""
+        )
+        implementer_resumes_before = sum(
             1
-            for line in agent_log_before.splitlines()
-            if line.startswith("ARGS:") and "'-p'" in line
+            for line in codex_log_before.splitlines()
+            if line.startswith("ARGS:") and "'resume'" in line and "'--output-schema'" not in line
         )
         _run_until(tick, run_id, target_kind="awaiting_codex_review", max_ticks=80)
-        agent_log_after = Path(fake_clis["agent_log"]).read_text(encoding="utf-8")
-        prompt_runs_after = sum(
+        codex_log_after = codex_log_path.read_text(encoding="utf-8")
+        implementer_resumes_after = sum(
             1
-            for line in agent_log_after.splitlines()
-            if line.startswith("ARGS:") and "'-p'" in line
+            for line in codex_log_after.splitlines()
+            if line.startswith("ARGS:") and "'resume'" in line and "'--output-schema'" not in line
         )
-        assert prompt_runs_after == prompt_runs_before + 1
-        assert agent_log_after.count("CREATE_CHAT:") == 1
+        assert implementer_resumes_after == implementer_resumes_before + 1
         with tick.store.begin_read() as conn:
             state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
             assert state.kind == "awaiting_codex_review"

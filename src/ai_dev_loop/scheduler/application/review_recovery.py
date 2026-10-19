@@ -15,9 +15,11 @@ from ai_dev_loop.runners.codex_failure import is_integrity_review_block_kind
 from ai_dev_loop.scheduler.application.attempt_envelope import read_bounded_bytes
 from ai_dev_loop.scheduler.application.codex_evidence import (
     CodexEvidenceError,
+    load_authenticated_codex_implementer_outcome,
     load_authenticated_codex_outcome,
     load_validated_review_result,
     validate_codex_review_outcome_integrity,
+    verify_codex_implementer_invocation_evidence,
     verify_codex_invocation_evidence,
     verify_pre_execution_codex_guards,
 )
@@ -30,6 +32,17 @@ from ai_dev_loop.scheduler.application.cursor_evidence import (
     load_authenticated_cursor_outcome,
     verify_cursor_invocation_evidence,
 )
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import (
+    CURSOR_CLI_RETIRED_SUMMARY,
+    context_uses_cursor_cli,
+)
+from ai_dev_loop.scheduler.application.cursor_sdk_journal import (
+    authenticate_sdk_journal,
+    authenticate_sdk_recovery_journal,
+)
+from ai_dev_loop.scheduler.application.cursor_sdk_reconciliation import (
+    authenticate_ready_sdk_reconciliation,
+)
 from ai_dev_loop.scheduler.application.review_checkpoint_verify import (
     ReviewCheckpointVerificationError,
     verify_review_retry_repository_checkpoint,
@@ -38,20 +51,27 @@ from ai_dev_loop.scheduler.domain.codex_contract import (
     BOOTSTRAP_CODEX_REVIEW_EFFECT_KIND,
     MAX_CODEX_EVENTS_ARTIFACT_BYTES,
     RESUME_CODEX_REVIEW_EFFECT_KIND,
+    codex_implementer_latest_final_rel,
 )
 from ai_dev_loop.scheduler.domain.common import payload_sha256
 from ai_dev_loop.scheduler.domain.cursor_contract import (
+    RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND,
     RUN_CURSOR_TURN_EFFECT_KIND,
     cursor_attempt_final_rel,
 )
+from ai_dev_loop.scheduler.domain.cursor_sdk_recovery import CursorSdkReconciliationRecordV1
 from ai_dev_loop.scheduler.domain.events import (
+    CODEX_IMPLEMENTER_TURN_COMPLETED_EVENT_KIND,
     CODEX_REVIEW_COMPLETED_EVENT_KIND,
     CODEX_REVIEWER_BOUND_EVENT_KIND,
     CURSOR_CHAT_CREATED_EVENT_KIND,
     CURSOR_TURN_COMPLETED_EVENT_KIND,
     STAGING_COMPLETED_EVENT_KIND,
+    CodexImplementerTurnCompletedEvent,
     CodexReviewerBoundEvent,
     CursorChatCreatedEvent,
+    CursorSdkAgentCreatedEvent,
+    CursorSdkTurnCompletedEvent,
     CursorTurnCompletedEvent,
     SchedulerEvent,
     StagingCompletedEvent,
@@ -62,6 +82,8 @@ from ai_dev_loop.scheduler.domain.state import (
     AwaitingCodexReviewState,
     BlockedState,
     CodexWorkflowCheckpoint,
+    CursorSdkBinding,
+    CursorSdkRuntimeBinding,
     CursorWorkflowCheckpoint,
     FreshCodexReviewerBinding,
     ReviewRecoveryLineage,
@@ -87,6 +109,7 @@ MAX_CURSOR_FINGERPRINT_BYTES = 1 * 1024 * 1024
 class RecoveryCopyManifestEntry:
     relative_path: str
     expected_sha256: str
+    destination_relative_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -452,6 +475,337 @@ def _authenticate_cursor_turn_attempt(
     return outcome
 
 
+def _authenticate_codex_implementation_for_review_recovery(
+    store: SqliteSchedulerStore,
+    artifacts: ProtectedArtifactStore,
+    run_id: str,
+    iteration: int,
+    session_id: str,
+) -> list[RecoveryCopyManifestEntry]:
+    with store.begin_read() as conn:
+        attempt = conn.execute(
+            """SELECT a.*, e.effect_kind FROM scheduler_attempts a
+            JOIN scheduler_effects e ON e.dispatch_id=a.dispatch_id
+            WHERE a.run_id=? AND a.component='codex_implementer' AND a.iteration=?
+              AND a.ingested=1 AND a.exit_code=0
+            ORDER BY a.completed_at DESC, a.attempt_id DESC LIMIT 1""",
+            (run_id, iteration),
+        ).fetchone()
+    if attempt is None:
+        raise SchedulerEngineError(
+            SchedulerEngineErrorKind.VALIDATION, "completed Codex implementer attempt missing"
+        )
+    root = artifacts.run_root(run_id)
+    try:
+        verify_codex_implementer_invocation_evidence(
+            root,
+            attempt_id=str(attempt["attempt_id"]),
+            run_id=run_id,
+            dispatch_id=str(attempt["dispatch_id"]),
+            unit_identity=str(attempt["unit_identity"]),
+            launch_nonce=str(attempt["launch_nonce"]),
+            launch_intent_sha256=str(attempt["launch_intent_sha256"]),
+            effect_kind=str(attempt["effect_kind"]),
+        )
+        outcome = load_authenticated_codex_implementer_outcome(
+            root,
+            attempt_id=str(attempt["attempt_id"]),
+            unit_identity=str(attempt["unit_identity"]),
+            result_rel=str(attempt["result_artifact_path"]),
+            stdout_rel=str(attempt["stdout_artifact_path"]),
+            stderr_rel=str(attempt["stderr_artifact_path"]),
+            observed_exit_code=0,
+            observed_termination=None,
+            expected_envelope_sha256=str(attempt["completion_envelope_sha256"]),
+            expected_dispatch_id=str(attempt["dispatch_id"]),
+            expected_effect_kind=str(attempt["effect_kind"]),
+        )
+        if outcome.get("session_id") != session_id:
+            raise CodexEvidenceError("completed implementer identity conflicts with binding")
+    except (CodexEvidenceError, ValueError, OSError) as exc:
+        raise SchedulerEngineError(SchedulerEngineErrorKind.VALIDATION, str(exc)) from exc
+    if not outcome.get("final_path") or not outcome.get("final_sha256"):
+        raise SchedulerEngineError(
+            SchedulerEngineErrorKind.VALIDATION,
+            "implementer missing authenticated final response binding",
+        )
+    final_entry = _manifest_entry(
+        artifacts,
+        run_id,
+        str(outcome["final_path"]),
+        str(outcome["final_sha256"]),
+        max_bytes=MAX_CURSOR_FINAL_BYTES,
+    )
+    return [
+        final_entry,
+        RecoveryCopyManifestEntry(
+            relative_path=final_entry.relative_path,
+            expected_sha256=final_entry.expected_sha256,
+            destination_relative_path=codex_implementer_latest_final_rel(iteration),
+        ),
+        _manifest_entry(
+            artifacts, run_id, str(outcome["metadata_path"]), str(outcome["metadata_sha256"])
+        ),
+    ]
+
+
+def _authenticate_sdk_reconciliation_attempt(
+    store: SqliteSchedulerStore,
+    artifacts: ProtectedArtifactStore,
+    *,
+    run_id: str,
+    expected_iteration: int,
+    recovery_key: str,
+    record_path: str,
+    record_sha256: str,
+    record: CursorSdkReconciliationRecordV1,
+) -> tuple[str, dict[str, object]]:
+    with store.begin_read() as conn:
+        attempt = store.get_attempt_by_id(conn, record.reconciliation_attempt_id)
+        dispatch = (
+            store.get_effect_by_dispatch_id(conn, str(attempt["dispatch_id"]))
+            if attempt is not None
+            else None
+        )
+    if (
+        attempt is None
+        or str(attempt["run_id"]) != run_id
+        or str(attempt["component"]) != "cursor"
+        or str(attempt["status"]) != "completed"
+        or int(attempt["ingested"]) != 1
+        or attempt["exit_code"] is None
+        or int(attempt["exit_code"]) != 0
+        or attempt["completion_envelope_sha256"] is None
+        or dispatch is None
+        or str(dispatch["run_id"]) != run_id
+        or str(dispatch["effect_kind"]) != RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND
+    ):
+        raise SchedulerEngineError(
+            SchedulerEngineErrorKind.VALIDATION,
+            "Cursor SDK terminal replay attempt is not authenticated",
+        )
+    try:
+        payload = dispatch["effect_payload"]
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+    except (TypeError, ValueError) as exc:
+        raise SchedulerEngineError(
+            SchedulerEngineErrorKind.VALIDATION,
+            "Cursor SDK terminal replay dispatch payload is invalid",
+        ) from exc
+    if not isinstance(payload, dict) or payload.get("recovery_key") != recovery_key:
+        raise SchedulerEngineError(
+            SchedulerEngineErrorKind.VALIDATION,
+            "Cursor SDK terminal replay dispatch changed recovery authority",
+        )
+    attempt_id = str(attempt["attempt_id"])
+    dispatch_id = str(attempt["dispatch_id"])
+    run_root = artifacts.run_root(run_id)
+    try:
+        invocation = verify_cursor_invocation_evidence(
+            run_root,
+            attempt_id=attempt_id,
+            run_id=run_id,
+            dispatch_id=dispatch_id,
+            unit_identity=str(attempt["unit_identity"]),
+            launch_nonce=str(attempt["launch_nonce"]),
+            launch_intent_sha256=str(attempt["launch_intent_sha256"]),
+            effect_kind=RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND,
+        )
+        outcome = load_authenticated_cursor_outcome(
+            run_root,
+            attempt_id=attempt_id,
+            unit_identity=str(attempt["unit_identity"]),
+            result_rel=str(attempt["result_artifact_path"]),
+            stdout_rel=str(attempt["stdout_artifact_path"]),
+            stderr_rel=str(attempt["stderr_artifact_path"]),
+            observed_exit_code=0,
+            expected_envelope_sha256=str(attempt["completion_envelope_sha256"]),
+            expected_dispatch_id=dispatch_id,
+            expected_effect_kind=RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND,
+        )
+    except (CursorEvidenceError, ValueError, TypeError, KeyError, OSError) as exc:
+        raise SchedulerEngineError(
+            SchedulerEngineErrorKind.VALIDATION,
+            f"Cursor SDK terminal replay evidence authentication failed: {exc}",
+        ) from exc
+    expected_invocation = {
+        "source_attempt_id": record.source_attempt_id,
+        "source_dispatch_id": record.source_dispatch_id,
+        "conversation_owner_run_id": record.conversation_owner_run_id,
+        "conversation_key": record.conversation_key,
+        "agent_id": record.agent_id,
+        "prompt_sha256": record.prompt_sha256,
+        "recovery_key": recovery_key,
+    }
+    expected_outcome = {
+        "iteration": expected_iteration,
+        "agent_id": record.agent_id,
+        "native_run_id": record.native_run_id,
+        "reconciliation_outcome": "terminal_recovered",
+        "reconciliation_record_path": record_path,
+        "reconciliation_record_sha256": record_sha256,
+        "final_response_path": record.terminal_response_path,
+        "final_response_sha256": record.terminal_response_sha256,
+        "cursor_output_fingerprint_path": record.cursor_output_fingerprint_path,
+        "cursor_output_fingerprint_sha256": record.cursor_output_fingerprint_sha256,
+    }
+    if (
+        any(invocation.get(key) != value for key, value in expected_invocation.items())
+        or any(outcome.get(key) != value for key, value in expected_outcome.items())
+        or outcome.get("parse_ok") is not True
+        or outcome.get("has_completion_signal") is not True
+    ):
+        raise SchedulerEngineError(
+            SchedulerEngineErrorKind.VALIDATION,
+            "Cursor SDK terminal replay outcome conflicts with reconciliation authority",
+        )
+    return attempt_id, outcome
+
+
+def _authenticate_sdk_review_checkpoint(
+    store: SqliteSchedulerStore,
+    artifacts: ProtectedArtifactStore,
+    run_id: str,
+    attempt: object,
+    outcome: dict[str, object],
+    event: CursorSdkTurnCompletedEvent,
+) -> tuple[CursorSdkRuntimeBinding, list[RecoveryCopyManifestEntry]]:
+    """Reconstruct SDK ownership from authenticated dispatch and original creation."""
+    attempt_id = str(attempt["attempt_id"])  # type: ignore[index]
+    dispatch_id = str(attempt["dispatch_id"])  # type: ignore[index]
+    run_root = artifacts.run_root(run_id)
+    evidence = json.loads(
+        (run_root / f"attempts/{attempt_id}/invocation-evidence.json").read_text()
+    )
+    owner = str(evidence["conversation_owner_run_id"])
+    key = str(evidence["conversation_key"])
+    agent = str(evidence["agent_id"])
+    with store.begin_read() as conn:
+        creation_events = store.list_events_for_run(conn, owner, limit=500, newest_first=False)
+    created = next(
+        (
+            parsed
+            for row in creation_events
+            if str(row["event_kind"]) == "cursor_sdk_agent_created"
+            and isinstance(parsed := _parse_event_row(row), CursorSdkAgentCreatedEvent)
+        ),
+        None,
+    )
+    if created is None or created.agent_id != agent or created.conversation_key != key:
+        raise SchedulerEngineError(
+            SchedulerEngineErrorKind.VALIDATION, "SDK creation authority mismatch"
+        )
+    identity = _manifest_entry(
+        artifacts, run_id, created.identity_artifact_path, created.identity_artifact_sha256
+    )
+    journal = _manifest_entry(artifacts, run_id, event.journal_path, event.journal_sha256)
+    manifest = [identity, journal]
+    try:
+        journal_path = resolve_run_relative_path(run_root, event.journal_path)
+        expected_binding = {
+            "attempt_id": attempt_id,
+            "dispatch_id": dispatch_id,
+            "conversation_owner_run_id": owner,
+            "conversation_key": key,
+            "agent_id": agent,
+            "prompt_sha256": str(evidence["prompt_sha256"]),
+        }
+        try:
+            records = authenticate_sdk_journal(
+                journal_path,
+                expected_sha256=event.journal_sha256,
+                operation="send",
+                expected_binding=expected_binding,
+            )
+        except ValueError:
+            records = authenticate_sdk_recovery_journal(
+                journal_path,
+                expected_sha256=event.journal_sha256,
+                expected_binding=expected_binding,
+            )
+        terminal_native_run_id = str(records[-1].get("native_run_id") or "") or None
+        source_agent_id = str(outcome.get("agent_id") or "") or None
+        if (
+            outcome.get("journal_sha256") != event.journal_sha256
+            or (source_agent_id is not None and source_agent_id != agent)
+            or (
+                terminal_native_run_id is not None and terminal_native_run_id != event.native_run_id
+            )
+        ):
+            raise ValueError("SDK completed turn authority mismatch")
+        final_attempt_id = attempt_id
+        final_outcome = outcome
+        if records[-1].get("outcome") == "success":
+            if (
+                source_agent_id != agent
+                or terminal_native_run_id != event.native_run_id
+                or outcome.get("native_run_id") != event.native_run_id
+            ):
+                raise ValueError("SDK completed turn authority mismatch")
+        else:
+            with store.begin_read() as conn:
+                row = store.get_cursor_sdk_reconciliation_by_source_attempt(
+                    conn, source_attempt_id=attempt_id
+                )
+                if row is None:
+                    raise ValueError("SDK completed turn lacks reconciliation authority")
+                intent, record = authenticate_ready_sdk_reconciliation(
+                    store,
+                    artifacts,
+                    conn,
+                    run_id=run_id,
+                    row=row,
+                )
+            record_path = str(row["result_artifact_path"] or "")
+            record_sha256 = str(row["result_sha256"] or "")
+            if (
+                intent.iteration != event.iteration
+                or record.outcome != "terminal_recovered"
+                or record.native_run_id != event.native_run_id
+                or record.cursor_output_fingerprint_path != event.cursor_output_fingerprint_path
+                or record.cursor_output_fingerprint_sha256 != event.cursor_output_fingerprint_sha256
+                or (
+                    outcome.get("native_run_id") is not None
+                    and outcome.get("native_run_id") != event.native_run_id
+                )
+            ):
+                raise ValueError("SDK completed turn authority mismatch")
+            final_attempt_id, final_outcome = _authenticate_sdk_reconciliation_attempt(
+                store,
+                artifacts,
+                run_id=run_id,
+                expected_iteration=event.iteration,
+                recovery_key=str(row["recovery_key"]),
+                record_path=record_path,
+                record_sha256=record_sha256,
+                record=record,
+            )
+            manifest.append(_manifest_entry(artifacts, run_id, record_path, record_sha256))
+        manifest.extend(
+            _authenticate_cursor_final_response(
+                artifacts,
+                source_run_id=run_id,
+                cursor_attempt_id=final_attempt_id,
+                iteration=event.iteration,
+                cursor_outcome=final_outcome,
+            )
+        )
+        sdk = CursorSdkRuntimeBinding(
+            conversation_owner_run_id=owner,
+            conversation_key=key,
+            agent_id=agent,
+            native_run_id=event.native_run_id,
+            identity_artifact_path=identity.relative_path,
+            identity_artifact_sha256=identity.expected_sha256,
+            latest_journal_path=journal.relative_path,
+            latest_journal_sha256=journal.expected_sha256,
+        )
+    except ValueError as exc:
+        raise SchedulerEngineError(SchedulerEngineErrorKind.VALIDATION, str(exc)) from exc
+    return sdk, manifest
+
+
 def _authenticate_cursor_final_response(
     artifacts: ProtectedArtifactStore,
     *,
@@ -677,11 +1031,18 @@ def _dedupe_manifest(
 ) -> tuple[RecoveryCopyManifestEntry, ...]:
     deduped: dict[str, RecoveryCopyManifestEntry] = {}
     for entry in entries:
-        deduped[entry.relative_path] = entry
+        destination = entry.destination_relative_path or entry.relative_path
+        existing = deduped.get(destination)
+        if existing is not None and existing != entry:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                f"recovery artifact destination has conflicting sources: {destination}",
+            )
+        deduped[destination] = entry
     return tuple(deduped.values())
 
 
-def _run_has_cursor_staging_ledger_evidence(
+def _run_has_implementation_staging_ledger_evidence(
     store: SqliteSchedulerStore,
     conn: sqlite3.Connection,
     run_id: str,
@@ -690,7 +1051,7 @@ def _run_has_cursor_staging_ledger_evidence(
         """
         SELECT 1 FROM scheduler_events
         WHERE run_id = ?
-          AND event_kind IN (?, ?, ?)
+          AND event_kind IN (?, ?, ?, ?)
         LIMIT 1
         """,
         (
@@ -698,6 +1059,7 @@ def _run_has_cursor_staging_ledger_evidence(
             CURSOR_CHAT_CREATED_EVENT_KIND,
             STAGING_COMPLETED_EVENT_KIND,
             CURSOR_TURN_COMPLETED_EVENT_KIND,
+            CODEX_IMPLEMENTER_TURN_COMPLETED_EVENT_KIND,
         ),
     ).fetchone()
     return row is not None
@@ -746,7 +1108,7 @@ def resolve_recovery_ledger_evidence_run_id(
     visited: set[str] = set()
     while current not in visited:
         visited.add(current)
-        if _run_has_cursor_staging_ledger_evidence(store, conn, current):
+        if _run_has_implementation_staging_ledger_evidence(store, conn, current):
             return current
         row = store.get_review_recovery_source_for_successor(conn, successor_run_id=current)
         if row is None:
@@ -782,7 +1144,8 @@ def analyze_blocked_review_recovery(
 
     chat_event: CursorChatCreatedEvent | None = None
     staging_event: StagingCompletedEvent | None = None
-    turn_event: CursorTurnCompletedEvent | None = None
+    turn_event: CursorTurnCompletedEvent | CursorSdkTurnCompletedEvent | None = None
+    implementer_event: CodexImplementerTurnCompletedEvent | None = None
     reviewer_bound_event: CodexReviewerBoundEvent | None = None
     for row in events:
         kind = str(row["event_kind"])
@@ -798,6 +1161,14 @@ def analyze_blocked_review_recovery(
             parsed = _parse_event_row(row)
             if isinstance(parsed, CursorTurnCompletedEvent):
                 turn_event = parsed
+        if kind == "cursor_sdk_turn_completed":
+            parsed = _parse_event_row(row)
+            if isinstance(parsed, CursorSdkTurnCompletedEvent):
+                turn_event = parsed
+        if kind == CODEX_IMPLEMENTER_TURN_COMPLETED_EVENT_KIND:
+            parsed = _parse_event_row(row)
+            if isinstance(parsed, CodexImplementerTurnCompletedEvent):
+                implementer_event = parsed
         if kind == CODEX_REVIEWER_BOUND_EVENT_KIND:
             parsed = _parse_event_row(row)
             if isinstance(parsed, CodexReviewerBoundEvent):
@@ -816,20 +1187,38 @@ def analyze_blocked_review_recovery(
                 if reviewer_bound_event is not None:
                     binding_run_id = ancestor_run_id
                     break
-    if (
-        chat_event is None
-        or staging_event is None
-        or turn_event is None
-        or reviewer_bound_event is None
+    is_codex_implementer = (
+        state.context.implementer is not None and state.context.implementer.provider == "codex"
+    )
+    is_sdk_implementer = not is_codex_implementer and isinstance(
+        state.context.cursor, CursorSdkBinding
+    )
+    if staging_event is None or reviewer_bound_event is None:
+        raise SchedulerEngineError(
+            SchedulerEngineErrorKind.VALIDATION,
+            "blocked source lacks completed implementation/staging/reviewer evidence",
+        )
+    if is_codex_implementer and implementer_event is None:
+        raise SchedulerEngineError(
+            SchedulerEngineErrorKind.VALIDATION,
+            "blocked source lacks completed Codex implementer evidence",
+        )
+    if not is_codex_implementer and (
+        turn_event is None or (not is_sdk_implementer and chat_event is None)
     ):
         raise SchedulerEngineError(
             SchedulerEngineErrorKind.VALIDATION,
-            "blocked source lacks completed cursor/staging/reviewer evidence",
+            "blocked source lacks completed Cursor implementation evidence",
         )
-    if turn_event.iteration != staging_event.iteration:
+    if turn_event is not None and turn_event.iteration != staging_event.iteration:
         raise SchedulerEngineError(
             SchedulerEngineErrorKind.VALIDATION,
             "cursor turn iteration disagrees with staged patch iteration",
+        )
+    if implementer_event is not None and implementer_event.iteration != staging_event.iteration:
+        raise SchedulerEngineError(
+            SchedulerEngineErrorKind.VALIDATION,
+            "Codex implementer iteration disagrees with staged patch iteration",
         )
 
     with store.begin_read() as conn:
@@ -842,10 +1231,14 @@ def analyze_blocked_review_recovery(
                 if bootstrap_attempt is not None:
                     bootstrap_run_id = ancestor_run_id
                     break
-        cursor_attempt = store.get_cursor_turn_attempt_for_iteration(
-            conn,
-            run_id=evidence_run_id,
-            iteration=staging_event.iteration,
+        cursor_attempt = (
+            None
+            if is_codex_implementer
+            else store.get_cursor_turn_attempt_for_iteration(
+                conn,
+                run_id=evidence_run_id,
+                iteration=staging_event.iteration,
+            )
         )
     if attempt is None:
         raise SchedulerEngineError(
@@ -857,7 +1250,7 @@ def analyze_blocked_review_recovery(
             SchedulerEngineErrorKind.VALIDATION,
             "blocked source lacks an authenticated bootstrap Codex attempt",
         )
-    if cursor_attempt is None:
+    if not is_codex_implementer and cursor_attempt is None:
         raise SchedulerEngineError(
             SchedulerEngineErrorKind.VALIDATION,
             "blocked source lacks a completed Cursor turn for the staged iteration",
@@ -951,22 +1344,6 @@ def analyze_blocked_review_recovery(
         _manifest_entry(
             artifacts,
             evidence_run_id,
-            chat_event.chat_artifact_path,
-            chat_event.chat_artifact_sha256,
-        )
-    )
-    manifest_entries.append(
-        _require_cursor_fingerprint_artifact(
-            artifacts,
-            evidence_run_id,
-            turn_event.cursor_output_fingerprint_path,
-            turn_event.cursor_output_fingerprint_sha256,
-        )
-    )
-    manifest_entries.append(
-        _manifest_entry(
-            artifacts,
-            evidence_run_id,
             staging_event.staged_patch_path,
             staging_event.staged_patch_sha256,
         )
@@ -979,23 +1356,119 @@ def analyze_blocked_review_recovery(
             reviewer_bound_event.binding_artifact_sha256,
         )
     )
-    cursor_outcome = _authenticate_cursor_turn_attempt(
-        store,
-        artifacts,
-        source_run_id=evidence_run_id,
-        attempt=cursor_attempt,
-        expected_iteration=staging_event.iteration,
-    )
-    cursor_attempt_id = str(cursor_attempt["attempt_id"])
-    manifest_entries.extend(
-        _authenticate_cursor_final_response(
+    implementer_session_id: str | None = None
+    implementer_binding_path: str | None = None
+    implementer_binding_sha256: str | None = None
+    sdk_checkpoint: CursorSdkRuntimeBinding | None = None
+    if is_codex_implementer:
+        assert implementer_event is not None
+        binding_entry = _manifest_entry(
+            artifacts,
+            evidence_run_id,
+            implementer_event.binding_artifact_path,
+            implementer_event.binding_artifact_sha256,
+            max_bytes=MAX_CONFIG_BYTES,
+        )
+        try:
+            binding_payload = json.loads(
+                artifacts.read_verified_bytes(
+                    evidence_run_id,
+                    binding_entry.relative_path,
+                    expected_sha256=binding_entry.expected_sha256,
+                ).decode("utf-8")
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "Codex implementer binding artifact is not valid UTF-8 JSON",
+            ) from exc
+        implementer = state.context.implementer
+        assert implementer is not None
+        implementer_session_id = (
+            str(binding_payload.get("session_id", "")).strip()
+            if isinstance(binding_payload, dict)
+            else ""
+        )
+        if (
+            not isinstance(binding_payload, dict)
+            or any(
+                binding_payload.get(key) != value
+                for key, value in {
+                    "role": "implementer",
+                    "purpose": "implementation",
+                    "session_id": implementer_session_id,
+                    "model": implementer.model,
+                    "reasoning_effort": implementer.reasoning_effort,
+                }.items()
+            )
+            or not implementer_session_id.startswith(
+                implementer_event.implementer_session_id_prefix
+            )
+        ):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "Codex implementer binding artifact conflicts with frozen identity",
+            )
+        manifest_entries.append(binding_entry)
+        manifest_entries.extend(
+            _authenticate_codex_implementation_for_review_recovery(
+                store, artifacts, evidence_run_id, staging_event.iteration, implementer_session_id
+            )
+        )
+        implementer_binding_path = binding_entry.relative_path
+        implementer_binding_sha256 = binding_entry.expected_sha256
+    else:
+        assert turn_event is not None
+        assert cursor_attempt is not None
+        if chat_event is not None:
+            manifest_entries.append(
+                _manifest_entry(
+                    artifacts,
+                    evidence_run_id,
+                    chat_event.chat_artifact_path,
+                    chat_event.chat_artifact_sha256,
+                )
+            )
+        manifest_entries.append(
+            _require_cursor_fingerprint_artifact(
+                artifacts,
+                evidence_run_id,
+                turn_event.cursor_output_fingerprint_path,
+                turn_event.cursor_output_fingerprint_sha256,
+            )
+        )
+        cursor_outcome = _authenticate_cursor_turn_attempt(
+            store,
             artifacts,
             source_run_id=evidence_run_id,
-            cursor_attempt_id=cursor_attempt_id,
-            iteration=staging_event.iteration,
-            cursor_outcome=cursor_outcome,
+            attempt=cursor_attempt,
+            expected_iteration=staging_event.iteration,
         )
-    )
+        cursor_attempt_id = str(cursor_attempt["attempt_id"])
+        if is_sdk_implementer:
+            if not isinstance(turn_event, CursorSdkTurnCompletedEvent):
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.VALIDATION, "SDK turn event missing"
+                )
+            sdk_checkpoint, sdk_manifest = _authenticate_sdk_review_checkpoint(
+                store,
+                artifacts,
+                evidence_run_id,
+                cursor_attempt,
+                cursor_outcome,
+                turn_event,
+            )
+            manifest_entries.extend(sdk_manifest)
+        if not is_sdk_implementer:
+            manifest_entries.extend(
+                _authenticate_cursor_final_response(
+                    artifacts,
+                    source_run_id=evidence_run_id,
+                    cursor_attempt_id=cursor_attempt_id,
+                    iteration=staging_event.iteration,
+                    cursor_outcome=cursor_outcome,
+                )
+            )
     manifest_entries.append(bootstrap_events_entry)
 
     copy_manifest = _dedupe_manifest(manifest_entries)
@@ -1009,9 +1482,10 @@ def analyze_blocked_review_recovery(
     )
     cursor = CursorWorkflowCheckpoint(
         iteration=int(staging_event.iteration),
-        chat_id=chat_event.chat_id,
-        chat_artifact_path=chat_event.chat_artifact_path,
-        chat_artifact_sha256=chat_event.chat_artifact_sha256,
+        sdk=sdk_checkpoint,
+        chat_id=chat_event.chat_id if chat_event is not None else None,
+        chat_artifact_path=(chat_event.chat_artifact_path if chat_event is not None else None),
+        chat_artifact_sha256=(chat_event.chat_artifact_sha256 if chat_event is not None else None),
         staged_patch_path=staging_event.staged_patch_path,
         staged_patch_sha256=staging_event.staged_patch_sha256,
     )
@@ -1032,6 +1506,9 @@ def analyze_blocked_review_recovery(
         reviewer_session_id=reviewer_session_id,
         binding_artifact_path=reviewer_bound_event.binding_artifact_path,
         binding_artifact_sha256=reviewer_bound_event.binding_artifact_sha256,
+        implementer_session_id=implementer_session_id,
+        implementer_binding_artifact_path=implementer_binding_path,
+        implementer_binding_artifact_sha256=implementer_binding_sha256,
     )
 
     evidence = BlockedReviewRecoveryEvidence(
@@ -1083,7 +1560,7 @@ def _copy_recovery_artifacts(
             )
         artifacts.publish_or_verify_bytes(
             successor_run_id,
-            entry.relative_path,
+            entry.destination_relative_path or entry.relative_path,
             content,
             max_bytes=len(content) + 1,
         )
@@ -1100,6 +1577,12 @@ def materialize_review_recovery_successor(
     event_id_factory: Callable[[], str] | None = None,
 ) -> str:
     from ai_dev_loop.scheduler.domain.events import CodexReviewRecoverySuccessorCreatedEvent
+
+    if context_uses_cursor_cli(evidence.context):
+        raise SchedulerEngineError(
+            SchedulerEngineErrorKind.VALIDATION,
+            f"scheduler review recovery: {CURSOR_CLI_RETIRED_SUMMARY}",
+        )
 
     successor_run_id = (
         run_id_factory(evidence.context.project_name, now)

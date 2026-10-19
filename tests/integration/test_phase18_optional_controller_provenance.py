@@ -45,6 +45,11 @@ def _submit_options(
         controller_session_id=controller_session_id,
         codex_review_model="gpt-5.6-sol",
         codex_review_reasoning_effort="high",
+        implementer_provider="codex",
+        implementer_command="codex",
+        implementer_model="gpt-5.6-sol",
+        implementer_reasoning_effort="high",
+        implementer_timeout_minutes=90,
         db_path=db_path,
         artifact_root=artifact_root,
     )

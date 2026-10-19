@@ -33,6 +33,8 @@ REVIEW_SKILL_INVOCATION_BYTES = (
 )
 PROMPT_MARKER_ORIGINAL_CURSOR = b"## Original Cursor prompt\n\n"
 PROMPT_MARKER_LATEST_CURSOR = b"\n\n## Latest Cursor final response\n\n"
+PROMPT_MARKER_ORIGINAL_CODEX_IMPLEMENTER = b"## Original Codex implementer prompt\n\n"
+PROMPT_MARKER_LATEST_CODEX_IMPLEMENTER = b"\n\n## Latest Codex implementer final response\n\n"
 PROMPT_MARKER_ARTIFACT_PATHS = b"\n\n## Artifact paths for auditability\n"
 REVIEW_PROMPT_FOOTER_BYTES = (
     b"Your final response must conform to codex-review-result-v1.json.\n"
@@ -273,41 +275,76 @@ def verify_captured_review_prompt_bytes(prompt_bytes: bytes, *, iteration: int) 
     repo_at = prompt_bytes.find(repo_marker)
     if repo_at == -1:
         raise AssertionError("review prompt missing repository plan path marker")
-    original_at = prompt_bytes.find(PROMPT_MARKER_ORIGINAL_CURSOR, repo_at)
+    is_codex_implementer = PROMPT_MARKER_ORIGINAL_CODEX_IMPLEMENTER in prompt_bytes
+    original_marker = (
+        PROMPT_MARKER_ORIGINAL_CODEX_IMPLEMENTER
+        if is_codex_implementer
+        else PROMPT_MARKER_ORIGINAL_CURSOR
+    )
+    latest_marker = (
+        PROMPT_MARKER_LATEST_CODEX_IMPLEMENTER
+        if is_codex_implementer
+        else PROMPT_MARKER_LATEST_CURSOR
+    )
+    original_at = prompt_bytes.find(original_marker, repo_at)
     if original_at == -1:
-        raise AssertionError("review prompt missing original Cursor prompt section")
-    cursor_start = original_at + len(PROMPT_MARKER_ORIGINAL_CURSOR)
-    latest_at = prompt_bytes.find(PROMPT_MARKER_LATEST_CURSOR, cursor_start)
+        raise AssertionError("review prompt missing original implementer prompt section")
+    cursor_start = original_at + len(original_marker)
+    latest_at = prompt_bytes.find(latest_marker, cursor_start)
     if latest_at == -1:
-        raise AssertionError("review prompt missing latest Cursor response section")
+        raise AssertionError("review prompt missing latest implementer response section")
     embedded = prompt_bytes[cursor_start:latest_at]
     if embedded != INITIAL_PROMPT_BYTES:
         raise AssertionError(
             f"review prompt embedded Cursor prompt byte mismatch: "
             f"expected {len(INITIAL_PROMPT_BYTES)} bytes, got {len(embedded)}"
         )
-    latest_start = latest_at + len(PROMPT_MARKER_LATEST_CURSOR)
+    latest_start = latest_at + len(latest_marker)
     artifact_at = prompt_bytes.find(PROMPT_MARKER_ARTIFACT_PATHS, latest_start)
     if artifact_at == -1:
         raise AssertionError("review prompt missing artifact paths section")
     if not prompt_bytes[artifact_at:].startswith(PROMPT_MARKER_ARTIFACT_PATHS):
         raise AssertionError("review prompt artifact paths marker misaligned")
     latest_body = prompt_bytes[latest_start:artifact_at]
-    expected_latest = expected_latest_cursor_final_response_for_captured_prompt(
-        prompt_bytes,
-        review_iteration=iteration,
-    )
-    if latest_body != expected_latest:
-        raise AssertionError(
-            "review prompt latest Cursor final response byte mismatch: "
-            f"expected {expected_latest!r}, got {latest_body!r}"
+    if is_codex_implementer:
+        fallback_response = (
+            b"The orchestrator could not extract a final Codex implementer response. "
+            b"Review the staged changes and artifacts using the paths below."
         )
+        fake_response = re.fullmatch(rb"implementation turn ([1-9][0-9]*) complete", latest_body)
+        fake_turn = int(fake_response.group(1)) if fake_response is not None else None
+        if latest_body != fallback_response and (fake_turn is None or fake_turn > iteration):
+            raise AssertionError(
+                "review prompt latest Codex implementer response is neither the "
+                "documented fallback nor a completed turn at or before the review "
+                f"iteration: review iteration {iteration}, got {latest_body!r}"
+            )
+    else:
+        expected_latest_options = {
+            expected_latest_cursor_final_response_for_captured_prompt(
+                prompt_bytes,
+                review_iteration=iteration,
+            )
+        }
+        if latest_body not in expected_latest_options:
+            raise AssertionError(
+                "review prompt latest implementer final response byte mismatch: "
+                f"expected one of {expected_latest_options!r}, got {latest_body!r}"
+            )
     if not prompt_bytes.endswith(REVIEW_PROMPT_FOOTER_BYTES):
         raise AssertionError("review prompt missing expected footer contract")
     iter_label = f"{iteration:02d}".encode("ascii")
     required_paths = (
-        b"cursor/iterations/" + iter_label + b"/events.jsonl",
-        b"cursor/iterations/" + iter_label + b"/final.txt",
+        (
+            b"implementer/iterations/" + iter_label + b"/final.txt"
+            if is_codex_implementer
+            else b"cursor/iterations/" + iter_label + b"/events.jsonl"
+        ),
+        (
+            b"implementer/turns"
+            if is_codex_implementer
+            else b"cursor/iterations/" + iter_label + b"/final.txt"
+        ),
         b"git/diffs/" + iter_label + b".patch",
     )
     for path in required_paths:

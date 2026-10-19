@@ -18,6 +18,10 @@ from ai_dev_loop.scheduler.application.cursor_evidence import (
     load_authenticated_cursor_outcome,
     verify_cursor_invocation_evidence,
 )
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import (
+    CURSOR_CLI_RETIRED_SUMMARY,
+    context_uses_cursor_cli,
+)
 from ai_dev_loop.scheduler.domain.common import encode_utc_instant
 from ai_dev_loop.scheduler.domain.cursor_contract import (
     RUN_CURSOR_TURN_EFFECT_ID,
@@ -134,6 +138,8 @@ class CursorTimeoutRetryService:
         now = self.now()
         with self.store.begin_immediate() as conn:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
+            if context_uses_cursor_cli(state.context):
+                raise invalid(f"scheduler cursor timeout recovery: {CURSOR_CLI_RETIRED_SUMMARY}")
             if isinstance(state.context.cursor, CursorSdkBinding):
                 raise invalid(
                     "Cursor SDK timeout recovery requires completed native-run reconciliation"
@@ -168,6 +174,8 @@ class CursorTimeoutRetryService:
         now = self.now()
         with self.store.begin_immediate() as conn:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
+            if context_uses_cursor_cli(state.context):
+                raise invalid(f"scheduler cursor retry: {CURSOR_CLI_RETIRED_SUMMARY}")
             self._require_idle(conn, run_id)
             if not isinstance(state, CURSOR_TURN_STATES) or not state.cursor.timeout_attempt_id:
                 raise invalid("Run has no retryable Cursor timeout")

@@ -45,20 +45,42 @@ def _two_phase_manifest() -> str:
     phases = [
         {
             "name": "phase-one",
+            "short_name": "Phase one",
             "plan_path": "docs/plans/sample-plan.md",
             "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
             "commit_message": "checkpoint after phase one",
+            "implementer": {
+                "provider": "codex",
+                "command": "codex",
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "high",
+                "timeout_minutes": 90,
+            },
             "codex": {"review_model": "gpt-5.6-sol", "review_reasoning_effort": "high"},
         },
         {
             "name": "phase-two",
+            "short_name": "Phase two",
             "plan_path": "docs/plans/sample-plan.md",
             "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
+            "implementer": {
+                "provider": "codex",
+                "command": "codex",
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "high",
+                "timeout_minutes": 90,
+            },
             "codex": {"review_model": "gpt-5.6-sol", "review_reasoning_effort": "high"},
         },
     ]
     return yaml.safe_dump(
-        {"schema_version": 1, "name": "two-phase", "phases": phases}, sort_keys=False
+        {
+            "schema_version": 3,
+            "name": "two-phase",
+            "short_name": "Two phase",
+            "phases": phases,
+        },
+        sort_keys=False,
     )
 
 

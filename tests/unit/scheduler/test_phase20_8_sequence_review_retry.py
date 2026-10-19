@@ -117,7 +117,11 @@ def _blocked_sequence_review_fixture(
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "message_only_usage_limit")
     monkeypatch.setenv("FAKE_CODEX_CAPACITY", "available")
     monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", BOOTSTRAP_ID)
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    monkeypatch.setenv(
+        "FAKE_CODEX_IMPLEMENTER_SESSION_ID",
+        "019def00-0000-0000-0000-0000000000aa",
+    )
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
     sequence_id = _prepare_sequence(git_repo, scheduler_paths)
     start = _start_service(scheduler_paths).start(sequence_id)
     tick = _tick_service(

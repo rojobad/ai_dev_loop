@@ -3,7 +3,7 @@
 Usa `codex-desktop-wsl` cuando:
 
 - Codex interactivo corre como aplicacion de escritorio en Windows.
-- Cursor CLI y Codex CLI no interactivo corren dentro de WSL.
+- Cursor SDK local y Codex CLI no interactivo corren dentro de WSL.
 - El repositorio objetivo vive en WSL.
 
 ## Instalar

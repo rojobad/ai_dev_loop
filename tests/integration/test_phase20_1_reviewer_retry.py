@@ -52,6 +52,11 @@ def _submit(git_repo: Path, scheduler_paths: dict[str, Path]) -> str:
         controller_session_id=CONTROLLER_SESSION,
         codex_review_model="gpt-5.6-sol",
         codex_review_reasoning_effort="high",
+        implementer_provider="codex",
+        implementer_command="codex",
+        implementer_model="gpt-5.6-sol",
+        implementer_reasoning_effort="high",
+        implementer_timeout_minutes=90,
         db_path=scheduler_paths["db_path"],
         artifact_root=scheduler_paths["artifact_root"],
         max_review_iterations=3,
@@ -66,6 +71,7 @@ def test_blocked_run_recovery_successor_completes_without_cursor(
     fake_clis: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
     monkeypatch.setenv("FAKE_CODEX_REVIEW_MODE", "message_only_usage_limit")
     monkeypatch.setenv("FAKE_CODEX_CAPACITY", "available")
     run_id = _submit(git_repo, scheduler_paths)
@@ -137,13 +143,9 @@ def test_blocked_run_recovery_successor_completes_without_cursor(
     assert successor.codex.reviewer_session_id == BOOTSTRAP_ID
     codex_log = Path(fake_clis["codex_log"]).read_text(encoding="utf-8")
     assert "cursor_attempt_runner" not in codex_log or "'resume'" in codex_log
-    source_final = next(
-        artifacts.run_root(run_id).glob("cursor/iterations/01/*/final.txt")
-    ).read_text(encoding="utf-8")
-    successor_final = next(
-        artifacts.run_root(successor_id).glob("cursor/iterations/01/*/final.txt")
-    ).read_text(encoding="utf-8")
-    assert successor_final == source_final
+    source_patch = (artifacts.run_root(run_id) / "git/diffs/01.patch").read_bytes()
+    successor_patch = (artifacts.run_root(successor_id) / "git/diffs/01.patch").read_bytes()
+    assert successor_patch == source_patch
     replay = service.retry(run_id)
     assert replay.idempotent_replay is True
     assert replay.run_id == successor_id

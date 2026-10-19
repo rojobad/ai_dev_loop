@@ -34,6 +34,7 @@ from ai_dev_loop.scheduler.domain.cursor_sdk_recovery import (
     CursorSdkSuccessorRecordV1,
 )
 from ai_dev_loop.scheduler.domain.state import CursorWorkflowCheckpoint
+from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SCHEMA_VERSION, SqliteSchedulerStore
 from ai_dev_loop.state import sha256_file
 
@@ -121,11 +122,10 @@ def _repo(tmp_path: Path) -> Path:
 
 def _evidence(tmp_path: Path, *, native: str | None = NATIVE) -> tuple[dict[str, object], Path]:
     repo = _repo(tmp_path)
-    root = tmp_path / "artifacts"
-    root.mkdir()
     source_attempt = "att-" + "1" * 32
     source_dispatch = "fx-source"
     run_id = "sdk-recovery-run"
+    root = ProtectedArtifactStore(tmp_path / "artifacts").run_root(run_id)
     prompt = root / "prompts/turn.txt"
     prompt.parent.mkdir()
     prompt.write_text("continue exactly")

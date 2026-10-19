@@ -1,9 +1,15 @@
-"""Integration tests for Phase 17.4 scheduler cursor workflow."""
+"""Current scheduler workflow coverage retained from Phase 17.4.
+
+The Phase 25.5 cutover retired new Cursor CLI execution. Cursor SDK workflow
+coverage now lives in the Phase 25.2/25.3 suites; this module keeps the shared
+helpers used by later integration tests and exercises the supported Codex-only
+legacy-config path without reviving the old fake ``agent`` dispatch.
+"""
 
 from __future__ import annotations
 
 import itertools
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -13,7 +19,7 @@ from tests.conftest import FIXTURE_REPO
 from tests.unit.scheduler.helpers import CONTROLLER_SESSION
 from tests.unit.scheduler.test_tick import FakeGitAdmissionPort, OkPreflightPort
 
-from ai_dev_loop.scheduler.application.cursor_retry_after import DEFAULT_USAGE_LIMIT_RETRY_SECONDS
+from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.scheduler.application.fake_attempt_backend import (
     FakeAgentProcessBackend,
     FakeAttemptScenario,
@@ -55,6 +61,11 @@ def _submit(
         controller_session_id=CONTROLLER_SESSION,
         codex_review_model="gpt-5.6-sol",
         codex_review_reasoning_effort="high",
+        implementer_provider="codex",
+        implementer_command="codex",
+        implementer_model="gpt-5.6-sol",
+        implementer_reasoning_effort="high",
+        implementer_timeout_minutes=90,
         db_path=scheduler_paths["db_path"],
         artifact_root=scheduler_paths["artifact_root"],
         max_review_iterations=max_review_iterations,
@@ -113,310 +124,79 @@ def _run_until(
     )
 
 
-def test_admit_and_preflight_without_legacy_fake_agent(
+def test_codex_only_v1_preflight_schedules_no_cursor_cli_effect(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
 ) -> None:
     run_id = _submit(git_repo, scheduler_paths)
     start_run(run_id, db_path=scheduler_paths["db_path"])
-    store = SqliteSchedulerStore(scheduler_paths["db_path"])
-    artifacts = ProtectedArtifactStore(scheduler_paths["artifact_root"])
-    tick = TickService(
-        store,
-        artifacts,
-        FakeGitAdmissionPort(resolved_root=str(git_repo.resolve())),
-        now_factory=lambda: datetime(2026, 9, 8, 12, 0, tzinfo=UTC),
-        tick_owner_factory=lambda: "tick-17-4",
-        attempt_id_factory=lambda: "att-" + "b" * 32,
-        attempt_backend=FakeAgentProcessBackend(
-            default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
-        ),
-        preflight_port=OkPreflightPort(),
-    )
-    receipt = tick.run_once()
-    assert any(item.action == "admitted" for item in receipt.run_receipts)
-    assert any(item.action == "preflight_completed" for item in receipt.run_receipts)
-    with store.begin_read() as conn:
-        state, _, _ = store.load_validated_snapshot(conn, run_id)
-        assert state.kind == "preflight_complete"
-        create_chat = conn.execute(
-            """
-            SELECT 1 FROM scheduler_effects
-            WHERE run_id = ? AND effect_kind = 'cursor.create_chat' AND status = 'pending'
-            """,
-            (run_id,),
-        ).fetchone()
-        assert create_chat is not None
-
-
-def test_create_chat_effect_pending_after_preflight(
-    git_repo: Path,
-    scheduler_paths: dict[str, Path],
-) -> None:
-    run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, db_path=scheduler_paths["db_path"])
-    store = SqliteSchedulerStore(scheduler_paths["db_path"])
-    artifacts = ProtectedArtifactStore(scheduler_paths["artifact_root"])
-    tick = TickService(
-        store,
-        artifacts,
-        FakeGitAdmissionPort(resolved_root=str(git_repo.resolve())),
-        now_factory=lambda: datetime(2026, 9, 8, 12, 0, tzinfo=UTC),
-        tick_owner_factory=lambda: "tick-17-4-chat",
-        attempt_id_factory=lambda: "att-" + "d" * 32,
-        attempt_backend=FakeAgentProcessBackend(
+    tick = _tick_service(
+        git_repo,
+        scheduler_paths,
+        now=datetime(2026, 9, 8, 12, tzinfo=UTC),
+        backend=FakeAgentProcessBackend(
             default_scenario=FakeAttemptScenario(active_ticks=1, exit_code=0)
         ),
-        preflight_port=OkPreflightPort(),
     )
     receipt = tick.run_once()
     assert any(item.action == "preflight_completed" for item in receipt.run_receipts)
-    with store.begin_read() as conn:
-        row = conn.execute(
-            """
-            SELECT effect_kind, status FROM scheduler_effects
-            WHERE run_id = ? AND effect_kind = 'cursor.create_chat'
-            """,
+    with tick.store.begin_read() as conn:
+        effects = conn.execute(
+            "SELECT effect_kind FROM scheduler_effects WHERE run_id = ?",
             (run_id,),
-        ).fetchone()
-        assert row is not None
-        assert str(row[0]) == "cursor.create_chat"
-        assert str(row[1]) in {"pending", "claimed"}
+        ).fetchall()
+    kinds = {str(row["effect_kind"]) for row in effects}
+    assert "codex.implementer_bootstrap" in kinds
+    assert "cursor.create_chat" not in kinds
+    assert "cursor.run_turn" not in kinds
 
 
-def test_create_chat_execution_failure_is_not_reported_as_an_invalid_chat_id(
+def test_new_v1_cursor_submission_rejects_before_publication(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
-    fake_clis: dict[str, Path],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    del fake_clis
-    monkeypatch.setenv("FAKE_AGENT_CREATE_CHAT_MODE", "fail")
-    run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, db_path=scheduler_paths["db_path"])
-    tick = _tick_service(
-        git_repo,
-        scheduler_paths,
-        now=datetime(2026, 9, 8, 12, 0, tzinfo=UTC),
-        backend=FakeAgentProcessBackend(
-            default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
-        ),
+    prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
+    options = SubmitOptions(
+        short_name="Retired Cursor CLI",
+        repo_path=git_repo,
+        plan_path=Path("docs/plans/sample-plan.md"),
+        prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
+        codex_review_model="gpt-5.6-sol",
+        codex_review_reasoning_effort="high",
+        db_path=scheduler_paths["db_path"],
+        artifact_root=scheduler_paths["artifact_root"],
     )
-
-    for _ in range(8):
-        tick.run_once()
-        with tick.store.begin_read() as conn:
-            state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
-        if state.kind == "blocked":
-            assert state.block_reason_kind == "cursor_chat_create_failed"
-            assert (
-                state.block_reason_summary
-                == "Cursor chat creation failed before a chat ID was received"
-            )
-            return
-    raise AssertionError("create-chat failure did not reach a blocked state")
+    with (
+        patch("sys.stdin", StringIO(prompt)),
+        pytest.raises(ValidationError, match="Cursor CLI execution is retired"),
+    ):
+        submit_run(options)
+    with SqliteSchedulerStore(scheduler_paths["db_path"]).begin_read() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM scheduler_runs").fetchone()[0] == 0
+    assert not scheduler_paths["artifact_root"].exists()
 
 
-def test_released_worktree_reservation_allows_a_fresh_submit(
+def test_codex_uses_frozen_command_after_path_changes(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
     fake_clis: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    del fake_clis
-    monkeypatch.setenv("FAKE_AGENT_CREATE_CHAT_MODE", "fail")
-    blocked_run_id = _submit(git_repo, scheduler_paths)
-    start_run(blocked_run_id, db_path=scheduler_paths["db_path"])
-    tick = _tick_service(
-        git_repo,
-        scheduler_paths,
-        now=datetime(2026, 9, 8, 12, 0, tzinfo=UTC),
-        backend=FakeAgentProcessBackend(
-            default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
-        ),
-    )
-    _run_until(tick, blocked_run_id, target_kind="blocked", max_ticks=8)
-
-    fresh_run_id = _submit(git_repo, scheduler_paths, max_review_iterations=8)
-
-    assert fresh_run_id != blocked_run_id
-    with tick.store.begin_read() as conn:
-        fresh_state, _, _ = tick.store.load_validated_snapshot(conn, fresh_run_id)
-        reservation = conn.execute(
-            """
-            SELECT run_id, status FROM scheduler_repository_reservations
-            WHERE worktree_key = ?
-            """,
-            (fresh_state.context.repository.worktree_key,),
-        ).fetchone()
-    assert fresh_state.kind == "queued"
-    assert reservation is not None
-    assert str(reservation["run_id"]) == fresh_run_id
-    assert str(reservation["status"]) == "active"
-
-
-def test_happy_path_reaches_awaiting_codex_review(
-    git_repo: Path,
-    scheduler_paths: dict[str, Path],
-    fake_clis: dict[str, Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
-    run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, db_path=scheduler_paths["db_path"])
-    now = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
-    backend = FakeAgentProcessBackend(
-        default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
-    )
-    tick = _tick_service(git_repo, scheduler_paths, now=now, backend=backend)
-    _run_until(tick, run_id, target_kind="awaiting_codex_review")
-    with tick.store.begin_read() as conn:
-        state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
-        assert state.kind == "awaiting_codex_review"
-        assert state.cursor.chat_id == "019abc00-1111-2222-3333-444444444444"
-        staged = conn.execute(
-            "SELECT 1 FROM scheduler_events WHERE run_id = ? AND event_kind = ?",
-            (run_id, "staging_completed"),
-        ).fetchone()
-        assert staged is not None
-    agent_log = fake_clis["agent_log"].read_text(encoding="utf-8")
-    assert agent_log.count("CREATE_CHAT:") == 1
-
-
-def test_cursor_uses_the_command_frozen_before_detached_path_changes(
-    git_repo: Path,
-    scheduler_paths: dict[str, Path],
-    fake_clis: dict[str, Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The worker PATH must not need the interactive directory containing agent."""
-
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_EDIT_PATH", "tracked.txt")
+    monkeypatch.setenv("FAKE_CODEX_IMPLEMENTER_SESSION_ID", "019def00-0000-0000-0000-0000000000aa")
     run_id = _submit(git_repo, scheduler_paths)
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     start_run(run_id, db_path=scheduler_paths["db_path"])
     tick = _tick_service(
         git_repo,
         scheduler_paths,
-        now=datetime(2026, 9, 8, 12, 0, tzinfo=UTC),
+        now=datetime(2026, 9, 8, 12, tzinfo=UTC),
         backend=FakeAgentProcessBackend(
             default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
         ),
     )
-
-    _run_until(tick, run_id, target_kind="awaiting_codex_review")
+    _run_until(tick, run_id, target_kind="awaiting_codex_review", max_ticks=30)
     with tick.store.begin_read() as conn:
         state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
-    assert state.context.cursor.command == str((fake_clis["bin_dir"] / "agent").resolve())
-    assert fake_clis["agent_log"].read_text(encoding="utf-8").count("CREATE_CHAT:") == 1
-
-
-def test_usage_limit_waits_for_structured_retry_before_continuation(
-    git_repo: Path,
-    scheduler_paths: dict[str, Path],
-    fake_clis: dict[str, Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
-    monkeypatch.setenv("FAKE_AGENT_RETRY_AFTER_SECONDS", "120")
-    monkeypatch.setenv("FAKE_AGENT_RUN_SEQUENCE", "usage_limit_retry,success")
-    monkeypatch.setenv(
-        "FAKE_AGENT_RUN_COUNTER",
-        str(fake_clis["agent_log"].parent / "usage-limit-retry-counter.txt"),
-    )
-    run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, db_path=scheduler_paths["db_path"])
-    now = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
-    backend = FakeAgentProcessBackend(
-        default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
-    )
-    tick = _tick_service(git_repo, scheduler_paths, now=now, backend=backend)
-    _run_until(tick, run_id, target_kind="waiting_usage_limit")
-    with tick.store.begin_read() as conn:
-        state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
-        assert state.kind == "waiting_usage_limit"
-        chat_id = state.cursor.chat_id
-        assert chat_id
-        wait_until = datetime.fromisoformat(state.cursor.wait_until.replace("Z", "+00:00"))
-        assert wait_until == now + timedelta(seconds=120)
-    tick_early = _tick_service(
-        git_repo,
-        scheduler_paths,
-        now=now + timedelta(seconds=30),
-        backend=backend,
-    )
-    tick_early.run_once()
-    with tick.store.begin_read() as conn:
-        state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
-        assert state.kind == "waiting_usage_limit"
-    tick_late = _tick_service(
-        git_repo,
-        scheduler_paths,
-        now=now + timedelta(seconds=121),
-        backend=backend,
-    )
-    _run_until(tick_late, run_id, target_kind="awaiting_codex_review", max_ticks=10)
-    with tick.store.begin_read() as conn:
-        state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
-        assert state.cursor.chat_id == chat_id
-    agent_log = fake_clis["agent_log"].read_text(encoding="utf-8")
-    assert agent_log.count("CREATE_CHAT:") == 1
-
-
-def test_usage_limit_missing_retry_uses_five_hour_fallback(
-    git_repo: Path,
-    scheduler_paths: dict[str, Path],
-    fake_clis: dict[str, Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
-    monkeypatch.setenv("FAKE_AGENT_RUN_SEQUENCE", "usage_limit,success")
-    monkeypatch.setenv(
-        "FAKE_AGENT_RUN_COUNTER",
-        str(fake_clis["agent_log"].parent / "usage-limit-fallback-counter.txt"),
-    )
-    run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, db_path=scheduler_paths["db_path"])
-    now = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
-    tick = _tick_service(
-        git_repo,
-        scheduler_paths,
-        now=now,
-        backend=FakeAgentProcessBackend(
-            default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
-        ),
-    )
-    _run_until(tick, run_id, target_kind="waiting_usage_limit")
-    with tick.store.begin_read() as conn:
-        state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
-        wait_until = datetime.fromisoformat(state.cursor.wait_until.replace("Z", "+00:00"))
-        assert wait_until == now + timedelta(seconds=DEFAULT_USAGE_LIMIT_RETRY_SECONDS)
-
-
-def test_unclassified_cursor_failure_blocks(
-    git_repo: Path,
-    scheduler_paths: dict[str, Path],
-    fake_clis: dict[str, Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("FAKE_AGENT_RUN_MODE", "fail")
-    monkeypatch.delenv("FAKE_AGENT_RUN_SEQUENCE", raising=False)
-    monkeypatch.setenv(
-        "FAKE_AGENT_RUN_COUNTER",
-        str(fake_clis["agent_log"].parent / "unclassified-counter.txt"),
-    )
-    run_id = _submit(git_repo, scheduler_paths)
-    start_run(run_id, db_path=scheduler_paths["db_path"])
-    now = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
-    tick = _tick_service(
-        git_repo,
-        scheduler_paths,
-        now=now,
-        backend=FakeAgentProcessBackend(
-            default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
-        ),
-    )
-    _run_until(tick, run_id, target_kind="blocked", max_ticks=15)
-    with tick.store.begin_read() as conn:
-        state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
-        assert state.kind == "blocked"
+    assert state.context.implementer is not None
+    assert state.context.implementer.command == str((fake_clis["bin_dir"] / "codex").resolve())

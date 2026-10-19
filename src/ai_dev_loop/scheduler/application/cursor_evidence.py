@@ -268,7 +268,10 @@ def verify_pre_execution_cursor_guards(
         owner = str(evidence.get("conversation_owner_run_id", ""))
         if str(evidence.get("conversation_key", "")) != cursor_conversation_key(owner):
             raise CursorEvidenceError("Cursor SDK conversation identity is not run-owned")
-        if owner != run_id and not evidence.get("sdk_successor_recovery_key"):
+        if owner != run_id and not (
+            evidence.get("sdk_successor_recovery_key")
+            or evidence.get("sdk_review_recovery_source_run_id")
+        ):
             raise CursorEvidenceError("Cursor SDK inherited conversation lacks recovery authority")
         if str(evidence.get("sdk_version", "")) != "1.0.37":
             raise CursorEvidenceError("Cursor SDK invocation version is not frozen")

@@ -216,7 +216,7 @@ def _evidence(repo: Path, *, effect_kind: str, attempt_id: str) -> dict[str, obj
 
 def test_create_intent_precedes_agent_binding_and_terminal(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
     repo = _repo(tmp_path)
-    run_root = tmp_path / "artifacts"
+    run_root = tmp_path / "artifacts" / "runs" / ("a" * 64)
     adapter = FakeSdkAdapter(repo)
     attempt_id = "att-" + "1" * 32
     journal = run_root / cursor_sdk_attempt_journal_rel(attempt_id)
@@ -265,8 +265,8 @@ def test_send_intent_and_native_id_precede_bounded_terminal_evidence(
     monkeypatch, tmp_path: Path
 ) -> None:  # type: ignore[no-untyped-def]
     repo = _repo(tmp_path)
-    run_root = tmp_path / "artifacts"
-    run_root.mkdir()
+    run_root = tmp_path / "artifacts" / "runs" / ("a" * 64)
+    run_root.mkdir(parents=True)
     prompt = run_root / "prompts/cursor-initial.txt"
     prompt.parent.mkdir(parents=True)
     prompt.write_text("implement exactly", encoding="utf-8")
@@ -330,7 +330,7 @@ def test_send_intent_and_native_id_precede_bounded_terminal_evidence(
 
 def test_lost_create_and_send_results_are_terminal_uncertainty(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
     repo = _repo(tmp_path)
-    run_root = tmp_path / "artifacts"
+    run_root = tmp_path / "artifacts" / "runs" / ("a" * 64)
     create = FakeSdkAdapter(repo, create_uncertain=True)
     monkeypatch.setattr(
         "ai_dev_loop.scheduler.cursor_attempt_runner._sdk_adapter", lambda evidence: create
@@ -386,7 +386,7 @@ def test_lost_create_and_send_results_are_terminal_uncertainty(monkeypatch, tmp_
 
 def test_sdk_rejects_non_finished_terminal_status(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
     repo = _repo(tmp_path)
-    run_root = tmp_path / "artifacts"
+    run_root = tmp_path / "artifacts" / "runs" / ("a" * 64)
     prompt = run_root / "prompts/cursor-initial.txt"
     prompt.parent.mkdir(parents=True)
     prompt.write_text("implement exactly", encoding="utf-8")
@@ -414,7 +414,7 @@ def test_failed_sdk_stream_finalizes_authenticated_partial_capture(
     monkeypatch, tmp_path: Path
 ) -> None:  # type: ignore[no-untyped-def]
     repo = _repo(tmp_path)
-    run_root = tmp_path / "artifacts"
+    run_root = tmp_path / "artifacts" / "runs" / ("a" * 64)
     prompt = run_root / "prompts/cursor-initial.txt"
     prompt.parent.mkdir(parents=True)
     prompt.write_text("implement exactly", encoding="utf-8")
@@ -458,7 +458,7 @@ def test_sdk_persistence_failure_stops_the_next_external_effect(
     stream_calls: int,
 ) -> None:  # type: ignore[no-untyped-def]
     repo = _repo(tmp_path)
-    run_root = tmp_path / "artifacts"
+    run_root = tmp_path / "artifacts" / "runs" / ("a" * 64)
     attempt_id = "att-" + "9" * 32
     adapter = FakeSdkAdapter(repo)
     monkeypatch.setattr(cursor_runner, "_sdk_adapter", lambda evidence: adapter)
@@ -729,8 +729,8 @@ def test_sdk_capture_is_bounded_and_adapter_redacts_secret_sentinels(
     monkeypatch, tmp_path: Path
 ) -> None:  # type: ignore[no-untyped-def]
     repo = _repo(tmp_path)
-    run_root = tmp_path / "artifacts"
-    run_root.mkdir()
+    run_root = tmp_path / "artifacts" / "runs" / ("a" * 64)
+    run_root.mkdir(parents=True)
     prompt = run_root / "prompts/cursor-initial.txt"
     prompt.parent.mkdir(parents=True)
     prompt.write_text("implement exactly", encoding="utf-8")

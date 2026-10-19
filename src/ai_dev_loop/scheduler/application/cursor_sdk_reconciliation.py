@@ -706,6 +706,16 @@ class CursorSdkReconciliationService:
         }
         if successor is not None:
             binding["sdk_successor_recovery_key"] = successor.recovery_key
+        review_source = self.store.get_review_recovery_source_for_successor(
+            conn, successor_run_id=run_id
+        )
+        if review_source is not None:
+            source_state, _, _ = self.store.load_validated_snapshot(
+                conn, str(review_source["source_run_id"])
+            )
+            if source_state.context != state.context:
+                raise _invalid("SDK review successor changed frozen inputs")
+            binding["sdk_review_recovery_source_run_id"] = str(review_source["source_run_id"])
         return binding
 
     def ensure_pending_effects(self) -> list[TickRunReceipt]:

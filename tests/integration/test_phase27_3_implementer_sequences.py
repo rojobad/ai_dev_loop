@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,6 +13,11 @@ import pytest
 import yaml
 from pydantic import ValidationError as ModelValidationError
 from referencing import Registry, Resource
+from tests.integration.test_phase25_2_sdk_workflow import (
+    _configure_v2,
+    _credential,
+    _install_fake_sdk,
+)
 
 from ai_dev_loop.errors import ValidationError
 from ai_dev_loop.paths import DIR_MODE, SENSITIVE_FILE_MODE, schema_path
@@ -36,7 +42,13 @@ from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerSto
 
 
 @pytest.fixture
-def scheduler_paths(isolated_xdg: Path, fake_clis: dict[str, Path]) -> dict[str, Path]:
+def scheduler_paths(
+    git_repo: Path,
+    isolated_xdg: Path,
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> dict[str, Path]:
     fake_clis["codex_models_file"].write_text(
         json.dumps(
             {
@@ -47,6 +59,13 @@ def scheduler_paths(isolated_xdg: Path, fake_clis: dict[str, Path]) -> dict[str,
             }
         )
     )
+    _configure_v2(git_repo)
+    fake_sdk = tmp_path / "fake-sdk"
+    fake_sdk.mkdir()
+    _install_fake_sdk(fake_sdk)
+    _credential(isolated_xdg)
+    prior = os.environ.get("PYTHONPATH", "")
+    monkeypatch.setenv("PYTHONPATH", str(fake_sdk) + ((":" + prior) if prior else ""))
     root = isolated_xdg / "state" / "ai_dev_loop"
     return {"db_path": root / "engine.sqlite3", "artifact_root": root / "artifacts"}
 
@@ -61,7 +80,8 @@ def _tick(repo, paths, *, backend=None):
     )
 
 
-def manifest_payload(providers: tuple[str, ...], *, version: int = 3) -> dict:
+def manifest_payload(providers: tuple[str, ...], *, version: int | None = None) -> dict:
+    version = version if version is not None else (4 if "cursor" in providers else 3)
     phases = []
     for ordinal, provider in enumerate(providers, 1):
         phase = {
@@ -70,10 +90,21 @@ def manifest_payload(providers: tuple[str, ...], *, version: int = 3) -> dict:
             "prompt_source_path": "docs/plans/prompt_sample-plan.txt",
             "codex": {"review_model": "gpt-6.1-sol", "review_reasoning_effort": "high"},
         }
-        if version == 3:
+        if version >= 3:
             phase["short_name"] = f"Phase {ordinal}"
         if ordinal < len(providers):
             phase["commit_message"] = f"accepted checkpoint {ordinal}"
+        if version == 4:
+            phase["cursor"] = {
+                "runtime": "sdk-local",
+                "model": "grok-4.7",
+                "parameters": {
+                    "context": "256k",
+                    "reasoning_effort": "high",
+                    "fast": False,
+                },
+            }
+            phase["implementer"] = {"provider": "cursor"}
         if provider == "codex":
             phase["implementer"] = {
                 "provider": "codex",
@@ -83,7 +114,7 @@ def manifest_payload(providers: tuple[str, ...], *, version: int = 3) -> dict:
             }
         phases.append(phase)
     payload = {"schema_version": version, "name": "dual-provider-smoke", "phases": phases}
-    if version == 3:
+    if version >= 3:
         payload["short_name"] = "Dual provider smoke"
     return payload
 
@@ -93,9 +124,16 @@ def prepare(
     paths: dict[str, Path],
     providers: tuple[str, ...],
     *,
-    version: int = 3,
+    version: int | None = None,
     payload: dict | None = None,
 ):
+    version = (
+        int(payload["schema_version"])
+        if payload is not None
+        else (version if version is not None else (4 if "cursor" in providers else 3))
+    )
+    if version == 4 and yaml.safe_load((repo / "ai_dev_loop.yaml").read_text())["version"] == 1:
+        _configure_v2(repo)
     manifest = repo.parent / "sequence.yaml"
     manifest.write_text(
         yaml.safe_dump(payload or manifest_payload(providers, version=version), sort_keys=False)
@@ -156,7 +194,7 @@ def test_mixed_three_phase_smoke_freezes_distinct_sessions_and_two_checkpoints(
     assert git(git_repo, "status", "--porcelain") == status_before
     assert not fake_clis["codex_log"].exists()
     seq = sequence_state(scheduler_paths, result.sequence_id)
-    assert seq.definition.schema_version == 2
+    assert seq.definition.schema_version == 3
     assert [e.implementer.provider for e in seq.definition.entries] == list(providers)
     start_sequence(result.sequence_id, db_path=scheduler_paths["db_path"])
     tick = _tick(git_repo, scheduler_paths)
@@ -171,7 +209,7 @@ def test_mixed_three_phase_smoke_freezes_distinct_sessions_and_two_checkpoints(
     ):
         leaf = leaf_state(scheduler_paths, materialized.run_id)
         assert leaf.kind == "completed"
-        assert leaf.context.schema_version == 6
+        assert leaf.context.schema_version == 8
         assert leaf.context.sequence.entry_hash == frozen_entry_hash(frozen)
         assert leaf.context.implementer == frozen.implementer
         assert leaf.context.codex.review_model == "gpt-6.1-sol"
@@ -369,19 +407,45 @@ def test_prepare_frozen_inputs_idempotence_config_precedence_and_drift(
     for entry in final.materialized_entries:
         validate_schema(
             leaf_state(scheduler_paths, entry.run_id).context.model_dump(mode="json"),
-            "scheduler-submitted-run-context-v6.json",
+            "scheduler-submitted-run-context-v8.json",
         )
 
 
 @pytest.mark.parametrize(
-    "override",
-    [{"cursor": {"model": "grok-4.7-high"}}, {"workflow": {"cursor_timeout_minutes": 2}}],
+    ("override", "expected_model", "expected_timeout"),
+    [
+        (
+            {
+                "cursor": {
+                    "runtime": "sdk-local",
+                    "model": "grok-4.7-high",
+                    "parameters": {
+                        "context": "256k",
+                        "reasoning_effort": "high",
+                        "fast": False,
+                    },
+                },
+            },
+            "grok-4.7-high",
+            2,
+        ),
+        ({"workflow": {"cursor_timeout_minutes": 7}}, "grok-4.7", 7),
+    ],
 )
-def test_prepare_rejects_conflicting_cursor_overrides(git_repo, scheduler_paths, override):
+def test_manifest_v4_freezes_per_phase_cursor_overrides(
+    git_repo,
+    scheduler_paths,
+    override,
+    expected_model,
+    expected_timeout,
+):
     payload = manifest_payload(("codex", "cursor"))
-    payload["phases"][0].update(override)
-    with pytest.raises(ValidationError, match="Cursor overrides conflict"):
-        prepare(git_repo, scheduler_paths, ("codex", "cursor"), payload=payload)
+    phase_index = 1 if "workflow" in override else 0
+    payload["phases"][phase_index].update(override)
+    result = prepare(git_repo, scheduler_paths, ("codex", "cursor"), payload=payload)
+    entry = sequence_state(scheduler_paths, result.sequence_id).definition.entries[phase_index]
+    assert entry.cursor.model == expected_model
+    assert entry.workflow.cursor_timeout_minutes == expected_timeout
 
 
 def test_v1_stays_cursor_and_rejects_implementer_metadata(git_repo, scheduler_paths, monkeypatch):
@@ -440,7 +504,9 @@ def test_abort_uncertain_capacity_continuation_holds_then_converges(
     assert (git_repo / "codex-phase-1.txt").is_file()
 
 
-def test_genuine_accepted_v1_frozen_fixture_preserves_hashes_and_materializes(tmp_path):
+def test_genuine_accepted_v1_frozen_fixture_preserves_hashes_but_cannot_materialize(
+    tmp_path,
+):
     import shutil
 
     from ai_dev_loop.scheduler.application.sequence_materializer import SequenceRunMaterializer
@@ -465,12 +531,8 @@ def test_genuine_accepted_v1_frozen_fixture_preserves_hashes_and_materializes(tm
             if index == 0
             else materializer.materialize_next_entry
         )
-        context, digest = method(
-            sequence_id=state.sequence_id, definition=state.definition, entry=entry
-        )
-        assert digest == original_hashes[index]
-        assert context.schema_version == 4 and context.implementer is None
-        validate_schema(context.model_dump(mode="json"), "scheduler-submitted-run-context-v4.json")
+        with pytest.raises(ValidationError, match="Cursor CLI execution is retired"):
+            method(sequence_id=state.sequence_id, definition=state.definition, entry=entry)
 
 
 def test_unsafe_identity_sequence_hold_survives_restart_until_explicit_abort(

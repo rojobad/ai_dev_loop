@@ -1,28 +1,29 @@
-# Configuracion del repositorio objetivo
+# Configuración del repositorio objetivo
 
-Cada repositorio que sera controlado por `ai_dev_loop` debe tener un archivo `ai_dev_loop.yaml` en su raiz.
-
-## Ejemplo recomendado (herencia de sesion)
-
-Por defecto, omite `review_model` y `review_reasoning_effort` para que `prepare` capture el modelo y reasoning de la sesion Codex exacta:
+Cada repositorio controlado por `ai_dev_loop` necesita un `ai_dev_loop.yaml` en
+su raíz. Para Cursor nuevo usa schema v2 y declara toda la selección SDK:
 
 ```yaml
-version: 1
+version: 2
 
 project:
   name: my-project
 
 cursor:
-  command: agent
-  model: composer-2.5-fast
-  output_format: stream-json
-  force: true
-  trust_workspace: true
+  runtime: sdk-local
+  sdk_version: 1.0.37
+  model: grok-4.7
+  parameters:
+    context: 256k
+    fast: false
+    reasoning_effort: high
+  credential_ref: cursor-default
+  setting_sources: [project]
   sandbox: disabled
 
 codex:
   command: codex
-  review_skill: review-staged-cursor-execution
+  review_skill: review-staged-ai-dev-loop-execution
   sandbox: workspace-write
 
 workflow:
@@ -37,91 +38,83 @@ prompt:
   filename_template: prompt_{plan_stem}.txt
 ```
 
-## Overrides explicitos
+`credential_ref` es un nombre, no el secreto. El operador provisiona
+`$XDG_CONFIG_HOME/ai_dev_loop/credentials/cursor-default` fuera del repositorio:
+directorios owned `0700`, archivo regular owned `0600`, una sola línea UTF-8 y
+ningún symlink. El producto no crea ni rota la credencial.
 
-Puedes fijar modelo y/o reasoning de forma independiente:
+## Implementer y reviewer independientes
 
-```yaml
-codex:
-  command: codex
-  review_model: gpt-5.6-terra
-  review_reasoning_effort: high
-  review_skill: review-staged-cursor-execution
-  sandbox: workspace-write
-```
-
-Tambien puedes fijar solo uno de los dos campos. Para runs nuevos, `null` u omitir cada campo significa usar el valor correspondiente capturado de la sesion durante `prepare`. No significa usar `config.toml` ni el default de Codex CLI. No uses una cadena magica como `inherit`.
-
-## Reglas de validacion
-
-- `version` debe ser `1`.
-- `project.name` debe ser un slug en minusculas con guiones opcionales.
-- `cursor.output_format` soporta `stream-json`, `json` o `text`.
-- `cursor.sandbox` soporta `enabled` o `disabled`.
-- `codex.sandbox` soporta `read-only`, `workspace-write` o `danger-full-access`.
-- `codex.review_model` es opcional; si esta presente, no puede ser vacio.
-- `codex.review_reasoning_effort` es opcional; valores validos: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`.
-- `workflow.stage_mode` soporta actualmente `all`.
-- Timeouts y `max_review_iterations` deben ser positivos.
-- `prompt.filename_template` debe incluir `{plan_stem}`.
-
-La configuracion se parsea como YAML estructurado. No se interpreta con expresiones regulares.
-
-## Precedencia
-
-La configuracion efectiva se resuelve en este orden:
-
-1. Flags explicitos de CLI.
-2. `ai_dev_loop.yaml` del repositorio.
-3. Configuracion global opcional bajo XDG config.
-4. Defaults seguros del paquete (herencia para modelo/reasoning de Codex).
-
-Durante `prepare`, `ai_dev_loop` persiste tanto la configuracion fuente como la configuracion efectiva. Tambien registra `session_model`, `session_reasoning_effort` y la procedencia `session` o `explicit` de cada valor efectivo. Todo queda congelado para el run.
-
-## Modelo y reasoning de review
-
-El default recomendado es capturar ambos valores de la sesion Codex exacta. Cada review nuevo pasa explicitamente `--model` y `model_reasoning_effort`, para no depender del default WSL.
-
-Si necesitas un override:
-
-1. Fija `codex.review_model` y/o `codex.review_reasoning_effort` en YAML, o
-2. Pasa `--codex-review-model` y/o `--codex-review-reasoning-effort` en `prepare`.
-
-Verifica modelos disponibles con:
+Omitir `implementer` mantiene Cursor como default. Para un run Codex-only, el
+submit puede seleccionar Codex explícitamente:
 
 ```bash
-codex debug models
+ai_dev_loop scheduler submit \
+  --short-name "Implementación Codex" \
+  --repo-path /path/al/repo \
+  --plan-path docs/plans/mi-plan.md \
+  --prompt-source-path docs/plans/prompt_mi-plan.txt \
+  --implementer-provider codex \
+  --implementer-model gpt-5.6-sol \
+  --implementer-reasoning-effort xhigh \
+  --codex-review-model gpt-6.1-sol \
+  --codex-review-reasoning-effort high \
+  --output json < docs/plans/prompt_mi-plan.txt
 ```
 
-Ese comando puede emitir mucha informacion; no la pegues completa en issues o logs.
+Modelo, razonamiento, timeout e identidad del implementer Codex quedan
+congelados aparte de reviewer B. El reviewer se crea una sola vez en el primer
+review y nunca usa `--last`. Una selección Codex funciona también con un config
+v1 histórico sin resolver el campo Cursor inerte; una selección efectiva Cursor
+v1 ya no se admite para trabajo nuevo.
 
-No mezcles IDs de Cursor Agent con IDs de Codex. En Codex, el modelo y el reasoning effort son campos distintos.
+## Reglas de validación
 
-Un override que cruce entre las familias GPT-5.5 y GPT-5.6 genera una advertencia operativa, no un bloqueo: en versiones validadas se observo que puede intentar `pre-sampling compact`. Evita cambiar de familia dentro del mismo run.
+- config v2 exige `runtime: sdk-local`, `sdk_version: 1.0.37`, modelo,
+  `parameters`, `credential_ref`, `setting_sources` y sandbox explícitos;
+- `project.name` es un slug en minúsculas con guiones opcionales;
+- `parameters.fast` es boolean, no string; context/effort son strings no vacíos;
+- `setting_sources` acepta `project`, `user`, `team`, `mdm`, `plugins` y `all`,
+  sin duplicados;
+- `workflow.stage_mode` es `all`; timeouts y techo de review son positivos;
+- `prompt.filename_template` incluye `{plan_stem}`;
+- campos extra o mezclas v1/v2 se rechazan.
 
-## Validar configuracion
+Valida sin lanzar agentes ni leer la credencial:
 
 ```bash
 ai_dev_loop config validate --repo /path/al/repo
 ```
 
-La salida indica si el modelo/reasoning son explicitos o `inherited from session`.
+Para un fixture anidado puedes pasar `--config-path`. El submit Cursor tampoco
+abre el bridge: package, credencial, autenticación y catálogo se comprueban en el
+intento owned del primer tick.
 
-Para fixtures o directorios anidados que no son un repositorio Git independiente, usa `--config-path`:
+## Precedencia y congelación
 
-```bash
-ai_dev_loop config validate \
-  --repo /path/al/repo \
-  --config-path /path/al/repo/ai_dev_loop.yaml
-```
+La configuración efectiva combina defaults del schema, configuración global
+XDG, archivo del repositorio y overrides CLI todavía soportados. Submit congela
+source/effective config, plan, prompt, identidad del repositorio y settings de
+ambos roles. Los flags `--codex-review-model` y
+`--codex-review-reasoning-effort` son obligatorios; no se heredan de YAML,
+controller A, `config.toml` ni defaults del CLI.
 
-## Convencion de planes y prompts
+Los flags nuevos de comando/modelo/formato Cursor CLI fueron retirados. Una
+secuencia nueva usa manifest v3 si todas sus hojas son Codex y v4 si contiene
+Cursor SDK. Una definición histórica con Cursor CLI se conserva para consultas y
+replay exacto, pero no puede start, materializar, hacer handoff o recovery.
 
-La convencion esperada es:
+## Planes, prompts y control-plane
+
+La convención esperada es:
 
 ```text
 docs/plans/<plan>.md
 docs/plans/prompt_<plan>.txt
 ```
 
-El plan aprobado y el prompt exacto se tratan como contrato. Si cambian despues de `prepare`, `start` debe fallar y pedir preparar un run nuevo.
+Plan y prompt son inputs inmutables. Cambiarlos exige un submit/prepare fresco.
+Editar el YAML fuente, instalar el paquete, provisionar la credencial y cambiar
+el timer son decisiones distintas; ninguna se infiere de la aceptación del
+código. Para migrar una instalación sigue el [cutover Cursor
+SDK](../operacion/cutover-cursor-sdk.md).

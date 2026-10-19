@@ -13,6 +13,10 @@ from ai_dev_loop.scheduler.application.cursor_recovery_evidence import (
     CursorRecoveryCheckReceipt,
     analyze_cursor_recovery_evidence,
 )
+from ai_dev_loop.scheduler.application.cursor_runtime_policy import (
+    CURSOR_CLI_RETIRED_SUMMARY,
+    context_uses_cursor_cli,
+)
 from ai_dev_loop.scheduler.infrastructure.paths import default_artifact_root, default_engine_db_path
 from ai_dev_loop.scheduler.infrastructure.readonly_protected_artifacts import (
     ReadOnlyProtectedArtifactStore,
@@ -46,6 +50,9 @@ def scheduler_cursor_recovery_check(
 ) -> CursorRecoveryCheckReceipt:
     resolved_db = db_path or default_engine_db_path()
     store = SqliteSchedulerStore.open_readonly(resolved_db)
+    retired = _retired_cursor_cli_analysis(store, run_id)
+    if retired is not None:
+        return retired.receipt
     artifacts = ReadOnlyProtectedArtifactStore(artifact_root or default_artifact_root())
     try:
         if event_page_size is None:
@@ -78,6 +85,9 @@ def analyze_cursor_recovery_for_inspection(
 
     resolved_db = db_path or default_engine_db_path()
     store = SqliteSchedulerStore.open_readonly(resolved_db)
+    retired = _retired_cursor_cli_analysis(store, run_id)
+    if retired is not None:
+        return retired
     artifacts = ReadOnlyProtectedArtifactStore(artifact_root or default_artifact_root())
     if event_page_size is None:
         return analyze_cursor_recovery_evidence(store, artifacts, run_id)
@@ -86,4 +96,29 @@ def analyze_cursor_recovery_for_inspection(
         artifacts,
         run_id,
         event_page_size=event_page_size,
+    )
+
+
+def _retired_cursor_cli_analysis(
+    store: SqliteSchedulerStore,
+    run_id: str,
+) -> CursorRecoveryAnalysisResult | None:
+    """Classify the frozen runtime before inspecting provider recovery artifacts."""
+
+    with store.begin_read() as conn:
+        state, _, _ = store.load_validated_snapshot(conn, run_id)
+    if not context_uses_cursor_cli(state.context):
+        return None
+    sequence = state.context.sequence
+    return CursorRecoveryAnalysisResult(
+        receipt=CursorRecoveryCheckReceipt(
+            run_id=run_id,
+            evidence_status="ineligible",
+            recovery_supported=False,
+            turn_kind=None,
+            reason_code="ineligible_cursor_cli_runtime_retired",
+            safe_summary=CURSOR_CLI_RETIRED_SUMMARY,
+            sequence_id=None if sequence is None else sequence.sequence_id,
+            ordinal=None if sequence is None else sequence.ordinal,
+        )
     )

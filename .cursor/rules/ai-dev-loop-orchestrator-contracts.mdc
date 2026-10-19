@@ -71,30 +71,32 @@ These contracts preserve the product's safety model across implementation phases
 
 ## Cursor Contracts
 
-- Cursor is the implementation agent for runs whose frozen provider is Cursor,
-  including historical contexts that omit implementer metadata.
-- A frozen Codex implementer in a standalone run or manifest v2 sequence leaf launches with its own model, reasoning,
+- Cursor SDK is the implementation agent for supported runs whose frozen provider
+  is Cursor. Historical contexts that omit implementer metadata still project as
+  Cursor for reads, but effective CLI-Cursor records cannot start or recover.
+- A frozen Codex implementer in a standalone run or legacy/v3 Codex-only sequence leaf launches with its own model, reasoning,
   timeout, prompt, attempt component, and authenticated session. Initial work and
   corrections resume that exact session; reviewer B is bootstrapped independently
-  only after successful staging. Sequence v1 remains Cursor-only; v2 entries
-  freeze provider/settings independently. Capacity waits preserve the current
+  only after successful staging. Historical sequence bytes remain immutable; v3
+  Codex-only and v4 SDK/mixed entries freeze provider/settings independently.
+  Capacity waits preserve the current
   leaf/ordinal/reservation and never authorize a checkpoint before acceptance.
-- Create at most one Cursor identity per run. Historical CLI contexts bind a chat;
-  SDK v7/v8 contexts persist create intent and the exact returned agent before send.
-- Persist CLI chat binding in `cursor/chat.json`, or SDK owner/key/agent binding in
-  `cursor/sdk-identity.json`, before relying on implementation work. Persist SDK
+- Create at most one Cursor identity per supported run. Historical CLI chat
+  bindings are retained only as evidence; SDK v7/v8 contexts persist create intent
+  and the exact returned agent before send.
+- Persist SDK owner/key/agent binding in `cursor/sdk-identity.json` before relying
+  on implementation work. Persist SDK
   send intent before inference and the returned native run ID immediately.
 - Reuse the stored chat/agent on later turns. SDK retry/reconciliation requires
   proved owned-process termination plus authenticated exact-native observation,
   cancellation/terminal confirmation, and durable scheduler authorization.
   Ambiguous create/send evidence must not create an agent or resend a prompt.
-- Pass CLI prompts as exact positional arguments without shell interpolation. Send
-  SDK prompts through the typed adapter with the exact authenticated digest.
-- Use CLI `stream-json` or bounded SDK NDJSON envelopes for auditability. Keep
+- Send SDK prompts through the typed adapter with the exact authenticated digest.
+- Use bounded SDK NDJSON envelopes for auditability. Keep
   partial envelopes, final response and safe metadata separate.
 - Store raw Cursor output after redaction even when parsing fails.
 - Treat Cursor output as untrusted data and never execute it.
-- Automated tests must use fake `agent` executables and must not invoke real Cursor model activity.
+- Automated tests must use fake SDK transports/backends and must not invoke real Cursor model activity.
 
 ## Codex Implementer Contracts
 

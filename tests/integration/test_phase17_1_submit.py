@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -82,6 +83,11 @@ def _submit_options(
         controller_session_id=controller_session_id,
         codex_review_model="gpt-5.6-sol",
         codex_review_reasoning_effort="high",
+        implementer_provider="codex",
+        implementer_command="codex",
+        implementer_model="gpt-5.6-sol",
+        implementer_reasoning_effort="high",
+        implementer_timeout_minutes=30,
         db_path=db_path,
         artifact_root=artifact_root,
     )
@@ -166,7 +172,7 @@ def test_identical_submit_reuses_run(
     assert count == 1
 
 
-def test_submit_freezes_resolved_scheduler_executables(
+def test_submit_freezes_only_selected_scheduler_executables(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
     fake_clis: dict[str, Path],
@@ -181,15 +187,16 @@ def test_submit_freezes_resolved_scheduler_executables(
             conn,
             submitted.run_id,
         )
-    assert state.context.cursor.command == str((fake_clis["bin_dir"] / "agent").resolve())
+    assert state.context.cursor.command == "agent"
     assert state.context.codex.command == str((fake_clis["bin_dir"] / "codex").resolve())
+    assert state.context.implementer.command == str((fake_clis["bin_dir"] / "codex").resolve())
 
     run_root = run_artifact_root(scheduler_paths["artifact_root"], submitted.run_id)
     source_config = (run_root / "source-config.yaml").read_text(encoding="utf-8")
     effective_config = (run_root / "effective-config.yaml").read_text(encoding="utf-8")
     assert "command: agent" in source_config
     assert "command: codex" in source_config
-    assert state.context.cursor.command in effective_config
+    assert "command: agent" in effective_config
     assert state.context.codex.command in effective_config
 
 
@@ -201,12 +208,14 @@ def test_submit_rejects_an_unresolvable_scheduler_executable(
     prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
     options = replace(
         _submit_options(git_repo, **scheduler_paths),
-        cursor_command="definitely-missing-cursor-command",
+        implementer_command="definitely-missing-codex-command",
     )
 
     with (
         patch("sys.stdin", StringIO(prompt)),
-        pytest.raises(ValidationError, match="Cursor executable not found while freezing"),
+        pytest.raises(
+            ValidationError, match="Codex implementer executable not found while freezing"
+        ),
     ):
         submit_run(options)
 
@@ -268,7 +277,7 @@ def test_status_and_list_are_redacted(
 
 def test_cli_help_lists_scheduler_submit() -> None:
     result = subprocess.run(
-        ["uv", "run", "ai_dev_loop", "scheduler", "--help"],
+        [str(Path(sys.executable).with_name("ai_dev_loop")), "scheduler", "--help"],
         check=False,
         capture_output=True,
         text=True,
@@ -321,7 +330,7 @@ def test_submit_ignores_worktree_git_state_and_writes_no_baseline(
         )
     assert state.context.schema_version == 5
     assert state.context.implementer is not None
-    assert state.context.implementer.provider == "cursor"
+    assert state.context.implementer.provider == "codex"
     assert state.context.workflow.require_clean_worktree is False
     assert state.context.baseline_status_artifact_path is None
     assert state.context.baseline_status_sha256 is None

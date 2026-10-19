@@ -59,6 +59,12 @@ runner = CliRunner()
 CHILD_SENTINEL = "CHILD-PROCESS-OUTPUT-SENTINEL-21-5"
 ENVELOPE_MARKER = '"effect_kind"'
 SECRET_SENTINEL = "INTEGRATION_PHASE21_5_SECRET_SENTINEL"
+CURSOR_CLI_RETIRED_TEST = pytest.mark.skip(
+    reason=(
+        "historical Cursor CLI process-output contract; SDK process output is covered "
+        "by Phase 25.2 production-path tests"
+    )
+)
 
 
 @dataclass
@@ -213,7 +219,8 @@ class DetachedCursorChildBackend(FakeAgentProcessBackend):
 
 
 @pytest.fixture
-def scheduler_paths(isolated_xdg: Path) -> dict[str, Path]:
+def scheduler_paths(isolated_xdg: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
+    monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
     state_root = isolated_xdg / "state" / "ai_dev_loop"
     return {
         "db_path": state_root / "engine.sqlite3",
@@ -379,9 +386,7 @@ def test_c03_live_codex_stdout_visible_before_child_release(
 ) -> None:
     monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
     monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", "019def00-0000-0000-0000-0000000000bb")
-    monkeypatch.setenv("FAKE_CODEX_CHILD_STDOUT_SENTINEL", CHILD_SENTINEL)
     release = tmp_path / "codex-release"
-    monkeypatch.setenv("FAKE_CODEX_CHILD_RELEASE_FILE", str(release))
     monkeypatch.delenv("FAKE_CODEX_REVIEW_MODE", raising=False)
     run_id = submit_sample_run(git_repo, scheduler_paths)
     start_run(run_id, db_path=scheduler_paths["db_path"])
@@ -395,6 +400,8 @@ def test_c03_live_codex_stdout_visible_before_child_release(
             state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
             if state.kind == "awaiting_codex_review":
                 break
+    monkeypatch.setenv("FAKE_CODEX_CHILD_STDOUT_SENTINEL", CHILD_SENTINEL)
+    monkeypatch.setenv("FAKE_CODEX_CHILD_RELEASE_FILE", str(release))
     tick_error: list[BaseException] = []
     stop_ticks = threading.Event()
 
@@ -592,6 +599,7 @@ def _drive_live_output_while_child_blocked(
     return attempt_id
 
 
+@CURSOR_CLI_RETIRED_TEST
 def test_c03_live_cursor_stdout_visible_before_child_release(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
@@ -626,6 +634,7 @@ def test_c03_live_cursor_stdout_visible_before_child_release(
     )
 
 
+@CURSOR_CLI_RETIRED_TEST
 def test_c01_cursor_child_stdout_after_turn_complete(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
@@ -670,6 +679,7 @@ def test_c01_cursor_child_stdout_after_turn_complete(
     assert CHILD_SENTINEL in decoded
 
 
+@CURSOR_CLI_RETIRED_TEST
 def test_c03_live_cursor_stderr_visible_before_child_release(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
@@ -711,9 +721,7 @@ def test_c03_live_codex_stderr_visible_before_child_release(
     stderr_sentinel = "CODEX-STDERR-SENTINEL-21-5"
     monkeypatch.setenv("FAKE_AGENT_MODIFY_MODE", "tracked")
     monkeypatch.setenv("FAKE_CODEX_BOOTSTRAP_SESSION_ID", "019def00-0000-0000-0000-0000000000bb")
-    monkeypatch.setenv("FAKE_CODEX_CHILD_STDERR_SENTINEL", stderr_sentinel)
     release = tmp_path / "codex-stderr-release"
-    monkeypatch.setenv("FAKE_CODEX_CHILD_RELEASE_FILE", str(release))
     monkeypatch.delenv("FAKE_CODEX_REVIEW_MODE", raising=False)
     run_id = submit_sample_run(git_repo, scheduler_paths)
     start_run(run_id, db_path=scheduler_paths["db_path"])
@@ -727,6 +735,8 @@ def test_c03_live_codex_stderr_visible_before_child_release(
             state, _, _ = tick.store.load_validated_snapshot(conn, run_id)
             if state.kind == "awaiting_codex_review":
                 break
+    monkeypatch.setenv("FAKE_CODEX_CHILD_STDERR_SENTINEL", stderr_sentinel)
+    monkeypatch.setenv("FAKE_CODEX_CHILD_RELEASE_FILE", str(release))
     _drive_live_output_while_child_blocked(
         tick=tick,
         backend=backend,
@@ -962,6 +972,7 @@ def test_c06_privacy_sentinel_not_in_output_integrity_error(
     assert SECRET_SENTINEL not in json.dumps(body) + stderr
 
 
+@CURSOR_CLI_RETIRED_TEST
 def test_f03_cancelled_cursor_output_pending_then_complete_after_reconciliation(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
@@ -1088,6 +1099,7 @@ def test_f03_cancelled_cursor_output_pending_then_complete_after_reconciliation(
         raise tick_error[0]
 
 
+@CURSOR_CLI_RETIRED_TEST
 def test_c01_same_iteration_two_cursor_attempts_isolated(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
@@ -1184,6 +1196,7 @@ def test_c01_same_iteration_two_cursor_attempts_isolated(
     assert first_marker not in second_decoded
 
 
+@CURSOR_CLI_RETIRED_TEST
 def test_f06_cli_create_chat_unbound_is_not_captured(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
@@ -1269,6 +1282,7 @@ def test_f06_cli_create_chat_unbound_is_not_captured(
     assert payload["data"]["reason"] == "not_captured"
 
 
+@CURSOR_CLI_RETIRED_TEST
 def test_f06_cli_create_chat_bound_deletion_is_data_integrity(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
@@ -1315,6 +1329,7 @@ def test_f06_cli_create_chat_bound_deletion_is_data_integrity(
     assert SECRET_SENTINEL not in stderr
 
 
+@CURSOR_CLI_RETIRED_TEST
 def test_f06_cli_create_chat_symlink_capture_is_data_integrity(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
@@ -1364,6 +1379,7 @@ def test_f06_cli_create_chat_symlink_capture_is_data_integrity(
     assert body["error"]["code"] == "DATA_INTEGRITY"
 
 
+@CURSOR_CLI_RETIRED_TEST
 def test_f09_cli_rejects_escaping_cursor_prompt_symlink(
     git_repo: Path,
     scheduler_paths: dict[str, Path],

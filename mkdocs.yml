@@ -26,6 +26,7 @@ nav:
       - Ejecutar runs: operacion/prepare-start-resume-abort.md
       - Dashboard local: operacion/dashboard-local.md
       - Recuperación del implementer Codex: operacion/codex-implementer-recovery.md
+      - Cutover Cursor SDK: operacion/cutover-cursor-sdk.md
       - Timer del scheduler en WSL: operacion/timer-systemd-wsl.md
       - Estado, logs e inspección: operacion/observabilidad.md
       - Estado y artefactos: operacion/estado-artefactos.md

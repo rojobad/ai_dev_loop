@@ -6,8 +6,10 @@
 - Repositorios objetivo almacenados y ejecutados dentro de WSL.
 - Python 3.11 o superior para `ai_dev_loop`.
 - `git` instalado en WSL.
-- Cursor CLI instalado en WSL como `agent`.
 - Codex CLI instalado en WSL como `codex`.
+- Para ejecutar implementaciones Cursor: extra empaquetado
+  `cursor-sdk==1.0.37` y una credencial privada provisionada por separado. El
+  package base basta para consultas históricas y flujos Codex-only.
 - Para Codex Desktop en Windows: acceso a la home de Codex Desktop desde WSL, normalmente bajo `/mnt/c/Users/<usuario>/.codex`.
 
 `ai_dev_loop` no modifica Python del sistema. El flujo recomendado usa `uv`.
@@ -33,14 +35,14 @@ bash scripts/development-install.sh
 Desde el repo:
 
 ```bash
-uv tool install .
+uv tool install '.[cursor-sdk]'
 ai_dev_loop --help
 ```
 
 Para reinstalar un build local actualizado en WSL despues de cambios:
 
 ```bash
-uv tool install --force .
+uv tool install --force '.[cursor-sdk]'
 which ai_dev_loop
 ai_dev_loop --version
 ai_dev_loop scheduler --help
@@ -50,7 +52,8 @@ Desde un wheel:
 
 ```bash
 uv run python -m build
-uv tool install --force dist/ai_dev_loop-0.1.0-py3-none-any.whl
+uv tool install --force \
+  'ai-dev-loop[cursor-sdk] @ file:///ruta/absoluta/dist/ai_dev_loop-0.1.0-py3-none-any.whl'
 ```
 
 El wheel incluye el dashboard local y sus assets same-origin. Una instalación
@@ -93,13 +96,14 @@ En WSL, evita usar temporales de DrvFS para la suite completa. Si `TMP`, `TEMP` 
 TMPDIR=/tmp TMP=/tmp TEMP=/tmp uv run python -m pytest -q
 ```
 
-## Validacion de CLIs externas
+No instales un checkout que todavía está cambiando sobre el driver estable que
+ejecuta su propia aceptación. El cutover exige paquete completamente aceptado,
+quiescencia y autorización de instalación separada; sigue el
+[procedimiento de cutover Cursor SDK](../operacion/cutover-cursor-sdk.md).
+
+## Validacion de runtimes externos
 
 ```bash
-agent --help
-agent status --format json
-agent models
-
 codex --help
 codex login status
 codex exec resume --help
@@ -112,17 +116,19 @@ No guardes ni publiques respuestas completas de autenticacion. `doctor` resume l
 ai_dev_loop doctor
 ```
 
-El scheduler ejecuta Cursor y Codex durante `scheduler tick`. Manten las CLIs
-actualizadas; `doctor` ayuda a detectar problemas de entorno antes de submit.
+El scheduler ejecuta Cursor mediante el SDK local y Codex mediante CLI durante
+`scheduler tick`. `doctor` ayuda a detectar problemas Codex de entorno antes de
+submit; el preflight Cursor SDK ocurre dentro del intento owned.
 
 Tambien puedes actualizar manualmente:
 
 ```bash
-agent update
 codex update
 ```
 
-Una actualizacion puede agregar soporte, pero no se presume que exista una version nueva. Despues se repiten los probes. Este flujo actualiza solo binarios CLI dentro de WSL, no Cursor Desktop ni Codex Desktop en Windows.
+Una actualizacion puede agregar soporte, pero no se presume que exista una
+version nueva. Despues se repiten los probes. Este flujo actualiza solo Codex CLI
+dentro de WSL, no Cursor Desktop ni Codex Desktop en Windows.
 
 ## Integraciones Codex (skills y hook)
 

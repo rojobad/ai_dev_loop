@@ -43,6 +43,11 @@ def test_scheduler_submit_freezes_reviewer_without_session(
                 controller_session_id=CONTROLLER_ID,
                 codex_review_model=REVIEW_MODEL,
                 codex_review_reasoning_effort=REVIEW_REASONING,
+                implementer_provider="codex",
+                implementer_command="codex",
+                implementer_model="gpt-5.6-sol",
+                implementer_reasoning_effort="high",
+                implementer_timeout_minutes=90,
                 db_path=scheduler_paths["db_path"],
                 artifact_root=scheduler_paths["artifact_root"],
             )
@@ -54,6 +59,7 @@ def test_scheduler_submit_freezes_reviewer_without_session(
         )
     assert state.context.schema_version == 5
     assert state.context.implementer is not None
-    assert state.context.implementer.provider == "cursor"
+    assert state.context.implementer.provider == "codex"
+    assert state.context.implementer.model == "gpt-5.6-sol"
     assert isinstance(state.context.codex, FreshCodexReviewerBinding)
     assert state.context.codex.review_model == REVIEW_MODEL

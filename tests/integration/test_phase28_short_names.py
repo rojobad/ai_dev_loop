@@ -58,6 +58,18 @@ def _paths(isolated_xdg: Path) -> dict[str, Path]:
     return {"db_path": root / "engine.sqlite3", "artifact_root": root / "artifacts"}
 
 
+def _codex_only_v3_manifest() -> str:
+    payload = yaml.safe_load(_two_phase_manifest())
+    for phase in payload["phases"]:
+        phase["implementer"] = {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "reasoning_effort": "high",
+            "timeout_minutes": 90,
+        }
+    return yaml.safe_dump(payload, sort_keys=False)
+
+
 def _artifact_digests(root: Path) -> dict[str, str]:
     if not root.exists():
         return {}
@@ -137,6 +149,14 @@ def test_real_cli_requires_and_persists_short_name_before_metadata_only_edits(
         "--codex-review-model",
         "gpt-6.1-sol",
         "--codex-review-reasoning-effort",
+        "high",
+        "--implementer-provider",
+        "codex",
+        "--implementer-command",
+        "codex",
+        "--implementer-model",
+        "gpt-5.6-sol",
+        "--implementer-reasoning-effort",
         "high",
         "--output",
         "json",
@@ -248,7 +268,7 @@ def test_v3_prepare_materialize_and_replay_preserve_exact_leaf_alias(
 ) -> None:
     del fake_clis
     paths = _paths(isolated_xdg)
-    manifest_path = _write_manifest(git_repo / "sequence.yaml", _two_phase_manifest())
+    manifest_path = _write_manifest(git_repo / "sequence.yaml", _codex_only_v3_manifest())
     service = _prepare_service(
         db_path=paths["db_path"], artifact_root=paths["artifact_root"], repo=git_repo
     )
@@ -401,7 +421,7 @@ def test_fresh_legacy_rejection_does_not_change_existing_ledger(
         } == authority_before
 
 
-def test_accepted_v1_fixture_replay_and_materialization_keep_manual_alias(
+def test_accepted_v1_fixture_replays_but_retired_runtime_cannot_start(
     isolated_xdg: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -457,17 +477,21 @@ def test_accepted_v1_fixture_replay_and_materialization_keep_manual_alias(
         assert replay.reused_existing is True
         assert replay.sequence_id == accepted.sequence_id
         assert _artifact_digests(paths["artifact_root"]) == artifact_hashes
-        started = _start_service(paths).start(accepted.sequence_id)
+        with pytest.raises(ValidationError, match="Cursor CLI execution is retired"):
+            _start_service(paths).start(accepted.sequence_id)
         with store.begin_read() as conn:
             assert store.sequence_short_name(conn, accepted.sequence_id) == "Edited historical"
-            assert store.run_short_name(conn, started.run_id) == "phase-1"
+            assert isinstance(
+                store.load_validated_sequence_state(conn, accepted.sequence_id),
+                PreparedSequenceState,
+            )
         materialized_hashes = _artifact_digests(paths["artifact_root"])
-        assert {key: materialized_hashes[key] for key in artifact_hashes} == artifact_hashes
+        assert materialized_hashes == artifact_hashes
     finally:
         shutil.rmtree(repository_root.parent, ignore_errors=True)
 
 
-def test_predecessor_generated_v2_fixture_replays_and_materializes_exactly(
+def test_predecessor_v2_fixture_replays_but_mixed_cli_runtime_cannot_start(
     isolated_xdg: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -528,16 +552,16 @@ def test_predecessor_generated_v2_fixture_replays_and_materializes_exactly(
         assert replay.sequence_id == accepted.sequence_id
         assert _artifact_digests(paths["artifact_root"]) == artifact_hashes
 
-        started = _start_service(paths).start(accepted.sequence_id)
+        with pytest.raises(ValidationError, match="Unsupported sequence ordinals: 2"):
+            _start_service(paths).start(accepted.sequence_id)
         with store.begin_read() as conn:
             state = store.load_validated_sequence_state(conn, accepted.sequence_id)
             assert state.definition == accepted.definition
             assert state.definition.entries[0].implementer.provider == "codex"
             assert state.definition.entries[1].implementer.provider == "cursor"
             assert store.sequence_short_name(conn, accepted.sequence_id) == "Edited accepted v2"
-            assert store.run_short_name(conn, started.run_id) == "phase-1"
         materialized_hashes = _artifact_digests(paths["artifact_root"])
-        assert {key: materialized_hashes[key] for key in artifact_hashes} == artifact_hashes
+        assert materialized_hashes == artifact_hashes
     finally:
         shutil.rmtree(repository_root.parent, ignore_errors=True)
 
@@ -549,7 +573,7 @@ def test_schema16_read_fallback_and_v17_migration_preserve_authority(
 ) -> None:
     del fake_clis
     paths = _paths(isolated_xdg)
-    manifest_path = _write_manifest(git_repo / "sequence.yaml", _two_phase_manifest())
+    manifest_path = _write_manifest(git_repo / "sequence.yaml", _codex_only_v3_manifest())
     prepared = _prepare_service(
         db_path=paths["db_path"], artifact_root=paths["artifact_root"], repo=git_repo
     ).prepare(SequencePrepareOptions(manifest_path=manifest_path, repo_path=git_repo, **paths))
