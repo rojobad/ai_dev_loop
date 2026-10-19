@@ -198,7 +198,7 @@ export function attemptTimelineOption(
         const endLabel = data.shape === "interval"
           ? line("completedAt", "Unavailable")
           : "No observed duration";
-        return `<strong>${line("caption", "Attempt")}</strong><br>${line("role", "Unclassified")}<br>${line("component", "unknown")} · ${line("effectKind", "no effect")}<br>${line("status", "unknown")}<br>${line("startAt", "Unavailable")} → ${endLabel}<br>Duration: ${line("duration", "Unavailable")}<br>Attempt ID: ${line("attemptId", "Unavailable")}`;
+        return `<strong>${line("caption", "Attempt")}</strong><br>${line("role", "Unclassified")}<br>${line("component", "unknown")} · ${line("effectKind", "no effect")}<br>${line("status", "unknown")}<br>${line("startAt", "Unavailable")} → ${endLabel}<br>Duration: ${line("duration", "Unavailable")}`;
       },
     },
     xAxis: {
@@ -497,7 +497,7 @@ export function AttemptTimeline({
           </p>
         </div>
         <div className="panel-heading-actions">
-          <span>{timeline.items.length} loaded / {metadata?.attemptCount ?? "?"} recorded attempts</span>
+          <span className="panel-load-count">{timeline.items.length} loaded / {metadata?.attemptCount ?? "?"} recorded attempts</span>
           <InformationControl label="Attempt timeline">
             <p>Rows follow the producer&apos;s chronological ordering and stable tie-breaker. Page exhaustion does not imply an active or unknown attempt completed.</p>
             <p>Roles come from authoritative component/effect pairs, not IDs. Selecting a row opens metadata only; prompt, review, and process output remain explicit reads.</p>

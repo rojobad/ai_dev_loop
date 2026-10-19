@@ -1,5 +1,5 @@
 import type { EChartsCoreOption } from "echarts/core";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { DashboardChart } from "./DashboardChart";
 import { InformationControl } from "./InformationControl";
@@ -146,6 +146,8 @@ export function ActivityCalendar({
   const [metric, setMetric] = useState<DashboardActivityMetric>("submissions");
   const [state, setState] = useState<ActivityState>({ loading: true, error: null });
   const generation = useRef(0);
+  const results = useRef<HTMLDivElement>(null);
+  const reservedHeight = useRef(260);
   const key = useMemo(
     () =>
       canonicalReadKey("dashboard.activity", {
@@ -158,6 +160,15 @@ export function ActivityCalendar({
       }),
     [datasetKey, filters, metric],
   );
+
+  // Capture the current geometry before the next metric/scope retires its
+  // observation. Keeping this space prevents the browser clamping scrollY
+  // when a calendar at the bottom of the document temporarily disappears.
+  useLayoutEffect(() => {
+    if (results.current) {
+      reservedHeight.current = results.current.getBoundingClientRect().height;
+    }
+  }, [key]);
 
   useEffect(() => {
     const ownedGeneration = ++generation.current;
@@ -239,50 +250,57 @@ export function ActivityCalendar({
             : ""}
         </p>
       ) : null}
-      {state.loading && !state.observation ? <p className="loading-line">Reading activity…</p> : null}
-      {state.observation && data ? (
-        <>
-          <p className="observation-line">
-            Last successful activity read · {formatAge(state.observation.receivedAt)}
-          </p>
-          <p className={`coverage coverage-${data.coverage.dataState}`}>
-            Coverage: {data.coverage.dataState}. {partial
-              ? "Values are recorded lower bounds; absent days are unknown."
-              : "Returned zero days are explicit."}
-            {data.coverage.warnings.length ? ` Warnings: ${data.coverage.warnings.join(", ")}.` : ""}
-            {` Exclusions — unstarted runs ${data.coverage.unstartedRuns}, missing launches ${data.coverage.missingLaunchTimes}, unknown execution kinds ${data.coverage.unknownExecutionKinds}, missing durations ${data.coverage.missingDurationAttempts}.`}
-          </p>
-          <p className="activity-total">
-            {METRIC_LABELS[data.metric]} total: <strong>{formatValue(data.metric, data.total)}</strong>
-          </p>
-          {option && data.days.length ? (
-            <DashboardChart
-              ariaLabel={`${METRIC_LABELS[data.metric]} activity calendar in ${data.filters.timeZone}`}
-              height={260}
-              option={option}
-              ownershipKey={key}
-              theme={theme}
-            />
-          ) : (
-            <div className="empty-state">
-              {partial
-                ? "No recorded contributions were returned; absent days remain unknown."
-                : "No activity was recorded in the applied range."}
-            </div>
-          )}
-          <details className="activity-days-disclosure">
-            <summary>Show daily values</summary>
-            <ol className="activity-days" aria-label={`${METRIC_LABELS[data.metric]} daily values`}>
-              {data.days.map((day) => (
-                <li key={day.date}>
-                  <time dateTime={day.date}>{formatCalendarDay(day.date)}</time>
-                  <span>{formatValue(data.metric, day.value)}</span>
-                </li>
-              ))}
-            </ol>
-          </details>
-        </>
-      ) : null}
+      <div ref={results} className="activity-results" aria-busy={state.loading}>
+        {state.observation && data ? (
+          <>
+            <p className="observation-line">
+              Last successful activity read · {formatAge(state.observation.receivedAt)}
+            </p>
+            <p className={`coverage coverage-${data.coverage.dataState}`}>
+              Coverage: {data.coverage.dataState}. {partial
+                ? "Values are recorded lower bounds; absent days are unknown."
+                : "Returned zero days are explicit."}
+              {data.coverage.warnings.length ? ` Warnings: ${data.coverage.warnings.join(", ")}.` : ""}
+              {` Exclusions — unstarted runs ${data.coverage.unstartedRuns}, missing launches ${data.coverage.missingLaunchTimes}, unknown execution kinds ${data.coverage.unknownExecutionKinds}, missing durations ${data.coverage.missingDurationAttempts}.`}
+            </p>
+            <p className="activity-total">
+              {METRIC_LABELS[data.metric]} total: <strong>{formatValue(data.metric, data.total)}</strong>
+            </p>
+            {option && data.days.length ? (
+              <DashboardChart
+                ariaLabel={`${METRIC_LABELS[data.metric]} activity calendar in ${data.filters.timeZone}`}
+                height={260}
+                option={option}
+                ownershipKey={key}
+                theme={theme}
+              />
+            ) : (
+              <div className="empty-state">
+                {partial
+                  ? "No recorded contributions were returned; absent days remain unknown."
+                  : "No activity was recorded in the applied range."}
+              </div>
+            )}
+            <details className="activity-days-disclosure">
+              <summary>Show daily values</summary>
+              <ol className="activity-days" aria-label={`${METRIC_LABELS[data.metric]} daily values`}>
+                {data.days.map((day) => (
+                  <li key={day.date}>
+                    <time dateTime={day.date}>{formatCalendarDay(day.date)}</time>
+                    <span>{formatValue(data.metric, day.value)}</span>
+                  </li>
+                ))}
+              </ol>
+            </details>
+          </>
+        ) : (
+          <div className="activity-loading" style={{ minHeight: reservedHeight.current }}>
+            <p className="loading-line" role="status">
+              {state.loading ? "Reading activity…" : "Activity is unavailable."}
+            </p>
+          </div>
+        )}
+      </div>
     </section>
   );
 }

@@ -182,7 +182,7 @@ describe("chart projections", () => {
         data: leaf,
       }),
     ).toBe(
-      "<strong>&lt;img src=x onerror=&quot;boom&quot;&gt; &amp; project</strong><br>&lt;b onmouseover=&quot;boom&quot;&gt;short&lt;/b&gt;: 4 runs<br>&lt;script&gt;alert(&quot;leaf&quot;)&lt;/script&gt; &amp; sequence · seq-malicious",
+      "<strong>&lt;img src=x onerror=&quot;boom&quot;&gt; &amp; project</strong><br>&lt;b onmouseover=&quot;boom&quot;&gt;short&lt;/b&gt;: 4 runs<br>&lt;script&gt;alert(&quot;leaf&quot;)&lt;/script&gt; &amp; sequence",
     );
   });
 

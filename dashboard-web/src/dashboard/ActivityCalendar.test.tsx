@@ -161,6 +161,40 @@ describe("C266-1 activity calendar", () => {
     );
   });
 
+  it("reserves the previous calendar height while a new metric is pending", async () => {
+    const user = userEvent.setup();
+    const dataSource = new HeldActivityDataSource();
+    const view = render(
+      <ActivityCalendar
+        coordinator={new RefreshCoordinator()}
+        dataSource={dataSource}
+        datasetKey="scope-1"
+        filters={filters}
+        theme="light"
+      />,
+    );
+    await act(async () => {
+      dataSource.held.get("submissions")?.resolve(
+        observation(data("submissions", [{ date: "2028-02-28", value: 3 }])),
+      );
+    });
+    const results = view.container.querySelector(".activity-results")!;
+    vi.spyOn(results, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 800, 430));
+    await user.selectOptions(screen.getByLabelText("Activity metric"), "review-rounds");
+    expect(results).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("status")).toHaveTextContent("Reading activity");
+    expect(view.container.querySelector(".activity-loading")).toHaveStyle({ minHeight: "430px" });
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.queryByText("Submissions total:")).not.toBeInTheDocument();
+    await act(async () => {
+      dataSource.held.get("review-rounds")?.resolve(
+        observation(data("review-rounds", [{ date: "2028-02-28", value: 1 }])),
+      );
+    });
+    expect(results).toHaveAttribute("aria-busy", "false");
+    expect(screen.getByRole("img", { name: /Review rounds/ })).toBeInTheDocument();
+  });
+
   it("keeps year/leap boundaries as named-zone calendar dates", () => {
     const value = data("process-hours", [
       { date: "2028-02-28", value: 3600 },

@@ -48,7 +48,7 @@ async function applyMapScope(page: Page): Promise<void> {
   await page.getByLabel("IANA time zone").fill("UTC");
   await page.getByLabel("From").fill("01/01/2026 00:00");
   await page.getByLabel("Until (exclusive)").fill("05/01/2026 00:00");
-  await expect(page.getByText("Loaded 28 of 28 started runs")).toBeVisible();
+  await expect(page.getByText("28/28 loaded")).toBeVisible();
 }
 
 async function expectFocusInsideDialog(page: Page): Promise<void> {

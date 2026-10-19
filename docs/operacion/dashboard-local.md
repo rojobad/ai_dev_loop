@@ -63,7 +63,11 @@ gráfico. Sus tarjetas de intentos quedan cerradas por defecto en `Attempt detai
 Los dos gráficos de resumen ocupan cada uno el ancho completo. La actividad
 diaria mantiene su equivalente textual dentro de un disclosure bajo demanda.
 Los tooltips de los gráficos aparecen sobre los paneles y se confinan al
-viewport también en pantallas estrechas.
+viewport también en pantallas estrechas. Muestran nombres legibles; los IDs
+técnicos permanecen en los detalles de inspección. El mapa de secuencias tiene scroll
+interno vertical y horizontal, con un alto máximo de 500 px. Al cambiar la
+métrica de actividad, su espacio se reserva durante la carga para evitar
+saltos de página.
 
 Los instantes se muestran como `DD/MM/yyyy HH:mm` en la zona elegida, los días
 como `DD/MM/yyyy` y las duraciones resueltas como horas/minutos (`<1 m` cuando

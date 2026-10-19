@@ -122,6 +122,13 @@ h3 {
   gap: 1rem;
 }
 
+.panel-load-count {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
 .panel-heading-actions {
   display: flex;
   align-items: center;
@@ -323,8 +330,9 @@ h3 {
 
 .run-map-chart-scroll {
   max-width: 100%;
-  overflow-x: auto;
-  overscroll-behavior-inline: contain;
+  max-height: 500px;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .lineage-line,
@@ -672,6 +680,16 @@ button:disabled {
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 700;
+}
+
+.activity-results {
+  display: flow-root;
+}
+
+.activity-loading {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
 }
 
 .activity-total {

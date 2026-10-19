@@ -52,7 +52,7 @@ async function applyFixtureScope(page: Page): Promise<void> {
 }
 
 async function loadAllRuns(page: Page): Promise<void> {
-  await expect(page.getByText(`Loaded ${fixture.mapTotal} of ${fixture.mapTotal} started runs`)).toBeVisible();
+  await expect(page.getByText(`${fixture.mapTotal}/${fixture.mapTotal} loaded`)).toBeVisible();
 }
 
 async function selectRun(page: Page, runId: string): Promise<void> {

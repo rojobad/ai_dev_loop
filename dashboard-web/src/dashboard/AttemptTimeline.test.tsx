@@ -528,6 +528,10 @@ describe("C264-3 attempt timeline semantics", () => {
       completedAt: "01/01/2026 00:30",
       duration: "00 h 30 m",
     });
+    const tooltip = (option.tooltip as { formatter: (event: unknown) => string }).formatter;
+    expect(tooltip({ data: chartData[2] })).toContain("3 - Iteration 1 - Reviewer");
+    expect(tooltip({ data: chartData[2] })).not.toContain("codex-reviewer");
+    expect(tooltip({ data: chartData[2] })).not.toContain("Attempt ID:");
     expect(attemptIdFromChartEvent({ data: { attemptId: "codex-reviewer" } })).toBe(
       "codex-reviewer",
     );

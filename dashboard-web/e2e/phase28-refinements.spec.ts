@@ -282,7 +282,7 @@ test("C283-1..5 automatic complete cohort, information controls, and viewport to
   await expect(page.getByRole("button", { name: "Apply" })).toHaveCount(0);
   await expect(page.getByLabel("Runs started: 0")).toBeVisible();
   await expect(page.getByText("64% remaining · 36% used")).toBeVisible();
-  await expect(page.getByText("Loaded 0 of 0 started runs")).toBeVisible();
+  await expect(page.getByText("0/0 loaded")).toBeVisible();
   await setScopeWithoutTypingDelay(page);
   await page.waitForTimeout(300);
   expect(
@@ -292,7 +292,7 @@ test("C283-1..5 automatic complete cohort, information controls, and viewport to
     ),
   ).toHaveLength(0);
 
-  await expect(page.getByText("Loaded 1036 of 1036 started runs")).toBeVisible();
+  await expect(page.getByText("1036/1036 loaded")).toBeVisible();
   await expect(page.getByLabel("Runs started: 1036")).toBeVisible();
   await expect(page.getByRole("button", { name: "Load more runs" })).toHaveCount(0);
   const runOptions = page.getByLabel("Select loaded run").locator("option");
@@ -399,5 +399,5 @@ test("C283-1..5 automatic complete cohort, information controls, and viewport to
   );
   expect(requests.filter((request) => request.operation === "dashboard.summary").length)
     .toBe(summariesBeforeInvalid);
-  await expect(page.getByText("Loaded 1036 of 1036 started runs")).toBeVisible();
+  await expect(page.getByText("1036/1036 loaded")).toBeVisible();
 });

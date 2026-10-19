@@ -50,7 +50,7 @@ async function applyMapScope(page: Page, fakeClock = false): Promise<void> {
   await page.getByLabel("Until (exclusive)").fill("05/01/2026 00:00");
   if (fakeClock) await page.clock.runFor(400);
   else await page.waitForTimeout(450);
-  await expect(page.getByText("Loaded 28 of 28 started runs")).toBeVisible();
+  await expect(page.getByText("28/28 loaded")).toBeVisible();
 }
 
 async function clickReplacementChartCell(page: Page, position: 1 | 2): Promise<void> {
@@ -158,8 +158,90 @@ test.afterAll(async () => {
   if (stateRoot) rmSync(stateRoot, { recursive: true, force: true });
 });
 
+test("map scroll stays inside its viewport and metric loading preserves page position", async ({ page }) => {
+  test.setTimeout(45_000);
+  await page.setViewportSize({ width: 1095, height: 884 });
+  let pendingMetric: string | null = null;
+  let metricStarted = false;
+  let releaseMetric: (() => void) | undefined;
+  let metricGate = Promise.resolve();
+  await page.route("**/api/dashboard/read", async (route) => {
+    const request = JSON.parse(route.request().postData() ?? "{}");
+    if (request.operation === "dashboard.activity" && request.parameters.metric === pendingMetric) {
+      metricStarted = true;
+      await metricGate;
+    }
+    if (request.operation === "dashboard.runs") {
+      const response = await route.fetch();
+      const payload = await response.json();
+      if (payload.ok && payload.data.items.length) {
+        const binding = payload.data.items.find((item: { sequenceBinding: unknown }) => item.sequenceBinding)?.sequenceBinding;
+        if (binding) {
+          payload.data.items.forEach((item: { sequenceBinding: unknown }, index: number) => {
+            item.sequenceBinding = {
+              ...binding,
+              sequenceId: `scroll-sequence-${index}`,
+              sequenceName: `Scroll sequence ${index}`,
+              sequenceShortName: `Scroll sequence ${index}`,
+            };
+          });
+        }
+      }
+      await route.fulfill({ response, json: payload });
+      return;
+    }
+    await route.continue();
+  });
+  await applyMapScope(page);
+  const map = page.getByRole("region", { name: "Scrollable sequence and run map" });
+  await map.scrollIntoViewIfNeeded();
+  const dimensions = await map.evaluate((element) => ({
+    height: element.getBoundingClientRect().height,
+    contentHeight: element.scrollHeight,
+  }));
+  expect(dimensions.height).toBeLessThanOrEqual(500);
+  expect(dimensions.contentHeight).toBeGreaterThan(500);
+  const beforeMapScroll = await page.evaluate(() => window.scrollY);
+  await map.hover();
+  await page.mouse.wheel(0, 250);
+  await expect.poll(() => map.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  expect(await page.evaluate(() => window.scrollY)).toBe(beforeMapScroll);
+
+  const activity = page.locator(".activity-panel");
+  for (const [metric, label] of [
+    ["review-rounds", "Review rounds"],
+    ["process-hours", "Process hours"],
+    ["submissions", "Submissions"],
+  ]) {
+    await activity.evaluate((element) => element.scrollIntoView({ block: "end" }));
+    const before = await page.evaluate(() => ({ scroll: window.scrollY, height: document.documentElement.scrollHeight }));
+    pendingMetric = metric;
+    metricStarted = false;
+    metricGate = new Promise<void>((resolve) => { releaseMetric = resolve; });
+    try {
+      await page.getByLabel("Activity metric").selectOption(metric);
+      await expect.poll(() => metricStarted).toBe(true);
+      await expect(activity.locator(".activity-results")).toHaveAttribute("aria-busy", "true");
+      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      expect(Math.abs(await page.evaluate(() => window.scrollY) - before.scroll)).toBeLessThanOrEqual(1);
+      expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeGreaterThanOrEqual(before.height - 1);
+    } finally {
+      pendingMetric = null;
+      releaseMetric?.();
+    }
+    const chart = page.getByRole("img", { name: `${label} activity calendar in UTC` });
+    await expect(chart).toBeVisible();
+    const after = await chart.boundingBox();
+    expect(after).not.toBeNull();
+    expect(after!.y).toBeGreaterThanOrEqual(0);
+    expect(after!.y + after!.height).toBeLessThanOrEqual(884);
+    expect(Math.abs(await page.evaluate(() => window.scrollY) - before.scroll)).toBeLessThanOrEqual(1);
+  }
+});
+
 test("compact panels keep full-width charts, spaced filters and collapsed attempts", async ({ page }) => {
   await applyMapScope(page);
+  await expect(page.locator(".overview-grid")).toBeVisible();
   for (const width of [1095, 390]) {
     await page.setViewportSize({ width, height: 884 });
     const geometry = await page.evaluate(() => {
@@ -216,7 +298,7 @@ test("C282-1..2 real chart keeps one selected run and stable paged attempt capti
 
   await applyMapScope(page);
   const projectSelect = page.locator(".filters select");
-  await expect(page.getByText("Loaded 28 of 28 started runs")).toBeVisible();
+  await expect(page.getByText("28/28 loaded")).toBeVisible();
   await expect(page.locator(".run-metadata")).toHaveCount(0);
 
   await clickReplacementChartCell(page, 1);
