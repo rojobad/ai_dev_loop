@@ -25,6 +25,7 @@ prompts, credenciales ni IDs de sesiones de agentes.
 | [INC-2026-10-15-001](2026-10-15-codex-implementer-routing-timeout-blocked.md) | 2026-10-15 | Timeout "workspace routing discovery" en bootstrap del implementer Codex bloquea fase 4/4 (`codex_implementer_failure`) sin reintento en la versión instalada | Abierto (decisión de Rodrigo) | Clasificador del implementer no trata el routing timeout como transitorio |
 
 | [INC-2026-10-15-002](2026-10-15-active-attempt-status-and-retry-action.md) | 2026-10-15 | Intento activo muestra `preflight_complete` y recomienda retry por timeout previo; caso relacionado `cursor_ready` reportado | Abierto; corrección diferida | Proyección de actividad/acción pendiente de análisis |
+| [INC-2026-10-19-001](2026-10-19-cursor-sdk-busy-first-send-ambiguous-missing.md) | 2026-10-19 | Primer `send` del Cursor SDK recibe `busy` por un run de creación y la fase queda en `cursor_sdk_ambiguous_missing` | Abierto; parche en el árbol, sin aceptación en vivo | Run `queued` de `CreateAgent` tratado como envío incierto |
 
 Una recurrencia debe tener su propia entrada y enlazar los casos relacionados.
 Conserva el diagnóstico original; agrega nueva evidencia identificando cuándo

@@ -192,6 +192,16 @@ class FakeAgent:
         self.run = run
         self.send_calls: list[tuple[str, SendOptions]] = []
         self.send_error: Exception | None = None
+        self.conversation_calls = 0
+        self.messages: list[object] = []
+
+    def list_messages(self, options: object = None) -> list[object]:
+        del options
+        return list(self.messages)
+
+    def conversation(self) -> list[object]:
+        self.conversation_calls += 1
+        raise TimeoutError("GetRunConversation timed out")
 
     def send(self, prompt: str, options: SendOptions) -> FakeRun:
         self.send_calls.append((prompt, options))
@@ -691,8 +701,36 @@ def test_pinned_generic_busy_is_classified_only_in_send_context(
     outcome = adapter.send(client.agent.agent_id, "next turn")
     assert outcome.failure is not None
     assert outcome.failure.code is CursorSdkErrorCode.BUSY
+    assert outcome.failure.evidence_class == "message"
     assert outcome.failure.agent_id == client.agent.agent_id
     assert len(client.agent.send_calls) == 1
+    send_options = client.agent.send_calls[0][1]
+    assert getattr(getattr(send_options, "local", None), "force", None) in {None, False}
+    adapter.close()
+
+
+def test_typed_and_structured_busy_are_distinct_from_message_text(
+    git_repo: Path,
+    isolated_xdg: Path,
+) -> None:
+    client = FakeClient()
+    adapter = _adapter(git_repo, isolated_xdg, client)
+    assert adapter.open().value is not None
+    assert adapter.create_agent().value is not None
+    client.agent.send_error = AgentBusyError("already has active run")
+    typed = adapter.send(client.agent.agent_id, "next turn")
+    assert typed.failure is not None
+    assert typed.failure.code is CursorSdkErrorCode.BUSY
+    assert typed.failure.evidence_class == "typed"
+    client.agent.send_error = InternalServerError("agent busy", code="agent_busy")
+    structured = adapter.send(client.agent.agent_id, "next turn")
+    assert structured.failure is not None
+    assert structured.failure.code is CursorSdkErrorCode.BUSY
+    assert structured.failure.evidence_class == "structured"
+    client.agent.conversation_calls = 0
+    counted = adapter.list_agent_messages(client.agent.agent_id)
+    assert counted.value == 0
+    assert client.agent.conversation_calls == 0
     adapter.close()
 
 

@@ -17,6 +17,7 @@ class CursorSdkOperation(StrEnum):
     STREAM = "stream"
     GET_RUN = "get_run"
     LIST_RUNS = "list_runs"
+    LIST_MESSAGES = "list_messages"
     CANCEL = "cancel"
     PREFLIGHT = "preflight"
 
@@ -47,6 +48,7 @@ class CursorSdkFailure:
     run_id: str | None
     retry_after: str | None = None
     request_id: str | None = None
+    evidence_class: Literal["typed", "structured", "message"] | None = None
 
 
 T = TypeVar("T")
@@ -183,5 +185,7 @@ class CursorSdkPort(Protocol):
         cursor: str | None = None,
         limit: int | None = None,
     ) -> CursorSdkOutcome[CursorSdkRunPage]: ...
+
+    def list_agent_messages(self, agent_id: str) -> CursorSdkOutcome[int]: ...
 
     def cancel(self, agent_id: str, run_id: str) -> CursorSdkOutcome[CursorSdkRunIdentity]: ...

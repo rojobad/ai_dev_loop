@@ -453,6 +453,34 @@ class CursorSdkAdapter:
                 self._classify(exc, CursorSdkOperation.LIST_RUNS, agent_id=agent_id)
             )
 
+    def list_agent_messages(self, agent_id: str) -> CursorSdkOutcome[int]:
+        """Return the public agent history count without reading a run conversation."""
+
+        invalid = self._require_open(CursorSdkOperation.LIST_MESSAGES, agent_id=agent_id)
+        if invalid is not None:
+            return CursorSdkOutcome.failed(invalid)
+        agent = self._agents.get(agent_id)
+        if agent is None:
+            resumed = self.resume_agent(agent_id)
+            if resumed.failure is not None:
+                return CursorSdkOutcome.failed(resumed.failure)
+            agent = self._agents[agent_id]
+        try:
+            messages = agent.list_messages()
+            if not isinstance(messages, list):
+                return CursorSdkOutcome.failed(
+                    self._failure(
+                        CursorSdkErrorCode.INVALID_RESPONSE,
+                        CursorSdkOperation.LIST_MESSAGES,
+                        agent_id=agent_id,
+                    )
+                )
+            return CursorSdkOutcome.success(len(messages))
+        except Exception as exc:
+            return CursorSdkOutcome.failed(
+                self._classify(exc, CursorSdkOperation.LIST_MESSAGES, agent_id=agent_id)
+            )
+
     def cancel(
         self,
         agent_id: str,
@@ -655,6 +683,7 @@ class CursorSdkAdapter:
         run_id: str | None = None,
         retry_after: str | None = None,
         request_id: str | None = None,
+        evidence_class: Literal["typed", "structured", "message"] | None = None,
     ) -> CursorSdkFailure:
         return CursorSdkFailure(
             code=code,
@@ -663,6 +692,7 @@ class CursorSdkAdapter:
             run_id=run_id,
             retry_after=retry_after,
             request_id=request_id,
+            evidence_class=evidence_class,
         )
 
     def _is_error(self, exc: Exception, name: str) -> bool:
@@ -686,6 +716,7 @@ class CursorSdkAdapter:
     ) -> CursorSdkFailure:
         retry_after = self._safe_metadata(getattr(exc, "retry_after", None))
         request_id = self._safe_metadata(getattr(exc, "request_id", None))
+        evidence_class: Literal["typed", "structured", "message"] | None = None
         if self._is_error(exc, "AuthenticationError"):
             code = CursorSdkErrorCode.AUTHENTICATION_FAILED
         elif self._is_error(exc, "RateLimitError"):
@@ -696,6 +727,7 @@ class CursorSdkAdapter:
             code = CursorSdkErrorCode.UNKNOWN_IDENTITY
         elif self._is_error(exc, "AgentBusyError"):
             code = CursorSdkErrorCode.BUSY
+            evidence_class = "typed"
         elif self._is_error(exc, "InternalServerError"):
             native_codes = {
                 str(getattr(exc, "code", "")).lower(),
@@ -706,10 +738,12 @@ class CursorSdkAdapter:
                 "[feature_unavailable]" in message
             ):
                 code = CursorSdkErrorCode.FEATURE_UNAVAILABLE
-            elif any(code.endswith("agent_busy") for code in native_codes) or (
-                operation is CursorSdkOperation.SEND and "already has active run" in message
-            ):
+            elif any(code.endswith("agent_busy") for code in native_codes):
                 code = CursorSdkErrorCode.BUSY
+                evidence_class = "structured"
+            elif operation is CursorSdkOperation.SEND and "already has active run" in message:
+                code = CursorSdkErrorCode.BUSY
+                evidence_class = "message"
             else:
                 code = CursorSdkErrorCode.SERVER_ERROR
         elif self._is_error(exc, "NetworkError"):
@@ -725,4 +759,5 @@ class CursorSdkAdapter:
             run_id=run_id,
             retry_after=retry_after,
             request_id=request_id,
+            evidence_class=evidence_class,
         )

@@ -176,6 +176,26 @@ class FakeAgentProcessBackend(AgentProcessBackend):
                 termination = TerminationClass.NONZERO_EXIT
                 lifecycle = UnitLifecycleState.FAILED
             envelope_path = request.result_envelope_path
+            if not envelope_path.is_file() and any(
+                "cursor_attempt_runner" in part for part in request.agent_argv
+            ):
+                stderr_text = (
+                    request.stderr_path.read_text(encoding="utf-8")
+                    if request.stderr_path.is_file()
+                    else ""
+                )
+                if "CursorSdkWorkerInterrupt" in stderr_text:
+                    os.environ.pop("AI_DEV_LOOP_SDK_INTERRUPT_AFTER", None)
+                result = ObserveResult(
+                    lifecycle_state=UnitLifecycleState.FAILED,
+                    owned=True,
+                    absence_proven=False,
+                    exit_code=exit_code,
+                    termination_class=termination,
+                    result_envelope_path=None,
+                )
+                self._completed[attempt_id] = result
+                return result
             if not envelope_path.is_file():
                 stdout_path = request.stdout_path
                 stderr_path = request.stderr_path

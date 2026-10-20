@@ -1129,8 +1129,8 @@ class CursorWorkflowService:
                     "conversation_key": expected_key,
                 },
             )
-            bound = records[1]
-            terminal = records[2]
+            bound = next(record for record in records if record.get("kind") == "agent_bound")
+            terminal = records[-1]
             if (
                 str(bound.get("agent_id", "")) != agent_id
                 or str(terminal.get("agent_id", "")) != agent_id
@@ -1262,6 +1262,19 @@ class CursorWorkflowService:
             and outcome.get("journal_sha256")
         ):
             failure_kind = "cursor_sdk_terminal_failed"
+        if failure_kind == "cursor_sdk_creation_readiness_hold":
+            return self._block_from_ingest(
+                run_id,
+                dispatch_id=dispatch_id,
+                attempt_id=attempt_id,
+                kind="cursor_chat_blocked",
+                reason_kind=failure_kind,
+                summary=(
+                    "Cursor SDK creation readiness is unproved; "
+                    "the repository reservation stays held"
+                ),
+                retain_reservation=True,
+            )
         if failure_kind:
             recoverable = failure_kind in {
                 "cursor_sdk_send_uncertain",

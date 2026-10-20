@@ -65,7 +65,12 @@ from ai_dev_loop.scheduler.application.cursor_runtime_policy import (
     context_uses_cursor_cli,
     unsupported_sequence_cursor_cli_ordinals,
 )
-from ai_dev_loop.scheduler.application.cursor_sdk_journal import seal_interrupted_sdk_send_journal
+from ai_dev_loop.scheduler.application.cursor_sdk_journal import (
+    JOURNAL_SCHEMA_VERSION,
+    authenticate_sdk_journal,
+    authenticate_sdk_recovery_journal,
+    seal_interrupted_sdk_send_journal,
+)
 from ai_dev_loop.scheduler.application.cursor_workflow_service import CursorWorkflowService
 from ai_dev_loop.scheduler.application.review_budget import effective_review_ceiling_for_run
 from ai_dev_loop.scheduler.application.scheduler_checkpoint import checkpoint_from_state
@@ -106,7 +111,10 @@ from ai_dev_loop.scheduler.domain.state import (
     WaitingUsageLimitState,
     resolved_implementer_provider,
 )
-from ai_dev_loop.scheduler.infrastructure.paths import scheduler_state_dir
+from ai_dev_loop.scheduler.infrastructure.paths import (
+    resolve_run_relative_path,
+    scheduler_state_dir,
+)
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import (
     ProtectedArtifactError,
     ProtectedArtifactStore,
@@ -1207,6 +1215,120 @@ class AttemptService:
             )
         return binding
 
+    def _prior_authorized_prompt_evidence(
+        self,
+        state: PreflightCompleteState
+        | CursorReadyState
+        | WaitingUsageLimitState
+        | WaitingForCursorFixState,
+        *,
+        run_id: str,
+    ) -> dict[str, str] | None:
+        """Pin the last authorized prompt journal from ledger authority.
+
+        ``latest_journal_path`` and ``latest_journal_sha256`` are the durable
+        reference. Attempt, dispatch and prompt bindings come from that
+        attempt's authenticated invocation, not from a fresh hash of the file.
+        """
+
+        sdk_runtime = state.cursor.sdk
+        if sdk_runtime is None:
+            return None
+        relative = sdk_runtime.latest_journal_path
+        expected_sha = sdk_runtime.latest_journal_sha256
+        marker = "cursor/sdk-attempts/"
+        suffix = "/dispatch-journal.jsonl"
+        if not relative.startswith(marker) or not relative.endswith(suffix):
+            raise ValidationError("Cursor SDK journal path is not an attempt journal")
+        source_attempt_id = relative[len(marker) : -len(suffix)]
+        if cursor_sdk_attempt_journal_rel(source_attempt_id) != relative:
+            raise ValidationError("Cursor SDK journal path is not an attempt journal")
+        run_root = self.artifacts.run_root(run_id)
+        journal_path = resolve_run_relative_path(run_root, relative)
+        if journal_path.is_symlink() or not journal_path.is_file():
+            return None
+        if sha256_file(journal_path) != expected_sha:
+            raise ValidationError(
+                "Cursor SDK prior journal digest does not match durable authority"
+            )
+        with self.store.begin_read() as conn:
+            attempt = self.store.get_attempt_by_id(conn, source_attempt_id)
+            if (
+                attempt is None
+                or str(attempt["run_id"]) != run_id
+                or attempt["launch_intent_sha256"] is None
+                or attempt["launch_nonce"] is None
+                or attempt["unit_identity"] is None
+            ):
+                return None
+            dispatch_id = str(attempt["dispatch_id"])
+            effect = self.store.get_effect_by_dispatch_id(conn, dispatch_id)
+            if effect is None or str(effect["run_id"]) != run_id:
+                raise ValidationError("Cursor SDK prior journal attempt has no dispatch")
+            effect_kind = str(effect["effect_kind"])
+            launch_nonce = str(attempt["launch_nonce"])
+            launch_intent_sha = str(attempt["launch_intent_sha256"])
+            unit_identity = str(attempt["unit_identity"])
+        if effect_kind != RUN_CURSOR_TURN_EFFECT_KIND:
+            return None
+        try:
+            invocation = verify_cursor_invocation_evidence(
+                run_root,
+                attempt_id=source_attempt_id,
+                run_id=run_id,
+                dispatch_id=dispatch_id,
+                unit_identity=unit_identity,
+                launch_nonce=launch_nonce,
+                launch_intent_sha256=launch_intent_sha,
+                effect_kind=effect_kind,
+            )
+        except CursorEvidenceError as exc:
+            raise ValidationError(
+                "Cursor SDK prior journal invocation is not authenticated"
+            ) from exc
+        prompt_sha = str(invocation.get("prompt_sha256", ""))
+        if not prompt_sha or invocation.get("agent_id") != sdk_runtime.agent_id:
+            raise ValidationError("Cursor SDK prior journal agent does not match the bound agent")
+        expected_binding = {
+            "attempt_id": source_attempt_id,
+            "dispatch_id": dispatch_id,
+            "conversation_owner_run_id": sdk_runtime.conversation_owner_run_id,
+            "conversation_key": sdk_runtime.conversation_key,
+            "agent_id": sdk_runtime.agent_id,
+            "prompt_sha256": prompt_sha,
+        }
+        try:
+            records = authenticate_sdk_recovery_journal(
+                journal_path,
+                expected_sha256=expected_sha,
+                expected_binding=expected_binding,
+            )
+        except ValueError:
+            try:
+                records = authenticate_sdk_journal(
+                    journal_path,
+                    expected_sha256=expected_sha,
+                    operation="send",
+                    expected_binding=expected_binding,
+                )
+            except ValueError:
+                return None
+        if not any(record.get("kind") == "send_intent" for record in records):
+            return None
+        kinds = {str(record.get("kind", "")) for record in records}
+        version = records[0].get("schema_version")
+        if version != JOURNAL_SCHEMA_VERSION and not kinds.intersection(
+            {"readiness_clear", "creation_blocker_cancel_confirmed"}
+        ):
+            return None
+        return {
+            "prior_authorized_journal_path": relative,
+            "prior_authorized_journal_sha256": expected_sha,
+            "prior_authorized_attempt_id": source_attempt_id,
+            "prior_authorized_dispatch_id": dispatch_id,
+            "prior_authorized_prompt_sha256": prompt_sha,
+        }
+
     def _cursor_binding(
         self,
         state: PreflightCompleteState
@@ -1292,6 +1414,8 @@ class AttemptService:
                     "agent_id": state.cursor.sdk.agent_id,
                     "prompt_path": prompt_path,
                     "prompt_sha256": prompt_sha,
+                    "identity_artifact_path": state.cursor.sdk.identity_artifact_path,
+                    "identity_artifact_sha256": state.cursor.sdk.identity_artifact_sha256,
                 }
             )
             from ai_dev_loop.scheduler.application.cursor_sdk_successor import (
@@ -1316,6 +1440,9 @@ class AttemptService:
                 binding["sdk_review_recovery_source_run_id"] = str(review_source["source_run_id"])
             if sdk_authority is not None:
                 binding["sdk_successor_recovery_key"] = sdk_authority.recovery_key
+            anchor = self._prior_authorized_prompt_evidence(state, run_id=run_id)
+            if anchor is not None:
+                binding.update(anchor)
             if sdk_authority is not None and sdk_successor_prompt_applies(state, sdk_authority):
                 # The SDK successor record authenticates the complete correction
                 # ancestry.  The resumed public SDK send consumes the copy-once

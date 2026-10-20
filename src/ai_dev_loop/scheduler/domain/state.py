@@ -556,6 +556,7 @@ CURSOR_SDK_RESERVATION_HOLD_BLOCK_KINDS = frozenset(
         "cursor_sdk_reconciliation_failed",
         "cursor_sdk_reconciliation_evidence_invalid",
         "cursor_sdk_ambiguous_missing",
+        "cursor_sdk_creation_readiness_hold",
         "cursor_sdk_ambiguous_multiple",
         "cursor_sdk_native_unavailable",
         "cursor_failure",

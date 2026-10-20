@@ -1,0 +1,232 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Reconciliation result whose decision is outside the v1 outcome set.\n\nHistorical v1 bytes stay on ``CursorSdkReconciliationRecordV1``. This model\nis written only for a proved-unsent prompt and lives at ``record-v2.json``.",
+  "properties": {
+    "schema_version": {
+      "const": 2,
+      "default": 2,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "run_id": {
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "source_attempt_id": {
+      "minLength": 1,
+      "title": "Source Attempt Id",
+      "type": "string"
+    },
+    "reconciliation_attempt_id": {
+      "minLength": 1,
+      "title": "Reconciliation Attempt Id",
+      "type": "string"
+    },
+    "source_dispatch_id": {
+      "minLength": 1,
+      "title": "Source Dispatch Id",
+      "type": "string"
+    },
+    "reconciliation_dispatch_id": {
+      "minLength": 1,
+      "title": "Reconciliation Dispatch Id",
+      "type": "string"
+    },
+    "conversation_owner_run_id": {
+      "minLength": 1,
+      "title": "Conversation Owner Run Id",
+      "type": "string"
+    },
+    "conversation_key": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Conversation Key",
+      "type": "string"
+    },
+    "agent_id": {
+      "minLength": 1,
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "prompt_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Prompt Sha256",
+      "type": "string"
+    },
+    "source_journal_path": {
+      "minLength": 1,
+      "title": "Source Journal Path",
+      "type": "string"
+    },
+    "source_journal_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Source Journal Sha256",
+      "type": "string"
+    },
+    "baseline_run_ids": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Baseline Run Ids",
+      "type": "array"
+    },
+    "candidate_run_ids": {
+      "default": [],
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Candidate Run Ids",
+      "type": "array"
+    },
+    "candidate_final_statuses": {
+      "additionalProperties": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "propertyNames": {
+        "minLength": 1
+      },
+      "title": "Candidate Final Statuses",
+      "type": "object"
+    },
+    "native_run_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Native Run Id"
+    },
+    "initial_native_status": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Initial Native Status"
+    },
+    "final_native_status": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Final Native Status"
+    },
+    "outcome": {
+      "enum": [
+        "terminal_recovered",
+        "continuation_ready",
+        "ambiguous_missing",
+        "ambiguous_multiple",
+        "native_unavailable",
+        "abort_reconciled",
+        "prompt_unsent"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "cancellation_requested": {
+      "default": false,
+      "title": "Cancellation Requested",
+      "type": "boolean"
+    },
+    "terminal_response_path": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Terminal Response Path"
+    },
+    "terminal_response_sha256": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Terminal Response Sha256"
+    },
+    "cursor_output_fingerprint_path": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cursor Output Fingerprint Path"
+    },
+    "cursor_output_fingerprint_sha256": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cursor Output Fingerprint Sha256"
+    }
+  },
+  "required": [
+    "run_id",
+    "source_attempt_id",
+    "reconciliation_attempt_id",
+    "source_dispatch_id",
+    "reconciliation_dispatch_id",
+    "conversation_owner_run_id",
+    "conversation_key",
+    "agent_id",
+    "prompt_sha256",
+    "source_journal_path",
+    "source_journal_sha256",
+    "baseline_run_ids",
+    "outcome"
+  ],
+  "title": "CursorSdkReconciliationRecordV2",
+  "type": "object"
+}

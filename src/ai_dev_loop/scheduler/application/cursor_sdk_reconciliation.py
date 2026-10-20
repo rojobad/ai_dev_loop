@@ -43,11 +43,14 @@ from ai_dev_loop.scheduler.domain.cursor_contract import (
 from ai_dev_loop.scheduler.domain.cursor_sdk_recovery import (
     CursorSdkReconciliationIntentV1,
     CursorSdkReconciliationRecordV1,
+    CursorSdkReconciliationRecordV2,
 )
 from ai_dev_loop.scheduler.domain.events import (
     CURSOR_SDK_RECONCILED_EVENT_KIND,
+    CURSOR_SDK_RECONCILED_V2_EVENT_KIND,
     CURSOR_TURN_BLOCKED_EVENT_KIND,
     CursorSdkReconciledEvent,
+    CursorSdkReconciledEventV2,
     CursorSdkReconciliationRequestedEvent,
     CursorSdkTurnCompletedEvent,
     CursorTurnBlockedEvent,
@@ -69,6 +72,8 @@ from ai_dev_loop.scheduler.infrastructure.protected_artifacts import (
 )
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 from ai_dev_loop.state import sha256_file, utc_now
+
+ReconciliationRecord = CursorSdkReconciliationRecordV1 | CursorSdkReconciliationRecordV2
 
 SDK_ACTIVE_STATES = (CursorReadyState, WaitingForCursorFixState, WaitingUsageLimitState)
 CAPACITY_FALLBACK = timedelta(hours=5)
@@ -125,7 +130,7 @@ def _authenticate_reconciliation_record(
     intent: CursorSdkReconciliationIntentV1,
     record_path: str,
     record_sha256: str,
-) -> CursorSdkReconciliationRecordV1:
+) -> ReconciliationRecord:
     if not record_path or not record_sha256:
         raise _invalid("Cursor SDK reconciliation record binding is invalid")
     try:
@@ -134,7 +139,17 @@ def _authenticate_reconciliation_record(
             record_path,
             expected_sha256=record_sha256,
         )
-        record = CursorSdkReconciliationRecordV1.model_validate_json(payload)
+        raw_record = json.loads(payload)
+        if not isinstance(raw_record, dict):
+            raise ValueError("Cursor SDK reconciliation record is not an object")
+        version = raw_record.get("schema_version")
+        record: ReconciliationRecord
+        if version == 2:
+            record = CursorSdkReconciliationRecordV2.model_validate(raw_record)
+        elif version == 1:
+            record = CursorSdkReconciliationRecordV1.model_validate(raw_record)
+        else:
+            raise ValueError("Cursor SDK reconciliation record version is unsupported")
         journal = authenticate_sdk_recovery_journal(
             resolve_run_relative_path(
                 artifacts.run_root(run_id),
@@ -152,13 +167,26 @@ def _authenticate_reconciliation_record(
         )
     except (ProtectedArtifactError, OSError, ModelValidationError, ValueError) as exc:
         raise _invalid("Cursor SDK reconciliation record failed authentication") from exc
-    expected_path = cursor_sdk_reconciliation_record_rel(
-        intent.source_attempt_id,
-        record.reconciliation_attempt_id,
-    )
-    legacy_path = cursor_sdk_reconciliation_record_rel(intent.source_attempt_id)
-    if record_path not in {expected_path, legacy_path}:
-        raise _invalid("Cursor SDK reconciliation record path changed worker identity")
+    if isinstance(record, CursorSdkReconciliationRecordV2):
+        expected_path = cursor_sdk_reconciliation_record_rel(
+            intent.source_attempt_id,
+            record.reconciliation_attempt_id,
+            schema_version=2,
+        )
+        if record_path != expected_path:
+            raise _invalid("Cursor SDK reconciliation record path changed worker identity")
+        if record.outcome == "prompt_unsent" and (
+            record.native_run_id is not None or record.candidate_run_ids
+        ):
+            raise _invalid("an unsent prompt cannot claim a native run")
+    else:
+        expected_path = cursor_sdk_reconciliation_record_rel(
+            intent.source_attempt_id,
+            record.reconciliation_attempt_id,
+        )
+        legacy_path = cursor_sdk_reconciliation_record_rel(intent.source_attempt_id)
+        if record_path not in {expected_path, legacy_path}:
+            raise _invalid("Cursor SDK reconciliation record path changed worker identity")
     raw_baseline = journal[0].get("run_ids")
     if not isinstance(raw_baseline, list):
         raise _invalid("Cursor SDK reconciliation inventory baseline is invalid")
@@ -217,7 +245,7 @@ def authenticate_ready_sdk_reconciliation(
     *,
     run_id: str,
     row: sqlite3.Row,
-) -> tuple[CursorSdkReconciliationIntentV1, CursorSdkReconciliationRecordV1]:
+) -> tuple[CursorSdkReconciliationIntentV1, ReconciliationRecord]:
     """Authenticate one ready ledger relation and all native evidence it names."""
 
     if str(row["run_id"]) != run_id or str(row["status"]) != "ready":
@@ -243,76 +271,38 @@ def authenticate_ready_sdk_reconciliation(
     return intent, record
 
 
-def authenticated_published_reconciliation_result(
-    store: SqliteSchedulerStore,
+def _current_attempt_published_record(
     artifacts: ProtectedArtifactStore,
-    conn: sqlite3.Connection,
     *,
+    intent: CursorSdkReconciliationIntentV1,
     run_id: str,
-    recovery_key: str,
     reconciliation_attempt_id: str,
     reconciliation_dispatch_id: str,
 ) -> tuple[str, str] | None:
-    """Authenticate a record published before its worker lost the result envelope."""
+    """Authenticate the one canonical record this reconciliation attempt published.
 
-    row = store.get_cursor_sdk_reconciliation_by_key(conn, recovery_key=recovery_key)
-    if row is None or str(row["run_id"]) != run_id or str(row["status"]) != "pending":
-        raise _invalid("interrupted Cursor SDK reconciliation authority is not pending")
-    intent = _intent_from_row(row)
-    record_path = cursor_sdk_reconciliation_record_rel(
-        intent.source_attempt_id,
-        reconciliation_attempt_id,
-    )
-    absolute = resolve_run_relative_path(artifacts.run_root(run_id), record_path)
-    if not absolute.is_file():
-        historical_path = str(row["result_artifact_path"] or "")
-        historical_sha = str(row["result_sha256"] or "")
-        if not historical_path and not historical_sha:
-            return None
-        if not historical_path or not historical_sha:
-            raise _invalid("historical Cursor SDK reconciliation binding is incomplete")
-        historical = _authenticate_reconciliation_record(
-            artifacts,
-            run_id=run_id,
-            intent=intent,
-            record_path=historical_path,
-            record_sha256=historical_sha,
+    v1 and v2 each have one path for this source and reconciliation attempt.
+    Absence of both means nothing was published. Both files, or a file that
+    does not authenticate as this attempt, is a conflict. Other attempts are
+    not scanned.
+    """
+
+    run_root = artifacts.run_root(run_id)
+    present: list[tuple[str, Path]] = []
+    for schema_version in (1, 2):
+        record_path = cursor_sdk_reconciliation_record_rel(
+            intent.source_attempt_id,
+            reconciliation_attempt_id,
+            schema_version=schema_version,
         )
-        if (
-            historical.reconciliation_attempt_id == reconciliation_attempt_id
-            or historical.reconciliation_dispatch_id == reconciliation_dispatch_id
-        ):
-            raise _invalid("current reconciliation result moved to a historical path")
-        historical_attempt = store.get_attempt_by_id(
-            conn,
-            historical.reconciliation_attempt_id,
-        )
-        historical_dispatch = store.get_effect_by_dispatch_id(
-            conn,
-            historical.reconciliation_dispatch_id,
-        )
-        if (
-            historical_attempt is None
-            or historical_dispatch is None
-            or str(historical_attempt["run_id"]) != run_id
-            or str(historical_attempt["dispatch_id"]) != historical.reconciliation_dispatch_id
-            or str(historical_attempt["component"]) != "cursor"
-            or str(historical_attempt["status"]) not in {"completed", "failed"}
-            or int(historical_attempt["ingested"]) != 1
-            or str(historical_dispatch["run_id"]) != run_id
-            or str(historical_dispatch["effect_kind"]) != RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND
-        ):
-            raise _invalid("historical Cursor SDK reconciliation worker is unauthenticated")
-        try:
-            historical_effect = json.loads(str(historical_dispatch["effect_payload"]))
-        except (TypeError, ValueError) as exc:
-            raise _invalid("historical reconciliation effect payload is invalid") from exc
-        if (
-            not isinstance(historical_effect, dict)
-            or str(historical_effect.get("recovery_key", "")) != recovery_key
-        ):
-            raise _invalid("historical reconciliation changed native obligation")
+        absolute = resolve_run_relative_path(run_root, record_path)
+        if absolute.is_file():
+            present.append((record_path, absolute))
+    if not present:
         return None
+    if len(present) != 1:
+        raise _invalid("published Cursor SDK reconciliation has conflicting versioned records")
+    record_path, absolute = present[0]
     record_sha = sha256_file(absolute)
     record = _authenticate_reconciliation_record(
         artifacts,
@@ -329,13 +319,88 @@ def authenticated_published_reconciliation_result(
     return record_path, record_sha
 
 
+def authenticated_published_reconciliation_result(
+    store: SqliteSchedulerStore,
+    artifacts: ProtectedArtifactStore,
+    conn: sqlite3.Connection,
+    *,
+    run_id: str,
+    recovery_key: str,
+    reconciliation_attempt_id: str,
+    reconciliation_dispatch_id: str,
+) -> tuple[str, str] | None:
+    """Authenticate a record published before its worker lost the result envelope."""
+
+    row = store.get_cursor_sdk_reconciliation_by_key(conn, recovery_key=recovery_key)
+    if row is None or str(row["run_id"]) != run_id or str(row["status"]) != "pending":
+        raise _invalid("interrupted Cursor SDK reconciliation authority is not pending")
+    intent = _intent_from_row(row)
+    published = _current_attempt_published_record(
+        artifacts,
+        intent=intent,
+        run_id=run_id,
+        reconciliation_attempt_id=reconciliation_attempt_id,
+        reconciliation_dispatch_id=reconciliation_dispatch_id,
+    )
+    if published is not None:
+        return published
+    historical_path = str(row["result_artifact_path"] or "")
+    historical_sha = str(row["result_sha256"] or "")
+    if not historical_path and not historical_sha:
+        return None
+    if not historical_path or not historical_sha:
+        raise _invalid("historical Cursor SDK reconciliation binding is incomplete")
+    historical = _authenticate_reconciliation_record(
+        artifacts,
+        run_id=run_id,
+        intent=intent,
+        record_path=historical_path,
+        record_sha256=historical_sha,
+    )
+    if (
+        historical.reconciliation_attempt_id == reconciliation_attempt_id
+        or historical.reconciliation_dispatch_id == reconciliation_dispatch_id
+    ):
+        raise _invalid("current reconciliation result moved to a historical path")
+    historical_attempt = store.get_attempt_by_id(
+        conn,
+        historical.reconciliation_attempt_id,
+    )
+    historical_dispatch = store.get_effect_by_dispatch_id(
+        conn,
+        historical.reconciliation_dispatch_id,
+    )
+    if (
+        historical_attempt is None
+        or historical_dispatch is None
+        or str(historical_attempt["run_id"]) != run_id
+        or str(historical_attempt["dispatch_id"]) != historical.reconciliation_dispatch_id
+        or str(historical_attempt["component"]) != "cursor"
+        or str(historical_attempt["status"]) not in {"completed", "failed"}
+        or int(historical_attempt["ingested"]) != 1
+        or str(historical_dispatch["run_id"]) != run_id
+        or str(historical_dispatch["effect_kind"]) != RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND
+    ):
+        raise _invalid("historical Cursor SDK reconciliation worker is unauthenticated")
+    try:
+        historical_effect = json.loads(str(historical_dispatch["effect_payload"]))
+    except (TypeError, ValueError) as exc:
+        raise _invalid("historical reconciliation effect payload is invalid") from exc
+    if (
+        not isinstance(historical_effect, dict)
+        or str(historical_effect.get("recovery_key", "")) != recovery_key
+    ):
+        raise _invalid("historical reconciliation changed native obligation")
+    return None
+
+
 def decisive_ready_sdk_reconciliation(
     store: SqliteSchedulerStore,
     artifacts: _ArtifactReader,
     conn: sqlite3.Connection,
     *,
     state: BlockedState,
-) -> tuple[sqlite3.Row, CursorSdkReconciliationIntentV1, CursorSdkReconciliationRecordV1]:
+) -> tuple[sqlite3.Row, CursorSdkReconciliationIntentV1, ReconciliationRecord]:
     """Resolve the exact ready reconciliation carried by the decisive failed turn."""
 
     block_row = conn.execute(
@@ -367,9 +432,11 @@ def decisive_ready_sdk_reconciliation(
         """,
         (state.run_id, int(block_row["sequence"])),
     ).fetchone()
-    if reconciled_row is None or str(reconciled_row["event_kind"]) != (
-        CURSOR_SDK_RECONCILED_EVENT_KIND
-    ):
+    reconciled_kind = None if reconciled_row is None else str(reconciled_row["event_kind"])
+    if reconciled_kind not in {
+        CURSOR_SDK_RECONCILED_EVENT_KIND,
+        CURSOR_SDK_RECONCILED_V2_EVENT_KIND,
+    }:
         raise _invalid("blocked Cursor SDK run lacks adjacent reconciliation authority")
     reconciled_payload = str(reconciled_row["event_payload"])
     if hashlib.sha256(reconciled_payload.encode("utf-8")).hexdigest() != str(
@@ -377,7 +444,11 @@ def decisive_ready_sdk_reconciliation(
     ):
         raise _invalid("decisive Cursor SDK reconciliation event digest mismatch")
     try:
-        reconciled = CursorSdkReconciledEvent.model_validate_json(reconciled_payload)
+        reconciled: CursorSdkReconciledEvent | CursorSdkReconciledEventV2
+        if reconciled_kind == CURSOR_SDK_RECONCILED_V2_EVENT_KIND:
+            reconciled = CursorSdkReconciledEventV2.model_validate_json(reconciled_payload)
+        else:
+            reconciled = CursorSdkReconciledEvent.model_validate_json(reconciled_payload)
     except ModelValidationError as exc:
         raise _invalid("decisive Cursor SDK reconciliation event is invalid") from exc
     row = store.get_cursor_sdk_reconciliation_by_key(
@@ -794,8 +865,18 @@ class CursorSdkReconciliationService:
             payload = self.artifacts.read_verified_bytes(
                 run_id, record_path, expected_sha256=record_sha
             )
-            record = CursorSdkReconciliationRecordV1.model_validate_json(payload)
-        except (ProtectedArtifactError, OSError, ModelValidationError) as exc:
+            raw_record = json.loads(payload)
+            if not isinstance(raw_record, dict):
+                raise ValueError("Cursor SDK reconciliation record is not an object")
+            version = raw_record.get("schema_version")
+            record: ReconciliationRecord
+            if version == 2:
+                record = CursorSdkReconciliationRecordV2.model_validate(raw_record)
+            elif version == 1:
+                record = CursorSdkReconciliationRecordV1.model_validate(raw_record)
+            else:
+                raise ValueError("Cursor SDK reconciliation record version is unsupported")
+        except (ProtectedArtifactError, OSError, ModelValidationError, ValueError) as exc:
             raise _invalid("Cursor SDK reconciliation record failed authentication") from exc
         with self.store.begin_immediate() as conn:
             persisted_attempt = self.store.get_attempt_by_id(conn, attempt_id)
@@ -834,6 +915,7 @@ class CursorSdkReconciliationService:
                     "terminal_recovered",
                     "continuation_ready",
                     "abort_reconciled",
+                    "prompt_unsent",
                 }
                 else "blocked"
             )
@@ -847,15 +929,29 @@ class CursorSdkReconciliationService:
                 now=now,
             ):
                 return TickRunReceipt(run_id=run_id, action="ingest_state_changed")
-            event = CursorSdkReconciledEvent(
-                run_id=run_id,
-                recovery_key=str(row["recovery_key"]),
-                source_attempt_id=record.source_attempt_id,
-                reconciliation_attempt_id=attempt_id,
-                outcome=record.outcome,
-                record_path=record_path,
-                record_sha256=record_sha,
-            )
+            event: CursorSdkReconciledEvent | CursorSdkReconciledEventV2
+            if isinstance(record, CursorSdkReconciliationRecordV2):
+                if record.outcome != "prompt_unsent":
+                    raise _invalid("Cursor SDK v2 reconciliation is not an unsent prompt")
+                event = CursorSdkReconciledEventV2(
+                    run_id=run_id,
+                    recovery_key=str(row["recovery_key"]),
+                    source_attempt_id=record.source_attempt_id,
+                    reconciliation_attempt_id=attempt_id,
+                    outcome="prompt_unsent",
+                    record_path=record_path,
+                    record_sha256=record_sha,
+                )
+            else:
+                event = CursorSdkReconciledEvent(
+                    run_id=run_id,
+                    recovery_key=str(row["recovery_key"]),
+                    source_attempt_id=record.source_attempt_id,
+                    reconciliation_attempt_id=attempt_id,
+                    outcome=record.outcome,
+                    record_path=record_path,
+                    record_sha256=record_sha,
+                )
             event_id = self.event_id()
             self.store.append_event(
                 conn,
@@ -1073,6 +1169,35 @@ class CursorSdkReconciliationService:
                         else "cursor_timeout_retry_exhausted"
                     ),
                 )
+            if record.outcome == "prompt_unsent":
+                updated = state.model_copy(
+                    update={
+                        "version": version + 1,
+                        "updated_at": encode_utc_instant(now),
+                        "cursor": common_cursor,
+                    }
+                )
+                if not self.store.compare_and_swap_state(
+                    conn,
+                    run_id=run_id,
+                    expected_version=version,
+                    new_state=updated,
+                    now=now,
+                ):
+                    raise _invalid("Cursor SDK unsent-prompt reconciliation lost state update")
+                self.store.insert_effect(
+                    conn,
+                    dispatch_id=self.dispatch_id(),
+                    source_event_id=event_id,
+                    run_id=run_id,
+                    effect_id=RUN_CURSOR_TURN_EFFECT_ID,
+                    effect_kind=RUN_CURSOR_TURN_EFFECT_KIND,
+                    effect_payload={"iteration": intent.iteration},
+                    available_at=now,
+                    claimed_run_version=updated.version,
+                    now=now,
+                )
+                return TickRunReceipt(run_id=run_id, action="cursor_sdk_unsent_prompt_dispatched")
             else:
                 reason = (
                     "cursor_failure"

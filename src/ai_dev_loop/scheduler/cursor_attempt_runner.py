@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import signal
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
@@ -21,7 +22,10 @@ from ai_dev_loop.integrations.cursor_sdk.adapter import (
 )
 from ai_dev_loop.integrations.cursor_sdk.port import (
     CursorSdkEnvelope,
+    CursorSdkErrorCode,
     CursorSdkFailure,
+    CursorSdkOutcome,
+    CursorSdkRunIdentity,
     CursorSdkTerminalRun,
 )
 from ai_dev_loop.paths import cursor_conversation_key
@@ -41,7 +45,10 @@ from ai_dev_loop.scheduler.application.cursor_evidence import (
     verify_pre_execution_cursor_guards,
 )
 from ai_dev_loop.scheduler.application.cursor_sdk_journal import (
+    JOURNAL_SCHEMA_VERSION,
+    JOURNAL_SCHEMA_VERSION_V2,
     append_sdk_journal,
+    authenticate_sdk_journal,
     authenticate_sdk_recovery_journal,
 )
 from ai_dev_loop.scheduler.application.token_usage_capture import (
@@ -64,7 +71,18 @@ from ai_dev_loop.scheduler.domain.cursor_contract import (
     git_status_after_cursor_rel,
     git_status_before_cursor_rel,
 )
-from ai_dev_loop.scheduler.domain.cursor_sdk_recovery import CursorSdkReconciliationRecordV1
+from ai_dev_loop.scheduler.domain.cursor_sdk_readiness import (
+    MAX_CREATION_READINESS_OBSERVATIONS,
+    MAX_CREATION_READINESS_SECONDS,
+    TERMINAL_PUBLIC_RUN_STATUSES,
+    CreationInventoryFact,
+    PublicRunFact,
+    classify_creation_readiness,
+)
+from ai_dev_loop.scheduler.domain.cursor_sdk_recovery import (
+    CursorSdkReconciliationRecordV1,
+    CursorSdkReconciliationRecordV2,
+)
 from ai_dev_loop.scheduler.domain.effects import CURSOR_ATTEMPT_EFFECT_KINDS
 from ai_dev_loop.scheduler.infrastructure.paths import run_artifact_root
 from ai_dev_loop.state import (
@@ -85,6 +103,14 @@ from ai_dev_loop.state import (
 
 MAX_CURSOR_SDK_EVENT_BYTES = 8 * 1024 * 1024
 MAX_CURSOR_SDK_RECONCILIATION_RUNS = 1_000
+
+
+class CursorSdkWorkerInterrupt(BaseException):
+    """Deterministic test barrier after a durable journal record."""
+
+    def __init__(self, kind: str) -> None:
+        super().__init__(kind)
+        self.kind = kind
 
 
 class CursorSdkOperationTimeout(BaseException):
@@ -381,10 +407,17 @@ def _sdk_uncertainty_payload(
             )
             if key in last
         }
+        versions = {item.get("schema_version") for item in records if isinstance(item, dict)}
+        schema_version = (
+            JOURNAL_SCHEMA_VERSION_V2
+            if versions == {JOURNAL_SCHEMA_VERSION_V2}
+            else JOURNAL_SCHEMA_VERSION
+        )
         append_sdk_journal(
             journal,
             kind="terminal",
             payload={**terminal, "outcome": "uncertain", "failure_kind": failure_kind},
+            schema_version=schema_version,
         )
     payload.update(
         {
@@ -395,6 +428,177 @@ def _sdk_uncertainty_payload(
     )
     payload.update(_existing_sdk_capture_payload(evidence, run_root, attempt_id=attempt_id))
     return payload
+
+
+def _readiness_now() -> float:
+    return time.monotonic()
+
+
+def _readiness_sleep(seconds: float) -> None:
+    if seconds > 0:
+        time.sleep(seconds)
+
+
+class _ReadinessBudgetExceeded(Exception):
+    """The ten-second creation-readiness budget elapsed around an SDK call."""
+
+
+@contextmanager
+def _bound_readiness_call(deadline: float) -> Iterator[None]:
+    """Stop a readiness SDK call when its own budget is gone.
+
+    The caller's frozen operation itimer is restored afterward. A shorter
+    readiness remainder replaces it only for the duration of this call.
+    """
+
+    remaining = deadline - _readiness_now()
+    if remaining <= 0:
+        raise _ReadinessBudgetExceeded()
+    current = signal.getitimer(signal.ITIMER_REAL)
+    overall_remaining = current[0]
+    if overall_remaining > 0 and overall_remaining <= remaining:
+        yield
+        return
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    entered = time.monotonic()
+
+    def expired(_signum: int, _frame: FrameType | None) -> None:
+        raise _ReadinessBudgetExceeded()
+
+    signal.signal(signal.SIGALRM, expired)
+    signal.setitimer(signal.ITIMER_REAL, remaining, 0)
+    try:
+        yield
+    finally:
+        elapsed = time.monotonic() - entered
+        restored = max(0.0, current[0] - elapsed) if current[0] > 0 else 0.0
+        signal.setitimer(signal.ITIMER_REAL, restored, current[1])
+        signal.signal(signal.SIGALRM, previous_handler)
+
+
+def _readiness_expired(deadline: float) -> bool:
+    return _readiness_now() > deadline
+
+
+def _maybe_interrupt(kind: str) -> None:
+    if os.environ.get("AI_DEV_LOOP_SDK_INTERRUPT_AFTER") == kind:
+        raise CursorSdkWorkerInterrupt(kind)
+
+
+def _journal_append(
+    path: Path,
+    *,
+    kind: str,
+    payload: dict[str, object],
+    schema_version: int,
+) -> None:
+    append_sdk_journal(path, kind=kind, payload=payload, schema_version=schema_version)
+    _maybe_interrupt(kind)
+
+
+def _load_creation_inventory(
+    evidence: dict[str, object],
+    run_root: Path,
+) -> CreationInventoryFact | None:
+    path = evidence.get("identity_artifact_path")
+    digest = evidence.get("identity_artifact_sha256")
+    if not isinstance(path, str) or not path or not isinstance(digest, str) or not digest:
+        return None
+    identity_path = run_root / path
+    if not identity_path.is_file() or sha256_file(identity_path) != digest:
+        raise ValueError("Cursor SDK identity artifact digest mismatch")
+    identity = json.loads(identity_path.read_text(encoding="utf-8"))
+    if not isinstance(identity, dict):
+        raise ValueError("Cursor SDK identity artifact is invalid")
+    journal_rel = identity.get("create_journal_path")
+    journal_sha = identity.get("create_journal_sha256")
+    if not isinstance(journal_rel, str) or not isinstance(journal_sha, str):
+        return None
+    journal_path = run_root / journal_rel
+    # A successor can carry the identity artifact without the source create
+    # journal. Absence is not eligibility; a present journal must still authenticate.
+    if journal_path.is_symlink() or not journal_path.is_file():
+        return None
+    records = authenticate_sdk_journal(
+        journal_path,
+        expected_sha256=journal_sha,
+        operation="create",
+        expected_binding={
+            "conversation_owner_run_id": str(evidence["conversation_owner_run_id"]),
+            "conversation_key": str(evidence["conversation_key"]),
+        },
+    )
+    inventory = next(
+        (record for record in records if record.get("kind") == "creation_inventory"), None
+    )
+    bound = next(record for record in records if record.get("kind") == "agent_bound")
+    if str(bound.get("agent_id", "")) != str(evidence.get("agent_id", "")):
+        raise ValueError("Cursor SDK creation inventory agent does not match the turn")
+    if inventory is None:
+        return None
+    raw_runs = inventory.get("runs")
+    if not isinstance(raw_runs, list):
+        raise ValueError("Cursor SDK creation inventory is invalid")
+    message_count = inventory.get("message_count")
+    authorized = inventory.get("authorized_send_count")
+    if isinstance(message_count, bool) or not isinstance(message_count, int):
+        raise ValueError("Cursor SDK creation message count is invalid")
+    if isinstance(authorized, bool) or not isinstance(authorized, int):
+        raise ValueError("Cursor SDK authorized send count is invalid")
+    runs: list[PublicRunFact] = []
+    for item in raw_runs:
+        if not isinstance(item, dict):
+            raise ValueError("Cursor SDK creation inventory entry is invalid")
+        runs.append(PublicRunFact(run_id=str(item["run_id"]), status=str(item["status"])))
+    return CreationInventoryFact(
+        runs=tuple(runs),
+        message_count=message_count,
+        authorized_send_count=authorized,
+    )
+
+
+def _public_run_facts(runs: list[CursorSdkTerminalRun]) -> tuple[PublicRunFact, ...]:
+    return tuple(PublicRunFact(run_id=run.run_id, status=run.status) for run in runs)
+
+
+def _observe_public_agent(
+    adapter: CursorSdkAdapter,
+    agent_id: str,
+    *,
+    deadline: float | None = None,
+) -> tuple[tuple[PublicRunFact, ...], int] | None:
+    try:
+        if deadline is None:
+            listed, failure = _list_sdk_runs_for_agent(adapter, agent_id)
+        else:
+            with _bound_readiness_call(deadline):
+                listed, failure = _list_sdk_runs_for_agent(adapter, agent_id)
+        if listed is None or failure is not None or _readiness_expired(deadline or float("inf")):
+            return None
+        if deadline is None:
+            messages = adapter.list_agent_messages(agent_id)
+        else:
+            with _bound_readiness_call(deadline):
+                messages = adapter.list_agent_messages(agent_id)
+    except _ReadinessBudgetExceeded:
+        return None
+    if deadline is not None and _readiness_expired(deadline):
+        return None
+    if (
+        messages.failure is not None
+        or isinstance(messages.value, bool)
+        or not isinstance(messages.value, int)
+    ):
+        return None
+    return _public_run_facts(listed), messages.value
+
+
+def _definitive_send_rejection(failure: CursorSdkFailure | None) -> bool:
+    return (
+        failure is not None
+        and failure.code == CursorSdkErrorCode.BUSY
+        and failure.evidence_class in {"typed", "structured"}
+    )
 
 
 def _run_sdk_create(
@@ -447,10 +651,15 @@ def _run_sdk_create_operation(
             "conversation_owner_run_id": str(evidence["conversation_owner_run_id"]),
             "conversation_key": str(evidence["conversation_key"]),
         }
-        append_sdk_journal(journal, kind="create_intent", payload=base)
+        _journal_append(
+            journal,
+            kind="create_intent",
+            payload=base,
+            schema_version=JOURNAL_SCHEMA_VERSION_V2,
+        )
         created = adapter.create_agent()
         if created.failure is not None or created.value is None:
-            append_sdk_journal(
+            _journal_append(
                 journal,
                 kind="terminal",
                 payload={
@@ -458,6 +667,7 @@ def _run_sdk_create_operation(
                     "outcome": "uncertain",
                     "failure_kind": "cursor_sdk_create_uncertain",
                 },
+                schema_version=JOURNAL_SCHEMA_VERSION_V2,
             )
             return {
                 "runtime": "sdk-local",
@@ -472,11 +682,62 @@ def _run_sdk_create_operation(
                 **_outcome_identity(evidence),
             }
         agent_id = created.value.agent_id
-        append_sdk_journal(journal, kind="agent_bound", payload={**base, "agent_id": agent_id})
-        append_sdk_journal(
+        bound = {**base, "agent_id": agent_id}
+        _journal_append(
+            journal,
+            kind="agent_bound",
+            payload=bound,
+            schema_version=JOURNAL_SCHEMA_VERSION_V2,
+        )
+        listed, list_failure = _list_sdk_runs_for_agent(adapter, agent_id)
+        messages = adapter.list_agent_messages(agent_id)
+        if (
+            listed is None
+            or list_failure is not None
+            or messages.failure is not None
+            or isinstance(messages.value, bool)
+            or not isinstance(messages.value, int)
+        ):
+            _journal_append(
+                journal,
+                kind="terminal",
+                payload={
+                    **bound,
+                    "outcome": "uncertain",
+                    "failure_kind": "cursor_sdk_create_uncertain",
+                },
+                schema_version=JOURNAL_SCHEMA_VERSION_V2,
+            )
+            return {
+                "runtime": "sdk-local",
+                "effect_kind": CREATE_CHAT_EFFECT_KIND,
+                "failure_kind": "cursor_sdk_create_uncertain",
+                "sdk_failure": _sdk_failure_payload(
+                    list_failure if list_failure is not None else messages.failure
+                ),
+                "journal_path": journal_rel,
+                "journal_sha256": sha256_file(journal),
+                "returncode": 1,
+                "parse_ok": False,
+                "has_completion_signal": False,
+                **_outcome_identity(evidence),
+            }
+        _journal_append(
+            journal,
+            kind="creation_inventory",
+            payload={
+                **bound,
+                "runs": [{"run_id": run.run_id, "status": run.status} for run in listed],
+                "message_count": messages.value,
+                "authorized_send_count": 0,
+            },
+            schema_version=JOURNAL_SCHEMA_VERSION_V2,
+        )
+        _journal_append(
             journal,
             kind="terminal",
-            payload={**base, "agent_id": agent_id, "outcome": "success"},
+            payload={**bound, "outcome": "success"},
+            schema_version=JOURNAL_SCHEMA_VERSION_V2,
         )
         return {
             "runtime": "sdk-local",
@@ -668,6 +929,530 @@ def _existing_sdk_capture_payload(
         return {}
 
 
+def _run_payload(
+    runs: tuple[PublicRunFact, ...] | list[CursorSdkTerminalRun],
+) -> list[dict[str, str]]:
+    return [{"run_id": run.run_id, "status": run.status} for run in runs]
+
+
+def _turn_stop(
+    evidence: dict[str, object],
+    *,
+    iteration: int,
+    failure_kind: str,
+    failure: CursorSdkFailure | None,
+    journal: Path,
+    journal_rel: str,
+    empty_capture_payload: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "runtime": "sdk-local",
+        "effect_kind": RUN_CURSOR_TURN_EFFECT_KIND,
+        "iteration": iteration,
+        "returncode": 1,
+        "timed_out": False,
+        "parse_ok": False,
+        "has_completion_signal": False,
+        "failure_kind": failure_kind,
+        "sdk_failure": _sdk_failure_payload(failure),
+        **empty_capture_payload,
+        "journal_path": journal_rel,
+        "journal_sha256": sha256_file(journal),
+        **_outcome_identity(evidence),
+    }
+
+
+def _append_turn_terminal(
+    journal: Path,
+    base: dict[str, object],
+    *,
+    outcome: str,
+    failure_kind: str | None = None,
+) -> None:
+    payload = {**base, "outcome": outcome}
+    if failure_kind is not None:
+        payload["failure_kind"] = failure_kind
+    append_sdk_journal(
+        journal,
+        kind="terminal",
+        payload=payload,
+        schema_version=JOURNAL_SCHEMA_VERSION_V2,
+    )
+
+
+def _readiness_record(
+    base: dict[str, object],
+    *,
+    ordinal: int,
+    runs: tuple[PublicRunFact, ...],
+    message_count: int,
+    reason: str,
+) -> dict[str, object]:
+    return {
+        **base,
+        "observation_ordinal": ordinal,
+        "runs": _run_payload(runs),
+        "message_count": message_count,
+        "reason": reason[:160],
+    }
+
+
+def _journal_readiness_hold(
+    journal: Path,
+    base: dict[str, object],
+    *,
+    ordinal: int,
+    runs: tuple[PublicRunFact, ...],
+    message_count: int,
+    reason: str,
+) -> None:
+    append_sdk_journal(
+        journal,
+        kind="readiness_hold",
+        payload=_readiness_record(
+            base,
+            ordinal=ordinal,
+            runs=runs,
+            message_count=message_count,
+            reason=reason,
+        ),
+        schema_version=JOURNAL_SCHEMA_VERSION_V2,
+    )
+    _append_turn_terminal(
+        journal,
+        base,
+        outcome="failed",
+        failure_kind="cursor_sdk_creation_readiness_hold",
+    )
+
+
+def _await_creation_blocker_terminal(
+    adapter: CursorSdkAdapter,
+    agent_id: str,
+    run_id: str,
+    *,
+    deadline: float,
+) -> str | None:
+    for poll in range(1, MAX_CREATION_READINESS_OBSERVATIONS + 1):
+        if _readiness_expired(deadline):
+            return None
+        try:
+            with _bound_readiness_call(deadline):
+                observed = adapter.get_run(agent_id, run_id)
+        except _ReadinessBudgetExceeded:
+            return None
+        if _readiness_expired(deadline):
+            return None
+        if observed.failure is not None or observed.value is None:
+            return None
+        status = observed.value.status.strip().lower()
+        if status in TERMINAL_PUBLIC_RUN_STATUSES:
+            return status
+        if poll == MAX_CREATION_READINESS_OBSERVATIONS:
+            return None
+        remaining = deadline - _readiness_now()
+        if remaining <= 0:
+            return None
+        _readiness_sleep(
+            min(remaining, MAX_CREATION_READINESS_SECONDS / MAX_CREATION_READINESS_OBSERVATIONS)
+        )
+    return None
+
+
+def _dispatch_after_creation_readiness(
+    adapter: CursorSdkAdapter,
+    evidence: dict[str, object],
+    run_root: Path,
+    *,
+    journal: Path,
+    journal_rel: str,
+    base: dict[str, object],
+    prompt: str,
+    agent_id: str,
+    iteration: int,
+    inventory: CreationInventoryFact,
+    baseline_runs: list[CursorSdkTerminalRun],
+    empty_capture_payload: dict[str, object],
+) -> CursorSdkRunIdentity | dict[str, object]:
+    del run_root
+    baseline_ids = {run.run_id for run in baseline_runs}
+    creation_ids = [run.run_id for run in inventory.runs if run.run_id in baseline_ids]
+    append_sdk_journal(
+        journal,
+        kind="run_inventory_baseline",
+        payload={
+            **base,
+            "run_ids": sorted(baseline_ids),
+            "runs": _run_payload(baseline_runs),
+            "creation_run_ids": creation_ids,
+            "message_count": inventory.message_count,
+            "authorized_send_count": inventory.authorized_send_count,
+        },
+        schema_version=JOURNAL_SCHEMA_VERSION_V2,
+    )
+    started = _readiness_now()
+    deadline = started + MAX_CREATION_READINESS_SECONDS
+    decision_ordinal = 0
+    decision = None
+    observed_runs: tuple[PublicRunFact, ...] = ()
+    observed_messages = 0
+    for ordinal in range(1, MAX_CREATION_READINESS_OBSERVATIONS + 1):
+        if _readiness_expired(deadline):
+            break
+        observed = _observe_public_agent(adapter, agent_id, deadline=deadline)
+        decision_ordinal = ordinal
+        if observed is None:
+            decision = None
+            break
+        observed_runs, observed_messages = observed
+        decision = classify_creation_readiness(
+            inventory,
+            observed_runs,
+            message_count=observed_messages,
+        )
+        if decision.action != "hold":
+            break
+        if ordinal == MAX_CREATION_READINESS_OBSERVATIONS:
+            break
+        remaining = deadline - _readiness_now()
+        if remaining <= 0:
+            break
+        _readiness_sleep(
+            min(remaining, MAX_CREATION_READINESS_SECONDS / MAX_CREATION_READINESS_OBSERVATIONS)
+        )
+    if decision is None or decision.action == "hold":
+        reason = "public observation failed" if decision is None else decision.reason
+        append_sdk_journal(
+            journal,
+            kind="readiness_hold",
+            payload=_readiness_record(
+                base,
+                ordinal=max(decision_ordinal, 1),
+                runs=observed_runs,
+                message_count=observed_messages,
+                reason=reason,
+            ),
+            schema_version=JOURNAL_SCHEMA_VERSION_V2,
+        )
+        _append_turn_terminal(
+            journal,
+            base,
+            outcome="failed",
+            failure_kind="cursor_sdk_creation_readiness_hold",
+        )
+        return _turn_stop(
+            evidence,
+            iteration=iteration,
+            failure_kind="cursor_sdk_creation_readiness_hold",
+            failure=None,
+            journal=journal,
+            journal_rel=journal_rel,
+            empty_capture_payload=empty_capture_payload,
+        )
+    if decision.action == "cancel" and _readiness_expired(deadline):
+        _journal_readiness_hold(
+            journal,
+            base,
+            ordinal=max(decision_ordinal, 1),
+            runs=observed_runs,
+            message_count=observed_messages,
+            reason="creation readiness budget expired",
+        )
+        return _turn_stop(
+            evidence,
+            iteration=iteration,
+            failure_kind="cursor_sdk_creation_readiness_hold",
+            failure=None,
+            journal=journal,
+            journal_rel=journal_rel,
+            empty_capture_payload=empty_capture_payload,
+        )
+    if decision.action == "cancel":
+        occupant_id = decision.occupant_id or ""
+        append_sdk_journal(
+            journal,
+            kind="readiness_observation",
+            payload=_readiness_record(
+                base,
+                ordinal=decision_ordinal,
+                runs=observed_runs,
+                message_count=observed_messages,
+                reason=decision.reason,
+            ),
+            schema_version=JOURNAL_SCHEMA_VERSION_V2,
+        )
+        _journal_append(
+            journal,
+            kind="creation_blocker_cancel_intent",
+            payload={**base, "run_id": occupant_id},
+            schema_version=JOURNAL_SCHEMA_VERSION_V2,
+        )
+        try:
+            with _bound_readiness_call(deadline):
+                cancelled = adapter.cancel(agent_id, occupant_id)
+        except _ReadinessBudgetExceeded:
+            _append_turn_terminal(
+                journal,
+                base,
+                outcome="failed",
+                failure_kind="cursor_sdk_creation_readiness_hold",
+            )
+            return _turn_stop(
+                evidence,
+                iteration=iteration,
+                failure_kind="cursor_sdk_creation_readiness_hold",
+                failure=None,
+                journal=journal,
+                journal_rel=journal_rel,
+                empty_capture_payload=empty_capture_payload,
+            )
+        confirmed = (
+            _await_creation_blocker_terminal(
+                adapter,
+                agent_id,
+                occupant_id,
+                deadline=deadline,
+            )
+            if cancelled.failure is None and not _readiness_expired(deadline)
+            else None
+        )
+        if confirmed is None:
+            _append_turn_terminal(
+                journal,
+                base,
+                outcome="failed",
+                failure_kind="cursor_sdk_creation_readiness_hold",
+            )
+            return _turn_stop(
+                evidence,
+                iteration=iteration,
+                failure_kind="cursor_sdk_creation_readiness_hold",
+                failure=cancelled.failure,
+                journal=journal,
+                journal_rel=journal_rel,
+                empty_capture_payload=empty_capture_payload,
+            )
+        _journal_append(
+            journal,
+            kind="creation_blocker_cancel_confirmed",
+            payload={**base, "run_id": occupant_id, "status": confirmed},
+            schema_version=JOURNAL_SCHEMA_VERSION_V2,
+        )
+    else:
+        append_sdk_journal(
+            journal,
+            kind="readiness_clear",
+            payload=_readiness_record(
+                base,
+                ordinal=decision_ordinal,
+                runs=observed_runs,
+                message_count=observed_messages,
+                reason=decision.reason,
+            ),
+            schema_version=JOURNAL_SCHEMA_VERSION_V2,
+        )
+
+    def send_once(ordinal: int) -> CursorSdkOutcome[CursorSdkRunIdentity]:
+        if _readiness_expired(deadline):
+            raise _ReadinessBudgetExceeded()
+        _journal_append(
+            journal,
+            kind="send_intent",
+            payload={**base, "dispatch_ordinal": ordinal},
+            schema_version=JOURNAL_SCHEMA_VERSION_V2,
+        )
+        # send_intent is the authorization barrier. The native handle and first
+        # stream event belong to the frozen turn deadline, not the readiness budget.
+        return adapter.send(agent_id, prompt)
+
+    if _readiness_expired(deadline):
+        _journal_readiness_hold(
+            journal,
+            base,
+            ordinal=max(decision_ordinal, 1),
+            runs=observed_runs,
+            message_count=observed_messages,
+            reason="creation readiness budget expired",
+        )
+        return _turn_stop(
+            evidence,
+            iteration=iteration,
+            failure_kind="cursor_sdk_creation_readiness_hold",
+            failure=None,
+            journal=journal,
+            journal_rel=journal_rel,
+            empty_capture_payload=empty_capture_payload,
+        )
+    try:
+        sent = send_once(1)
+    except _ReadinessBudgetExceeded:
+        _append_turn_terminal(
+            journal,
+            base,
+            outcome="uncertain",
+            failure_kind="cursor_sdk_send_uncertain",
+        )
+        return _turn_stop(
+            evidence,
+            iteration=iteration,
+            failure_kind="cursor_sdk_send_uncertain",
+            failure=None,
+            journal=journal,
+            journal_rel=journal_rel,
+            empty_capture_payload=empty_capture_payload,
+        )
+    if sent.failure is None and sent.value is not None:
+        return sent.value
+    fresh = _observe_public_agent(adapter, agent_id, deadline=deadline)
+    post: tuple[PublicRunFact, ...] = ()
+    fresh_runs: tuple[PublicRunFact, ...] = ()
+    fresh_messages = 0
+    if fresh is not None:
+        fresh_runs, fresh_messages = fresh
+        post = tuple(run for run in fresh_runs if run.run_id not in baseline_ids)
+    blocker = inventory.runs[0] if len(inventory.runs) == 1 else None
+    blocker_terminal = False
+    other_active = False
+    if fresh is not None and blocker is not None:
+        current = next((run for run in fresh_runs if run.run_id == blocker.run_id), None)
+        blocker_terminal = (
+            current is not None and current.status.strip().lower() in TERMINAL_PUBLIC_RUN_STATUSES
+        )
+        other_active = any(
+            run.run_id != blocker.run_id
+            and run.status.strip().lower() not in TERMINAL_PUBLIC_RUN_STATUSES
+            for run in fresh_runs
+        )
+    next_ordinal = decision_ordinal + 1
+    can_resend = (
+        _definitive_send_rejection(sent.failure)
+        and fresh is not None
+        and not post
+        and blocker_terminal
+        and not other_active
+        and fresh_messages == 0
+        and next_ordinal <= MAX_CREATION_READINESS_OBSERVATIONS
+        and not _readiness_expired(deadline)
+    )
+    if len(post) == 1 or len(post) > 1 or fresh is None or not can_resend:
+        if (
+            can_resend is False
+            and _definitive_send_rejection(sent.failure)
+            and fresh is not None
+            and not post
+            and blocker is not None
+            and not blocker_terminal
+            and next_ordinal <= MAX_CREATION_READINESS_OBSERVATIONS
+        ):
+            evidence_class = sent.failure.evidence_class if sent.failure is not None else None
+            append_sdk_journal(
+                journal,
+                kind="send_rejected",
+                payload={
+                    **base,
+                    "dispatch_ordinal": 1,
+                    "evidence_class": evidence_class or "typed",
+                },
+                schema_version=JOURNAL_SCHEMA_VERSION_V2,
+            )
+            append_sdk_journal(
+                journal,
+                kind="readiness_hold",
+                payload=_readiness_record(
+                    base,
+                    ordinal=next_ordinal,
+                    runs=fresh_runs,
+                    message_count=fresh_messages,
+                    reason="owned creation blocker is still nonterminal",
+                ),
+                schema_version=JOURNAL_SCHEMA_VERSION_V2,
+            )
+            _append_turn_terminal(
+                journal,
+                base,
+                outcome="failed",
+                failure_kind="cursor_sdk_creation_readiness_hold",
+            )
+            return _turn_stop(
+                evidence,
+                iteration=iteration,
+                failure_kind="cursor_sdk_creation_readiness_hold",
+                failure=sent.failure,
+                journal=journal,
+                journal_rel=journal_rel,
+                empty_capture_payload=empty_capture_payload,
+            )
+        _append_turn_terminal(
+            journal,
+            base,
+            outcome="uncertain",
+            failure_kind="cursor_sdk_send_uncertain",
+        )
+        return _turn_stop(
+            evidence,
+            iteration=iteration,
+            failure_kind="cursor_sdk_send_uncertain",
+            failure=sent.failure,
+            journal=journal,
+            journal_rel=journal_rel,
+            empty_capture_payload=empty_capture_payload,
+        )
+    evidence_class = sent.failure.evidence_class if sent.failure is not None else None
+    append_sdk_journal(
+        journal,
+        kind="send_rejected",
+        payload={**base, "dispatch_ordinal": 1, "evidence_class": evidence_class or "typed"},
+        schema_version=JOURNAL_SCHEMA_VERSION_V2,
+    )
+    append_sdk_journal(
+        journal,
+        kind="readiness_observation",
+        payload=_readiness_record(
+            base,
+            ordinal=next_ordinal,
+            runs=fresh_runs,
+            message_count=fresh_messages,
+            reason="owned creation blocker is terminal and no prompt run was accepted",
+        ),
+        schema_version=JOURNAL_SCHEMA_VERSION_V2,
+    )
+    try:
+        resent = send_once(2)
+    except _ReadinessBudgetExceeded:
+        _append_turn_terminal(
+            journal,
+            base,
+            outcome="uncertain",
+            failure_kind="cursor_sdk_send_uncertain",
+        )
+        return _turn_stop(
+            evidence,
+            iteration=iteration,
+            failure_kind="cursor_sdk_send_uncertain",
+            failure=sent.failure,
+            journal=journal,
+            journal_rel=journal_rel,
+            empty_capture_payload=empty_capture_payload,
+        )
+    if resent.failure is not None or resent.value is None:
+        _append_turn_terminal(
+            journal,
+            base,
+            outcome="uncertain",
+            failure_kind="cursor_sdk_send_uncertain",
+        )
+        return _turn_stop(
+            evidence,
+            iteration=iteration,
+            failure_kind="cursor_sdk_send_uncertain",
+            failure=resent.failure,
+            journal=journal,
+            journal_rel=journal_rel,
+            empty_capture_payload=empty_capture_payload,
+        )
+    return resent.value
+
+
 def _run_sdk_turn(
     evidence: dict[str, object],
     run_root: Path,
@@ -757,53 +1542,8 @@ def _run_sdk_turn_operation(
             "agent_id": agent_id,
             "prompt_sha256": prompt_sha,
         }
-        baseline_run_ids: list[str] = []
-        next_cursor: str | None = None
-        while True:
-            listed = adapter.list_runs(agent_id, cursor=next_cursor, limit=100)
-            if listed.failure is not None or listed.value is None:
-                return {
-                    "runtime": "sdk-local",
-                    "effect_kind": RUN_CURSOR_TURN_EFFECT_KIND,
-                    "iteration": iteration,
-                    "returncode": 1,
-                    "timed_out": False,
-                    "parse_ok": False,
-                    "has_completion_signal": False,
-                    "failure_kind": "cursor_sdk_preflight_failed",
-                    "sdk_failure": _sdk_failure_payload(listed.failure),
-                    **empty_capture_payload,
-                    **_outcome_identity(evidence),
-                }
-            for native in listed.value.runs:
-                if native.agent_id != agent_id or not native.run_id:
-                    raise ValueError("Cursor SDK run inventory crossed the bound agent")
-                if native.run_id not in baseline_run_ids:
-                    baseline_run_ids.append(native.run_id)
-                if len(baseline_run_ids) > MAX_CURSOR_SDK_RECONCILIATION_RUNS:
-                    raise ValueError("Cursor SDK run inventory exceeded the reconciliation bound")
-            if listed.value.next_cursor is None:
-                break
-            if listed.value.next_cursor == next_cursor:
-                raise ValueError("Cursor SDK run inventory cursor made no progress")
-            next_cursor = listed.value.next_cursor
-        append_sdk_journal(
-            journal,
-            kind="run_inventory_baseline",
-            payload={**base, "run_ids": sorted(baseline_run_ids)},
-        )
-        append_sdk_journal(journal, kind="send_intent", payload=base)
-        sent = adapter.send(agent_id, prompt)
-        if sent.failure is not None or sent.value is None:
-            append_sdk_journal(
-                journal,
-                kind="terminal",
-                payload={
-                    **base,
-                    "outcome": "uncertain",
-                    "failure_kind": "cursor_sdk_send_uncertain",
-                },
-            )
+        baseline_runs, baseline_failure = _list_sdk_runs_for_agent(adapter, agent_id)
+        if baseline_runs is None:
             return {
                 "runtime": "sdk-local",
                 "effect_kind": RUN_CURSOR_TURN_EFFECT_KIND,
@@ -812,17 +1552,83 @@ def _run_sdk_turn_operation(
                 "timed_out": False,
                 "parse_ok": False,
                 "has_completion_signal": False,
-                "failure_kind": "cursor_sdk_send_uncertain",
-                "sdk_failure": _sdk_failure_payload(sent.failure),
+                "failure_kind": "cursor_sdk_preflight_failed",
+                "sdk_failure": _sdk_failure_payload(baseline_failure),
                 **empty_capture_payload,
-                "journal_path": journal_rel,
-                "journal_sha256": sha256_file(journal),
                 **_outcome_identity(evidence),
             }
-        native_run_id = sent.value.run_id
+        baseline_run_ids = sorted(run.run_id for run in baseline_runs)
+        inventory = _load_creation_inventory(evidence, run_root)
+        journal_version = JOURNAL_SCHEMA_VERSION
+        if (
+            inventory is not None
+            and inventory.runs
+            and not _prior_prompt_authorized(run_root, evidence, attempt_id)
+        ):
+            journal_version = JOURNAL_SCHEMA_VERSION_V2
+            dispatched = _dispatch_after_creation_readiness(
+                adapter,
+                evidence,
+                run_root,
+                journal=journal,
+                journal_rel=journal_rel,
+                base=base,
+                prompt=prompt,
+                agent_id=agent_id,
+                iteration=iteration,
+                inventory=inventory,
+                baseline_runs=baseline_runs,
+                empty_capture_payload=empty_capture_payload,
+            )
+            if isinstance(dispatched, dict):
+                return dispatched
+            native_run_id = dispatched.run_id
+        else:
+            append_sdk_journal(
+                journal,
+                kind="run_inventory_baseline",
+                payload={**base, "run_ids": baseline_run_ids},
+            )
+            _journal_append(
+                journal,
+                kind="send_intent",
+                payload=base,
+                schema_version=JOURNAL_SCHEMA_VERSION,
+            )
+            sent = adapter.send(agent_id, prompt)
+            if sent.failure is not None or sent.value is None:
+                append_sdk_journal(
+                    journal,
+                    kind="terminal",
+                    payload={
+                        **base,
+                        "outcome": "uncertain",
+                        "failure_kind": "cursor_sdk_send_uncertain",
+                    },
+                )
+                return {
+                    "runtime": "sdk-local",
+                    "effect_kind": RUN_CURSOR_TURN_EFFECT_KIND,
+                    "iteration": iteration,
+                    "returncode": 1,
+                    "timed_out": False,
+                    "parse_ok": False,
+                    "has_completion_signal": False,
+                    "failure_kind": "cursor_sdk_send_uncertain",
+                    "sdk_failure": _sdk_failure_payload(sent.failure),
+                    **empty_capture_payload,
+                    "journal_path": journal_rel,
+                    "journal_sha256": sha256_file(journal),
+                    **_outcome_identity(evidence),
+                }
+            native_run_id = sent.value.run_id
         append_sdk_journal(
-            journal, kind="native_run_bound", payload={**base, "native_run_id": native_run_id}
+            journal,
+            kind="native_run_bound",
+            payload={**base, "native_run_id": native_run_id},
+            schema_version=journal_version,
         )
+        _maybe_interrupt("native_run_bound")
         stored = 0
         truncated = False
         stream_usages: list[CursorUsageEvent] = []
@@ -900,6 +1706,7 @@ def _run_sdk_turn_operation(
                     "outcome": "uncertain",
                     "failure_kind": "cursor_sdk_native_run_uncertain",
                 },
+                schema_version=journal_version,
             )
             return {
                 "runtime": "sdk-local",
@@ -952,6 +1759,7 @@ def _run_sdk_turn_operation(
                 "native_run_id": native_run_id,
                 "outcome": "success" if has_completion else "failed",
             },
+            schema_version=journal_version,
         )
         return {
             "runtime": "sdk-local",
@@ -989,9 +1797,10 @@ def _list_sdk_runs_for_agent(
         for native in listed.value.runs:
             if native.agent_id != agent_id or not native.run_id:
                 raise ValueError("Cursor SDK reconciliation inventory crossed the bound agent")
-            if native.run_id not in seen:
-                seen.add(native.run_id)
-                runs.append(native)
+            if native.run_id in seen:
+                raise ValueError("Cursor SDK run inventory identities conflict")
+            seen.add(native.run_id)
+            runs.append(native)
             if len(runs) > MAX_CURSOR_SDK_RECONCILIATION_RUNS:
                 raise ValueError("Cursor SDK reconciliation inventory exceeded its bound")
         if listed.value.next_cursor is None:
@@ -999,6 +1808,119 @@ def _list_sdk_runs_for_agent(
         if listed.value.next_cursor == next_cursor:
             raise ValueError("Cursor SDK reconciliation cursor made no progress")
         next_cursor = listed.value.next_cursor
+
+
+def _prior_prompt_authorized(
+    run_root: Path,
+    evidence: dict[str, object],
+    attempt_id: str,
+) -> bool:
+    """True only for the one journal the application pinned as authorized.
+
+    The caller supplies the durable path, digest, attempt, dispatch and prompt
+    binding. A self-hash of whatever file is on disk, or any other journal in
+    the attempt directory, is not authority. A digest or binding mismatch is
+    unsafe evidence and rejects the turn.
+    """
+
+    fields = (
+        "prior_authorized_journal_path",
+        "prior_authorized_journal_sha256",
+        "prior_authorized_attempt_id",
+        "prior_authorized_dispatch_id",
+        "prior_authorized_prompt_sha256",
+    )
+    present = [evidence.get(name) for name in fields]
+    if all(value in {None, ""} for value in present):
+        return False
+    if any(not isinstance(value, str) or not value for value in present):
+        raise ValueError("prior prompt authority is incomplete")
+    relative, digest, prior_attempt, prior_dispatch, prior_prompt = (
+        str(value) for value in present
+    )
+    if prior_attempt == attempt_id:
+        raise ValueError("prior prompt authority names the current attempt")
+    if relative != cursor_sdk_attempt_journal_rel(prior_attempt):
+        raise ValueError("prior prompt journal is not the source attempt journal")
+    path = run_root / relative
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("prior prompt journal is missing")
+    if sha256_file(path) != digest:
+        raise ValueError("prior prompt journal digest mismatch")
+    binding = {
+        "attempt_id": prior_attempt,
+        "dispatch_id": prior_dispatch,
+        "conversation_owner_run_id": str(evidence["conversation_owner_run_id"]),
+        "conversation_key": str(evidence["conversation_key"]),
+        "agent_id": str(evidence["agent_id"]),
+        "prompt_sha256": prior_prompt,
+    }
+    try:
+        records = authenticate_sdk_recovery_journal(
+            path,
+            expected_sha256=digest,
+            expected_binding=binding,
+        )
+    except ValueError:
+        records = authenticate_sdk_journal(
+            path,
+            expected_sha256=digest,
+            operation="send",
+            expected_binding=binding,
+        )
+    if not any(record.get("kind") == "send_intent" for record in records):
+        return False
+    kinds = {str(record.get("kind", "")) for record in records}
+    version = records[0].get("schema_version")
+    return version == JOURNAL_SCHEMA_VERSION or bool(
+        kinds.intersection({"readiness_clear", "creation_blocker_cancel_confirmed"})
+    )
+
+
+def _prompt_journal_authorizes_send(records: tuple[dict[str, object], ...]) -> bool:
+    return any(record.get("kind") == "send_intent" for record in records)
+
+
+def _exclusive_creation_blocker(records: tuple[dict[str, object], ...]) -> str | None:
+    baseline = records[0]
+    raw = baseline.get("creation_run_ids")
+    if raw is None:
+        return None
+    if (
+        not isinstance(raw, list)
+        or any(not isinstance(item, str) or not item for item in raw)
+        or len(set(raw)) != len(raw)
+    ):
+        raise ValueError("Cursor SDK creation blocker inventory is invalid")
+    if len(raw) != 1:
+        return None
+    run_ids = baseline.get("run_ids")
+    if not isinstance(run_ids, list) or raw[0] not in run_ids:
+        raise ValueError("Cursor SDK creation blocker is outside the baseline")
+    return str(raw[0])
+
+
+def _confirm_creation_blocker(
+    adapter: CursorSdkAdapter,
+    agent_id: str,
+    blocker_id: str,
+) -> tuple[bool, bool]:
+    observed = adapter.get_run(agent_id, blocker_id)
+    if observed.failure is not None or observed.value is None:
+        return False, False
+    if observed.value.status.strip().lower() in TERMINAL_PUBLIC_RUN_STATUSES:
+        return True, False
+    cancelled = adapter.cancel(agent_id, blocker_id)
+    if cancelled.failure is not None:
+        return False, True
+    confirmed = adapter.get_run(agent_id, blocker_id)
+    if (
+        confirmed.failure is not None
+        or confirmed.value is None
+        or confirmed.value.status.strip().lower() not in TERMINAL_PUBLIC_RUN_STATUSES
+    ):
+        return False, True
+    return True, True
 
 
 def _run_sdk_reconciliation(
@@ -1076,6 +1998,7 @@ def _run_sdk_reconciliation_operation(
     candidate_final_statuses: dict[str, str] = {}
     abort_requested = evidence.get("abort_requested") is True
     capture_payload: dict[str, object] = {}
+    blocker_ok = True
     try:
         opened = adapter.open()
         preflight = adapter.preflight() if opened.failure is None else None
@@ -1093,6 +2016,16 @@ def _run_sdk_reconciliation_operation(
         ):
             outcome = "native_unavailable"
         else:
+            blocker_id = _exclusive_creation_blocker(records)
+            has_cancel_intent = any(
+                record.get("kind") == "creation_blocker_cancel_intent" for record in records
+            )
+            if blocker_id is not None and (abort_requested or has_cancel_intent):
+                blocker_terminal, blocker_cancel_requested = _confirm_creation_blocker(
+                    adapter, agent_id, blocker_id
+                )
+                cancellation_requested = cancellation_requested or blocker_cancel_requested
+                blocker_ok = blocker_terminal
             if native_run_id is None:
                 listed, _failure = _list_sdk_runs_for_agent(adapter, agent_id)
                 if listed is None:
@@ -1100,7 +2033,11 @@ def _run_sdk_reconciliation_operation(
                 else:
                     candidates = [run for run in listed if run.run_id not in set(baseline)]
                     candidate_run_ids = [run.run_id for run in candidates]
-                    if not candidates:
+                    prompt_authorized = _prompt_journal_authorizes_send(records)
+                    if not prompt_authorized and not abort_requested:
+                        native_run_id = None
+                        outcome = "prompt_unsent" if not candidates else "native_unavailable"
+                    elif not candidates:
                         outcome = "abort_reconciled" if abort_requested else "ambiguous_missing"
                     elif len(candidates) != 1:
                         outcome = "ambiguous_multiple"
@@ -1270,8 +2207,15 @@ def _run_sdk_reconciliation_operation(
                             outcome = "continuation_ready"
     finally:
         adapter.close()
+    if not blocker_ok:
+        outcome = "native_unavailable"
 
-    record = CursorSdkReconciliationRecordV1(
+    record_model = (
+        CursorSdkReconciliationRecordV2
+        if outcome == "prompt_unsent"
+        else CursorSdkReconciliationRecordV1
+    )
+    record = record_model(
         run_id=str(evidence["run_id"]),
         source_attempt_id=source_attempt_id,
         reconciliation_attempt_id=attempt_id,
@@ -1312,7 +2256,11 @@ def _run_sdk_reconciliation_operation(
             else None
         ),
     )
-    record_rel = cursor_sdk_reconciliation_record_rel(source_attempt_id, attempt_id)
+    record_rel = cursor_sdk_reconciliation_record_rel(
+        source_attempt_id,
+        attempt_id,
+        schema_version=2 if outcome == "prompt_unsent" else 1,
+    )
     atomic_write_json(run_root / record_rel, record.model_dump(mode="json"), sensitive=True)
     record_sha = sha256_file(run_root / record_rel)
     return {

@@ -140,6 +140,94 @@ class CursorSdkReconciliationRecordV1(DomainModel):
         ).encode("utf-8")
 
 
+class CursorSdkReconciliationRecordV2(DomainModel):
+    """Reconciliation result whose decision is outside the v1 outcome set.
+
+    Historical v1 bytes stay on ``CursorSdkReconciliationRecordV1``. This model
+    is written only for a proved-unsent prompt and lives at ``record-v2.json``.
+    """
+
+    schema_version: Literal[2] = 2
+    run_id: NonEmptyStr
+    source_attempt_id: NonEmptyStr
+    reconciliation_attempt_id: NonEmptyStr
+    source_dispatch_id: NonEmptyStr
+    reconciliation_dispatch_id: NonEmptyStr
+    conversation_owner_run_id: NonEmptyStr
+    conversation_key: Sha256Hex
+    agent_id: NonEmptyStr
+    prompt_sha256: Sha256Hex
+    source_journal_path: NonEmptyStr
+    source_journal_sha256: Sha256Hex
+    baseline_run_ids: tuple[NonEmptyStr, ...]
+    candidate_run_ids: tuple[NonEmptyStr, ...] = ()
+    candidate_final_statuses: dict[NonEmptyStr, NonEmptyStr] = Field(default_factory=dict)
+    native_run_id: NonEmptyStr | None = None
+    initial_native_status: NonEmptyStr | None = None
+    final_native_status: NonEmptyStr | None = None
+    outcome: Literal[
+        "terminal_recovered",
+        "continuation_ready",
+        "ambiguous_missing",
+        "ambiguous_multiple",
+        "native_unavailable",
+        "abort_reconciled",
+        "prompt_unsent",
+    ]
+    cancellation_requested: bool = False
+    terminal_response_path: NonEmptyStr | None = None
+    terminal_response_sha256: Sha256Hex | None = None
+    cursor_output_fingerprint_path: NonEmptyStr | None = None
+    cursor_output_fingerprint_sha256: Sha256Hex | None = None
+
+    @model_validator(mode="after")
+    def bindings_agree(self) -> CursorSdkReconciliationRecordV2:
+        if len(set(self.baseline_run_ids)) != len(self.baseline_run_ids):
+            raise ValueError("baseline run identities must be unique")
+        if len(set(self.candidate_run_ids)) != len(self.candidate_run_ids):
+            raise ValueError("candidate run identities must be unique")
+        if not set(self.candidate_final_statuses).issubset(self.candidate_run_ids):
+            raise ValueError("candidate statuses must belong to candidate run identities")
+        response = (self.terminal_response_path, self.terminal_response_sha256)
+        fingerprint = (
+            self.cursor_output_fingerprint_path,
+            self.cursor_output_fingerprint_sha256,
+        )
+        if any(value is None for value in response) != all(value is None for value in response):
+            raise ValueError("terminal response path and digest must appear together")
+        if any(value is None for value in fingerprint) != all(
+            value is None for value in fingerprint
+        ):
+            raise ValueError("cursor fingerprint path and digest must appear together")
+        if self.outcome == "terminal_recovered":
+            if self.native_run_id is None or any(value is None for value in response + fingerprint):
+                raise ValueError("terminal recovery requires exact result and fingerprint evidence")
+        elif any(value is not None for value in response + fingerprint):
+            raise ValueError("non-terminal recovery outcomes cannot carry terminal result evidence")
+        if self.outcome == "continuation_ready" and self.native_run_id is None:
+            raise ValueError("continuation requires an exact terminal native run")
+        if self.outcome.startswith("ambiguous_") and self.native_run_id is not None:
+            raise ValueError("ambiguous outcomes cannot claim a native run identity")
+        if self.outcome == "abort_reconciled" and any(
+            value is not None for value in response + fingerprint
+        ):
+            raise ValueError("abort reconciliation cannot publish a turn result")
+        if self.outcome == "abort_reconciled" and set(self.candidate_final_statuses) != set(
+            self.candidate_run_ids
+        ):
+            raise ValueError("abort reconciliation requires every candidate terminal status")
+        if self.outcome == "prompt_unsent" and (
+            self.native_run_id is not None or self.candidate_run_ids
+        ):
+            raise ValueError("an unsent prompt cannot claim a native run")
+        return self
+
+    def canonical_bytes(self) -> bytes:
+        return (
+            json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":")) + "\n"
+        ).encode("utf-8")
+
+
 class CursorSdkSuccessorIntentV1(DomainModel):
     """Copy-once publication authority for an SDK manual recovery successor."""
 

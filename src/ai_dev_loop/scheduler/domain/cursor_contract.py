@@ -65,11 +65,14 @@ def cursor_sdk_attempt_journal_rel(attempt_id: str) -> str:
 def cursor_sdk_reconciliation_record_rel(
     source_attempt_id: str,
     reconciliation_attempt_id: str | None = None,
+    *,
+    schema_version: int = 1,
 ) -> str:
+    filename = "record-v2.json" if schema_version == 2 else "record-v1.json"
     directory = f"cursor/sdk-reconciliation/{source_attempt_id}"
     if reconciliation_attempt_id is None:
-        return f"{directory}/record-v1.json"
-    return f"{directory}/attempts/{reconciliation_attempt_id}/record-v1.json"
+        return f"{directory}/{filename}"
+    return f"{directory}/attempts/{reconciliation_attempt_id}/{filename}"
 
 
 def cursor_sdk_attempt_events_rel(iteration_number: int, attempt_id: str) -> str:

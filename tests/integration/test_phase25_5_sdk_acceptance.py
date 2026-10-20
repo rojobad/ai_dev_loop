@@ -451,10 +451,12 @@ def test_exact_source_sdk_config_runs_initial_correction_and_read_only_views(
         ("cursor", "implementer"),
         ("codex", "reviewer"),
     }
-    submitted = datetime.fromisoformat(state.submitted_at.replace("Z", "+00:00"))
+    # Cohort membership uses the first execution launch. This test freezes that
+    # launch at 2026-10-18T12:00Z; submission itself uses wall time.
+    frozen_launch = datetime(2026, 10, 18, 12, tzinfo=UTC)
     dashboard = default_dashboard_read_service(db_path=db).runs(
-        from_value=(submitted - timedelta(days=1)).isoformat(),
-        to_value=(submitted + timedelta(days=1)).isoformat(),
+        from_value=(frozen_launch - timedelta(days=1)).isoformat(),
+        to_value=(frozen_launch + timedelta(days=1)).isoformat(),
         time_zone="UTC",
         limit=20,
     )

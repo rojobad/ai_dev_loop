@@ -30,6 +30,7 @@ from ai_dev_loop.scheduler.domain.cursor_contract import (
 from ai_dev_loop.scheduler.domain.cursor_sdk_recovery import (
     CursorSdkReconciliationIntentV1,
     CursorSdkReconciliationRecordV1,
+    CursorSdkReconciliationRecordV2,
     CursorSdkSuccessorIntentV1,
     CursorSdkSuccessorRecordV1,
 )
@@ -244,6 +245,7 @@ def test_phase25_3_persisted_models_match_published_json_schemas() -> None:
     models = (
         (CursorSdkReconciliationIntentV1, "scheduler-cursor-sdk-reconciliation-intent-v1.json"),
         (CursorSdkReconciliationRecordV1, "scheduler-cursor-sdk-reconciliation-record-v1.json"),
+        (CursorSdkReconciliationRecordV2, "scheduler-cursor-sdk-reconciliation-record-v2.json"),
         (CursorSdkSuccessorIntentV1, "scheduler-cursor-sdk-successor-intent-v1.json"),
         (CursorSdkSuccessorRecordV1, "scheduler-cursor-sdk-successor-record-v1.json"),
         (CursorWorkflowCheckpoint, "scheduler-cursor-workflow-checkpoint-v1.json"),
