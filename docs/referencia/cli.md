@@ -361,6 +361,36 @@ se perdió la respuesta de `send`, el inventario público posterior se compara c
 el inventario durable anterior: solo un candidato nuevo único se adopta. Cero o
 varios candidatos, un backend no observable o una creación sin identidad exacta
 permanecen bloqueados con la reserva retenida y cero redispatch especulativo.
+Antes del primer envío de un agente con inventario de creación autenticado, el
+worker observa como máximo tres veces y durante como máximo diez segundos, dentro
+del deadline del intento. Cancela una sola vez el ocupante exclusivo `queued` o
+`running` público solo si no hubo envío autorizado y la historia pública del
+agente está vacía; confirma que quedó terminal y después envía el prompt una vez.
+Un ocupante ya terminal no se cancela. Un estado desconocido, historia pública,
+otro run o una prueba ausente dejan `cursor_sdk_creation_readiness_hold` con la
+reserva retenida. Esa cancelación no es salida de implementación ni incrementa
+reviews. `SendOptions.local.force` no se usa. Un rechazo definitivo
+(`AgentBusyError` o `InternalServerError` con código `agent_busy`) autoriza como
+máximo un reenvío del mismo prompt en el mismo intento cuando una observación
+nueva prueba que ningún run de prompt fue aceptado y que el bloqueador propio ya
+es terminal. Un mensaje genérico, un fallo de red o un run nuevo único no
+reenvían: el run único se reconcilia y los demás casos siguen retenidos. Los
+journals v1 y los agentes sin ese inventario no infieren esta elegibilidad.
+Un turno posterior del mismo agente no repite la puerta cuando el lanzamiento
+aporta el journal, el digest durable y el binding de intento, dispatch y prompt
+de un envío ya autorizado. Un hash recién calculado del archivo, o un journal
+huérfano del directorio, no es esa autoridad. El `authorized_send_count`
+original del inventario no prueba que ningún prompt posterior fue autorizado.
+Si el journal v2 sellado prueba que el prompt nunca se envió, la reconciliación
+escribe el record v2 en `record-v2.json` con `prompt_unsent` y el evento
+`cursor_sdk_reconciled_v2`, y despacha ese mismo turno una vez. Si el sobre de
+resultado se pierde después de publicar ese record, la recuperación autentica
+ese path y digest exactos y no abre otra observación nativa. Los records v1
+conservan sus resultados anteriores. Un `send_intent` ya escrito conserva el
+hold de aceptación incierta. El presupuesto de diez segundos acota las lecturas
+de preparación, la cancelación, la confirmación y la comprobación previa a cada
+envío o reintento de rechazo. Después de un `send_intent` autorizado, la espera
+del handle nativo sigue el deadline congelado del turno.
 
 Con `--check`, el comando es solo lectura: abre el ledger en modo readonly, reconstruye
 la evidencia causal del fallo `cursor_failure` (si existe) o autentica el intent y

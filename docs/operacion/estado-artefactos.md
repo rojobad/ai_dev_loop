@@ -115,7 +115,23 @@ No existe `recover` publico en el scheduler central. Ante fallos:
   `cursor-retry --check/--force` y la rama Cursor de `implementer-retry` conservan
   agente, reviewer, presupuesto, ordinal y short name. Una creación incierta o
   cero/varios candidatos retienen la reserva sin redispatch; `scheduler abort`
-  también espera cancelación/confirmación nativa antes de liberar ownership;
+  también espera cancelación/confirmación nativa antes de liberar ownership.
+  El journal de creación v2 guarda el inventario público tomado antes de cerrar
+  el bridge. El primer envío, si ese inventario prueba un único ocupante sin
+  trabajo, persiste la intención de cancelarlo, confirma el estado terminal y
+  solo entonces envía. Un ID de ese inventario nunca se adopta como run de
+  implementación.   `cursor_sdk_creation_readiness_hold` retiene la reserva; no es
+  un fallo reintentable por `cursor-retry`. Un turno posterior no reabre esa
+  puerta cuando el lanzamiento trae el path, el digest durable y el binding de
+  intento, dispatch y prompt del journal autorizado. Un journal v2 sellado sin
+  `send_intent` reconcilia `prompt_unsent` en el record v2 (`record-v2.json`) y
+  el evento `cursor_sdk_reconciled_v2`, y despacha el mismo turno; ese resultado
+  no adopta el run de creación. Un sobre de resultado perdido no descarta el
+  record ya publicado de ese intento: se autentica su path y digest y no se
+  abre otra observación. Los records v1 conservan sus resultados
+  anteriores. Los journals v1 siguen leyéndose con su autoridad anterior y no
+  habilitan esta cancelación. El presupuesto de preparación no sustituye el
+  deadline congelado de un envío ya autorizado;
 - `scheduler abort` cancela sin borrar artefactos ni cambios staged;
 - para trabajo nuevo tras un run terminal, `scheduler submit` con
   `--short-name`, `--resubmission-id <uuid>`, modelo y razonamiento de review

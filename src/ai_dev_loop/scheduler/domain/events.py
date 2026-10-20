@@ -56,6 +56,7 @@ CURSOR_SDK_AGENT_CREATED_EVENT_KIND = "cursor_sdk_agent_created"
 CURSOR_SDK_TURN_COMPLETED_EVENT_KIND = "cursor_sdk_turn_completed"
 CURSOR_SDK_RECONCILIATION_REQUESTED_EVENT_KIND = "cursor_sdk_reconciliation_requested"
 CURSOR_SDK_RECONCILED_EVENT_KIND = "cursor_sdk_reconciled"
+CURSOR_SDK_RECONCILED_V2_EVENT_KIND = "cursor_sdk_reconciled_v2"
 CURSOR_USAGE_LIMIT_DETECTED_EVENT_KIND = "cursor_usage_limit_detected"
 STAGING_COMPLETED_EVENT_KIND = "staging_completed"
 STAGING_BLOCKED_EVENT_KIND = "staging_blocked"
@@ -328,6 +329,20 @@ class CursorSdkReconciledEvent(DomainModel):
         "native_unavailable",
         "abort_reconciled",
     ]
+    record_path: NonEmptyStr
+    record_sha256: Sha256Hex
+
+
+class CursorSdkReconciledEventV2(DomainModel):
+    """Versioned reconciliation event for a decision v1 records cannot represent."""
+
+    kind: Literal["cursor_sdk_reconciled_v2"] = "cursor_sdk_reconciled_v2"
+    schema_version: Literal[2] = 2
+    run_id: NonEmptyStr
+    recovery_key: Sha256Hex
+    source_attempt_id: NonEmptyStr
+    reconciliation_attempt_id: NonEmptyStr
+    outcome: Literal["prompt_unsent"]
     record_path: NonEmptyStr
     record_sha256: Sha256Hex
 
@@ -1228,6 +1243,7 @@ SchedulerEvent = Annotated[
         Tag(CURSOR_SDK_RECONCILIATION_REQUESTED_EVENT_KIND),
     ]
     | Annotated[CursorSdkReconciledEvent, Tag(CURSOR_SDK_RECONCILED_EVENT_KIND)]
+    | Annotated[CursorSdkReconciledEventV2, Tag(CURSOR_SDK_RECONCILED_V2_EVENT_KIND)]
     | Annotated[CursorTurnBlockedEvent, Tag(CURSOR_TURN_BLOCKED_EVENT_KIND)]
     | Annotated[CursorUsageLimitDetectedEvent, Tag(CURSOR_USAGE_LIMIT_DETECTED_EVENT_KIND)]
     | Annotated[StagingCompletedEvent, Tag(STAGING_COMPLETED_EVENT_KIND)]

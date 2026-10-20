@@ -136,6 +136,10 @@ class FakeSdkAdapter:
         assert agent_id == AGENT_ID
         return CursorSdkOutcome.success(CursorSdkRunPage(runs=(), next_cursor=None))
 
+    def list_agent_messages(self, agent_id: str):  # type: ignore[no-untyped-def]
+        assert agent_id == AGENT_ID
+        return CursorSdkOutcome.success(0)
+
     def stream(self, agent_id: str, run_id: str, *, on_envelope=None, **kwargs):  # type: ignore[no-untyped-def]
         del kwargs
         assert agent_id == AGENT_ID and run_id == NATIVE_RUN_ID
@@ -237,7 +241,12 @@ def test_create_intent_precedes_agent_binding_and_terminal(monkeypatch, tmp_path
     records = [
         json.loads(line) for line in (run_root / outcome["journal_path"]).read_text().splitlines()
     ]
-    assert [item["kind"] for item in records] == ["create_intent", "agent_bound", "terminal"]
+    assert [item["kind"] for item in records] == [
+        "create_intent",
+        "agent_bound",
+        "creation_inventory",
+        "terminal",
+    ]
     assert records[1]["agent_id"] == AGENT_ID == outcome["agent_id"]
     expected_binding = {
         "attempt_id": "att-" + "1" * 32,
@@ -464,10 +473,10 @@ def test_sdk_persistence_failure_stops_the_next_external_effect(
     monkeypatch.setattr(cursor_runner, "_sdk_adapter", lambda evidence: adapter)
     real_append = cursor_runner.append_sdk_journal
 
-    def fail_selected_barrier(path, *, kind, payload):  # type: ignore[no-untyped-def]
+    def fail_selected_barrier(path, *, kind, payload, schema_version=1):  # type: ignore[no-untyped-def]
         if kind == barrier:
             raise OSError(f"synthetic {kind} persistence failure")
-        return real_append(path, kind=kind, payload=payload)
+        return real_append(path, kind=kind, payload=payload, schema_version=schema_version)
 
     monkeypatch.setattr(cursor_runner, "append_sdk_journal", fail_selected_barrier)
     with pytest.raises(OSError, match="persistence failure"):

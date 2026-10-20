@@ -217,7 +217,56 @@ def _install_fake_sdk(root: Path) -> None:
                     self.code = "rate_limited"
                     self.retry_after = "1"
 
-            errors = SimpleNamespace(RateLimitError=RateLimitError)
+            class AgentBusyError(Exception):
+                def __init__(self, message="already has active run"):
+                    super().__init__(message)
+                    self.message = message
+                    self.code = "agent_busy"
+
+            class InternalServerError(Exception):
+                def __init__(self, message="bridge failure", code="internal"):
+                    super().__init__(message)
+                    self.message = message
+                    self.code = code
+
+            class NetworkError(Exception):
+                def __init__(self, message="synthetic network loss"):
+                    super().__init__(message)
+                    self.message = message
+
+            errors = SimpleNamespace(
+                RateLimitError=RateLimitError,
+                AgentBusyError=AgentBusyError,
+                InternalServerError=InternalServerError,
+                NetworkError=NetworkError,
+            )
+            CREATION_RUN_ID = "run-019abc00-1111-4222-8333-777777777777"
+            PROMPT_RUN_ID = "run-019abc00-1111-4222-8333-555555555555"
+            AGENT_ID = "019abc00-1111-4222-8333-444444444444"
+
+            def _store_path():
+                value = os.environ.get("FAKE_CURSOR_SDK_DURABLE_STORE", "")
+                return Path(value) if value else None
+
+            def _read_store():
+                path = _store_path()
+                if path is None or not path.is_file():
+                    return {"runs": [], "messages": [], "sends": 0, "conversation_calls": 0, "cancels": []}
+                return json.loads(path.read_text(encoding="utf-8"))
+
+            def _write_store(payload):
+                path = _store_path()
+                if path is None:
+                    return
+                path.parent.mkdir(parents=True, exist_ok=True)
+                temporary = path.with_suffix(path.suffix + ".tmp")
+                temporary.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+                temporary.replace(path)
+
+            def _public_creation_status(wire):
+                if wire == "creating":
+                    return "running"
+                return wire
 
             def _latest_journal_kinds():
                 root = os.environ.get("FAKE_CURSOR_SDK_RUN_ROOT", "")
@@ -291,11 +340,15 @@ def _install_fake_sdk(root: Path) -> None:
                     return [SimpleNamespace(id="grok-4.7", variants=[SimpleNamespace(params=params)])]
 
             class Run:
-                id = "run-019abc00-1111-4222-8333-555555555555"
-                agent_id = "019abc00-1111-4222-8333-444444444444"
-                def __init__(self, workspace): self.workspace = Path(workspace)
+                def __init__(self, workspace, run_id=PROMPT_RUN_ID, agent_id=AGENT_ID, status=None):
+                    self.workspace = Path(workspace)
+                    self.id = run_id
+                    self.agent_id = agent_id
+                    self._status = status
                 @property
                 def status(self):
+                    if self._status:
+                        return self._status
                     failure_marker = os.environ.get("FAKE_CURSOR_SDK_STREAM_FAILURE_MARKER", "")
                     stream_still_failing = (
                         os.environ.get("FAKE_CURSOR_SDK_STREAM_FAILURE") == "1"
@@ -310,7 +363,11 @@ def _install_fake_sdk(root: Path) -> None:
                 def result(self): return os.environ.get("FAKE_CURSOR_SDK_TERMINAL_TEXT", "exact fake terminal")
                 def events(self):
                     if os.environ.get("FAKE_CURSOR_SDK_RUN_ROOT"):
-                        assert _latest_journal_kinds() == ["run_inventory_baseline", "send_intent", "native_run_bound"]
+                        kinds = _latest_journal_kinds()
+                        assert kinds[0] == "run_inventory_baseline"
+                        assert "send_intent" in kinds
+                        assert kinds[-1] == "native_run_bound"
+                        assert kinds.count("send_intent") <= 2
                     target = self.workspace / "tracked.txt"
                     prior = target.read_text(encoding="utf-8") if target.is_file() else ""
                     target.write_text(prior + "sdk implementation\\n", encoding="utf-8")
@@ -356,19 +413,48 @@ def _install_fake_sdk(root: Path) -> None:
                 def wait(self):
                     usage_json = os.environ.get("FAKE_CURSOR_SDK_USAGE_JSON", "").strip()
                     return SimpleNamespace(
-                        status=os.environ.get("FAKE_CURSOR_SDK_TERMINAL_STATUS", "finished"),
-                        result=os.environ.get("FAKE_CURSOR_SDK_TERMINAL_TEXT", "exact fake terminal"),
+                        status=self._status or os.environ.get("FAKE_CURSOR_SDK_TERMINAL_STATUS", "finished"),
+                        result="" if self._status in {"queued", "running", "cancelled", "canceled"} else os.environ.get("FAKE_CURSOR_SDK_TERMINAL_TEXT", "exact fake terminal"),
                         usage=(
                             None
-                            if not usage_json
+                            if not usage_json or self._status in {"queued", "running", "cancelled", "canceled"}
                             else SimpleNamespace(**json.loads(usage_json))
                         ),
                     )
+                def cancel(self):
+                    store = _read_store()
+                    for item in store.get("runs", []):
+                        if item["id"] == self.id:
+                            item["status"] = "cancelled"
+                    store.setdefault("cancels", []).append(self.id)
+                    _write_store(store)
+                    self._status = "cancelled"
+                def conversation(self):
+                    store = _read_store()
+                    store["conversation_calls"] = int(store.get("conversation_calls", 0)) + 1
+                    _write_store(store)
+                    raise TimeoutError("GetRunConversation timed out")
 
             class Agent:
                 agent_id = "019abc00-1111-4222-8333-444444444444"
                 def __init__(self, workspace): self.workspace = workspace
+                def list_messages(self, options=None):
+                    del options
+                    forced = os.environ.get("FAKE_CURSOR_SDK_MESSAGE_COUNT", "")
+                    if forced != "":
+                        return [
+                            SimpleNamespace(type="user", uuid=str(index), agent_id=self.agent_id)
+                            for index in range(int(forced))
+                        ]
+                    store = _read_store()
+                    return [
+                        SimpleNamespace(type=str(item.get("type", "user")), uuid=str(index), agent_id=self.agent_id)
+                        for index, item in enumerate(store.get("messages", []))
+                    ]
                 def send(self, prompt, options):
+                    local = getattr(options, "local", None)
+                    assert not (isinstance(local, dict) and local.get("force"))
+                    assert getattr(local, "force", None) in {None, False}
                     counter = os.environ.get("FAKE_CURSOR_SDK_SEND_COUNTER", "")
                     if counter:
                         path = Path(counter)
@@ -377,10 +463,82 @@ def _install_fake_sdk(root: Path) -> None:
                     identity = os.environ.get("FAKE_CURSOR_SDK_IDENTITY_PATH", "")
                     if identity:
                         assert Path(identity).is_file()
-                        assert _latest_journal_kinds() == ["run_inventory_baseline", "send_intent"]
+                        kinds = _latest_journal_kinds()
+                        assert kinds[0] == "run_inventory_baseline"
+                        assert kinds[-1] == "send_intent"
+                        assert "native_run_bound" not in kinds
                     if os.environ.get("FAKE_CURSOR_SDK_SEND_UNCERTAIN") == "1":
                         raise RuntimeError("synthetic send result loss")
-                    return Run(self.workspace)
+                    store = _read_store()
+                    store["send_attempts"] = int(store.get("send_attempts", 0)) + 1
+                    mode = os.environ.get("FAKE_CURSOR_SDK_FIRST_SEND_MODE", "")
+                    if mode == "accept-network" and store["send_attempts"] == 1:
+                        store.setdefault("runs", []).append(
+                            {
+                                "id": os.environ.get(
+                                    "FAKE_CURSOR_SDK_ACCEPTED_RUN_ID",
+                                    "run-019abc00-1111-4222-8333-888888888888",
+                                ),
+                                "status": "finished",
+                                "agent_id": self.agent_id,
+                                "text": "accepted before the error",
+                            }
+                        )
+                        _write_store(store)
+                        raise NetworkError("lost before acceptance")
+                    if mode == "message-busy" and store["send_attempts"] == 1:
+                        _write_store(store)
+                        raise InternalServerError("agent already has active run", code="internal")
+                    if mode == "structured-busy" and store["send_attempts"] == 1:
+                        _write_store(store)
+                        raise InternalServerError("agent busy", code="agent_busy")
+                    if mode == "typed-busy" and store["send_attempts"] == 1:
+                        _write_store(store)
+                        raise AgentBusyError("already has active run")
+                    if mode == "typed-busy-twice" and store["send_attempts"] <= 2:
+                        _write_store(store)
+                        raise AgentBusyError("already has active run")
+                    active = [
+                        item for item in store.get("runs", [])
+                        if item.get("status") in {"queued", "running"}
+                    ]
+                    if active and os.environ.get("FAKE_CURSOR_SDK_CREATION_OCCUPANT"):
+                        evidence = os.environ.get("FAKE_CURSOR_SDK_BUSY_EVIDENCE", "typed")
+                        if evidence == "structured":
+                            raise InternalServerError("agent busy", code="agent_busy")
+                        if evidence == "message":
+                            raise InternalServerError("agent already has active run", code="internal")
+                        if evidence == "network":
+                            raise NetworkError("lost before acceptance")
+                        raise AgentBusyError("already has active run")
+                    if os.environ.get("FAKE_CURSOR_SDK_ACCEPT_NEW_RUN_ON_BUSY") == "1" and active:
+                        accepted = {
+                            "id": os.environ.get("FAKE_CURSOR_SDK_ACCEPTED_RUN_ID", "run-019abc00-1111-4222-8333-888888888888"),
+                            "status": "finished",
+                            "agent_id": self.agent_id,
+                            "text": "accepted despite busy",
+                        }
+                        store.setdefault("runs", []).append(accepted)
+                        _write_store(store)
+                        raise AgentBusyError("already has active run")
+                    store["sends"] = int(store.get("sends", 0)) + 1
+                    store.setdefault("prompts", []).append(prompt)
+                    store.setdefault("messages", []).append({"type": "user"})
+                    prompt_ids = [
+                        item.get("id")
+                        for item in store.get("runs", [])
+                        if item.get("id") == PROMPT_RUN_ID
+                    ]
+                    run_id = (
+                        PROMPT_RUN_ID
+                        if not prompt_ids
+                        else "run-019abc00-1111-4222-8333-555555555556"
+                    )
+                    store.setdefault("runs", []).append(
+                        {"id": run_id, "status": "finished", "agent_id": self.agent_id}
+                    )
+                    _write_store(store)
+                    return Run(self.workspace, run_id=run_id)
 
             class Client:
                 def __init__(self, workspace): self.workspace = workspace; self.models = Models()
@@ -403,30 +561,72 @@ def _install_fake_sdk(root: Path) -> None:
                         assert _latest_journal_kinds() == ["create_intent"]
                     if os.environ.get("FAKE_CURSOR_SDK_CREATE_UNCERTAIN") == "1":
                         raise RuntimeError("synthetic create result loss")
+                    wire = os.environ.get("FAKE_CURSOR_SDK_CREATION_OCCUPANT", "")
+                    if wire:
+                        store = _read_store()
+                        runs = [{
+                            "id": CREATION_RUN_ID,
+                            "status": _public_creation_status(wire),
+                            "wire": wire,
+                            "agent_id": AGENT_ID,
+                        }]
+                        extra = os.environ.get("FAKE_CURSOR_SDK_EXTRA_CREATION_RUN", "")
+                        if extra:
+                            runs.append({"id": extra, "status": "running", "agent_id": AGENT_ID})
+                        store["runs"] = runs
+                        store["messages"] = []
+                        store["sends"] = 0
+                        store["cancels"] = []
+                        store["conversation_calls"] = 0
+                        _write_store(store)
                     return Agent(options.local.cwd)
-                def resume_agent(self, agent_id, options): return Agent(options.local.cwd)
+                def resume_agent(self, agent_id, options):
+                    if os.environ.get("FAKE_CURSOR_SDK_INJECT_FOREIGN_ON_RESUME") == "1":
+                        store = _read_store()
+                        foreign_id = "run-019abc00-1111-4222-8333-999999999999"
+                        if not any(item.get("id") == foreign_id for item in store.get("runs", [])):
+                            store.setdefault("runs", []).append(
+                                {"id": foreign_id, "status": "running", "agent_id": agent_id}
+                            )
+                            _write_store(store)
+                    return Agent(options.local.cwd)
                 def list_runs(self, agent_id, **kwargs):
-                    class Page(list): next_cursor = None
+                    class Page(list):
+                        def __init__(self, items, next_cursor=None):
+                            super().__init__(items)
+                            self.next_cursor = next_cursor
+                    cursor = kwargs.get("cursor")
+                    if cursor == "stuck":
+                        return Page([], "stuck")
                     send_counter = os.environ.get("FAKE_CURSOR_SDK_SEND_COUNTER", "")
                     send_completed = (
                         bool(send_counter)
                         and Path(send_counter).is_file()
                         and Path(send_counter).read_text() == "1"
                     )
-                    runs = (
-                        [Run(self.workspace)]
-                        if (
-                            os.environ.get("FAKE_CURSOR_SDK_DISCOVER_UNIQUE_RUN") == "1"
-                            and send_completed
-                        )
-                        else []
-                    )
+                    runs = []
+                    if _store_path() is not None:
+                        for item in _read_store().get("runs", []):
+                            if item.get("agent_id") not in {None, agent_id}:
+                                continue
+                            runs.append(Run(self.workspace, item["id"], agent_id, item.get("status")))
+                    if (
+                        os.environ.get("FAKE_CURSOR_SDK_DISCOVER_UNIQUE_RUN") == "1"
+                        and send_completed
+                        and not any(run.id == PROMPT_RUN_ID for run in runs)
+                    ):
+                        runs.append(Run(self.workspace))
+                    if os.environ.get("FAKE_CURSOR_SDK_STUCK_CURSOR") == "1" and cursor is None and runs:
+                        return Page(runs, "stuck")
                     return Page(runs)
                 def get_run(self, run_id, options):
                     _block_reconciliation()
                     if os.environ.get("FAKE_CURSOR_SDK_NATIVE_UNAVAILABLE") == "1":
                         raise RuntimeError("synthetic native observation unavailable")
-                    return Run(self.workspace)
+                    for item in _read_store().get("runs", []):
+                        if item.get("id") == run_id:
+                            return Run(self.workspace, run_id, item.get("agent_id", AGENT_ID), item.get("status"))
+                    return Run(self.workspace, run_id)
                 def close(self):
                     marker_value = os.environ.get("FAKE_CURSOR_SDK_DEADLINE_MARKER", "")
                     if not marker_value:

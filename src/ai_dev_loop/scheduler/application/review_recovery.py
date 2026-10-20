@@ -59,7 +59,10 @@ from ai_dev_loop.scheduler.domain.cursor_contract import (
     RUN_CURSOR_TURN_EFFECT_KIND,
     cursor_attempt_final_rel,
 )
-from ai_dev_loop.scheduler.domain.cursor_sdk_recovery import CursorSdkReconciliationRecordV1
+from ai_dev_loop.scheduler.domain.cursor_sdk_recovery import (
+    CursorSdkReconciliationRecordV1,
+    CursorSdkReconciliationRecordV2,
+)
 from ai_dev_loop.scheduler.domain.events import (
     CODEX_IMPLEMENTER_TURN_COMPLETED_EVENT_KIND,
     CODEX_REVIEW_COMPLETED_EVENT_KIND,
@@ -558,7 +561,7 @@ def _authenticate_sdk_reconciliation_attempt(
     recovery_key: str,
     record_path: str,
     record_sha256: str,
-    record: CursorSdkReconciliationRecordV1,
+    record: CursorSdkReconciliationRecordV1 | CursorSdkReconciliationRecordV2,
 ) -> tuple[str, dict[str, object]]:
     with store.begin_read() as conn:
         attempt = store.get_attempt_by_id(conn, record.reconciliation_attempt_id)

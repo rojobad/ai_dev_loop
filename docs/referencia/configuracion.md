@@ -176,7 +176,22 @@ cancela y confirma antes de aplicar la política normal de timeout/capacidad. Pa
 un envío cuya respuesta se perdió, solo se adopta el único run nuevo respecto al
 inventario pre-envío. Cero o varios candidatos, o una creación cuya identidad no
 puede probarse, retienen la reserva para inspección o `scheduler abort` sin crear
-otro agente ni reenviar el prompt.
+otro agente ni reenviar el prompt. El primer envío puede cancelar antes de inferir
+un único ocupante de creación autenticado, exclusivo y sin trabajo autorizado,
+cuando su estado público es `queued` o `running` y la historia pública del agente
+está vacía. La observación está acotada a tres lecturas y diez segundos. Si esa
+prueba falta, el run queda en `cursor_sdk_creation_readiness_hold`. Un journal v1
+o un agente histórico sin inventario de creación no recibe esa cancelación.
+Una corrección del mismo agente no vuelve a exigir historia vacía cuando el
+ledger aporta el journal, el digest y el binding de un prompt ya autorizado.
+Un journal v2 interrumpido antes de `send_intent` se sella y, si prueba que el
+prompt no se envió, la reconciliación escribe el record v2 (`record-v2.json`,
+evento `cursor_sdk_reconciled_v2`) y despacha ese turno una vez. Si el sobre
+de resultado se pierde tras publicar el record, ese path y digest autenticados
+siguen siendo la autoridad y no se abre otra observación nativa. Los records
+v1 conservan sus resultados anteriores. El límite de diez segundos cubre las
+lecturas, la cancelación, la confirmación y la barrera previa a enviar; no
+acorta un envío ya autorizado, que sigue el deadline congelado del turno.
 
 El wheel publica el extra opcional `cursor-sdk` con pin exacto a 1.0.37. La
 instalacion base no importa ni instala ese package y conserva lectores históricos
