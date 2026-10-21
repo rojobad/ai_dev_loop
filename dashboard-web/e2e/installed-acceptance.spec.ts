@@ -179,6 +179,8 @@ test("C267-1 installed wheel serves the complete offline provider-aware journey"
   ).toBe(false);
 
   await selectRun(page, fixture.sourceRunId);
+  // Replacing the run remounts attempt details closed.
+  await page.locator(".attempt-details-disclosure > summary").click();
   await page.getByRole("button", { name: new RegExp(`Attempt ID: ${fixture.activeAttemptId}`) }).click();
   await page.getByRole("button", { name: "Load stdout" }).click();
   await expect(page.getByText("no / active")).toBeVisible();

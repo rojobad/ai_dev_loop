@@ -17,6 +17,7 @@ import type {
   ReviewDetailData,
   RunInspectData,
   SourceObservation,
+  TokenUsageData,
 } from "./types";
 
 /** Queues deliberate component reads behind the same two-slot coordinator. */
@@ -148,6 +149,21 @@ export class CoordinatedDashboardDataSource implements DashboardDataSource {
     return this.coordinator.request(
       "machine.codex-capacity.once",
       (owned) => this.delegate.capacity(owned),
+      signal,
+    );
+  }
+
+  tokenUsage(
+    filters: DashboardFilters,
+    runId: string | null,
+    signal: AbortSignal,
+  ): Promise<SourceObservation<TokenUsageData>> {
+    return this.coordinator.request(
+      canonicalReadKey("dashboard.token-usage.once", {
+        ...filterParameters(filters),
+        runId,
+      }),
+      (owned) => this.delegate.tokenUsage(filters, runId, owned),
       signal,
     );
   }

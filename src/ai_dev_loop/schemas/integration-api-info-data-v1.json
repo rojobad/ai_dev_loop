@@ -28,7 +28,8 @@
         "codexImplementerManualRecovery": { "type": "boolean" },
         "dashboard": { "type": "boolean" },
         "shortNames": { "type": "boolean" },
-        "tokenUsage": { "type": "boolean" }
+        "tokenUsage": { "type": "boolean" },
+        "dashboardTokenUsage": { "type": "boolean" }
       }
     }
   }

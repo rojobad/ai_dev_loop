@@ -64,10 +64,13 @@ class _QueryBudget:
         seconds: float,
         monotonic: Callable[[], float],
         cancelled: Callable[[], bool],
+        absolute_deadline: float | None = None,
     ) -> None:
         self._monotonic = monotonic
         self._cancelled = cancelled
-        self._deadline = monotonic() + seconds
+        self._deadline = (
+            absolute_deadline if absolute_deadline is not None else monotonic() + seconds
+        )
         self.expired = False
 
     def should_interrupt(self) -> int:
@@ -143,6 +146,7 @@ class SqliteDashboardReadRepository:
         progress_steps: int = DEFAULT_PROGRESS_STEPS,
         monotonic: Callable[[], float] = time.monotonic,
         cancelled: Callable[[], bool] | None = None,
+        absolute_deadline: float | None = None,
     ) -> None:
         if query_budget_seconds <= 0:
             raise ValueError("query_budget_seconds must be positive")
@@ -153,6 +157,7 @@ class SqliteDashboardReadRepository:
         self.progress_steps = progress_steps
         self.monotonic = monotonic
         self.cancelled = cancelled or (lambda: False)
+        self.absolute_deadline = absolute_deadline
 
     def _open_store(self) -> SqliteSchedulerStore | None:
         if not self.db_path.exists():
@@ -497,6 +502,7 @@ class SqliteDashboardReadRepository:
             seconds=self.query_budget_seconds,
             monotonic=self.monotonic,
             cancelled=self.cancelled,
+            absolute_deadline=self.absolute_deadline,
         )
         counts: Counter[str] = Counter()
         try:
@@ -561,6 +567,7 @@ class SqliteDashboardReadRepository:
             seconds=self.query_budget_seconds,
             monotonic=self.monotonic,
             cancelled=self.cancelled,
+            absolute_deadline=self.absolute_deadline,
         )
         try:
             store = self._open_store()

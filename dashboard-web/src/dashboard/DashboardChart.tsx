@@ -1,4 +1,12 @@
-import { BarChart, CustomChart, GaugeChart, HeatmapChart, TreemapChart } from "echarts/charts";
+import {
+  BarChart,
+  CustomChart,
+  GaugeChart,
+  HeatmapChart,
+  SankeyChart,
+  SunburstChart,
+  TreemapChart,
+} from "echarts/charts";
 import {
   CalendarComponent,
   GridComponent,
@@ -18,6 +26,8 @@ echarts.use([
   CustomChart,
   GaugeChart,
   HeatmapChart,
+  SankeyChart,
+  SunburstChart,
   TreemapChart,
   CalendarComponent,
   GridComponent,

@@ -1,0 +1,45 @@
+schema_version: 4
+name: phase-29-dashboard-token-analytics
+short_name: f29 - Tokens dashboard
+phases:
+  - name: phase-29-1-token-queries
+    short_name: f29.1 - Consultas de tokens
+    plan_path: archive/implementation-history/plans/phase-29-1-token-queries.md
+    prompt_source_path: archive/implementation-history/plans/prompt_phase-29-1-token-queries.txt
+    commit_message: 'feat: add shared Dashboard token analytics queries'
+    implementer:
+      provider: cursor
+    cursor:
+      runtime: sdk-local
+      model: grok-4.7
+      parameters:
+        context: 256k
+        reasoning_effort: high
+        fast: false
+    codex:
+      review_model: gpt-6.1-sol
+      review_reasoning_effort: high
+    workflow:
+      max_review_iterations: 7
+      cursor_timeout_minutes: 90
+      codex_timeout_minutes: 90
+  - name: phase-29-2-token-widgets
+    short_name: f29.2 - Graficas y detalle de run
+    plan_path: archive/implementation-history/plans/phase-29-2-token-widgets.md
+    prompt_source_path: archive/implementation-history/plans/prompt_phase-29-2-token-widgets.txt
+    implementer:
+      provider: cursor
+    cursor:
+      runtime: sdk-local
+      model: grok-4.7
+      parameters:
+        context: 256k
+        reasoning_effort: high
+        fast: false
+    codex:
+      review_model: gpt-6.1-sol
+      review_reasoning_effort: high
+    workflow:
+      max_review_iterations: 7
+      cursor_timeout_minutes: 90
+      codex_timeout_minutes: 90

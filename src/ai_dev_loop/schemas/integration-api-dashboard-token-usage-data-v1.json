@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/integration-api-dashboard-token-usage-data-v1.json",
+  "title": "ai_dev_loop Integration API dashboard token usage data v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "observedAt",
+    "filters",
+    "scope",
+    "modelProvenance",
+    "normalizationVersion",
+    "selectedRun",
+    "selectedRunCount",
+    "cohortRunCount",
+    "cohortCoverage",
+    "source",
+    "rows"
+  ],
+  "properties": {
+    "observedAt": { "type": "string", "format": "integration-rfc3339-utc" },
+    "filters": {
+      "$ref": "https://ai-dev-loop.local/schemas/integration-api-dashboard-shared-v1.json#/$defs/filters"
+    },
+    "scope": { "enum": ["cohort", "direct"] },
+    "modelProvenance": { "const": "configured" },
+    "normalizationVersion": { "const": "provider-usage-v1" },
+    "selectedRun": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "required": ["runId", "shortName", "projectName"],
+      "properties": {
+        "runId": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "shortName": { "type": "string", "minLength": 1, "maxLength": 35 },
+        "projectName": { "type": "string", "minLength": 1 }
+      }
+    },
+    "selectedRunCount": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "cohortRunCount": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "cohortCoverage": {
+      "$ref": "https://ai-dev-loop.local/schemas/integration-api-dashboard-shared-v1.json#/$defs/coverage"
+    },
+    "source": { "$ref": "#/$defs/source" },
+    "rows": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/row" }
+    }
+  },
+  "$defs": {
+    "category": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["knownTotal", "knownObservations", "observationCount", "coverage"],
+      "properties": {
+        "knownTotal": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "knownObservations": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "observationCount": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "coverage": { "enum": ["complete", "partial", "unknown", "not_applicable"] }
+      }
+    },
+    "flow": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "knownTotal", "knownObservations", "observationCount", "coverage"],
+      "properties": {
+        "name": {
+          "enum": [
+            "input_other",
+            "cache_read",
+            "cache_write",
+            "input_unsplit",
+            "output_other",
+            "reasoning_output",
+            "output_unsplit"
+          ]
+        },
+        "knownTotal": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "knownObservations": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "observationCount": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "coverage": { "enum": ["complete", "partial", "unknown", "not_applicable"] }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "knownTotalTokens",
+        "inferenceAttempts",
+        "knownAttempts",
+        "partialAttempts",
+        "unknownAttempts",
+        "coverage",
+        "diagnostics",
+        "categories",
+        "flows"
+      ],
+      "properties": {
+        "knownTotalTokens": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "inferenceAttempts": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "knownAttempts": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "partialAttempts": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "unknownAttempts": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "coverage": { "enum": ["complete", "partial", "unknown", "not_applicable"] },
+        "diagnostics": { "type": "array", "items": { "type": "string", "maxLength": 80 } },
+        "categories": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/category" }
+        },
+        "flows": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": { "$ref": "#/$defs/flow" }
+        }
+      }
+    },
+    "row": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "provider",
+        "configuredModel",
+        "modelProvenance",
+        "role",
+        "stage",
+        "knownTotalTokens",
+        "inferenceAttempts",
+        "knownAttempts",
+        "partialAttempts",
+        "unknownAttempts",
+        "coverage",
+        "categories",
+        "nativeCategories",
+        "flows"
+      ],
+      "properties": {
+        "provider": { "enum": ["cursor", "codex"] },
+        "configuredModel": { "type": ["string", "null"], "minLength": 1 },
+        "modelProvenance": { "const": "configured" },
+        "role": { "enum": ["implementer", "reviewer"] },
+        "stage": { "enum": ["initial", "correction", "review"] },
+        "knownTotalTokens": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "inferenceAttempts": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "knownAttempts": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "partialAttempts": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "unknownAttempts": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "coverage": { "enum": ["complete", "partial", "unknown", "not_applicable"] },
+        "categories": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/category" }
+        },
+        "nativeCategories": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/category" }
+        },
+        "flows": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": { "$ref": "#/$defs/flow" }
+        }
+      }
+    }
+  }
+}

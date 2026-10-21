@@ -378,6 +378,33 @@ def integration_dashboard_activity_command(
     emit_success(data.model_dump(mode="json", by_alias=True))
 
 
+@dashboard_app.command("token-usage")
+def integration_dashboard_token_usage_command(
+    from_utc: DashboardFromOption,
+    to_utc: DashboardToOption,
+    output: IntegrationOutputOption = "json",
+    project_name: DashboardProjectOption = None,
+    time_zone: DashboardTimeZoneOption = "America/La_Paz",
+    run_id: Annotated[
+        str | None,
+        typer.Option("--run-id", help="Exact run in the started cohort."),
+    ] = None,
+) -> None:
+    """Return disjoint token usage for the started cohort or one direct run."""
+    _require_json_output(output)
+    service = default_dashboard_read_service()
+    kwargs: dict[str, object] = {
+        "from_value": from_utc,
+        "to_value": to_utc,
+        "time_zone": time_zone,
+        "run_id": run_id,
+    }
+    if project_name is not None:
+        kwargs["project_name"] = project_name
+    data = service.token_usage(**kwargs)
+    emit_success(data.model_dump(mode="json", by_alias=True))
+
+
 @runs_app.command("list")
 def integration_runs_list_command(
     output: IntegrationOutputOption = "json",

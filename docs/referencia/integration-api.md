@@ -5,7 +5,7 @@ futuro supervise el scheduler local sin acceder a SQLite ni rutas privadas.
 
 ## Versión del contrato
 
-- Versión actual de la API: **1.12** (`apiVersion.major` / `apiVersion.minor`).
+- Versión actual de la API: **1.13** (`apiVersion.major` / `apiVersion.minor`).
 - Misma major: compatible; campos desconocidos se ignoran en consumidores.
 - Major distinta: el consumidor debe detenerse con `UPDATE_REQUIRED` y no emitir
   más peticiones de recursos.
@@ -18,7 +18,7 @@ Todas las órdenes bajo `integration` escriben **un único documento JSON** en s
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 12 },
+  "apiVersion": { "major": 1, "minor": 13 },
   "ok": true,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": {},
@@ -30,7 +30,7 @@ Error:
 
 ```json
 {
-  "apiVersion": { "major": 1, "minor": 12 },
+  "apiVersion": { "major": 1, "minor": 13 },
   "ok": false,
   "observedAt": "2026-09-18T12:00:00Z",
   "data": null,
@@ -64,8 +64,11 @@ ai_dev_loop integration info [--output json]
 - No requiere ledger del scheduler, no crea directorios XDG y no sondea Codex.
 - `data.aiDevLoopVersion` es la versión del paquete instalado.
 - `data.capabilities` declara de forma honesta qué lecturas existen en esta
-  versión. En **1.12**, `runs`, `sequences`, `reviewInspection`, `processOutput`,
-  `codexCapacity`, `dashboard`, `shortNames` y `tokenUsage` son `true`.
+  versión. En **1.13**, `runs`, `sequences`, `reviewInspection`, `processOutput`,
+  `codexCapacity`, `dashboard`, `shortNames`, `tokenUsage` y
+  `dashboardTokenUsage` son `true`. La ausencia de `dashboardTokenUsage` significa
+  que esa consulta no está disponible; los clientes de la misma major siguen
+  siendo válidos.
 
 ## Capacidad Codex local (API 1.5)
 
@@ -193,6 +196,7 @@ ai_dev_loop integration dashboard projects [--offset N --limit N]
 ai_dev_loop integration dashboard summary --from UTC --to UTC [--project NAME] [--time-zone IANA]
 ai_dev_loop integration dashboard runs --from UTC --to UTC [--project NAME] [--time-zone IANA] [--offset N --limit N]
 ai_dev_loop integration dashboard activity --from UTC --to UTC --metric submissions|review-rounds|process-hours [--project NAME] [--time-zone IANA]
+ai_dev_loop integration dashboard token-usage --from UTC --to UTC [--project NAME] [--time-zone IANA] [--run-id RUN_ID]
 ```
 
 - `from` es inclusivo y `to` exclusivo; ambos se normalizan a UTC. El rango
@@ -248,6 +252,18 @@ desconocidos el total conocido es `null`. Cursor usa
 entrada y reasoning como subconjuntos. Las proyecciones históricas no migran ni
 backfillean el ledger y solo leen JSONL Codex cuyo origen está autenticado.
 
+API 1.13 agrega la capacidad opcional `dashboardTokenUsage` y la operación
+`dashboard.token-usage`. No cambia el significado de `tokenUsage` en inspect.
+La consulta agrega el uso directo de la cohorte iniciada, o de un solo run de
+esa cohorte cuando `runId` es exacto. El modelo es el configurado en la
+invocación autenticada; `null` permanece `null`. Las categorías nativas pueden
+solaparse, y `flows` es la partición disjunta cuyo total conocido coincide con
+`knownTotalTokens`. Una cohorte vacía es `not_applicable`; evidencia ausente es
+`unknown` con total `null`. Los límites son 366 días, 10.000 runs, 100.000
+intentos de inferencia, 5 segundos y 240 KiB, con fallo tipado y sin total
+parcial. El Dashboard consume esta consulta en el flujo, la composición y las
+categorías de la cohorte, y en el consumo directo del run seleccionado.
+
 ## Implementer, capacidad y timeout por rol (API 1.7+)
 
 Los resúmenes de run incluyen `implementerProvider`; inspect agrega
@@ -285,7 +301,7 @@ sin invocar la CLI como subprocess por petición. Enlaza solamente
 ```
 
 Las operaciones permitidas son `dashboard.projects`, `dashboard.summary`,
-`dashboard.runs`, `dashboard.activity`, `run.inspect`, `run.timeline`,
+`dashboard.runs`, `dashboard.activity`, `dashboard.token-usage`, `run.inspect`, `run.timeline`,
 `sequence.inspect`, `sequence.phase-runs`, `machine.codex-capacity`,
 `run.initial-prompt`, `run.review`, `run.review-content` y `run.output`. No existe
 dispatch genérico de comandos, SQL, argv o rutas. Los parámetros de rango usan

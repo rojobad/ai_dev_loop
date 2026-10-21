@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   CAPACITY_REFRESH_MS,
+  SELECTED_RUN_REFRESH_MS,
   SUMMARY_REFRESH_MS,
   RefreshCoordinator,
 } from "./refreshCoordinator";
@@ -278,5 +279,39 @@ describe("C266-2 refresh coordinator", () => {
     await runtime.advance(1);
     expect(ownerRead).toHaveBeenCalledTimes(2);
     retire();
+  });
+
+  it("shares two slots between the 30s token scope and the 10s selected run", async () => {
+    const runtime = new FakeRuntime();
+    const coordinator = new RefreshCoordinator({ runtime, timeoutMs: 1_000_000, maxActive: 2 });
+    const starts: string[] = [];
+    const held = new Map<string, ReturnType<typeof deferred<string>>>();
+    const retire = ["dashboard.token-usage", "dashboard.token-usage.run"].map((key) => {
+      const request = deferred<string>();
+      held.set(key, request);
+      return coordinator.observe({
+        key,
+        cadenceMs: key.endsWith(".run") ? SELECTED_RUN_REFRESH_MS : SUMMARY_REFRESH_MS,
+        read: async () => {
+          starts.push(key);
+          return request.promise;
+        },
+        onSuccess: vi.fn(),
+        onError: vi.fn(),
+      });
+    });
+    const blocked = coordinator.request("dashboard.runs.extra", async () => "extra");
+    expect(coordinator.activeCount()).toBe(2);
+    expect(starts).toEqual(["dashboard.token-usage", "dashboard.token-usage.run"]);
+    held.get("dashboard.token-usage")?.resolve("cohort");
+    held.get("dashboard.token-usage.run")?.resolve("run");
+    await expect(blocked).resolves.toBe("extra");
+    await runtime.advance(SELECTED_RUN_REFRESH_MS);
+    expect(starts.filter((key) => key.endsWith(".run"))).toHaveLength(2);
+    expect(starts.filter((key) => key === "dashboard.token-usage")).toHaveLength(1);
+    await runtime.advance(SUMMARY_REFRESH_MS - SELECTED_RUN_REFRESH_MS);
+    expect(starts.filter((key) => key === "dashboard.token-usage")).toHaveLength(2);
+    expect(coordinator.activeCount()).toBeLessThanOrEqual(2);
+    retire.forEach((stop) => stop());
   });
 });

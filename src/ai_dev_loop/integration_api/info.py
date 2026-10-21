@@ -22,6 +22,7 @@ def build_integration_info_data() -> IntegrationInfoData:
                 "dashboard": True,
                 "shortNames": True,
                 "tokenUsage": True,
+                "dashboardTokenUsage": True,
             },
         }
     )

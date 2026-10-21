@@ -37,3 +37,6 @@ archive/implementation-history/plans/prompt_*.txt
 
 # Portable Phase 28 Dashboard refinement inputs.
 !archive/implementation-history/plans/prompt_phase-28-*.txt
+
+# Portable Phase 29 Dashboard token analytics inputs.
+!archive/implementation-history/plans/prompt_phase-29-*.txt

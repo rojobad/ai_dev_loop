@@ -33,6 +33,7 @@ class ReadOnlyProtectedArtifactStore:
         relative_path: str,
         *,
         expected_sha256: str,
+        max_bytes: int | None = None,
     ) -> bytes:
         validate_sha256_hex(expected_sha256)
         root = self.run_root(run_id)
@@ -45,7 +46,11 @@ class ReadOnlyProtectedArtifactStore:
             mode = path.stat().st_mode & 0o777
             if mode & 0o077:
                 raise ProtectedArtifactError("artifact has unsafe permissions")
+        if max_bytes is not None and path.stat().st_size > max_bytes:
+            raise ProtectedArtifactError("artifact exceeds size limit")
         data = path.read_bytes()
+        if max_bytes is not None and len(data) > max_bytes:
+            raise ProtectedArtifactError("artifact exceeds size limit")
         digest = hashlib.sha256(data).hexdigest()
         if digest != expected_sha256:
             raise ProtectedArtifactError("artifact hash mismatch")

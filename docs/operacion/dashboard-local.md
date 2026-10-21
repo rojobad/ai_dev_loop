@@ -76,9 +76,29 @@ reescriben.
 
 ## Refresco y contenido sensible
 
-El refresco automático usa como máximo dos lecturas activas. Summary, primera
-página visible del mapa y actividad usan 30 segundos; el run/timeline
-seleccionado usa 10 segundos; capacidad usa 60 segundos. El mapa solicita hasta
+El refresco automático usa como máximo dos lecturas activas. Summary, la
+primera página visible del mapa, la actividad y el uso de tokens de la cohorte
+usan 30 segundos. El run/timeline seleccionado y su consumo directo de tokens
+usan 10 segundos. Capacidad usa 60 segundos. Esas dos lecturas de tokens son
+independientes: la de cohorte alimenta los tres gráficos y la del run solo
+aparece cuando hay un run seleccionado. Al final de la página, la tarjeta
+`Token Scope` permite elegir varios modelos mediante casillas y un rol.
+La selección filtra los tres gráficos siguientes en memoria y no cambia
+Inspection scope, el mapa ni el run. Sin modelos concretos seleccionados se
+incluyen todos. Los clics en modelos de las gráficas agregan o quitan ese modelo;
+un rol o una hoja agrega su modelo y aplica el rol, conservando los demás
+modelos. `All models` restablece solo los modelos; `Clear selection`, ambos
+filtros. Escape cierra el selector y devuelve el foco sin scroll. Los modelos
+retirados desaparecen de la selección al refrescar, conservando los vigentes.
+Un productor sin
+`dashboardTokenUsage` deja el uso como no disponible; no lo muestra como cero
+ni detiene el resto del dashboard. La lectura de tokens no abre el prompt, la
+review ni la salida de proceso. Ante HTTP 503, las lecturas de tokens reintentan
+hasta tres veces, esperando 1, 2 y 4 segundos. Comparten el límite de dos
+lecturas del coordinador y su timeout; cambiar scope/run, pausar u ocultar la
+pestaña cancela la espera. Si la indisponibilidad continúa, se muestra el error
+temporal y se conserva Retry. No se reintentan automáticamente errores de datos,
+contrato ni HTTP 500. El mapa solicita hasta
 1000 runs y sigue las páginas automáticamente. Si una página no cabe en el sobre
 de 240 KiB, reduce ese lote de forma acotada; las páginas históricas cargadas no
 se convierten en polling periódico. Progreso, cobertura incompleta y `Retry`

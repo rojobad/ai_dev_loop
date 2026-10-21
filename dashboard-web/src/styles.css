@@ -669,6 +669,241 @@ button:disabled {
   font-size: 0.8rem;
 }
 
+.token-analytics,
+.run-token-panel,
+.token-panel {
+  overflow-anchor: none;
+}
+
+.token-analytics {
+  display: grid;
+  gap: 0.85rem;
+  margin-top: 0.85rem;
+}
+
+.token-scope,
+.token-sankey-slot,
+.token-pair {
+  min-width: 0;
+}
+
+.token-sankey-slot {
+  min-height: 560px;
+}
+
+.token-sankey-scroll {
+  min-height: 480px;
+  max-height: 480px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.token-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+  align-items: start;
+}
+
+.token-panel {
+  min-height: 480px;
+}
+
+.run-token-panel {
+  min-height: 440px;
+  margin-top: 0.85rem;
+}
+
+.run-token-frame {
+  display: grid;
+  grid-template-rows: 9rem 320px minmax(3rem, auto);
+}
+
+.run-token-meta,
+.run-token-chart-scroll {
+  min-height: 0;
+  overflow: auto;
+}
+
+.run-token-chart-scroll {
+  overscroll-behavior: contain;
+}
+
+.run-token-chart-scroll .token-chart-placeholder {
+  min-height: 100%;
+}
+
+.run-token-disclosure-slot .token-details-disclosure {
+  margin-top: 0;
+}
+
+.token-facets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.55rem;
+}
+
+.token-facets label {
+  display: grid;
+  min-width: 190px;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.token-facets select {
+  width: 100%;
+  min-width: 0;
+  min-height: 2.5rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 400;
+}
+
+.token-model-control {
+  position: relative;
+  display: grid;
+  gap: 0.35rem;
+  width: min(22rem, 100%);
+  min-width: 0;
+}
+
+.token-model-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.token-model-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+}
+
+.token-model-trigger > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.token-model-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  width: 100%;
+  max-height: min(18rem, 40vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 8px 26px rgb(15 35 60 / 15%);
+}
+
+.token-model-menu > button {
+  width: 100%;
+  margin-bottom: 0.3rem;
+}
+
+.token-model-menu label {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 0.5rem;
+  border-radius: 6px;
+  color: var(--text);
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.token-model-menu label:hover {
+  background: var(--surface-muted);
+}
+
+.token-model-menu input {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+}
+
+.token-model-menu label span {
+  overflow-wrap: anywhere;
+}
+
+.token-known-total,
+.token-state {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 400;
+}
+
+.token-known-total strong,
+.token-state {
+  color: var(--text);
+}
+
+.token-chart-placeholder {
+  display: grid;
+  min-height: 240px;
+  place-items: center;
+  color: var(--muted);
+}
+
+.token-heatmap-scroll {
+  min-height: 440px;
+  max-height: 440px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.token-details-disclosure {
+  margin-top: 0.75rem;
+}
+
+.token-details-disclosure summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+.token-detail-human dl,
+.token-detail-row dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem 0.8rem;
+  margin: 0.6rem 0;
+}
+
+.token-detail-human dt,
+.token-detail-row dt {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.token-detail-ids {
+  margin-top: 1rem;
+}
+
+.token-detail-row ul,
+.token-detail-human ul {
+  margin: 0.3rem 0 0.8rem;
+  padding-left: 1.1rem;
+}
+
 .activity-panel {
   margin-top: 0.85rem;
 }
@@ -727,7 +962,10 @@ button:disabled {
   }
 
   .overview-grid,
-  .linked-inspection-grid {
+  .linked-inspection-grid,
+  .token-pair,
+  .token-detail-human dl,
+  .token-detail-row dl {
     grid-template-columns: 1fr;
   }
 

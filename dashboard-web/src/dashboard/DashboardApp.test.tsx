@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { DashboardDataSourceError } from "./types";
 import type {
   AttemptTimelineData,
   CodexCapacityData,
@@ -21,8 +22,15 @@ import type {
   ReviewDetailData,
   RunInspectData,
   SourceObservation,
+  TokenUsageData,
 } from "./types";
-import { capacityData, ImmediateDataSource, observation, summaryData } from "./test-fixtures";
+import {
+  capacityData,
+  cursorCodexTokenUsage,
+  ImmediateDataSource,
+  observation,
+  summaryData,
+} from "./test-fixtures";
 
 vi.mock("./DashboardChart", () => ({
   DashboardChart: ({
@@ -179,6 +187,26 @@ class DeferredDataSource implements DashboardDataSource {
 
   async capacity(_signal: AbortSignal): Promise<SourceObservation<CodexCapacityData>> {
     return observation(capacityData);
+  }
+
+  async tokenUsage(
+    filters: DashboardFilters,
+    runId: string | null,
+  ): Promise<SourceObservation<TokenUsageData>> {
+    const data = cursorCodexTokenUsage(filters);
+    if (runId === null) return observation(data);
+    const row = data.rows[0];
+    return observation({
+      ...data,
+      scope: "direct",
+      selectedRun: { runId, shortName: "Selected run", projectName: filters.projectName ?? "project-a" },
+      selectedRunCount: 1,
+      source: {
+        ...row,
+        diagnostics: [],
+      },
+      rows: [row],
+    });
   }
 }
 
@@ -434,5 +462,38 @@ describe("C263 overview shell", () => {
     expect(
       screen.getByText("Select an exact run cell or the loaded-run control to inspect it."),
     ).toBeInTheDocument();
+  });
+
+  it("shares one cohort token read and keeps run selection off the global charts", async () => {
+    const user = userEvent.setup();
+    const dataSource = new ImmediateDataSource();
+    render(<DashboardApp dataSource={dataSource} />);
+    expect(await screen.findByText("255")).toBeInTheDocument();
+    const cohortReads = () => dataSource.tokenCalls.filter((call) => call.runId === null);
+    expect(cohortReads()).toHaveLength(1);
+    expect(dataSource.tokenCalls.some((call) => call.runId !== null)).toBe(false);
+    expect(screen.queryByText("Precise values")).not.toBeInTheDocument();
+
+    await user.selectOptions(await screen.findByLabelText("Select loaded run"), "standalone-run");
+    expect((await screen.findAllByText("Selected run")).length).toBeGreaterThan(0);
+    expect(dataSource.tokenCalls.map((call) => call.runId)).toEqual([null, "standalone-run"]);
+    expect(screen.getAllByText("255").length).toBeGreaterThan(0);
+    expect(screen.getByText("Precise values").closest("details")).not.toHaveAttribute("open");
+    expect(cohortReads()).toHaveLength(1);
+  });
+
+  it("leaves the rest of the dashboard usable when token usage is unsupported", async () => {
+    class UnsupportedTokens extends ImmediateDataSource {
+      override async tokenUsage(): Promise<SourceObservation<TokenUsageData>> {
+        throw new DashboardDataSourceError(
+          "INVALID_ARGUMENT",
+          "Unsupported dashboard read operation.",
+        );
+      }
+    }
+    render(<DashboardApp dataSource={new UnsupportedTokens()} />);
+    expect((await screen.findAllByText(/Token usage is not available/)).length).toBeGreaterThan(0);
+    expect(await screen.findByLabelText("Runs started: 7")).toBeInTheDocument();
+    expect(screen.queryByText("Known total")).not.toBeInTheDocument();
   });
 });

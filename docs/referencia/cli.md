@@ -792,6 +792,7 @@ ai_dev_loop integration dashboard projects [--offset N --limit N]
 ai_dev_loop integration dashboard summary --from UTC --to UTC [--project NAME] [--time-zone IANA]
 ai_dev_loop integration dashboard runs --from UTC --to UTC [--project NAME] [--time-zone IANA] [--offset N --limit N]
 ai_dev_loop integration dashboard activity --from UTC --to UTC --metric submissions|review-rounds|process-hours [--project NAME] [--time-zone IANA]
+ai_dev_loop integration dashboard token-usage --from UTC --to UTC [--project NAME] [--time-zone IANA] [--run-id RUN_ID]
 ```
 
 Namespace singular para el contrato JSON que consumirá el Bridge futuro. Todas
@@ -799,9 +800,11 @@ las órdenes de este namespace emiten un único documento JSON en stdout; `--hel
 sigue siendo ayuda normal de Typer. El namespace plural `integrations` (instalación
 Codex global) no cambia.
 
-La API actual **1.12** expone `dashboard`, nombres cortos y `tokenUsage`; la ausencia de la
-capacidad dashboard en un payload histórico significa que esas cuatro consultas
-no están disponibles. Las
+La API actual **1.13** expone `dashboard`, nombres cortos, `tokenUsage` y
+`dashboardTokenUsage`. La ausencia de la
+capacidad dashboard en un payload histórico significa que las consultas de
+dashboard no están disponibles; la ausencia de `dashboardTokenUsage` significa
+que `token-usage` no está disponible. Las
 lecturas de runs, secuencias, revisiones, salidas de procesos y dashboard abren el
 ledger en solo lectura y no migran la base de datos.
 `integration info` no requiere ledger. `integration codex-capacity` ejecuta una
@@ -813,8 +816,14 @@ Las consultas dashboard tienen rango `[from,to)`, zona IANA, proyecto exacto
 opcional y páginas de 25 por defecto. `dashboard.runs` admite hasta 1000 por
 página; las demás colecciones conservan el máximo de 100. `summary`/`runs` usan
 el primer lanzamiento de ejecución; `activity` fecha eventos o intervalos y
-entrega segundos para `process-hours`. Los límites de scope/tiempo/envelope
-fallan sin resultados parciales. Estas órdenes no leen contenido sensible ni
+entrega segundos para `process-hours`. `token-usage` agrega el uso directo de
+esa misma cohorte, o de un run directo cuando `--run-id` pertenece a ella. El
+modelo es el configurado en la invocación autenticada. Las categorías pueden
+solaparse; las hojas de flujo no se solapan y suman el total conocido. El
+Dashboard muestra esa consulta como flujo, composición y categorías de la
+cohorte, y como consumo directo del run seleccionado. Los límites de
+scope/tiempo/envelope fallan sin resultados parciales. Estas órdenes no leen
+contenido sensible ni
 observan capacidad actual.
 
 Detalle del sobre, códigos de error, paginación y lecturas sensibles:

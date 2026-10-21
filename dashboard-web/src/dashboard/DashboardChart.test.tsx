@@ -27,6 +27,8 @@ vi.mock("echarts/charts", () => ({
   CustomChart: {},
   GaugeChart: {},
   HeatmapChart: {},
+  SankeyChart: {},
+  SunburstChart: {},
   TreemapChart: {},
 }));
 vi.mock("echarts/components", () => ({

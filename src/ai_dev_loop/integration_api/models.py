@@ -54,6 +54,7 @@ class IntegrationCapabilities(PublicWireModel):
     dashboard: StrictBool = False
     short_names: StrictBool = Field(False, alias="shortNames")
     token_usage: StrictBool = Field(False, alias="tokenUsage")
+    dashboard_token_usage: StrictBool = Field(False, alias="dashboardTokenUsage")
 
 
 class IntegrationInfoData(PublicWireModel):

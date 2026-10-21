@@ -5,6 +5,8 @@ import {
   projectStateOption,
   workloadOption,
 } from "./charts";
+import { cursorCodexTokenUsage } from "./test-fixtures";
+import { projectTokenUsage, tokenSankeyOption } from "./tokenCharts";
 import type { DashboardProjectSummary, DashboardWorkloadItem } from "./types";
 
 interface TooltipOption {
@@ -193,5 +195,16 @@ describe("chart projections", () => {
     expect(projectFromChartEvent({ name: "project-from-axis" })).toBe("project-from-axis");
     expect(projectFromChartEvent({ data: { projectName: 42 } })).toBeNull();
     expect(projectFromChartEvent(null)).toBeNull();
+  });
+
+  it("escapes configured model text in token-flow tooltips", () => {
+    const usage = cursorCodexTokenUsage();
+    usage.rows[0].configuredModel = '<img src=x onerror="boom">';
+    const option = tokenSankeyOption(projectTokenUsage(usage, { models: [], role: null }));
+    const node = (option.series as Array<{ data: Array<Record<string, unknown>> }>)[0].data[0];
+    const html = (option.tooltip as { formatter: (value: unknown) => string }).formatter({ data: node });
+    expect(html).toContain("&lt;img");
+    expect(html).not.toContain("<img");
+    expect(html).not.toMatch(/runId|attemptId|sequenceId/i);
   });
 });
