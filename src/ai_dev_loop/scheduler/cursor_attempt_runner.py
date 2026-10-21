@@ -398,19 +398,25 @@ def _sdk_adapter(evidence: dict[str, object]) -> CursorSdkAdapter:
     if cursor_conversation_key(owner) != expected_key:
         raise ValueError("Cursor SDK conversation ownership binding is invalid")
     repository_root = Path(str(evidence["repository_root"]))
+    from ai_dev_loop.scheduler.application.cursor_sdk_retention import open_dispatch_store
+
     evidence_schema = evidence.get("schema_version")
     store_backend: Literal["jsonl", "sqlite"] = "sqlite" if evidence_schema == 3 else "jsonl"
     native_store_layout_version: Literal[1] = 1
     if evidence_schema == 3 and evidence.get("store_backend") != "sqlite":
         raise ValueError("Cursor SDK SQLite storage binding is invalid")
-    config = build_cursor_sdk_client_config(
-        _sdk_selection(evidence),
-        workspace=repository_root,
-        repository_root=repository_root,
-        conversation_owner_identity=owner,
-        store_backend=store_backend,
-        native_store_layout_version=native_store_layout_version,
-        require_existing_native_state=bool(evidence.get("agent_id")),
+    config = open_dispatch_store(
+        conversation_key=expected_key,
+        conversation_owner_run_id=owner,
+        opener=lambda: build_cursor_sdk_client_config(
+            _sdk_selection(evidence),
+            workspace=repository_root,
+            repository_root=repository_root,
+            conversation_owner_identity=owner,
+            store_backend=store_backend,
+            native_store_layout_version=native_store_layout_version,
+            require_existing_native_state=bool(evidence.get("agent_id")),
+        ),
     )
     return CursorSdkAdapter(config, repository_root=repository_root)
 
@@ -2552,21 +2558,21 @@ def main(argv: list[str] | None = None) -> int:
         native_state_unavailable = (
             isinstance(exc, CursorSdkPathError) and exc.code == "native_state_unavailable"
         )
-        failure_kind = (
-            "cursor_sdk_native_unavailable"
-            if native_state_unavailable
-            else (
-                "cursor_chat_create_failed"
-                if effect_kind == CREATE_CHAT_EFFECT_KIND
-                else (
-                    "cursor_sdk_reconciliation_failed"
-                    if effect_kind == RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND
-                    else "cursor_turn_execution_failed"
-                )
-            )
+        conversation_disposed = (
+            isinstance(exc, CursorSdkPathError) and exc.code == "conversation_disposed"
         )
-        diagnostic_payload: dict[str, object] = {"failure_kind": failure_kind}
         if native_state_unavailable:
+            failure_kind = "cursor_sdk_native_unavailable"
+        elif conversation_disposed:
+            failure_kind = "cursor_sdk_preflight_failed"
+        elif effect_kind == CREATE_CHAT_EFFECT_KIND:
+            failure_kind = "cursor_chat_create_failed"
+        elif effect_kind == RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND:
+            failure_kind = "cursor_sdk_reconciliation_failed"
+        else:
+            failure_kind = "cursor_turn_execution_failed"
+        diagnostic_payload: dict[str, object] = {"failure_kind": failure_kind}
+        if native_state_unavailable or conversation_disposed:
             diagnostic_payload.update(
                 {
                     "runtime": "sdk-local",
@@ -2578,6 +2584,7 @@ def main(argv: list[str] | None = None) -> int:
             evidence.get("runtime") == "sdk-local"
             and effect_kind != RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND
             and not native_state_unavailable
+            and not conversation_disposed
         ):
             diagnostic_payload.update(
                 _sdk_uncertainty_payload(
@@ -2607,9 +2614,9 @@ def main(argv: list[str] | None = None) -> int:
                 TerminationClass.TIMEOUT if sdk_timed_out else TerminationClass.NONZERO_EXIT
             ),
             stderr_text=(
-                _deadline_stderr(run_root, args.attempt_id, exc)
-                if evidence.get("runtime") == "sdk-local"
-                else _bounded_diagnostic(exc)
+                _bounded_diagnostic(exc)
+                if conversation_disposed or evidence.get("runtime") != "sdk-local"
+                else _deadline_stderr(run_root, args.attempt_id, exc)
             ),
             stdout_payload=diagnostic_payload,
         )

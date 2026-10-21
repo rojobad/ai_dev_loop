@@ -356,7 +356,7 @@ def test_fresh_legacy_and_invalid_v3_fail_before_resource_creation(
     assert not paths["artifact_root"].exists()
 
 
-@pytest.mark.parametrize("schema_version", [16, 17, 18])
+@pytest.mark.parametrize("schema_version", [16, 17, 18, 19])
 def test_fresh_legacy_rejection_does_not_change_existing_ledger(
     git_repo: Path,
     isolated_xdg: Path,
@@ -372,6 +372,14 @@ def test_fresh_legacy_rejection_does_not_change_existing_ledger(
     legacy_path.write_text(yaml.safe_dump(legacy), encoding="utf-8")
 
     SqliteSchedulerStore(paths["db_path"])
+    if schema_version < 19:
+        with sqlite3.connect(paths["db_path"]) as conn:
+            conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_retention_policy")
+            conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_conversation_fences")
+            conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_disposals")
+            conn.execute("DELETE FROM scheduler_schema_migrations WHERE version >= 19")
+            conn.execute("PRAGMA user_version = 18")
+            conn.commit()
     if schema_version < 18:
         with sqlite3.connect(paths["db_path"]) as conn:
             conn.execute("DROP TABLE scheduler_cursor_sdk_reconciliations")
@@ -591,6 +599,9 @@ def test_schema16_read_fallback_and_v17_migration_preserve_authority(
     immutable_before = _immutable_snapshot(paths["db_path"])
     artifacts_before = _artifact_digests(paths["artifact_root"])
     with sqlite3.connect(paths["db_path"]) as conn:
+        conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_retention_policy")
+        conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_conversation_fences")
+        conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_disposals")
         conn.execute("DROP TABLE scheduler_cursor_sdk_reconciliations")
         conn.execute("DROP TABLE scheduler_planned_run_presentation")
         conn.execute("DROP TABLE scheduler_run_presentation")
@@ -626,7 +637,7 @@ def test_schema16_read_fallback_and_v17_migration_preserve_authority(
 
     migrated = SqliteSchedulerStore(paths["db_path"])
     with migrated.begin_read() as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 18
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 19
         assert migrated.sequence_short_name(conn, prepared.sequence_id) == "fixture-sequence"
         assert migrated.run_short_name(conn, submitted.run_id) == submitted.run_id[:35]
         entries = conn.execute(
@@ -666,6 +677,9 @@ def test_schema17_migration_fault_rolls_back_all_presentation_tables(
     paths = _paths(isolated_xdg)
     SqliteSchedulerStore(paths["db_path"])
     with sqlite3.connect(paths["db_path"]) as conn:
+        conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_retention_policy")
+        conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_conversation_fences")
+        conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_disposals")
         conn.execute("DROP TABLE scheduler_cursor_sdk_reconciliations")
         conn.execute("DROP TABLE scheduler_planned_run_presentation")
         conn.execute("DROP TABLE scheduler_run_presentation")

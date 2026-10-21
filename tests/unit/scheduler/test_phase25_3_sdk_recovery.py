@@ -259,8 +259,11 @@ def test_phase25_3_persisted_models_match_published_json_schemas() -> None:
 
 def _downgrade_fixture_to_schema17(db_path: Path) -> None:
     with sqlite3.connect(db_path) as conn:
+        conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_retention_policy")
+        conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_conversation_fences")
+        conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_disposals")
         conn.execute("DROP TABLE scheduler_cursor_sdk_reconciliations")
-        conn.execute("DELETE FROM scheduler_schema_migrations WHERE version = 18")
+        conn.execute("DELETE FROM scheduler_schema_migrations WHERE version >= 18")
         conn.execute("PRAGMA user_version = 17")
         conn.commit()
 
@@ -272,9 +275,9 @@ def test_schema18_migration_adds_sdk_reconciliation_ledger(tmp_path: Path) -> No
 
     store = SqliteSchedulerStore(db_path)
 
-    assert SCHEMA_VERSION == 18
+    assert SCHEMA_VERSION == 19
     with store.begin_read() as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 18
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert (
             conn.execute(
                 "SELECT COUNT(*) FROM sqlite_master "

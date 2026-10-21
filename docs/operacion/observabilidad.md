@@ -110,3 +110,10 @@ Los comandos `status`, `inspect` y `logs` de nivel superior para runs bajo `runs
 fueron retirados en Phase 17.7. Para estado historico, consulta los artefactos en disco
 o elimina el arbol legacy con `scheduler cutover cleanup` solo tras aceptacion humana
 independiente (ver [Desinstalacion y limpieza](desinstalacion-limpieza.md)).
+
+La retención de conversaciones Cursor SDK no añade un timer ni una métrica de
+Dashboard. El mismo `scheduler tick` que ya observa el ledger aplica, en un lote
+acotado y después de soltar su lease, la política explícita de 168 horas
+desde la última terminación autenticada.
+`scheduler cursor-store policy` y `cleanup` muestran la decisión y la
+elegibilidad sin incluir prompts, blobs nativos ni session IDs completos.

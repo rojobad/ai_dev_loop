@@ -118,4 +118,11 @@ trabajo para inferir qué versión quedó activa. Después de crear records SDK,
 rollback necesita un paquete reader-compatible y otra ventana quiescente. Volver
 solo a un reader pre-Phase-25 es inseguro. No borres ledger, artifacts, store ni
 credenciales como parte del rollback; la limpieza es una autorización destructiva
-distinta.
+distinta. El cutover de estado retirado sigue siendo `scheduler cutover cleanup`
+y solo alcanza `runs/` y `pr-review-v2/`. Una conversación SDK cuya evidencia
+durable demuestra que todo el trabajo relacionado terminó se dispone con
+`scheduler cursor-store cleanup`, o por el tick de mantenimiento cuando han
+pasado 168 horas desde esa terminación autenticada —incluida la reconciliación
+nativa si ocurrió después del abort— y la política del ledger está habilitada.
+Esa política no borra stores recuperables, waits, presupuestos agotados ni
+holds de recovery.

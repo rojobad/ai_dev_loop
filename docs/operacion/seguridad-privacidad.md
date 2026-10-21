@@ -117,6 +117,12 @@ El store nativo es la autoridad de replay/consulta de la conversacion; el ledger
 no duplica transcript, eventos ni uso como nueva verdad. El bridge se cierra en
 el boundary de lifecycle del adapter tanto en salida normal como excepcional, y
 un fallo de recurso/runtime/open se clasifica antes de cualquier envío.
+Antes de crear o abrir ese root, el dispatch observa una intención o un recibo
+de retención y rechaza la conversación ya dispuesta sin llamar al bridge. La
+limpieza, manual o automática, borra solo ese root de aplicación tras autenticar
+owner y backend; conserva credenciales, ledger, artefactos y estado ajeno. La
+inspección no migra un ledger ausente o histórico. El tombstone se publica sin
+seguir enlaces simbólicos.
 
 El servidor `dashboard serve` es una superficie local sin login: enlaza únicamente
 IPv4 `127.0.0.1` y exige Host/Origin same-origin exactos. No debe publicarse mediante

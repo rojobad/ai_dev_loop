@@ -1,0 +1,78 @@
+{
+  "additionalProperties": false,
+  "description": "Durable deletion intent allocated before any native store removal.",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "intent_id": {
+      "minLength": 1,
+      "title": "Intent Id",
+      "type": "string"
+    },
+    "receipt_id": {
+      "minLength": 1,
+      "title": "Receipt Id",
+      "type": "string"
+    },
+    "conversation_key": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Conversation Key",
+      "type": "string"
+    },
+    "conversation_owner_run_id": {
+      "minLength": 1,
+      "title": "Conversation Owner Run Id",
+      "type": "string"
+    },
+    "store_backend": {
+      "enum": [
+        "jsonl",
+        "sqlite"
+      ],
+      "title": "Store Backend",
+      "type": "string"
+    },
+    "native_store_layout_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Native Store Layout Version",
+      "type": "integer"
+    },
+    "mode": {
+      "enum": [
+        "manual",
+        "automatic"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "definitively_finished_at": {
+      "minLength": 1,
+      "title": "Definitively Finished At",
+      "type": "string"
+    },
+    "requested_at": {
+      "minLength": 1,
+      "title": "Requested At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "intent_id",
+    "receipt_id",
+    "conversation_key",
+    "conversation_owner_run_id",
+    "store_backend",
+    "mode",
+    "definitively_finished_at",
+    "requested_at"
+  ],
+  "title": "CursorSdkDisposalIntentV1",
+  "type": "object"
+}

@@ -157,7 +157,8 @@ empaquetado abre `SqliteLocalAgentStore` con ese root y llama la API publica
 distribucion fijada. Fallar al resolver el recurso/runtime o abrir SQLite detiene
 el intento antes de crear, reanudar o enviar. No hay fallback al store global.
 Las formas historicas conservan sus dos roots `bridge/` y `store/` y semantica
-JSONL. Ningun root puede solaparse con el repositorio. La identidad del owner se
+JSONL. La retención de ese root no es un campo de `ai_dev_loop.yaml`: el ledger
+guarda la política explícita de 168 horas y el interruptor automático. Ningun root puede solaparse con el repositorio. La identidad del owner se
 convierte en un digest SHA-256; no se usa un nombre inferido, path libre ni estado
 dentro del checkout.
 

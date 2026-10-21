@@ -85,6 +85,12 @@ $XDG_STATE_HOME/ai_dev_loop/pr-review-v2/              # motor PR-review v2
 
 Eliminalos solo con `scheduler cutover cleanup --confirm delete-legacy-state` tras
 aceptacion humana independiente (ver [Desinstalacion y limpieza](desinstalacion-limpieza.md)).
+Ese cutover no alcanza `cursor-sdk/`. Una conversación SDK terminada se dispone
+con `scheduler cursor-store cleanup` o, si la política del ledger sigue
+habilitada, 168 horas después de la última terminación autenticada de todo el
+trabajo relacionado, incluida una reconciliación nativa posterior al abort. El
+root nativo desaparece; el ledger, los artefactos y el tombstone
+`cursor-sdk-disposals/<key>.json` quedan como evidencia.
 
 El layout legacy `runs/` incluia `state.json`, `cursor/`, `codex/`, `git/`, etc.
 Esa informacion ya no es la autoridad operativa; conservala solo para auditoria
