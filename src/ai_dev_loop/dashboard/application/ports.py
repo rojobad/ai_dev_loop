@@ -10,6 +10,7 @@ from typing import Protocol
 
 class DashboardReadErrorKind(StrEnum):
     INVALID_ARGUMENT = "invalid_argument"
+    NOT_FOUND = "not_found"
     UNSUPPORTED = "unsupported"
     DATA_INTEGRITY = "data_integrity"
     IO = "io"

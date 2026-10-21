@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
@@ -16,11 +18,14 @@ from ai_dev_loop.scheduler.application.contracts import (
     SchedulerEngineError,
     SchedulerEngineErrorKind,
 )
+from ai_dev_loop.scheduler.application.token_usage_capture import MAX_USAGE_OBSERVATION_BYTES
 from ai_dev_loop.scheduler.domain.codex_contract import (
     CODEX_ATTEMPT_EFFECT_KINDS,
     IMPLEMENTER_ATTEMPT_EFFECT_KINDS,
+    MAX_CODEX_EVENTS_ARTIFACT_BYTES,
 )
 from ai_dev_loop.scheduler.domain.cursor_contract import (
+    MAX_CURSOR_EVENTS_ARTIFACT_BYTES,
     RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND,
     RUN_CURSOR_TURN_EFFECT_KIND,
 )
@@ -49,6 +54,61 @@ from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerSto
 _INFERENCE_EFFECTS = frozenset(
     {RUN_CURSOR_TURN_EFFECT_KIND} | CODEX_ATTEMPT_EFFECT_KINDS | IMPLEMENTER_ATTEMPT_EFFECT_KINDS
 )
+_SOURCE_ARTIFACT_READ_LIMIT = max(MAX_CURSOR_EVENTS_ARTIFACT_BYTES, MAX_CODEX_EVENTS_ARTIFACT_BYTES)
+_CONFIGURED_MODEL_MAX_CODE_POINTS = 256
+
+
+class TokenUsageScopeLimit(Exception):
+    """Direct usage collection exceeded its attempt or deadline boundary."""
+
+
+@dataclass(frozen=True)
+class DirectUsageAttempt:
+    run_id: str
+    attempt_id: str
+    provider: Literal["cursor", "codex"]
+    role: Literal["implementer", "reviewer"]
+    stage: Literal["initial", "correction", "review"]
+    configured_model: str | None
+    observations: tuple[UsageObservationV1, ...]
+    state: Literal["complete", "partial", "unknown"]
+
+
+@dataclass(frozen=True)
+class DirectUsageEvidence:
+    attempts: tuple[DirectUsageAttempt, ...]
+    unattributed_attempts: int
+    diagnostics: tuple[str, ...]
+
+
+def configured_model_from_invocation(
+    provider: Literal["cursor", "codex"],
+    role: Literal["implementer", "reviewer"],
+    invocation: dict[str, object],
+) -> str | None:
+    """Return the invocation's configured model, or None when it was not recorded."""
+
+    if provider == "cursor":
+        raw = invocation.get("cursor_model")
+    elif role == "implementer":
+        raw = invocation.get("model")
+    else:
+        raw = invocation.get("review_model")
+    if not isinstance(raw, str) or isinstance(raw, bool):
+        return None
+    if any(unicodedata.category(character) == "Cc" for character in raw):
+        return None
+    text = raw.strip()
+    if not text or len(text) > _CONFIGURED_MODEL_MAX_CODE_POINTS:
+        return None
+    return text
+
+
+def _checkpoint(checkpoint: Callable[[], None] | None) -> None:
+    if checkpoint is not None:
+        checkpoint()
+
+
 _NORMALIZED_CATEGORIES = tuple(NormalizedUsage.model_fields)
 _NATIVE_CATEGORIES = {
     "cursor": (
@@ -78,6 +138,7 @@ class _Attempt:
     provider: Literal["cursor", "codex"]
     role: Literal["implementer", "reviewer"]
     stage: Literal["initial", "correction", "review"]
+    configured_model: str | None
     outcome: dict[str, object] | None
 
 
@@ -124,6 +185,7 @@ def _attempt_from_authenticated(
             provider="cursor",
             role="implementer",
             stage="initial" if raw_iteration == 1 else "correction",
+            configured_model=configured_model_from_invocation("cursor", "implementer", invocation),
             outcome=outcome,
         )
     if effect in IMPLEMENTER_ATTEMPT_EFFECT_KINDS:
@@ -137,6 +199,7 @@ def _attempt_from_authenticated(
             provider="codex",
             role="implementer",
             stage=cast(Literal["initial", "correction"], turn),
+            configured_model=configured_model_from_invocation("codex", "implementer", invocation),
             outcome=outcome,
         )
     return _Attempt(
@@ -146,6 +209,7 @@ def _attempt_from_authenticated(
         provider="codex",
         role="reviewer",
         stage="review",
+        configured_model=configured_model_from_invocation("codex", "reviewer", invocation),
         outcome=outcome,
     )
 
@@ -161,6 +225,7 @@ def _load_published_observations(
     outcome: dict[str, object],
     attempts: dict[str, _Attempt],
     diagnostics: list[str],
+    checkpoint: Callable[[], None] | None = None,
 ) -> tuple[list[UsageObservationV1], set[str]]:
     observations: list[UsageObservationV1] = []
     logical_attempt_id: str | None = publisher.attempt_id if publisher is not None else None
@@ -188,8 +253,14 @@ def _load_published_observations(
             if logical_attempt_id is not None:
                 incomplete_attempts.add(logical_attempt_id)
             continue
+        _checkpoint(checkpoint)
         try:
-            data = artifacts.read_verified_bytes(run_id, path, expected_sha256=digest)
+            data = artifacts.read_verified_bytes(
+                run_id,
+                path,
+                expected_sha256=digest,
+                max_bytes=MAX_USAGE_OBSERVATION_BYTES,
+            )
             observation = UsageObservationV1.model_validate_json(data)
             logical = attempts.get(observation.scheduler_attempt_id)
             if logical is None:
@@ -209,16 +280,25 @@ def _load_published_observations(
                 or observation.source_dispatch_id != logical.dispatch_id
             ):
                 raise ValueError("usage observation attribution mismatch")
-            artifacts.read_verified_bytes(
-                run_id,
-                observation.source_artifact_path,
-                expected_sha256=observation.source_artifact_sha256,
-            )
-            observations.append(observation)
         except Exception:
             diagnostics.append("usage_observation_integrity_error")
             if logical_attempt_id is not None:
                 incomplete_attempts.add(logical_attempt_id)
+            continue
+        _checkpoint(checkpoint)
+        try:
+            artifacts.read_verified_bytes(
+                run_id,
+                observation.source_artifact_path,
+                expected_sha256=observation.source_artifact_sha256,
+                max_bytes=_SOURCE_ARTIFACT_READ_LIMIT,
+            )
+        except Exception:
+            diagnostics.append("usage_observation_integrity_error")
+            if logical_attempt_id is not None:
+                incomplete_attempts.add(logical_attempt_id)
+            continue
+        observations.append(observation)
     return observations, incomplete_attempts
 
 
@@ -227,6 +307,7 @@ def _historical_codex_observations(
     artifacts: ReadOnlyProtectedArtifactStore,
     attempt: _Attempt,
     diagnostics: list[str],
+    checkpoint: Callable[[], None] | None = None,
 ) -> tuple[list[UsageObservationV1], bool | None]:
     outcome = attempt.outcome
     if outcome is None:
@@ -235,8 +316,14 @@ def _historical_codex_observations(
     digest = outcome.get("events_sha256")
     if not isinstance(path, str) or not isinstance(digest, str) or not digest:
         return [], None
+    _checkpoint(checkpoint)
     try:
-        data = artifacts.read_verified_bytes(attempt.run_id, path, expected_sha256=digest)
+        data = artifacts.read_verified_bytes(
+            attempt.run_id,
+            path,
+            expected_sha256=digest,
+            max_bytes=_SOURCE_ARTIFACT_READ_LIMIT,
+        )
         text = data.decode("utf-8")
     except Exception:
         diagnostics.append("historical_codex_usage_source_invalid")
@@ -536,7 +623,11 @@ class TokenUsageReadService:
         return tuple(str(row["run_id"]) for row in rows)
 
     def _collect(
-        self, conn: sqlite3.Connection, run_ids: tuple[str, ...]
+        self,
+        conn: sqlite3.Connection,
+        run_ids: tuple[str, ...],
+        *,
+        checkpoint: Callable[[], None] | None = None,
     ) -> tuple[
         dict[str, _Attempt],
         dict[str, list[UsageObservationV1]],
@@ -576,6 +667,7 @@ class TokenUsageReadService:
                     and effect != RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND
                 ):
                     continue
+                _checkpoint(checkpoint)
                 try:
                     authenticated = authenticate_process_attempt(run_root, row, effect_kind=effect)
                     authenticated_rows.append(
@@ -621,6 +713,7 @@ class TokenUsageReadService:
                 outcome=outcome,
                 attempts=attempts,
                 diagnostics=diagnostics,
+                checkpoint=checkpoint,
             )
             publication_incomplete.update(incomplete)
             for attempt_id in incomplete:
@@ -637,6 +730,7 @@ class TokenUsageReadService:
                 artifacts=self.artifacts,
                 attempt=attempt,
                 diagnostics=diagnostics,
+                checkpoint=checkpoint,
             )
             if complete is not None:
                 attempt_completeness[attempt.attempt_id] = (
@@ -655,6 +749,65 @@ class TokenUsageReadService:
             attempt_completeness,
             unattributed_attempts,
             diagnostics,
+        )
+
+    def collect_direct(
+        self,
+        run_ids: tuple[str, ...],
+        *,
+        max_attempts: int,
+        checkpoint: Callable[[], None] | None = None,
+    ) -> DirectUsageEvidence:
+        """Authenticate direct usage after bounding inference attempts.
+
+        Artifact reads start only once the attempt count is known to fit.
+        """
+
+        if max_attempts < 0:
+            raise TokenUsageScopeLimit
+        unique_ids = tuple(dict.fromkeys(run_ids))
+        with self.store.begin_read() as conn:
+            counted = 0
+            for run_id in unique_ids:
+                _checkpoint(checkpoint)
+                for row in _rows(conn, run_id):
+                    if str(row["effect_kind"]) in _INFERENCE_EFFECTS:
+                        counted += 1
+                        if counted > max_attempts:
+                            raise TokenUsageScopeLimit
+            attempts, observations, completeness, unattributed, diagnostics = self._collect(
+                conn,
+                unique_ids,
+                checkpoint=checkpoint,
+            )
+        evidence_attempts: list[DirectUsageAttempt] = []
+        for attempt in attempts.values():
+            items = tuple(observations.get(attempt.attempt_id, ()))
+            if not items:
+                state: Literal["complete", "partial", "unknown"] = "unknown"
+            elif not completeness.get(
+                attempt.attempt_id,
+                all(item.availability == "known" for item in items),
+            ):
+                state = "partial"
+            else:
+                state = "complete"
+            evidence_attempts.append(
+                DirectUsageAttempt(
+                    run_id=attempt.run_id,
+                    attempt_id=attempt.attempt_id,
+                    provider=attempt.provider,
+                    role=attempt.role,
+                    stage=attempt.stage,
+                    configured_model=attempt.configured_model,
+                    observations=items,
+                    state=state,
+                )
+            )
+        return DirectUsageEvidence(
+            attempts=tuple(evidence_attempts),
+            unattributed_attempts=unattributed,
+            diagnostics=tuple(sorted(set(diagnostics))),
         )
 
     def run_report(self, run_id: str) -> RunUsageReport:

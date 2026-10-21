@@ -22,6 +22,7 @@ from ai_dev_loop.integration_api.capacity_service import (
 from ai_dev_loop.integration_api.dashboard_service import (
     IntegrationDashboardReadService,
     default_dashboard_read_service,
+    parse_optional_run_id,
 )
 from ai_dev_loop.integration_api.envelope import build_failure_envelope, build_success_envelope
 from ai_dev_loop.integration_api.errors import IntegrationApiError, IntegrationErrorCode
@@ -175,7 +176,10 @@ def default_http_service_factories(
     """Build readers lazily so bind/validation failures never touch storage."""
 
     return HttpServiceFactories(
-        dashboard=lambda: default_dashboard_read_service(db_path=db_path),
+        dashboard=lambda: default_dashboard_read_service(
+            db_path=db_path,
+            artifact_root=artifact_root,
+        ),
         run=lambda: default_run_read_service(db_path=db_path, artifact_root=artifact_root),
         sequence=lambda: default_sequence_read_service(
             db_path=db_path,
@@ -235,6 +239,15 @@ def _required_text(parameters: Mapping[str, object], key: str) -> str:
     if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
         raise IntegrationApiError.invalid_argument(f"{key} contains unsupported characters.")
     return value
+
+
+_TOKEN_USAGE_PARAMETERS = frozenset({"fromUtc", "toUtc", "timeZone", "projectName", "runId"})
+
+
+def _optional_run_id(parameters: Mapping[str, object]) -> str | None:
+    if "runId" not in parameters:
+        return None
+    return parse_optional_run_id(parameters.get("runId"))
 
 
 def _dashboard_filter_kwargs(parameters: Mapping[str, object]) -> dict[str, object]:
@@ -299,6 +312,21 @@ class DashboardHttpDispatcher:
             return PreparedHttpRead(
                 operation,
                 lambda: _wire(self._factories.dashboard().activity(**kwargs)),
+            )
+
+        if operation == "dashboard.token-usage":
+            unknown = set(params) - _TOKEN_USAGE_PARAMETERS
+            if unknown:
+                raise IntegrationApiError.invalid_argument(
+                    "Unknown dashboard token-usage parameter."
+                )
+            kwargs = _dashboard_filter_kwargs(params)
+            selected_run_id = _optional_run_id(params)
+            return PreparedHttpRead(
+                operation,
+                lambda: _wire(
+                    self._factories.dashboard().token_usage(**kwargs, run_id=selected_run_id)
+                ),
             )
 
         if operation == "run.inspect":

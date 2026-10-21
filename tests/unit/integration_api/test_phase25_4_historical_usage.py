@@ -32,7 +32,7 @@ def _empty_scope(scope: str) -> UsageScopeReport:
 
 
 def test_u03_additive_api_version_capability_and_usage_schema() -> None:
-    assert (API_MAJOR, API_MINOR) == (1, 12)
+    assert (API_MAJOR, API_MINOR) == (1, 13)
     assert build_integration_info_data().capabilities.token_usage is True
     report = RunUsageReport(
         run_id="historical-run",

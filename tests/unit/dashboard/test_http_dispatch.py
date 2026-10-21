@@ -50,6 +50,9 @@ class _DashboardService:
     def activity(self, **kwargs: object) -> _Wire:
         return self.recorder.result("dashboard.activity", **kwargs)
 
+    def token_usage(self, **kwargs: object) -> _Wire:
+        return self.recorder.result("dashboard.token-usage", **kwargs)
+
 
 class _RunService:
     def __init__(self, recorder: _Recorder) -> None:
@@ -147,6 +150,15 @@ def _dispatcher(recorder: _Recorder) -> DashboardHttpDispatcher:
             },
             "dashboard",
         ),
+        (
+            "dashboard.token-usage",
+            {
+                "fromUtc": "2026-01-01T00:00:00Z",
+                "toUtc": "2026-01-02T00:00:00Z",
+                "runId": None,
+            },
+            "dashboard",
+        ),
         ("run.inspect", {"runId": "run-1"}, "run"),
         ("run.timeline", {"runId": "run-1"}, "run"),
         ("sequence.inspect", {"sequenceId": "sequence-1"}, "sequence"),
@@ -200,6 +212,12 @@ def test_c262_2_allowlisted_dispatch_uses_one_typed_service(
         ),
         ("sequence.phase-runs", {"sequenceId": "s", "ordinal": True}),
         ("dashboard.projects", {"limit": 101}),
+        (
+            "dashboard.token-usage",
+            {"fromUtc": "2026-01-01T00:00:00Z", "sql": "select 1"},
+        ),
+        ("dashboard.token-usage", {"fromUtc": "2026-01-01T00:00:00Z", "runId": ""}),
+        ("dashboard.token-usage", {"fromUtc": "2026-01-01T00:00:00Z", "runId": "../run"}),
         ("dashboard.projects", {"offset": False}),
         (
             "run.initial-prompt",

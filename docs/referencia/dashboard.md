@@ -7,9 +7,9 @@ contratos de datos y lecturas.
 ## Superficie instalada
 
 `ai_dev_loop dashboard serve --port 8765` sirve el frontend empaquetado y
-`POST /api/dashboard/read` en `127.0.0.1`. La API de integración actual es 1.12 y
-publica `capabilities.dashboard=true`, `capabilities.shortNames=true` y
-`capabilities.tokenUsage=true`. SQLite
+`POST /api/dashboard/read` en `127.0.0.1`. La API de integración actual es 1.13 y
+publica `capabilities.dashboard=true`, `capabilities.shortNames=true`,
+`capabilities.tokenUsage=true` y `capabilities.dashboardTokenUsage=true`. SQLite
 schema 17 en adelante almacena los nombres cortos; schema 16 sigue siendo legible mediante
 fallback sin migración ni escritura. El lector abre un snapshot validado de
 `engine.sqlite3` en modo solo lectura y usa los artefactos protegidos como autoridad.
@@ -22,6 +22,7 @@ Las operaciones HTTP allowlisted son:
 | `dashboard.summary` | KPIs, estados completos por proyecto y workload |
 | `dashboard.runs` | mapa paginado de runs y linaje |
 | `dashboard.activity` | valores diarios para una métrica |
+| `dashboard.token-usage` | uso de tokens de la cohorte o de un run directo |
 | `run.inspect`, `run.timeline` | metadata y timeline del run seleccionado |
 | `sequence.inspect`, `sequence.phase-runs` | contexto autoritativo de secuencia |
 | `machine.codex-capacity` | capacidad actual, independiente del filtro histórico |
@@ -168,7 +169,72 @@ ofrece esta superficie. Consulta [API de integración
 local](integration-api.md) para el sobre común y [Dashboard local](../operacion/dashboard-local.md)
 para operación y refresco.
 
-Los inspect de run/secuencia pueden incluir el resumen aditivo `tokenUsage`, pero
-el Dashboard no añade gráficos ni paneles de tokens en esta fase. Sus KPIs,
-review rounds y process-hours continúan derivándose solo del ledger de ejecución;
-la ausencia o cobertura parcial de uso no oculta runs ni cambia actividad.
+Los inspect de run/secuencia pueden incluir el resumen aditivo `tokenUsage`.
+Ese informe sigue siendo por run o secuencia e incluye el scope
+`recoveryLineage`. Los gráficos del Dashboard llegan en la fase 29.2; esta
+superficie solo publica la consulta que los alimentará. KPIs, review rounds y
+process-hours continúan derivándose solo del ledger de ejecución; la ausencia o
+cobertura parcial de uso no oculta runs ni cambia actividad.
+
+## Uso de tokens de la cohorte
+
+`dashboard.token-usage` y `integration dashboard token-usage` usan la misma
+consulta. El alcance es la cohorte de `summary`/`runs`: cada run cuyo primer
+lanzamiento de ejecución cae en `[fromUtc, toUtc)`. La membresía no usa la fecha
+de submission ni una página del mapa. Para cada run incluido se cuenta todo el
+uso directo observado, también intentos posteriores al rango. `runId` omitido o
+`null` agrega la cohorte. Un `runId` exacto restringe el agregado a ese run si
+pertenece a la misma cohorte y proyecto; si no pertenece, o no existe, la
+respuesta es `NOT_FOUND` y no devuelve datos de otro run. Un `runId` vacío o no
+textual es `INVALID_ARGUMENT`.
+
+La respuesta de cohorte no enumera runs ni intentos. `selectedRun` solo existe
+en el alcance `direct` y su `shortName` es la metadata de presentación vigente.
+`cohortRunCount` es el tamaño completo de la cohorte filtrada.
+`selectedRunCount` es el número de runs incluidos en el agregado: el tamaño de
+la cohorte, 1 en alcance directo, o 0 si no hay runs elegibles. El linaje de
+recovery no se expande ni se suma con el uso directo.
+
+`configuredModel` sale de la invocación autenticada de ese intento. Cursor usa
+el modelo del turno; el implementer Codex usa su modelo; el reviewer usa el
+modelo de review. No se relee el YAML actual como sustituto histórico. Un
+modelo no registrado permanece `null` y se agrupa como modelo desconocido; la
+cadena `"Unknown"` no se fabrica. La misma grafía en Cursor y Codex son filas
+distintas. `modelProvenance` es siempre `configured`.
+
+Cada fila agrupa `(provider, configuredModel, role, stage)`. Los contadores
+normalizados y nativos conservan total conocido, observaciones conocidas,
+observaciones y cobertura. Pueden solaparse: no se suman
+`input_total + cache + output_total + reasoning` como un total. El total
+conocido y las hojas `flows` son una partición disjunta por observación:
+
+- Cursor: `input_other` es la entrada no cacheada, más `cache_read` y
+  `cache_write`. Si reasoning es conocido, `output_other` es
+  `output_total - reasoning_output`; si no, `output_unsplit` es `output_total`.
+- Codex con cache de entrada conocida: `input_other` es
+  `input_total - cache_read`, más `cache_read`. La misma regla de salida. Una
+  escritura de cache Codex permanece en el contador nativo y no añade otra hoja.
+- Codex sin cache de entrada: `input_unsplit` es `input_total`.
+
+Un valor ausente sigue siendo `null`, no cero. Un cero registrado sigue siendo
+cero. `input_unsplit` y `output_unsplit` son cantidades conocidas de subtipo
+desconocido. La suma de las hojas no nulas coincide con `knownTotalTokens`.
+Los intentos desconocidos aumentan la cobertura y no inventan anchos de flujo.
+Una aritmética contradictoria queda fuera del total mediante el diagnóstico de
+integridad existente. Los enteros que no caben en un entero seguro de
+JavaScript fallan toda la consulta.
+
+Una cohorte vacía tiene cobertura `not_applicable` y total conocido `null`.
+Intentos elegibles sin evidencia tienen cobertura `unknown` y total `null`.
+Un total parcial es un límite inferior. La evidencia histórica ausente permanece
+desconocida; no se inventan contadores, modelo ni rol. Creación de chat,
+preflight, reconciliación, sondas y efectos que no son inferencia no consumen
+tokens por sí mismos. Un reintento de inferencia real cuenta; repetir la
+publicación de la misma observación no.
+
+La consulta conserva los límites de 366 días, 10.000 runs de la cohorte,
+100.000 intentos de inferencia del alcance, 5 segundos y 240 KiB. El plazo
+incluye la lectura autenticada de artefactos y se comprueba entre lecturas
+acotadas. Superar alcance, plazo o sobre falla con el error tipado de alcance
+estrecho y no publica un total parcial ni muestreado. La ausencia de
+`dashboardTokenUsage` significa que el productor no ofrece esta consulta.
