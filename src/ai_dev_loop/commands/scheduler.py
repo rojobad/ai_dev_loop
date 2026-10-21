@@ -263,7 +263,10 @@ def render_scheduler_timeline_output(result: TimelineResult, *, output: str) -> 
             f"- iter {entry.iteration:02d} {entry.phase} "
             f"attempt {entry.phase_attempt} {entry.status} "
             f"launch={entry.launch_requested_at or 'n/a'} "
-            f"completed={entry.completed_at or 'n/a'} duration={duration}"
+            f"completed={entry.completed_at or 'n/a'} duration={duration} "
+            f"sdk_wait={entry.sdk_wait_stage} "
+            f"waiting_for_initial_sdk_response={entry.sdk_wait_waiting_for_initial_response} "
+            f"elapsed_seconds={entry.sdk_wait_elapsed_seconds}"
         )
     return "\n".join(lines) + "\n"
 

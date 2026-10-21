@@ -66,8 +66,18 @@ from ai_dev_loop.commands.scheduler import (
 from ai_dev_loop.commands.scheduler import (
     start_run as start_scheduler_run,
 )
-from ai_dev_loop.errors import AiDevLoopError
+from ai_dev_loop.errors import AiDevLoopError, ValidationError
 from ai_dev_loop.paths import runs_dir
+from ai_dev_loop.scheduler.application.cursor_sdk_retention import (
+    CleanupPreview,
+    apply_cursor_sdk_cleanup,
+    load_cursor_sdk_retention_policy,
+    preview_cursor_sdk_cleanup,
+    render_cleanup_apply,
+    render_cleanup_preview,
+    render_retention_policy,
+    set_cursor_sdk_retention_enabled,
+)
 from ai_dev_loop.scheduler.application.cutover_cleanup import (
     CUTOVER_CONFIRMATION_TOKEN,
     cutover_target_paths,
@@ -87,7 +97,13 @@ from ai_dev_loop.scheduler.application.token_usage_query import (
     scheduler_sequence_usage,
     scheduler_usage,
 )
+from ai_dev_loop.scheduler.domain.cursor_sdk_retention import (
+    CURSOR_STORE_CLEANUP_CONFIRMATION,
+)
 from ai_dev_loop.scheduler.domain.presentation import ShortNameUpdateResult
+from ai_dev_loop.scheduler.infrastructure.paths import default_engine_db_path
+from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
+from ai_dev_loop.state import utc_now
 
 app = typer.Typer(
     name="ai_dev_loop",
@@ -106,6 +122,12 @@ scheduler_app = typer.Typer(
 cutover_app = typer.Typer(
     help="Explicit destructive cleanup of retired legacy XDG state roots.",
 )
+cursor_store_app = typer.Typer(
+    help=(
+        "Preview or delete one app-owned Cursor SDK conversation root. "
+        "Automatic seven-day retention uses the same disposal path during scheduler ticks."
+    ),
+)
 timer_app = typer.Typer(help="Packaged systemd timer asset helpers (no auto-enable).")
 sequence_app = typer.Typer(
     help=(
@@ -118,6 +140,7 @@ integrations_app = typer.Typer(help="Global Codex integration commands.")
 sessions_app = typer.Typer(help="Desktop session rollout bridge commands.")
 integrations_app.add_typer(sessions_app, name="sessions")
 scheduler_app.add_typer(cutover_app, name="cutover")
+scheduler_app.add_typer(cursor_store_app, name="cursor-store")
 scheduler_app.add_typer(timer_app, name="timer")
 scheduler_app.add_typer(sequence_app, name="sequence")
 scheduler_app.add_typer(run_app, name="run")
@@ -809,6 +832,117 @@ def scheduler_sequence_abort_command(
 
         result = scheduler_sequence_abort(sequence_id)
         typer.echo(render_sequence_abort_output(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+def _cursor_store_paths() -> tuple[Path, Path]:
+    database = default_engine_db_path()
+    return database, database.parent
+
+
+def _cursor_store_reader() -> tuple[SqliteSchedulerStore | None, Path]:
+    """Open an existing ledger without creating, migrating, or changing permissions."""
+
+    database, state_root = _cursor_store_paths()
+    if database.is_symlink() or not database.is_file():
+        return None, state_root
+    return SqliteSchedulerStore.open_readonly(database), state_root
+
+
+def _cursor_store_writer() -> tuple[SqliteSchedulerStore, Path]:
+    database, state_root = _cursor_store_paths()
+    return SqliteSchedulerStore(database), state_root
+
+
+@cursor_store_app.command("policy")
+def scheduler_cursor_store_policy_command(
+    automatic: Annotated[
+        str | None,
+        typer.Option(
+            "--automatic",
+            help="Set automatic seven-day cleanup to enabled or disabled.",
+        ),
+    ] = None,
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Show or update the explicit Cursor SDK retention policy."""
+
+    def run() -> None:
+        if automatic is None:
+            store, _state_root = _cursor_store_reader()
+            policy = None if store is None else load_cursor_sdk_retention_policy(store)
+        elif automatic not in {"enabled", "disabled"}:
+            raise ValidationError("--automatic must be enabled or disabled")
+        else:
+            store, _state_root = _cursor_store_writer()
+            policy = set_cursor_sdk_retention_enabled(
+                store,
+                enabled=automatic == "enabled",
+                now=utc_now(),
+            )
+        typer.echo(render_retention_policy(policy, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@cursor_store_app.command("cleanup")
+def scheduler_cursor_store_cleanup_command(
+    conversation_key: Annotated[
+        str | None,
+        typer.Option("--conversation-key", help="Authenticated conversation key to inspect."),
+    ] = None,
+    owner_run_id: Annotated[
+        str | None,
+        typer.Option("--owner-run-id", help="Conversation owner run id to inspect."),
+    ] = None,
+    confirm: Annotated[
+        str | None,
+        typer.Option(
+            "--confirm",
+            help=f"Apply one deletion only with {CURSOR_STORE_CLEANUP_CONFIRMATION}.",
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Preview eligibility without deleting."),
+    ] = False,
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Preview or delete one app-owned Cursor SDK conversation root."""
+
+    def run() -> None:
+        now = utc_now()
+        if dry_run or confirm is None:
+            store, state_root = _cursor_store_reader()
+            if store is None:
+                preview = CleanupPreview(policy=None, conversations=())
+            else:
+                preview = preview_cursor_sdk_cleanup(
+                    store,
+                    state_root=state_root,
+                    now=now,
+                    conversation_key=conversation_key,
+                    conversation_owner_run_id=owner_run_id,
+                )
+            typer.echo(render_cleanup_preview(preview, output=output.value), nl=False)
+            return
+        if confirm != CURSOR_STORE_CLEANUP_CONFIRMATION:
+            raise ValidationError(f"confirmation must be {CURSOR_STORE_CLEANUP_CONFIRMATION}")
+        if conversation_key is None and owner_run_id is None:
+            raise ValidationError("apply requires --conversation-key or --owner-run-id")
+        store, state_root = _cursor_store_writer()
+        result = apply_cursor_sdk_cleanup(
+            store,
+            state_root=state_root,
+            now=now,
+            mode="manual",
+            conversation_key=conversation_key,
+            conversation_owner_run_id=owner_run_id,
+        )
+        typer.echo(render_cleanup_apply(result, output=output.value), nl=False)
+        if result.action not in {"deleted", "already_deleted", "already_absent"}:
+            raise typer.Exit(code=1)
 
     _handle(run)
 

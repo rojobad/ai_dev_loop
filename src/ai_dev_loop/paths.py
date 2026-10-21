@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import sqlite3
 import stat
 from dataclasses import dataclass
 from pathlib import Path
@@ -92,6 +93,7 @@ class CursorSdkPathError(ValueError):
 class CursorSdkClientPaths:
     workspace: Path
     conversation_key: str
+    conversation_root: Path
     state_root: Path
     store_root: Path
 
@@ -223,6 +225,9 @@ def ensure_cursor_sdk_client_paths(
     workspace: Path,
     repository_root: Path,
     conversation_owner_identity: str,
+    store_backend: str = "jsonl",
+    native_store_layout_version: int = 1,
+    require_existing_native_state: bool = False,
 ) -> CursorSdkClientPaths:
     if workspace.is_symlink() or not workspace.is_dir():
         raise CursorSdkPathError("invalid_workspace")
@@ -236,24 +241,72 @@ def ensure_cursor_sdk_client_paths(
     app_state_root = state_dir()
     sdk_root = cursor_sdk_state_root()
     conversation_root = sdk_root / key
-    bridge_state_root = conversation_root / "bridge"
-    store_root = conversation_root / "store"
+    if native_store_layout_version != 1 or store_backend not in {"jsonl", "sqlite"}:
+        raise CursorSdkPathError("unsupported_native_store_layout")
+    bridge_state_root = (
+        conversation_root if store_backend == "sqlite" else conversation_root / "bridge"
+    )
+    store_root = conversation_root if store_backend == "sqlite" else conversation_root / "store"
     _require_no_overlap(
         app_state_root,
         repository_resolved,
         code="state_repository_overlap",
     )
-    for path, code in (
+    required_directories = [
         (app_state_root, "unsafe_state_directory"),
         (sdk_root, "unsafe_sdk_state_directory"),
         (conversation_root, "unsafe_conversation_directory"),
-        (bridge_state_root, "unsafe_bridge_state_directory"),
-        (store_root, "unsafe_store_directory"),
-    ):
-        _ensure_owned_private_directory(path, code=code)
+    ]
+    if store_backend == "jsonl":
+        required_directories.extend(
+            (
+                (bridge_state_root, "unsafe_bridge_state_directory"),
+                (store_root, "unsafe_store_directory"),
+            )
+        )
+    for path, code in required_directories:
+        if require_existing_native_state:
+            try:
+                _require_owned_private_directory(path, code=code)
+            except CursorSdkPathError as exc:
+                raise CursorSdkPathError("native_state_unavailable") from exc
+        else:
+            _ensure_owned_private_directory(path, code=code)
+    if require_existing_native_state:
+        if store_backend == "sqlite":
+            marker = conversation_root / "index.db"
+            if marker.is_symlink() or not marker.is_file():
+                raise CursorSdkPathError("native_state_unavailable")
+            try:
+                if marker.stat().st_size < 100:
+                    raise CursorSdkPathError("native_state_unavailable")
+                uri = f"{marker.resolve(strict=True).as_uri()}?mode=ro"
+                with sqlite3.connect(uri, uri=True) as connection:
+                    quick_check = connection.execute("PRAGMA quick_check").fetchone()
+                    page_count = connection.execute("PRAGMA page_count").fetchone()
+                    persisted_table = connection.execute(
+                        "SELECT 1 FROM sqlite_schema WHERE type = 'table' LIMIT 1"
+                    ).fetchone()
+                if (
+                    quick_check != ("ok",)
+                    or page_count is None
+                    or int(page_count[0]) < 1
+                    or persisted_table is None
+                ):
+                    raise CursorSdkPathError("native_state_unavailable")
+            except CursorSdkPathError:
+                raise
+            except (OSError, sqlite3.Error) as exc:
+                raise CursorSdkPathError("native_state_unavailable") from exc
+        else:
+            try:
+                next(store_root.iterdir())
+            except (StopIteration, OSError) as exc:
+                raise CursorSdkPathError("native_state_unavailable") from exc
     return CursorSdkClientPaths(
         workspace=workspace_resolved,
         conversation_key=key,
+        conversation_root=conversation_root,
         state_root=bridge_state_root,
         store_root=store_root,
     )

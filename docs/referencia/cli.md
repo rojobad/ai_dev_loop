@@ -353,7 +353,7 @@ ai_dev_loop scheduler cursor-retry <run-id> [--check | --force] [--output text|j
 sigue autorizando solo el reintento de un timeout Cursor ya terminado, con el mismo
 prompt, chat y salida que antes.
 
-En contextos Cursor SDK v7/v8, el scheduler prueba primero la ausencia del árbol
+En contextos Cursor SDK v7-v10, el scheduler prueba primero la ausencia del árbol
 de procesos y reconcilia el run nativo con un cliente fresco ligado al mismo
 owner/key/agent. Un run terminal conocido se reproduce sin otro envío; uno no
 terminal se cancela y confirma antes de habilitar la política normal de retry. Si
@@ -568,7 +568,19 @@ no es el antiguo `recover` ni un envío fresco con `--resubmission-id`.
 `scheduler timeline` devuelve una tabla acotada de intentos Cursor/Codex por
 iteracion: fase, ordinal de reintento, estado seguro, marcas de tiempo durables
 y `observed_duration_seconds` solo cuando existen `launch_requested_at` y
-`completed_at`. No incluye cola, preflight, IDs internos, artefactos ni salidas
+`completed_at`. Para un turno Cursor SDK tambien proyecta `sdk_wait_stage`,
+`sdk_wait_waiting_for_initial_response` y `sdk_wait_elapsed_seconds` desde el
+artefacto `wait-progress.jsonl` de ese intento. Si el artefacto no existe o no
+se puede autenticar, los tres campos son `unknown`. Una espera abierta crece
+con el reloj de inspeccion. Un sello `interrupted` sin handle nativo queda
+cerrado: `sdk_wait_stage` es `interrupted`, la espera ya no esta abierta y el
+tiempo queda congelado entre la autorizacion y el sello, o `unknown` si ese
+cierre no se puede establecer. No inventa un handle ni un resultado terminal.
+Si el handle ya estaba enlazado, la etapa sigue siendo ese enlace y el tiempo
+queda congelado en el enlace. La espera del primer
+resultado nativo no afirma que el modelo este detenido ni que haya progresado:
+un estado nativo `running`, el uso de CPU o la ausencia de texto no cambian
+esa proyeccion. No incluye cola, preflight, IDs internos, prompts ni salidas
 raw. Limite por defecto 50; maximo duro 200. Valores mayores se truncan y
 `truncated` indica overflow.
 
@@ -583,6 +595,72 @@ root, rechazar symlinks, comprobar que no hay trabajo scheduler activo y adquiri
 coordinacion contra ticks concurrentes.
 
 En modo JSON, el anuncio de rutas exactas va a stderr; stdout contiene un unico documento JSON.
+
+Ese comando no inspecciona ni borra `cursor-sdk/`. La retención de conversaciones
+SDK tiene un comando distinto.
+
+## `scheduler cursor-store`
+
+```bash
+ai_dev_loop scheduler cursor-store policy [--automatic enabled|disabled] [--output text|json]
+ai_dev_loop scheduler cursor-store cleanup [--conversation-key KEY | --owner-run-id RUN] [--dry-run] [--output text|json]
+ai_dev_loop scheduler cursor-store cleanup --conversation-key KEY --confirm delete-cursor-sdk-conversation
+```
+
+La política efectiva vive en el ledger, no en `ai_dev_loop.yaml` ni en la edad
+de un directorio. El operador la fijó el 2026-10-20: limpieza automática
+habilitada y 168 horas desde la terminación durable de todo el trabajo
+relacionado. `policy` la muestra. `--automatic disabled` o `enabled` cambia
+solo ese interruptor y conserva la ventana, la fuente y el instante de la
+decisión. Si la fila no existe, la limpieza automática no corre y no se
+reconstruye a partir de directorios ni de un recibo antiguo; `policy
+--automatic enabled` vuelve a escribir la misma decisión.
+
+`cleanup` sin `--confirm`, y también con `--dry-run`, solo previsualiza. No
+borra, no abre el bridge y no llama a un modelo. Esa inspección, igual que
+`policy` sin `--automatic`, abre el ledger en solo lectura cuando el archivo ya
+existe. Un ledger ausente o un esquema anterior a la retención no crea
+directorios, no migra, no siembra la política y no cambia permisos. Apply exige
+`delete-cursor-sdk-conversation` y exactamente un `--conversation-key` o
+`--owner-run-id`. Borra un único root de aplicación
+`$XDG_STATE_HOME/ai_dev_loop/cursor-sdk/<sha256-owner>/` cuando el owner, el
+backend y la ruta autentican, no queda un intento vivo o incierto, y ninguna
+referencia relacionada puede despachar, extender, reintentar o reanudar.
+Persiste la intención antes de borrar y después un recibo con tombstone en
+`cursor-sdk-disposals/`. La publicación exige un directorio real del mismo
+usuario y crea el temporal con `O_EXCL|O_NOFOLLOW`; un enlace simbólico en el
+directorio, el temporal o el destino se rechaza sin escribir fuera. Si otra
+generación del fence ya completó el recibo, el worker vencido republica esos
+bytes y no sustituye el tombstone. Cada publicación usa un temporal propio;
+no borra el temporal de otra publicación en curso. Si dos publicaciones crean
+`cursor-sdk-disposals/` a la vez, la que pierde `mkdir` acepta el directorio
+real del mismo usuario y sigue; un enlace o un archivo en ese path se rechaza. Un tick posterior republica
+el tombstone ausente de un recibo ya confirmado, sin volver a borrar ni ocupar
+el cupo de borrados nuevos. Repetir el apply converge al mismo recibo.
+
+La limpieza automática usa las mismas reglas dentro de `scheduler tick`, en
+lotes acotados, solo cuando la política está habilitada y el reloj UTC está
+en o después de `terminación + 168h`. Ese instante es el máximo de la
+terminación autenticada de cada run relacionado y, cuando existe, de la
+reconciliación nativa autenticada (`cursor_sdk_reconciled` /
+`cursor_sdk_reconciled_v2`). Un abort cuyo checkpoint ya no tiene `cursor.sdk`
+sigue identificándose por esa intención autenticada. Un ancestro `blocked`
+tampoco impide la limpieza cuando una publicación de sucesor `ready` y
+autenticada lo reemplazó y todo ese linaje ya terminó; el estado histórico no
+se reescribe. El reloj no empieza en `aborted_at` si la reconciliación
+terminó después. Un tick anterior
+no borra. La ausencia del scheduler no promete una hora exacta de borrado:
+ocurre en el siguiente tick de mantenimiento. La política deshabilitada deja
+el apply manual disponible. Un `aborted` limpio cuenta como terminado;
+`max_iterations_reached`, esperas, checkpoints, recovery, handoff y abort sin
+reconciliar no se borran. La edad no sale de `mtime`, de `updated_at` ni de
+otra columna SQL mutable. Falta de evidencia de terminación o un payload
+dañado impide el borrado.
+
+Se conservan el ledger, `artifacts/`, credenciales, repositorios, backups del
+operador, estado Codex, conversaciones no relacionadas y el estado global de
+Cursor. No hay barrido global del CLI ni parser de blobs nativos. El cutover
+sigue limitado a `runs/` y `pr-review-v2/`.
 
 ## `scheduler timer`
 

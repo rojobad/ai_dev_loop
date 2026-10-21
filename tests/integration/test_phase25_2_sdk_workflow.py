@@ -6,6 +6,7 @@ import base64
 import itertools
 import json
 import os
+import shutil
 import signal
 import subprocess
 import textwrap
@@ -29,7 +30,8 @@ from ai_dev_loop.integration_api.errors import IntegrationApiError
 from ai_dev_loop.integration_api.process_output_service import (
     IntegrationProcessOutputReadService,
 )
-from ai_dev_loop.paths import schema_path
+from ai_dev_loop.integration_api.review_service import default_review_read_service
+from ai_dev_loop.paths import cursor_conversation_key, cursor_sdk_state_root, schema_path
 from ai_dev_loop.scheduler.application.abort import scheduler_abort_run
 from ai_dev_loop.scheduler.application.attempt_backend import (
     LaunchRequest,
@@ -46,6 +48,7 @@ from ai_dev_loop.scheduler.application.fake_attempt_backend import (
     FakeAgentProcessBackend,
     FakeAttemptScenario,
 )
+from ai_dev_loop.scheduler.application.history import scheduler_history
 from ai_dev_loop.scheduler.application.implementer_timeout_retry import (
     scheduler_implementer_retry,
 )
@@ -56,6 +59,7 @@ from ai_dev_loop.scheduler.application.sequence_prepare import (
 )
 from ai_dev_loop.scheduler.application.sequence_start import start_sequence
 from ai_dev_loop.scheduler.application.start import start_run
+from ai_dev_loop.scheduler.application.status import scheduler_list, scheduler_status
 from ai_dev_loop.scheduler.application.submission import SubmitOptions, submit_run
 from ai_dev_loop.scheduler.application.tick import TickService
 from ai_dev_loop.scheduler.domain.cursor_contract import (
@@ -204,6 +208,7 @@ def _install_fake_sdk(root: Path) -> None:
             import json
             import os
             import signal
+            import sqlite3
             import subprocess
             import sys
             import time
@@ -234,11 +239,15 @@ def _install_fake_sdk(root: Path) -> None:
                     super().__init__(message)
                     self.message = message
 
+            class AgentNotFoundError(Exception):
+                pass
+
             errors = SimpleNamespace(
                 RateLimitError=RateLimitError,
                 AgentBusyError=AgentBusyError,
                 InternalServerError=InternalServerError,
                 NetworkError=NetworkError,
+                AgentNotFoundError=AgentNotFoundError,
             )
             CREATION_RUN_ID = "run-019abc00-1111-4222-8333-777777777777"
             PROMPT_RUN_ID = "run-019abc00-1111-4222-8333-555555555555"
@@ -581,6 +590,8 @@ def _install_fake_sdk(root: Path) -> None:
                         _write_store(store)
                     return Agent(options.local.cwd)
                 def resume_agent(self, agent_id, options):
+                    if os.environ.get("FAKE_CURSOR_SDK_MISSING_BOUND_AGENT") == "1":
+                        raise AgentNotFoundError("synthetic bound agent missing")
                     if os.environ.get("FAKE_CURSOR_SDK_INJECT_FOREIGN_ON_RESUME") == "1":
                         store = _read_store()
                         foreign_id = "run-019abc00-1111-4222-8333-999999999999"
@@ -651,6 +662,22 @@ def _install_fake_sdk(root: Path) -> None:
                         and _turn_identity_is_persisted()
                     ):
                         raise RuntimeError("synthetic open failure")
+                    local = kwargs.get("local")
+                    if getattr(getattr(local, "store", None), "type", None) == "sqlite":
+                        command = kwargs.get("command")
+                        assert isinstance(command, tuple)
+                        assert len(command) == 4
+                        assert Path(command[0]).name == "node"
+                        assert command[1] == "--import"
+                        assert Path(command[2]).name == "native_store_initializer.mjs"
+                        assert Path(command[3]).name == "cursor-sdk-bridge.js"
+                        state_root = Path(kwargs["state_root"])
+                        state_root.mkdir(parents=True, exist_ok=True)
+                        with sqlite3.connect(state_root / "index.db") as connection:
+                            connection.execute(
+                                "CREATE TABLE IF NOT EXISTS fake_native_state "
+                                "(key TEXT PRIMARY KEY)"
+                            )
                     return Client(workspace)
             """
         ).lstrip(),
@@ -661,6 +688,14 @@ def _install_fake_sdk(root: Path) -> None:
     (dist / "METADATA").write_text(
         "Metadata-Version: 2.1\nName: cursor-sdk\nVersion: 1.0.37\n", encoding="utf-8"
     )
+    bridge_root = root / "cursor_sdk/_vendor/bridge"
+    node = bridge_root / "bin/node"
+    entrypoint = bridge_root / "dist/bin/cursor-sdk-bridge.js"
+    node.parent.mkdir(parents=True)
+    entrypoint.parent.mkdir(parents=True)
+    node.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    node.chmod(0o755)
+    entrypoint.write_text("// synthetic bridge entrypoint\n", encoding="utf-8")
 
 
 def _credential(isolated_xdg: Path) -> None:
@@ -744,18 +779,27 @@ def test_sdk_initial_and_correction_reach_acceptance_with_durable_exact_identity
             break
         assert state.kind != "blocked", getattr(state, "block_reason_summary", "")
     assert state.kind == "completed"
-    assert state.context.schema_version == 7
+    assert state.context.schema_version == 9
     _validate_schema(
         state.context.model_dump(mode="json"),
-        "scheduler-submitted-run-context-v7.json",
+        "scheduler-submitted-run-context-v9.json",
     )
     assert state.cursor.chat_id is None
     assert state.cursor.sdk is not None
+    assert state.cursor.sdk.schema_version == 2
+    assert state.cursor.sdk.store_backend == "sqlite"
+    assert state.cursor.sdk.native_store_layout_version == 1
     assert state.cursor.sdk.agent_id == "019abc00-1111-4222-8333-444444444444"
     assert state.cursor.sdk.native_run_id == "run-019abc00-1111-4222-8333-555555555555"
     assert state.cursor.iteration == 2
     assert state.codex.reviewer_session_id == "019abc00-1111-4222-8333-666666666666"
     assert (run_root / state.cursor.sdk.identity_artifact_path).is_file()
+    identity = json.loads(
+        (run_root / state.cursor.sdk.identity_artifact_path).read_text(encoding="utf-8")
+    )
+    assert identity["schema_version"] == 2
+    assert identity["store_backend"] == "sqlite"
+    assert identity["native_store_layout_version"] == 1
     final_responses = list((run_root / "cursor/iterations").glob("*/*/final.txt"))
     assert final_responses
     for final_response in final_responses:
@@ -821,6 +865,126 @@ def test_sdk_initial_and_correction_reach_acceptance_with_durable_exact_identity
     events.write_text("tampered\n", encoding="utf-8")
     with pytest.raises(IntegrationApiError, match="failed verification"):
         output.read_process_output(run_id, attempt_id=sdk_attempt_id, stream="stdout")
+
+
+@pytest.mark.parametrize("damage", ["missing", "empty", "truncated", "corrupt", "missing_agent"])
+def test_bound_sdk_agent_with_unavailable_sqlite_state_blocks_before_send(
+    git_repo: Path,
+    isolated_xdg: Path,
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    damage: str,
+) -> None:
+    del fake_clis
+    _configure_v2(git_repo)
+    fake_sdk = tmp_path / "fake-sdk-missing-native"
+    fake_sdk.mkdir()
+    _install_fake_sdk(fake_sdk)
+    _credential(isolated_xdg)
+    monkeypatch.setenv("PYTHONPATH", str(fake_sdk))
+    send_counter = tmp_path / "send-count"
+    monkeypatch.setenv("FAKE_CURSOR_SDK_SEND_COUNTER", str(send_counter))
+    state_root = isolated_xdg / "state/ai_dev_loop"
+    db = state_root / "engine.sqlite3"
+    artifacts_root = state_root / "artifacts"
+    prompt = (FIXTURE_REPO / "docs/plans/prompt_sample-plan.txt").read_text(encoding="utf-8")
+    with patch("sys.stdin", StringIO(prompt)):
+        run_id = submit_run(
+            SubmitOptions(
+                short_name="Missing SQLite state",
+                repo_path=git_repo,
+                plan_path=Path("docs/plans/sample-plan.md"),
+                prompt_source_path=Path("docs/plans/prompt_sample-plan.txt"),
+                controller_session_id=CONTROLLER_SESSION,
+                codex_review_model="gpt-6.1-sol",
+                codex_review_reasoning_effort="high",
+                db_path=db,
+                artifact_root=artifacts_root,
+            )
+        ).run_id
+    start_run(run_id, db_path=db)
+    store = SqliteSchedulerStore(db)
+    tick = TickService(
+        store,
+        ProtectedArtifactStore(artifacts_root),
+        FakeGitAdmissionPort(resolved_root=str(git_repo.resolve())),
+        now_factory=lambda: datetime(2026, 10, 17, 12, tzinfo=UTC),
+        tick_owner_factory=lambda: f"phase257-missing-{next(_ATTEMPTS)}",
+        attempt_id_factory=lambda: f"att-{next(_ATTEMPTS):032x}",
+        attempt_backend=FakeAgentProcessBackend(
+            default_scenario=FakeAttemptScenario(active_ticks=0, exit_code=0)
+        ),
+        preflight_port=OkPreflightPort(),
+    )
+    for _ in range(20):
+        tick.run_once()
+        with store.begin_read() as conn:
+            state, _, _ = store.load_validated_snapshot(conn, run_id)
+        if state.kind == "cursor_ready":
+            break
+    assert state.kind == "cursor_ready"
+    assert state.cursor.sdk is not None
+    assert state.cursor.sdk.store_backend == "sqlite"
+    owner_root = cursor_sdk_state_root() / cursor_conversation_key(run_id)
+    assert (owner_root / "index.db").is_file()
+    if damage == "missing_agent":
+        monkeypatch.setenv("FAKE_CURSOR_SDK_MISSING_BOUND_AGENT", "1")
+    elif damage == "missing":
+        shutil.rmtree(owner_root)
+    elif damage == "empty":
+        (owner_root / "index.db").write_bytes(b"")
+    elif damage == "truncated":
+        (owner_root / "index.db").write_bytes(b"SQLite format 3\x00truncated")
+    else:
+        (owner_root / "index.db").write_bytes(b"not a sqlite database")
+
+    for _ in range(10):
+        tick.run_once()
+        with store.begin_read() as conn:
+            state, _, _ = store.load_validated_snapshot(conn, run_id)
+            reservation = store.get_reservation_for_run(conn, run_id)
+        if state.kind == "blocked":
+            break
+    assert state.kind == "blocked"
+    assert state.block_reason_kind == "cursor_sdk_native_unavailable"
+    assert reservation is not None and reservation["status"] == "active"
+    assert owner_root.exists() is (damage != "missing")
+    assert not send_counter.exists()
+
+
+def test_historical_reads_need_no_sdk_native_state(
+    isolated_xdg: Path,
+    tmp_path: Path,
+) -> None:
+    fixture = Path(__file__).resolve().parents[1] / "fixtures/phase21_4_pre_21_4_historical"
+    manifest = json.loads((fixture / "manifest.json").read_text(encoding="utf-8"))
+    run_id = str(manifest["run_id"])
+    attempt_id = str(manifest["attempt_id"])
+    state_root = tmp_path / "historical-state"
+    state_root.mkdir()
+    db = state_root / "engine.sqlite3"
+    artifacts_root = state_root / "artifacts"
+    shutil.copy2(fixture / "engine.sqlite3", db)
+    shutil.copytree(fixture / "artifacts", artifacts_root)
+    before = db.read_bytes()
+    assert not cursor_sdk_state_root().exists()
+
+    listed = scheduler_list(db_path=db)
+    assert [item.run_id for item in listed] == [run_id]
+    assert scheduler_status(run_id, db_path=db).summary.run_id == run_id
+    assert scheduler_history(run_id, db_path=db).entries
+    review = default_review_read_service(db_path=db, artifact_root=artifacts_root)
+    detail = review.inspect_review(run_id, attempt_id=attempt_id)
+    assert detail.result_state == "valid"
+    content = review.read_review_content(
+        run_id,
+        attempt_id=attempt_id,
+        content_kind="review-markdown",
+    )
+    assert content.available is True and content.returned_bytes > 0
+    assert not cursor_sdk_state_root().exists()
+    assert db.read_bytes() == before
 
 
 @pytest.mark.parametrize(
@@ -1404,14 +1568,14 @@ def test_manifest_v4_freezes_named_mixed_provider_entries(
     original_state_payload = store.dump_sequence_state(prepared)[1]
     original_idempotency_key = prepared.idempotency_key  # type: ignore[union-attr]
     entries = prepared.definition.entries  # type: ignore[union-attr]
-    assert prepared.definition.schema_version == 3  # type: ignore[union-attr]
+    assert prepared.definition.schema_version == 4  # type: ignore[union-attr]
     _validate_schema(
         prepared.definition.model_dump(mode="json"),  # type: ignore[union-attr]
-        "scheduler-sequence-definition-v3.json",
+        "scheduler-sequence-definition-v4.json",
     )
     _validate_schema(
         entries[0].model_dump(mode="json"),
-        "scheduler-frozen-sequence-entry-v3.json",
+        "scheduler-frozen-sequence-entry-v4.json",
     )
     assert [entry.implementer.provider for entry in entries] == ["cursor", "codex"]  # type: ignore[union-attr]
     context = build_sequence_run_context(
@@ -1419,10 +1583,10 @@ def test_manifest_v4_freezes_named_mixed_provider_entries(
         entry=entries[0],
         entry_hash=SqliteSchedulerStore.dump_sequence_entry(entries[0])[1],
     )
-    assert context.schema_version == 8
+    assert context.schema_version == 10
     _validate_schema(
         context.model_dump(mode="json"),
-        "scheduler-submitted-run-context-v8.json",
+        "scheduler-submitted-run-context-v10.json",
     )
     assert context.sequence is not None and context.sequence.ordinal == 1
 

@@ -59,7 +59,7 @@ from ai_dev_loop.scheduler.domain.events import RunSubmittedEvent
 from ai_dev_loop.scheduler.domain.state import (
     SUBMITTED_CONTEXT_SCHEMA_VERSION,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_AGENT_LED,
-    SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK,
+    SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SQLITE,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_FRESH,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER,
     AbortedState,
@@ -392,12 +392,15 @@ def _cursor_binding(effective: ProjectConfig) -> CursorBinding | CursorSdkBindin
             sandbox=effective.cursor.sandbox,
         )
     return CursorSdkBinding(
+        schema_version=2,
         sdk_version=effective.cursor.sdk_version,
         model=effective.cursor.model,
         parameters=effective.cursor.parameters,
         credential_ref=effective.cursor.credential_ref,
         setting_sources=tuple(effective.cursor.setting_sources),
         sandbox=effective.cursor.sandbox,
+        store_backend="sqlite",
+        native_store_layout_version=1,
     )
 
 
@@ -480,7 +483,7 @@ def _build_agent_led_context(
     repo_root = str(repo_target.root)
     return SubmittedRunContext(
         schema_version=(
-            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SQLITE
             if isinstance(effective.cursor, CursorSdkSection)
             and effective.implementer.provider == "cursor"
             else SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER

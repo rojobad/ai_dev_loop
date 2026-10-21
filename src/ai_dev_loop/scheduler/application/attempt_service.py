@@ -71,6 +71,9 @@ from ai_dev_loop.scheduler.application.cursor_sdk_journal import (
     authenticate_sdk_recovery_journal,
     seal_interrupted_sdk_send_journal,
 )
+from ai_dev_loop.scheduler.application.cursor_sdk_progress import (
+    seal_interrupted_sdk_wait_progress,
+)
 from ai_dev_loop.scheduler.application.cursor_workflow_service import CursorWorkflowService
 from ai_dev_loop.scheduler.application.review_budget import effective_review_ceiling_for_run
 from ai_dev_loop.scheduler.application.scheduler_checkpoint import checkpoint_from_state
@@ -88,6 +91,7 @@ from ai_dev_loop.scheduler.domain.cursor_contract import (
     RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND,
     RUN_CURSOR_TURN_EFFECT_KIND,
     cursor_sdk_attempt_journal_rel,
+    cursor_sdk_wait_progress_rel,
     invocation_evidence_rel,
 )
 from ai_dev_loop.scheduler.domain.effects import (
@@ -1352,7 +1356,7 @@ class AttemptService:
 
             sdk = context.cursor
             binding: dict[str, object] = {
-                "schema_version": 2,
+                "schema_version": 3 if sdk.schema_version == 2 else 2,
                 "runtime": "sdk-local",
                 "effect_kind": effect_kind,
                 "repository_root": identity.root,
@@ -1379,6 +1383,13 @@ class AttemptService:
                 ),
                 "timeout_seconds": context.workflow.cursor_timeout_minutes * 60,
             }
+            if sdk.schema_version == 2:
+                binding.update(
+                    {
+                        "store_backend": sdk.store_backend,
+                        "native_store_layout_version": sdk.native_store_layout_version,
+                    }
+                )
             if effect_kind == CREATE_CHAT_EFFECT_KIND:
                 return binding
             if state.cursor.sdk is None:
@@ -1387,6 +1398,12 @@ class AttemptService:
                 state.cursor.sdk.conversation_owner_run_id
             ):
                 raise ValidationError("Cursor SDK identity owner disagrees with conversation key")
+            if (
+                state.cursor.sdk.schema_version != sdk.schema_version
+                or state.cursor.sdk.store_backend != sdk.store_backend
+                or state.cursor.sdk.native_store_layout_version != sdk.native_store_layout_version
+            ):
+                raise ValidationError("Cursor SDK runtime storage binding changed")
             if isinstance(state, WaitingForCursorFixState):
                 prompt_path = state.codex.latest_correction_envelope_path
                 prompt_sha = state.codex.latest_correction_envelope_sha256
@@ -1770,6 +1787,9 @@ class AttemptService:
                     journal_path = run_root / journal_rel
                     if not seal_interrupted_sdk_send_journal(journal_path):
                         raise ValueError("interrupted SDK send journal cannot be sealed")
+                    seal_interrupted_sdk_wait_progress(
+                        run_root / cursor_sdk_wait_progress_rel(attempt_id)
+                    )
                     payload.update(
                         {
                             "failure_kind": "cursor_sdk_worker_lost",

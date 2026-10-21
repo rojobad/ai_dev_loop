@@ -31,6 +31,7 @@ $XDG_STATE_HOME/ai_dev_loop/
 │       implementer/turns/<NN>.<attempt-id>.{jsonl,stderr.txt,metadata.json,...}
 │       cursor/sdk-identity.json
 │       cursor/sdk-attempts/<attempt-id>/dispatch-journal.jsonl
+│       cursor/sdk-attempts/<attempt-id>/wait-progress.jsonl
 │       cursor/iterations/<NN>/<attempt-id>/{sdk-envelopes.jsonl,sdk-metadata.json,final.txt,stderr.txt}
 │       codex/fresh-reviewer-input.json
 │       codex/fresh-reviewer-binding.json
@@ -55,7 +56,8 @@ $XDG_STATE_HOME/ai_dev_loop/
   reviewer B independiente. Los contextos históricos sin esa metadata se
   proyectan como Cursor para lectura; su runtime CLI ya no puede iniciar trabajo.
 - Un submit Cursor con config v2 congela runtime SDK, versión, modelo+parámetros,
-  referencia de credencial, fuentes, sandbox y policy en contexto v7. El worker
+  referencia de credencial, fuentes, sandbox, policy y SQLite/layout en contexto
+  v9. El worker
   persiste `create_intent` antes de crear, liga el agent exacto antes del primer
   send y persiste `send_intent` antes de inferir. Los envelopes NDJSON acotados,
   final, metadata y hashes permanecen separados. La identidad lógica no expone
@@ -83,6 +85,12 @@ $XDG_STATE_HOME/ai_dev_loop/pr-review-v2/              # motor PR-review v2
 
 Eliminalos solo con `scheduler cutover cleanup --confirm delete-legacy-state` tras
 aceptacion humana independiente (ver [Desinstalacion y limpieza](desinstalacion-limpieza.md)).
+Ese cutover no alcanza `cursor-sdk/`. Una conversación SDK terminada se dispone
+con `scheduler cursor-store cleanup` o, si la política del ledger sigue
+habilitada, 168 horas después de la última terminación autenticada de todo el
+trabajo relacionado, incluida una reconciliación nativa posterior al abort. El
+root nativo desaparece; el ledger, los artefactos y el tombstone
+`cursor-sdk-disposals/<key>.json` quedan como evidencia.
 
 El layout legacy `runs/` incluia `state.json`, `cursor/`, `codex/`, `git/`, etc.
 Esa informacion ya no es la autoridad operativa; conservala solo para auditoria
@@ -108,7 +116,7 @@ No existe `recover` publico en el scheduler central. Ante fallos:
   reserva pero no puede ejecutar. Para la hoja vigente de secuencia,
   `scheduler_sequence_implementer_replacements` liga ordinal, generación, entrada
   congelada y adopción; lineage registra `implementer_retry`;
-- para Cursor SDK v7/v8, el ledger
+- para Cursor SDK v7-v10, el ledger
   `scheduler_cursor_sdk_reconciliations` y los records protegidos enlazan el
   intento fallido, journal, owner/key/agent, inventario pre-envío y resultado
   nativo. Solo una reconciliación exacta habilita el retry automático o manual.
@@ -130,8 +138,22 @@ No existe `recover` publico en el scheduler central. Ante fallos:
   record ya publicado de ese intento: se autentica su path y digest y no se
   abre otra observación. Los records v1 conservan sus resultados
   anteriores. Los journals v1 siguen leyéndose con su autoridad anterior y no
-  habilitan esta cancelación. El presupuesto de preparación no sustituye el
-  deadline congelado de un envío ya autorizado;
+  habilitan esta cancelación.   El presupuesto de preparación no sustituye el
+  deadline congelado de un envío ya autorizado. Ping, autenticación, inventario,
+  get y cancel conservan un tope corto de transporte. Resume, send y stream
+  usan el resto de ese deadline congelado; el temporizador del worker y la
+  terminación del árbol de procesos siguen siendo el reloj de pared. Un timeout
+  HTTP por inactividad no diagnostica un bloqueo. `wait-progress.jsonl` (schema 1)
+  anota la autorización del send, el enlace del handle nativo y la observación
+  terminal. Un fallo ordinario de send, readiness o stream sella esa espera.
+  `scheduler timeline` y el stderr de resultado del intento muestran la etapa
+  y el tiempo, o `unknown` si falta la evidencia. Una espera abierta crece; un
+  sello `interrupted` sin handle nativo queda cerrado, sin inventar el handle
+  ni un resultado terminal, y no crece en inspecciones posteriores. El stderr
+  autenticado del hijo SDK no recibe esas líneas. Silencio, CPU o
+  un estado nativo `running` no cuentan como progreso ni como stall. Un send
+  perdido sigue la reconciliación nativa autenticada ya existente, sin un
+  segundo prompt.
 - `scheduler abort` cancela sin borrar artefactos ni cambios staged;
 - para trabajo nuevo tras un run terminal, `scheduler submit` con
   `--short-name`, `--resubmission-id <uuid>`, modelo y razonamiento de review
@@ -177,9 +199,10 @@ sonda acotada al CLI Codex en `PATH`.
 Manifest v3 exige `short_name` de secuencia y fase, mientras definición/entrada
 v2 sigue congelando runtimes históricos por ordinal y las hojas usan contexto
 submitido v6. Manifest SDK v4 conserva los nombres y exige runtime/modelo/parámetros
-completos por fase; definición/entrada v3 y contexto v8 congelan esa selección,
-incluso en secuencias mixtas Cursor-SDK/Codex. Los envelopes de ciclo de vida de
-secuencia siguen v1.
+completos por fase; las preparaciones nuevas usan definición/entrada v4 y contexto
+v10 para congelar también SQLite/layout, incluso en secuencias mixtas
+Cursor-SDK/Codex. Definición/entrada v3 y contexto v8 permanecen históricos y
+JSONL. Los envelopes de ciclo de vida de secuencia siguen v1.
 Entradas históricas v1 y contextos v4 conservan Cursor, identidad y hashes.
 Preparaciones v1/v2 ya aceptadas conservan replay exacto. Si tienen una hoja
 Cursor CLI efectiva no pueden start/materializar/handoff/recovery; una definición

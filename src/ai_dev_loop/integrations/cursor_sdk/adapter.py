@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import importlib
 import importlib.metadata
+import importlib.resources
 import os
 import re
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
+from contextvars import ContextVar, Token
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from types import ModuleType
@@ -54,6 +57,86 @@ _SAFE_NUMERIC_USAGE_FIELDS = frozenset(
     }
 )
 
+_NATIVE_STORE_INITIALIZER = "native_store_initializer.mjs"
+_BUNDLED_BRIDGE_FILES = (
+    "bin/node",
+    "dist/bin/cursor-sdk-bridge.js",
+)
+# Ping, auth, inventory, get, and cancel stay on this short unary cap.
+# launch_bridge applies one client_timeout to both unary and stream, so send,
+# stream, and resume then select a public with_options view. That view carries
+# the remaining frozen attempt deadline. httpx applies the number as an
+# inactivity ceiling; the worker SIGALRM and owned process-tree termination
+# remain the wall-clock authority.
+ADMINISTRATIVE_RPC_TIMEOUT_SECONDS = 60
+_OPERATION_DEADLINE: ContextVar[float | None] = ContextVar(
+    "cursor_sdk_operation_deadline",
+    default=None,
+)
+
+
+class CursorSdkOperationBudgetExhausted(BaseException):
+    """The frozen attempt budget is gone, so no resume, send, or stream starts."""
+
+
+def bind_cursor_sdk_operation_deadline(deadline_monotonic: float) -> Token[float | None]:
+    """Install the attempt deadline once. Resume, send, and stream must not reset it."""
+
+    if deadline_monotonic <= 0:
+        raise ValueError("Cursor SDK operation deadline must be positive")
+    return _OPERATION_DEADLINE.set(deadline_monotonic)
+
+
+def reset_cursor_sdk_operation_deadline(token: Token[float | None]) -> None:
+    _OPERATION_DEADLINE.reset(token)
+
+
+def operation_budget_remaining() -> float | None:
+    """Seconds left on the frozen deadline, or None when no attempt deadline is bound."""
+
+    deadline = _OPERATION_DEADLINE.get()
+    if deadline is None:
+        return None
+    return deadline - time.monotonic()
+
+
+def resolve_cursor_sdk_native_bridge_command() -> tuple[str, ...]:
+    """Resolve the pinned bridge and packaged native-store initializer.
+
+    The initializer derives the public JavaScript SDK modules from the original
+    bridge entrypoint, so this resolver never bakes a development checkout or
+    installation prefix into the command.
+    """
+
+    try:
+        distribution = importlib.metadata.distribution("cursor-sdk")
+    except importlib.metadata.PackageNotFoundError as exc:
+        raise CursorSdkPathError("cursor_sdk_distribution_unavailable") from exc
+    if distribution.version != CURSOR_SDK_VERSION:
+        raise CursorSdkPathError("cursor_sdk_distribution_version_mismatch")
+    try:
+        bridge_root = Path(str(distribution.locate_file("cursor_sdk/_vendor/bridge"))).resolve(
+            strict=True
+        )
+        initializer_resource = importlib.resources.files(
+            "ai_dev_loop.integrations.cursor_sdk"
+        ).joinpath(_NATIVE_STORE_INITIALIZER)
+        initializer = Path(str(initializer_resource)).resolve(strict=True)
+    except (FileNotFoundError, ModuleNotFoundError, TypeError, ValueError) as exc:
+        raise CursorSdkPathError("cursor_sdk_native_initializer_unavailable") from exc
+    node, entrypoint = (bridge_root / relative for relative in _BUNDLED_BRIDGE_FILES)
+    if (
+        initializer.is_symlink()
+        or not initializer.is_file()
+        or node.is_symlink()
+        or not node.is_file()
+        or not os.access(node, os.X_OK)
+        or entrypoint.is_symlink()
+        or not entrypoint.is_file()
+    ):
+        raise CursorSdkPathError("cursor_sdk_native_runtime_unavailable")
+    return (str(node), "--import", str(initializer), str(entrypoint))
+
 
 def build_cursor_sdk_client_config(
     selection: CursorSdkSection,
@@ -61,17 +144,25 @@ def build_cursor_sdk_client_config(
     workspace: Path,
     repository_root: Path,
     conversation_owner_identity: str,
+    store_backend: Literal["jsonl", "sqlite"] = "jsonl",
+    native_store_layout_version: Literal[1] = 1,
+    require_existing_native_state: bool = False,
 ) -> CursorSdkClientConfig:
     paths = ensure_cursor_sdk_client_paths(
         workspace=workspace,
         repository_root=repository_root,
         conversation_owner_identity=conversation_owner_identity,
+        store_backend=store_backend,
+        native_store_layout_version=native_store_layout_version,
+        require_existing_native_state=require_existing_native_state,
     )
     return CursorSdkClientConfig(
         sdk_version=selection.sdk_version,
         workspace=paths.workspace,
         state_root=paths.state_root,
         store_root=paths.store_root,
+        store_backend=store_backend,
+        native_store_layout_version=native_store_layout_version,
         model=selection.model,
         parameters=selection.wire_parameters(),
         credential_ref=selection.credential_ref,
@@ -103,10 +194,14 @@ class CursorSdkAdapter:
         *,
         repository_root: Path,
         sdk_loader: Callable[[], ModuleType | Any] | None = None,
+        bridge_command_resolver: Callable[[], tuple[str, ...]] | None = None,
     ) -> None:
         self._config = config
         self._repository_root = repository_root
         self._sdk_loader = sdk_loader
+        self._bridge_command_resolver = (
+            bridge_command_resolver or resolve_cursor_sdk_native_bridge_command
+        )
         self._sdk: Any = None
         self._client: Any = None
         self._api_key: str | None = None
@@ -153,15 +248,23 @@ class CursorSdkAdapter:
             # SDK launch error cannot copy it into otherwise-safe metadata.
             self._api_key = api_key
             local_options = self._local_options(sdk)
+            bridge_command = (
+                self._bridge_command_resolver() if self._config.store_backend == "sqlite" else None
+            )
             with _without_cursor_auth_environment(api_key):
+                launch_options: dict[str, object] = {
+                    "workspace": self._config.workspace,
+                    "state_root": self._config.state_root,
+                    "local": local_options,
+                    "timeout": 30,
+                    "client_timeout": ADMINISTRATIVE_RPC_TIMEOUT_SECONDS,
+                    "max_retries": 0,
+                    "allow_api_key_env_fallback": True,
+                }
+                if bridge_command is not None:
+                    launch_options["command"] = bridge_command
                 client = sdk.CursorClient.launch_bridge(
-                    workspace=self._config.workspace,
-                    state_root=self._config.state_root,
-                    local=local_options,
-                    timeout=30,
-                    client_timeout=60,
-                    max_retries=0,
-                    allow_api_key_env_fallback=True,
+                    **launch_options,
                 )
             self._client = client
             ping = client.ping()
@@ -271,7 +374,10 @@ class CursorSdkAdapter:
         if invalid is not None:
             return CursorSdkOutcome.failed(invalid)
         try:
-            agent = self._client.resume_agent(agent_id, self._agent_options())
+            view = self._deadline_client(stream=False)
+            agent = view.resume_agent(agent_id, self._agent_options())
+            if view is not self._client and hasattr(agent, "client"):
+                agent.client = self._client
             resumed_id = str(getattr(agent, "agent_id", ""))
             if resumed_id != agent_id:
                 return CursorSdkOutcome.failed(
@@ -283,6 +389,8 @@ class CursorSdkAdapter:
                 )
             self._agents[agent_id] = agent
             return CursorSdkOutcome.success(CursorSdkAgentIdentity(agent_id=agent_id))
+        except CursorSdkOperationBudgetExhausted:
+            raise
         except Exception as exc:
             return CursorSdkOutcome.failed(
                 self._classify(exc, CursorSdkOperation.RESUME, agent_id=agent_id)
@@ -307,7 +415,12 @@ class CursorSdkAdapter:
                 return CursorSdkOutcome.failed(resumed.failure)
             agent = self._agents[agent_id]
         try:
-            run = agent.send(prompt, self._send_options())
+            view = self._deadline_client(stream=True)
+            agent.client = view
+            try:
+                run = agent.send(prompt, self._send_options())
+            finally:
+                agent.client = self._client
             run_id = self._run_id(run)
             returned_agent_id = str(getattr(run, "agent_id", agent_id))
             if not run_id or returned_agent_id != agent_id:
@@ -320,6 +433,8 @@ class CursorSdkAdapter:
                 )
             self._runs[run_id] = run
             return CursorSdkOutcome.success(CursorSdkRunIdentity(agent_id=agent_id, run_id=run_id))
+        except CursorSdkOperationBudgetExhausted:
+            raise
         except Exception as exc:
             return CursorSdkOutcome.failed(
                 self._classify(exc, CursorSdkOperation.SEND, agent_id=agent_id)
@@ -342,8 +457,11 @@ class CursorSdkAdapter:
         if invalid is not None:
             return CursorSdkOutcome.failed(invalid)
         try:
+            view = self._deadline_client(stream=True)
             if mode == "replay":
                 run = self._get_public_run(agent_id, run_id)
+                if hasattr(run, "client"):
+                    run.client = view
                 # Pinned 1.0.37 reports supports("observe") == false even when
                 # public replay works. Invoke observe directly and never gate it.
                 # ObserveRun does not mutate a handle created by GetRun, so use
@@ -356,6 +474,8 @@ class CursorSdkAdapter:
                 run = self._runs.get(run_id)
                 if run is None:
                     run = self._get_public_run(agent_id, run_id)
+                if hasattr(run, "client"):
+                    run.client = view
                 iterator = run.events() if hasattr(run, "events") else run.stream()
                 for event in iterator:
                     if on_envelope is not None:
@@ -371,6 +491,8 @@ class CursorSdkAdapter:
                     )
                 )
             return CursorSdkOutcome.success(converted)
+        except CursorSdkOperationBudgetExhausted:
+            raise
         except Exception as exc:
             return CursorSdkOutcome.failed(
                 self._classify(
@@ -520,6 +642,26 @@ class CursorSdkAdapter:
                 )
             )
 
+    def _deadline_client(self, *, stream: bool) -> Any:
+        """Public client view for resume, send, or stream.
+
+        Administrative RPCs keep the base client. A bound attempt rechecks the
+        remaining frozen deadline and does not start the RPC when it is gone.
+        The returned view does not replace the base client's short unary cap.
+        """
+
+        client = self._client
+        remaining = operation_budget_remaining()
+        if client is None or remaining is None or not hasattr(client, "with_options"):
+            if remaining is not None and remaining <= 0:
+                raise CursorSdkOperationBudgetExhausted()
+            return client
+        if remaining <= 0:
+            raise CursorSdkOperationBudgetExhausted()
+        if stream:
+            return client.with_options(stream_timeout=remaining)
+        return client.with_options(unary_timeout=remaining)
+
     def _sdk_version(self, sdk: Any) -> str:
         if self._sdk_loader is not None:
             return str(getattr(sdk, "__version__", CURSOR_SDK_VERSION))
@@ -529,11 +671,16 @@ class CursorSdkAdapter:
             return ""
 
     def _local_options(self, sdk: Any) -> Any:
+        store = (
+            sdk.LocalAgentStoreConfig(type="sqlite")
+            if self._config.store_backend == "sqlite"
+            else sdk.LocalAgentStoreConfig(type="jsonl", root_dir=str(self._config.store_root))
+        )
         return sdk.LocalAgentOptions(
             cwd=self._config.workspace,
             setting_sources=list(self._config.setting_sources),
             sandbox_options=sdk.SandboxOptions(enabled=self._config.sandbox == "enabled"),
-            store=sdk.LocalAgentStoreConfig(type="jsonl", root_dir=str(self._config.store_root)),
+            store=store,
         )
 
     def _model_selection(self) -> Any:

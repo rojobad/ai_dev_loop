@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-import importlib.util
+import builtins
 import json
 import shutil
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -31,6 +33,21 @@ from ai_dev_loop.scheduler.application.submission import SubmissionService, Subm
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
 from ai_dev_loop.scheduler.infrastructure.repository_target import RepositoryTarget
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
+
+
+@contextmanager
+def _reject_cursor_sdk_imports() -> Iterator[None]:
+    """Prove the guarded operation does not import the optional SDK runtime."""
+
+    original_import = builtins.__import__
+
+    def guarded_import(name: str, *args: object, **kwargs: object) -> object:
+        if name == "cursor_sdk" or name.startswith("cursor_sdk."):
+            raise AssertionError(f"submission imported optional SDK runtime: {name}")
+        return original_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", guarded_import):
+        yield
 
 
 def _v2_config(*, implementer: str = "") -> str:
@@ -226,10 +243,12 @@ def test_mixed_global_and_repository_config_versions_fail_explicitly(
         resolve_effective_config(repo_root=git_repo)
 
 
-def test_cursor_selected_v2_submit_freezes_phase25_2_sdk_context_without_importing_sdk(
+def test_cursor_selected_v2_submit_freezes_sqlite_sdk_context_without_importing_sdk(
     git_repo: Path,
     isolated_xdg: Path,
 ) -> None:
+    historical_root = Path(__file__).resolve().parent.parent / "fixtures/phase25_7_historical"
+    historical_before = {path.name: path.read_bytes() for path in historical_root.glob("*.json")}
     _write_v2(git_repo)
     paths = _paths(isolated_xdg)
     service = SubmissionService(
@@ -237,14 +256,20 @@ def test_cursor_selected_v2_submit_freezes_phase25_2_sdk_context_without_importi
         ProtectedArtifactStore(paths["artifact_root"]),
         repository_discoverer=lambda _: _repository_target(git_repo),
     )
-    with patch("sys.stdin", StringIO(_prompt(git_repo))):
+    with (
+        patch("sys.stdin", StringIO(_prompt(git_repo))),
+        _reject_cursor_sdk_imports(),
+    ):
         result = service.submit(_submit_options(git_repo, paths))
     with service.store.begin_read() as conn:
         state, _, _ = service.store.load_validated_snapshot(conn, result.run_id)
-    assert state.context.schema_version == 7
+    assert state.context.schema_version == 9
     assert state.context.cursor.runtime == "sdk-local"  # type: ignore[union-attr]
+    assert state.context.cursor.store_backend == "sqlite"  # type: ignore[union-attr]
     assert (service.artifacts.run_root(result.run_id) / "effective-config.yaml").is_file()
-    assert importlib.util.find_spec("cursor_sdk") is None
+    assert {
+        path.name: path.read_bytes() for path in historical_root.glob("*.json")
+    } == historical_before
 
 
 def test_codex_selected_v2_submit_needs_no_cursor_runtime_key_or_extra(
@@ -264,7 +289,10 @@ def test_codex_selected_v2_submit_needs_no_cursor_runtime_key_or_extra(
         ProtectedArtifactStore(paths["artifact_root"]),
         repository_discoverer=lambda _: _repository_target(git_repo),
     )
-    with patch("sys.stdin", StringIO(_prompt(git_repo))):
+    with (
+        patch("sys.stdin", StringIO(_prompt(git_repo))),
+        _reject_cursor_sdk_imports(),
+    ):
         result = service.submit(_submit_options(git_repo, paths))
     with SqliteSchedulerStore(paths["db_path"]).begin_read() as conn:
         state, _, _ = SqliteSchedulerStore(paths["db_path"]).load_validated_snapshot(
@@ -283,7 +311,6 @@ def test_codex_selected_v2_submit_needs_no_cursor_runtime_key_or_extra(
     assert effective_payload["version"] == 2
     assert effective_payload["cursor"]["parameters"]["fast"] is False
     assert "command" not in effective_payload["cursor"]
-    assert importlib.util.find_spec("cursor_sdk") is None
 
 
 def test_codex_selected_v2_does_not_copy_available_cursor_key_to_scheduler_state(

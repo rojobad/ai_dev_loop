@@ -61,7 +61,7 @@ if TYPE_CHECKING:
         | AwaitingFinalizationSequenceState
     )
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 SEQUENCE_SCHEMA_VERSION = 5
 REVIEW_RETRY_SCHEMA_VERSION = 6
 SEQUENCE_RUN_LINEAGE_SCHEMA_VERSION = 9
@@ -84,13 +84,15 @@ MIGRATION_V15_NAME = "0015_codex_implementer_recovery"
 MIGRATION_V16_NAME = "0016_sequence_implementer_replacement"
 MIGRATION_V17_NAME = "0017_presentation_short_names"
 MIGRATION_V18_NAME = "0018_cursor_sdk_reconciliation"
+MIGRATION_V19_NAME = "0019_cursor_sdk_retention"
 SEQUENCE_REVIEW_RECOVERY_SCHEMA_VERSION = 11
 CURSOR_INITIAL_RECOVERY_SCHEMA_VERSION = 12
 CURSOR_SEQUENCE_REPLACEMENT_SCHEMA_VERSION = 13
 CODEX_IMPLEMENTER_RECOVERY_SCHEMA_VERSION = 15
 SEQUENCE_IMPLEMENTER_REPLACEMENT_SCHEMA_VERSION = 16
 CURSOR_SDK_RECONCILIATION_SCHEMA_VERSION = 18
-REQUIRED_TABLES = frozenset(
+CURSOR_SDK_RETENTION_SCHEMA_VERSION = 19
+REQUIRED_TABLES_V18 = frozenset(
     {
         "scheduler_schema_migrations",
         "scheduler_runs",
@@ -121,7 +123,12 @@ REQUIRED_TABLES = frozenset(
         "scheduler_cursor_sdk_reconciliations",
     }
 )
-REQUIRED_TABLES_V17 = REQUIRED_TABLES - {"scheduler_cursor_sdk_reconciliations"}
+REQUIRED_TABLES = REQUIRED_TABLES_V18 | {
+    "scheduler_cursor_sdk_retention_policy",
+    "scheduler_cursor_sdk_conversation_fences",
+    "scheduler_cursor_sdk_disposals",
+}
+REQUIRED_TABLES_V17 = REQUIRED_TABLES_V18 - {"scheduler_cursor_sdk_reconciliations"}
 REQUIRED_TABLES_V16 = REQUIRED_TABLES_V17 - {
     "scheduler_run_presentation",
     "scheduler_sequence_presentation",
@@ -135,7 +142,7 @@ REQUIRED_TABLES_V11 = REQUIRED_TABLES_V12 - {"scheduler_cursor_initial_recoverie
 REQUIRED_TABLES_V9 = REQUIRED_TABLES_V11 - {"scheduler_sequence_execution_replacements"}
 REQUIRED_TABLES_V8 = REQUIRED_TABLES_V9 - {"scheduler_sequence_run_attempts"}
 REQUIRED_TABLES_V7 = REQUIRED_TABLES_V8 - {"scheduler_capacity_retry_generations"}
-REQUIRED_INDEXES = frozenset(
+REQUIRED_INDEXES_V18 = frozenset(
     {
         "idx_scheduler_runs_state_kind",
         "idx_scheduler_runs_worktree",
@@ -169,8 +176,11 @@ REQUIRED_INDEXES = frozenset(
         "idx_scheduler_cursor_sdk_reconciliations_run",
     }
 )
+REQUIRED_INDEXES = REQUIRED_INDEXES_V18 | {
+    "idx_scheduler_cursor_sdk_disposals_status",
+}
 REQUIRED_TABLES_V6 = REQUIRED_TABLES_V7 - {"scheduler_checkpoint_holds"}
-REQUIRED_INDEXES_V17 = REQUIRED_INDEXES - {
+REQUIRED_INDEXES_V17 = REQUIRED_INDEXES_V18 - {
     "idx_scheduler_cursor_sdk_reconciliations_run",
 }
 REQUIRED_INDEXES_V15 = REQUIRED_INDEXES_V17 - {
@@ -340,6 +350,10 @@ def _migration_v18_sql() -> str:
     return _migration_sql("0018_cursor_sdk_reconciliation.sql")
 
 
+def _migration_v19_sql() -> str:
+    return _migration_sql("0019_cursor_sdk_retention.sql")
+
+
 def _split_sql_statements(sql: str) -> list[str]:
     statements: list[str] = []
     for chunk in sql.split(";"):
@@ -392,6 +406,8 @@ def migration_checksum(version: int) -> str:
         return hashlib.sha256(_migration_v17_sql().encode("utf-8")).hexdigest()
     if version == 18:
         return hashlib.sha256(_migration_v18_sql().encode("utf-8")).hexdigest()
+    if version == 19:
+        return hashlib.sha256(_migration_v19_sql().encode("utf-8")).hexdigest()
     raise ValueError(f"unsupported migration version {version}")
 
 
@@ -618,6 +634,10 @@ class SqliteSchedulerStore:
                 for migration_version in range(1, 18):
                     self._verify_migration_checksum(conn, migration_version)
                 self._migrate_v17_to_v18(conn)
+            elif version == 18:
+                for migration_version in range(1, 19):
+                    self._verify_migration_checksum(conn, migration_version)
+                self._migrate_v18_to_v19(conn)
             else:
                 self._verify_current_schema(conn)
             self._apply_database_permissions(self.db_path)
@@ -1090,7 +1110,7 @@ class SqliteSchedulerStore:
 
     def _migrate_v17_to_v18(self, conn: sqlite3.Connection) -> None:
         if self._user_version(conn) >= 18:
-            self._verify_current_schema(conn)
+            self._migrate_v18_to_v19(conn)
             return
         for migration_version in range(1, 18):
             self._verify_migration_checksum(conn, migration_version)
@@ -1108,6 +1128,33 @@ class SqliteSchedulerStore:
                 (18, MIGRATION_V18_NAME, migration_checksum(18), applied_at),
             )
             conn.execute("PRAGMA user_version = 18")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        self._apply_database_permissions(self.db_path)
+        self._migrate_v18_to_v19(conn)
+
+    def _migrate_v18_to_v19(self, conn: sqlite3.Connection) -> None:
+        if self._user_version(conn) >= 19:
+            self._verify_current_schema(conn)
+            return
+        for migration_version in range(1, 19):
+            self._verify_migration_checksum(conn, migration_version)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for statement in _split_sql_statements(_migration_v19_sql()):
+                self._fault_maybe_raise_migration(statement)
+                conn.execute(statement)
+            applied_at = encode_utc_instant(datetime.now(tz=UTC))
+            conn.execute(
+                """
+                INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (19, MIGRATION_V19_NAME, migration_checksum(19), applied_at),
+            )
+            conn.execute("PRAGMA user_version = 19")
             conn.commit()
         except Exception:
             conn.rollback()
@@ -1154,6 +1201,9 @@ class SqliteSchedulerStore:
         if target >= SCHEMA_VERSION:
             tables = REQUIRED_TABLES
             indexes = REQUIRED_INDEXES
+        elif target >= 18:
+            tables = REQUIRED_TABLES_V18
+            indexes = REQUIRED_INDEXES_V18
         elif target >= 17:
             tables = REQUIRED_TABLES_V17
             indexes = REQUIRED_INDEXES_V17
@@ -2606,10 +2656,10 @@ class SqliteSchedulerStore:
             )
         sequence_filter = ""
         if kind == "standalone":
-            sequence_filter = " AND COALESCE(json_extract(state_payload, '$.context.schema_version'), 0) NOT IN (4, 6, 8)"
+            sequence_filter = " AND COALESCE(json_extract(state_payload, '$.context.schema_version'), 0) NOT IN (4, 6, 8, 10)"
         elif kind == "sequence":
             sequence_filter = (
-                " AND json_extract(state_payload, '$.context.schema_version') IN (4, 6, 8)"
+                " AND json_extract(state_payload, '$.context.schema_version') IN (4, 6, 8, 10)"
             )
         elif kind != "all":
             raise SchedulerEngineError(
@@ -5653,6 +5703,8 @@ class SqliteSchedulerStore:
         *,
         source_run_id: str,
     ) -> list[sqlite3.Row]:
+        if "scheduler_cursor_initial_recoveries" not in self._table_names(conn):
+            return []
         rows = conn.execute(
             """
             SELECT * FROM scheduler_cursor_initial_recoveries
@@ -5670,6 +5722,8 @@ class SqliteSchedulerStore:
         source_run_id: str,
         failed_attempt_id: str,
     ) -> sqlite3.Row | None:
+        if "scheduler_cursor_initial_recoveries" not in self._table_names(conn):
+            return None
         row = conn.execute(
             """
             SELECT * FROM scheduler_cursor_initial_recoveries
@@ -5685,6 +5739,8 @@ class SqliteSchedulerStore:
         *,
         successor_run_id: str,
     ) -> sqlite3.Row | None:
+        if "scheduler_cursor_initial_recoveries" not in self._table_names(conn):
+            return None
         row = conn.execute(
             """
             SELECT * FROM scheduler_cursor_initial_recoveries
@@ -5700,6 +5756,8 @@ class SqliteSchedulerStore:
         *,
         recovery_key: str,
     ) -> sqlite3.Row | None:
+        if "scheduler_cursor_initial_recoveries" not in self._table_names(conn):
+            return None
         row = conn.execute(
             """
             SELECT * FROM scheduler_cursor_initial_recoveries
@@ -5713,6 +5771,8 @@ class SqliteSchedulerStore:
         self,
         conn: sqlite3.Connection,
     ) -> list[sqlite3.Row]:
+        if "scheduler_cursor_initial_recoveries" not in self._table_names(conn):
+            return []
         rows = conn.execute(
             """
             SELECT * FROM scheduler_cursor_initial_recoveries

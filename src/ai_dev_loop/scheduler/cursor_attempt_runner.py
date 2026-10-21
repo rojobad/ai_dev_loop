@@ -14,21 +14,26 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
+from typing import Literal
 
 from ai_dev_loop.config import CursorSdkSection
 from ai_dev_loop.integrations.cursor_sdk.adapter import (
     CursorSdkAdapter,
+    CursorSdkOperationBudgetExhausted,
+    bind_cursor_sdk_operation_deadline,
     build_cursor_sdk_client_config,
+    reset_cursor_sdk_operation_deadline,
 )
 from ai_dev_loop.integrations.cursor_sdk.port import (
     CursorSdkEnvelope,
     CursorSdkErrorCode,
     CursorSdkFailure,
+    CursorSdkOperation,
     CursorSdkOutcome,
     CursorSdkRunIdentity,
     CursorSdkTerminalRun,
 )
-from ai_dev_loop.paths import cursor_conversation_key
+from ai_dev_loop.paths import CursorSdkPathError, cursor_conversation_key
 from ai_dev_loop.runners.cursor_output import (
     capture_cursor_output_fingerprint,
 )
@@ -51,6 +56,15 @@ from ai_dev_loop.scheduler.application.cursor_sdk_journal import (
     authenticate_sdk_journal,
     authenticate_sdk_recovery_journal,
 )
+from ai_dev_loop.scheduler.application.cursor_sdk_progress import (
+    NATIVE_HANDLE_BOUND,
+    SEND_AUTHORIZED,
+    TERMINAL_OBSERVED,
+    append_sdk_wait_progress,
+    format_sdk_wait_log,
+    inspect_sdk_wait,
+    seal_interrupted_sdk_wait_progress,
+)
 from ai_dev_loop.scheduler.application.token_usage_capture import (
     CursorUsageEvent,
     capture_cursor_usage_evidence_safely,
@@ -68,6 +82,7 @@ from ai_dev_loop.scheduler.domain.cursor_contract import (
     cursor_sdk_attempt_journal_rel,
     cursor_sdk_attempt_metadata_rel,
     cursor_sdk_reconciliation_record_rel,
+    cursor_sdk_wait_progress_rel,
     git_status_after_cursor_rel,
     git_status_before_cursor_rel,
 )
@@ -126,6 +141,37 @@ class CursorSdkOperationTimeout(BaseException):
         self.capture_payload = {} if capture_payload is None else capture_payload
 
 
+_OPERATION_DESCENDANTS: list[int] = []
+_DEADLINE_EXCEPTIONS = (CursorSdkOperationTimeout, CursorSdkOperationBudgetExhausted)
+
+
+def register_sdk_operation_descendant(pid: int) -> None:
+    """Track one process group started for the current attempt.
+
+    The worker terminates these groups when the frozen deadline fires. This
+    does not cancel native runs or widen the retry policy.
+    """
+
+    if pid <= 1 or pid == os.getpid():
+        raise ValueError("Cursor SDK descendant pid is invalid")
+    _OPERATION_DESCENDANTS.append(pid)
+
+
+def terminate_sdk_operation_descendants() -> None:
+    """SIGKILL every registered descendant process group."""
+
+    pids = list(_OPERATION_DESCENDANTS)
+    _OPERATION_DESCENDANTS.clear()
+    for pid in pids:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                continue
+
+
 @contextmanager
 def _sdk_operation_deadline(evidence: dict[str, object]) -> Iterator[None]:
     timeout_seconds = _binding_float(evidence, "timeout_seconds")
@@ -133,6 +179,8 @@ def _sdk_operation_deadline(evidence: dict[str, object]) -> Iterator[None]:
         raise ValueError("Cursor SDK timeout_seconds must be positive")
     previous_handler = signal.getsignal(signal.SIGALRM)
     capture_payload: dict[str, object] = {}
+    deadline_token = bind_cursor_sdk_operation_deadline(time.monotonic() + timeout_seconds)
+    _OPERATION_DESCENDANTS.clear()
 
     def deadline_expired(_signum: int, _frame: FrameType | None) -> None:
         raise CursorSdkOperationTimeout(
@@ -142,13 +190,20 @@ def _sdk_operation_deadline(evidence: dict[str, object]) -> Iterator[None]:
 
     signal.signal(signal.SIGALRM, deadline_expired)
     # Repeating delivery also bounds a bridge close that starts while unwinding
-    # the first deadline exception.
+    # the first deadline exception. Resume, send, and stream do not reinstall it.
     signal.setitimer(signal.ITIMER_REAL, timeout_seconds, min(timeout_seconds, 0.25))
+    expired = False
     try:
         yield
+    except _DEADLINE_EXCEPTIONS:
+        expired = True
+        raise
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous_handler)
+        reset_cursor_sdk_operation_deadline(deadline_token)
+        if expired:
+            terminate_sdk_operation_descendants()
 
 
 def _structured_error_records(stdout: str) -> list[dict[str, object]]:
@@ -298,7 +353,11 @@ def _finalize_success_artifacts(
     cursor_outcome: dict[str, object],
 ) -> int:
     stdout_path.write_text(json.dumps(cursor_outcome, sort_keys=True) + "\n", encoding="utf-8")
-    stderr_path.write_text("", encoding="utf-8")
+    wait_log = cursor_outcome.get("sdk_wait_log")
+    stderr_path.write_text(
+        f"{wait_log}\n" if isinstance(wait_log, str) and wait_log else "",
+        encoding="utf-8",
+    )
     termination = (
         TerminationClass.SUCCESS
         if exit_code == 0
@@ -339,11 +398,25 @@ def _sdk_adapter(evidence: dict[str, object]) -> CursorSdkAdapter:
     if cursor_conversation_key(owner) != expected_key:
         raise ValueError("Cursor SDK conversation ownership binding is invalid")
     repository_root = Path(str(evidence["repository_root"]))
-    config = build_cursor_sdk_client_config(
-        _sdk_selection(evidence),
-        workspace=repository_root,
-        repository_root=repository_root,
-        conversation_owner_identity=owner,
+    from ai_dev_loop.scheduler.application.cursor_sdk_retention import open_dispatch_store
+
+    evidence_schema = evidence.get("schema_version")
+    store_backend: Literal["jsonl", "sqlite"] = "sqlite" if evidence_schema == 3 else "jsonl"
+    native_store_layout_version: Literal[1] = 1
+    if evidence_schema == 3 and evidence.get("store_backend") != "sqlite":
+        raise ValueError("Cursor SDK SQLite storage binding is invalid")
+    config = open_dispatch_store(
+        conversation_key=expected_key,
+        conversation_owner_run_id=owner,
+        opener=lambda: build_cursor_sdk_client_config(
+            _sdk_selection(evidence),
+            workspace=repository_root,
+            repository_root=repository_root,
+            conversation_owner_identity=owner,
+            store_backend=store_backend,
+            native_store_layout_version=native_store_layout_version,
+            require_existing_native_state=bool(evidence.get("agent_id")),
+        ),
     )
     return CursorSdkAdapter(config, repository_root=repository_root)
 
@@ -427,7 +500,47 @@ def _sdk_uncertainty_payload(
         }
     )
     payload.update(_existing_sdk_capture_payload(evidence, run_root, attempt_id=attempt_id))
+    if effect_kind == RUN_CURSOR_TURN_EFFECT_KIND:
+        seal_interrupted_sdk_wait_progress(run_root / cursor_sdk_wait_progress_rel(attempt_id))
+        payload.update(_sdk_wait_fields(run_root, attempt_id))
     return payload
+
+
+def _note_sdk_wait(run_root: Path, attempt_id: str, iteration: int, kind: str) -> None:
+    """Persist one safe stage without mutating the authenticated child stderr."""
+
+    del iteration
+    append_sdk_wait_progress(
+        run_root / cursor_sdk_wait_progress_rel(attempt_id),
+        kind=kind,
+        attempt_id=attempt_id,
+    )
+
+
+def _deadline_stderr(run_root: Path, attempt_id: str, exc: BaseException) -> str:
+    inspection = inspect_sdk_wait(run_root / cursor_sdk_wait_progress_rel(attempt_id))
+    detail = f"{type(exc).__name__}: Cursor SDK worker failed"
+    return f"{format_sdk_wait_log(inspection)}; {detail}"[:240]
+
+
+def _sdk_wait_fields(run_root: Path, attempt_id: str) -> dict[str, str]:
+    inspection = inspect_sdk_wait(run_root / cursor_sdk_wait_progress_rel(attempt_id))
+    return {
+        "sdk_wait_stage": inspection.stage,
+        "sdk_wait_elapsed_seconds": inspection.elapsed_seconds,
+        "sdk_wait_waiting_for_initial_response": inspection.waiting_for_initial_response,
+        "sdk_wait_log": format_sdk_wait_log(inspection),
+    }
+
+
+def _closed_sdk_wait_fields(run_root: Path, attempt_id: str) -> dict[str, str]:
+    """Seal an open wait and project it. A missing file contributes nothing."""
+
+    path = run_root / cursor_sdk_wait_progress_rel(attempt_id)
+    if path.is_symlink() or not path.is_file():
+        return {}
+    seal_interrupted_sdk_wait_progress(path)
+    return _sdk_wait_fields(run_root, attempt_id)
 
 
 def _readiness_now() -> float:
@@ -510,6 +623,19 @@ def _load_creation_inventory(
     identity = json.loads(identity_path.read_text(encoding="utf-8"))
     if not isinstance(identity, dict):
         raise ValueError("Cursor SDK identity artifact is invalid")
+    evidence_schema = evidence.get("schema_version")
+    expected_identity_schema = 2 if evidence_schema == 3 else 1
+    identity_schema = identity.get("schema_version")
+    if (expected_identity_schema == 2 and identity_schema != 2) or (
+        expected_identity_schema == 1 and identity_schema not in {None, 1}
+    ):
+        raise ValueError("Cursor SDK identity storage schema mismatch")
+    if expected_identity_schema == 2 and (
+        identity.get("store_backend") != evidence.get("store_backend")
+        or identity.get("native_store_layout_version")
+        != evidence.get("native_store_layout_version")
+    ):
+        raise ValueError("Cursor SDK identity storage binding mismatch")
     journal_rel = identity.get("create_journal_path")
     journal_sha = identity.get("create_journal_sha256")
     if not isinstance(journal_rel, str) or not isinstance(journal_sha, str):
@@ -944,6 +1070,8 @@ def _turn_stop(
     journal: Path,
     journal_rel: str,
     empty_capture_payload: dict[str, object],
+    run_root: Path,
+    attempt_id: str,
 ) -> dict[str, object]:
     return {
         "runtime": "sdk-local",
@@ -956,6 +1084,7 @@ def _turn_stop(
         "failure_kind": failure_kind,
         "sdk_failure": _sdk_failure_payload(failure),
         **empty_capture_payload,
+        **_closed_sdk_wait_fields(run_root, attempt_id),
         "journal_path": journal_rel,
         "journal_sha256": sha256_file(journal),
         **_outcome_identity(evidence),
@@ -1074,7 +1203,6 @@ def _dispatch_after_creation_readiness(
     baseline_runs: list[CursorSdkTerminalRun],
     empty_capture_payload: dict[str, object],
 ) -> CursorSdkRunIdentity | dict[str, object]:
-    del run_root
     baseline_ids = {run.run_id for run in baseline_runs}
     creation_ids = [run.run_id for run in inventory.runs if run.run_id in baseline_ids]
     append_sdk_journal(
@@ -1148,6 +1276,8 @@ def _dispatch_after_creation_readiness(
             journal=journal,
             journal_rel=journal_rel,
             empty_capture_payload=empty_capture_payload,
+            run_root=run_root,
+            attempt_id=str(base["attempt_id"]),
         )
     if decision.action == "cancel" and _readiness_expired(deadline):
         _journal_readiness_hold(
@@ -1166,6 +1296,8 @@ def _dispatch_after_creation_readiness(
             journal=journal,
             journal_rel=journal_rel,
             empty_capture_payload=empty_capture_payload,
+            run_root=run_root,
+            attempt_id=str(base["attempt_id"]),
         )
     if decision.action == "cancel":
         occupant_id = decision.occupant_id or ""
@@ -1205,6 +1337,8 @@ def _dispatch_after_creation_readiness(
                 journal=journal,
                 journal_rel=journal_rel,
                 empty_capture_payload=empty_capture_payload,
+                run_root=run_root,
+                attempt_id=str(base["attempt_id"]),
             )
         confirmed = (
             _await_creation_blocker_terminal(
@@ -1231,6 +1365,8 @@ def _dispatch_after_creation_readiness(
                 journal=journal,
                 journal_rel=journal_rel,
                 empty_capture_payload=empty_capture_payload,
+                run_root=run_root,
+                attempt_id=str(base["attempt_id"]),
             )
         _journal_append(
             journal,
@@ -1261,8 +1397,11 @@ def _dispatch_after_creation_readiness(
             payload={**base, "dispatch_ordinal": ordinal},
             schema_version=JOURNAL_SCHEMA_VERSION_V2,
         )
+        _note_sdk_wait(run_root, str(base["attempt_id"]), iteration, SEND_AUTHORIZED)
         # send_intent is the authorization barrier. The native handle and first
         # stream event belong to the frozen turn deadline, not the readiness budget.
+        # The readiness itimer is not installed around this call, and the attempt
+        # deadline installed at operation start is not replaced.
         return adapter.send(agent_id, prompt)
 
     if _readiness_expired(deadline):
@@ -1282,6 +1421,8 @@ def _dispatch_after_creation_readiness(
             journal=journal,
             journal_rel=journal_rel,
             empty_capture_payload=empty_capture_payload,
+            run_root=run_root,
+            attempt_id=str(base["attempt_id"]),
         )
     try:
         sent = send_once(1)
@@ -1300,6 +1441,8 @@ def _dispatch_after_creation_readiness(
             journal=journal,
             journal_rel=journal_rel,
             empty_capture_payload=empty_capture_payload,
+            run_root=run_root,
+            attempt_id=str(base["attempt_id"]),
         )
     if sent.failure is None and sent.value is not None:
         return sent.value
@@ -1381,6 +1524,8 @@ def _dispatch_after_creation_readiness(
                 journal=journal,
                 journal_rel=journal_rel,
                 empty_capture_payload=empty_capture_payload,
+                run_root=run_root,
+                attempt_id=str(base["attempt_id"]),
             )
         _append_turn_terminal(
             journal,
@@ -1396,6 +1541,8 @@ def _dispatch_after_creation_readiness(
             journal=journal,
             journal_rel=journal_rel,
             empty_capture_payload=empty_capture_payload,
+            run_root=run_root,
+            attempt_id=str(base["attempt_id"]),
         )
     evidence_class = sent.failure.evidence_class if sent.failure is not None else None
     append_sdk_journal(
@@ -1433,6 +1580,8 @@ def _dispatch_after_creation_readiness(
             journal=journal,
             journal_rel=journal_rel,
             empty_capture_payload=empty_capture_payload,
+            run_root=run_root,
+            attempt_id=str(base["attempt_id"]),
         )
     if resent.failure is not None or resent.value is None:
         _append_turn_terminal(
@@ -1449,6 +1598,8 @@ def _dispatch_after_creation_readiness(
             journal=journal,
             journal_rel=journal_rel,
             empty_capture_payload=empty_capture_payload,
+            run_root=run_root,
+            attempt_id=str(base["attempt_id"]),
         )
     return resent.value
 
@@ -1521,6 +1672,12 @@ def _run_sdk_turn_operation(
         resumed = adapter.resume_agent(agent_id) if preflight.failure is None else None
         if preflight.failure is not None or resumed is None or resumed.failure is not None:
             failure = preflight.failure if preflight.failure is not None else resumed.failure  # type: ignore[union-attr]
+            bound_agent_missing = (
+                resumed is not None
+                and resumed.failure is not None
+                and resumed.failure.operation is CursorSdkOperation.RESUME
+                and resumed.failure.code is CursorSdkErrorCode.UNKNOWN_IDENTITY
+            )
             return {
                 "runtime": "sdk-local",
                 "effect_kind": RUN_CURSOR_TURN_EFFECT_KIND,
@@ -1529,7 +1686,11 @@ def _run_sdk_turn_operation(
                 "timed_out": False,
                 "parse_ok": False,
                 "has_completion_signal": False,
-                "failure_kind": "cursor_sdk_preflight_failed",
+                "failure_kind": (
+                    "cursor_sdk_native_unavailable"
+                    if bound_agent_missing
+                    else "cursor_sdk_preflight_failed"
+                ),
                 "sdk_failure": _sdk_failure_payload(failure),
                 **empty_capture_payload,
                 **_outcome_identity(evidence),
@@ -1595,6 +1756,7 @@ def _run_sdk_turn_operation(
                 payload=base,
                 schema_version=JOURNAL_SCHEMA_VERSION,
             )
+            _note_sdk_wait(run_root, attempt_id, iteration, SEND_AUTHORIZED)
             sent = adapter.send(agent_id, prompt)
             if sent.failure is not None or sent.value is None:
                 append_sdk_journal(
@@ -1617,6 +1779,7 @@ def _run_sdk_turn_operation(
                     "failure_kind": "cursor_sdk_send_uncertain",
                     "sdk_failure": _sdk_failure_payload(sent.failure),
                     **empty_capture_payload,
+                    **_closed_sdk_wait_fields(run_root, attempt_id),
                     "journal_path": journal_rel,
                     "journal_sha256": sha256_file(journal),
                     **_outcome_identity(evidence),
@@ -1628,6 +1791,7 @@ def _run_sdk_turn_operation(
             payload={**base, "native_run_id": native_run_id},
             schema_version=journal_version,
         )
+        _note_sdk_wait(run_root, attempt_id, iteration, NATIVE_HANDLE_BOUND)
         _maybe_interrupt("native_run_bound")
         stored = 0
         truncated = False
@@ -1668,21 +1832,21 @@ def _run_sdk_turn_operation(
 
         try:
             streamed = adapter.stream(agent_id, native_run_id, on_envelope=capture)
-        except CursorSdkOperationTimeout as exc:
-            exc.capture_payload.update(
-                _sdk_capture_payload(
-                    evidence,
-                    run_root,
-                    attempt_id=attempt_id,
-                    agent_id=agent_id,
-                    native_run_id=native_run_id,
-                    status=None,
-                    stored=stored,
-                    truncated=truncated,
-                    capture_complete=False,
-                    stream_usages=tuple(stream_usages),
-                )
+        except _DEADLINE_EXCEPTIONS as exc:
+            captured = _sdk_capture_payload(
+                evidence,
+                run_root,
+                attempt_id=attempt_id,
+                agent_id=agent_id,
+                native_run_id=native_run_id,
+                status=None,
+                stored=stored,
+                truncated=truncated,
+                capture_complete=False,
+                stream_usages=tuple(stream_usages),
             )
+            if isinstance(exc, CursorSdkOperationTimeout):
+                exc.capture_payload.update(captured)
             raise
         if streamed.failure is not None or streamed.value is None:
             capture_payload = _sdk_capture_payload(
@@ -1720,6 +1884,7 @@ def _run_sdk_turn_operation(
                 "failure_kind": "cursor_sdk_native_run_uncertain",
                 "sdk_failure": _sdk_failure_payload(streamed.failure),
                 **capture_payload,
+                **_closed_sdk_wait_fields(run_root, attempt_id),
                 "journal_path": journal_rel,
                 "journal_sha256": sha256_file(journal),
                 **_outcome_identity(evidence),
@@ -1761,6 +1926,7 @@ def _run_sdk_turn_operation(
             },
             schema_version=journal_version,
         )
+        _note_sdk_wait(run_root, attempt_id, iteration, TERMINAL_OBSERVED)
         return {
             "runtime": "sdk-local",
             "effect_kind": RUN_CURSOR_TURN_EFFECT_KIND,
@@ -1771,6 +1937,7 @@ def _run_sdk_turn_operation(
             "timed_out": False,
             "parse_ok": True,
             "has_completion_signal": has_completion,
+            **_sdk_wait_fields(run_root, attempt_id),
             **capture_payload,
             "after_status_path": after_rel,
             "cursor_output_fingerprint_path": post_fp.relative_path,
@@ -2386,21 +2553,38 @@ def main(argv: list[str] | None = None) -> int:
                 run_root,
                 attempt_id=args.attempt_id,
             )
-    except (Exception, CursorSdkOperationTimeout) as exc:
-        sdk_timed_out = isinstance(exc, CursorSdkOperationTimeout)
-        failure_kind = (
-            "cursor_chat_create_failed"
-            if effect_kind == CREATE_CHAT_EFFECT_KIND
-            else (
-                "cursor_sdk_reconciliation_failed"
-                if effect_kind == RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND
-                else "cursor_turn_execution_failed"
-            )
+    except (Exception, *_DEADLINE_EXCEPTIONS) as exc:
+        sdk_timed_out = isinstance(exc, _DEADLINE_EXCEPTIONS)
+        native_state_unavailable = (
+            isinstance(exc, CursorSdkPathError) and exc.code == "native_state_unavailable"
         )
+        conversation_disposed = (
+            isinstance(exc, CursorSdkPathError) and exc.code == "conversation_disposed"
+        )
+        if native_state_unavailable:
+            failure_kind = "cursor_sdk_native_unavailable"
+        elif conversation_disposed:
+            failure_kind = "cursor_sdk_preflight_failed"
+        elif effect_kind == CREATE_CHAT_EFFECT_KIND:
+            failure_kind = "cursor_chat_create_failed"
+        elif effect_kind == RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND:
+            failure_kind = "cursor_sdk_reconciliation_failed"
+        else:
+            failure_kind = "cursor_turn_execution_failed"
         diagnostic_payload: dict[str, object] = {"failure_kind": failure_kind}
+        if native_state_unavailable or conversation_disposed:
+            diagnostic_payload.update(
+                {
+                    "runtime": "sdk-local",
+                    "returncode": 1,
+                    "timed_out": False,
+                }
+            )
         if (
             evidence.get("runtime") == "sdk-local"
             and effect_kind != RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND
+            and not native_state_unavailable
+            and not conversation_disposed
         ):
             diagnostic_payload.update(
                 _sdk_uncertainty_payload(
@@ -2430,9 +2614,9 @@ def main(argv: list[str] | None = None) -> int:
                 TerminationClass.TIMEOUT if sdk_timed_out else TerminationClass.NONZERO_EXIT
             ),
             stderr_text=(
-                f"{type(exc).__name__}: Cursor SDK worker failed"
-                if evidence.get("runtime") == "sdk-local"
-                else _bounded_diagnostic(exc)
+                _bounded_diagnostic(exc)
+                if conversation_disposed or evidence.get("runtime") != "sdk-local"
+                else _deadline_stderr(run_root, args.attempt_id, exc)
             ),
             stdout_payload=diagnostic_payload,
         )

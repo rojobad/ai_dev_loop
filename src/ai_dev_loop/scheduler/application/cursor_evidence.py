@@ -263,8 +263,17 @@ def verify_pre_execution_cursor_guards(
     if sdk_runtime:
         from ai_dev_loop.paths import cursor_conversation_key
 
-        if evidence.get("schema_version") != 2:
-            raise CursorEvidenceError("Cursor SDK invocation requires evidence schema v2")
+        evidence_schema = evidence.get("schema_version")
+        if evidence_schema not in {2, 3}:
+            raise CursorEvidenceError("Cursor SDK invocation requires evidence schema v2 or v3")
+        if evidence_schema == 2:
+            if "store_backend" in evidence or "native_store_layout_version" in evidence:
+                raise CursorEvidenceError("historical Cursor SDK evidence changed storage meaning")
+        elif (
+            evidence.get("store_backend") != "sqlite"
+            or evidence.get("native_store_layout_version") != 1
+        ):
+            raise CursorEvidenceError("Cursor SDK SQLite storage binding is not frozen")
         owner = str(evidence.get("conversation_owner_run_id", ""))
         if str(evidence.get("conversation_key", "")) != cursor_conversation_key(owner):
             raise CursorEvidenceError("Cursor SDK conversation identity is not run-owned")

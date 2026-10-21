@@ -45,11 +45,15 @@ Requisitos:
   config v1 falla antes de publicar el run y debe migrar a config v2.
 
 Config v2 describe el Cursor SDK local fijado a 1.0.37. Con implementer Cursor,
-submit congela la selección completa en contexto v7; package, credencial, bridge,
-auth y catálogo se verifican dentro del intento aislado, no durante submit. Un
+submit congela la selección completa y SQLite/layout en contexto v9; package,
+credencial, initializer, bridge, auth y catálogo se verifican dentro del intento
+aislado, no durante submit. Un
 implementer Codex explícito sigue admitiéndose sin ningún runtime Cursor y mantiene
 settings e identidad independientes del reviewer B. Las secuencias SDK requieren
-manifest v4 y materializan contexto v8; las preparaciones históricas no cambian.
+manifest v4; una preparación nueva congela definición/entrada v4 y materializa
+contexto v10. Las preparaciones históricas no cambian. El launcher SQLite abre el
+store nativo con el root privado del owner mediante un initializer empaquetado
+antes del entrypoint original; no usa el store por defecto ni un fallback.
 Un manifest v3 nuevo sigue válido si todas sus hojas son Codex; si una definición
 histórica contiene Cursor CLI, el precheck de secuencia la rechaza completa antes
 de start, materialización o checkpoint. Replay y consultas no reescriben hashes.

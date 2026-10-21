@@ -11,7 +11,7 @@ import sqlite3
 import subprocess
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -40,6 +40,11 @@ from ai_dev_loop.scheduler.application.cursor_recovery_evidence import (
 from ai_dev_loop.scheduler.application.cursor_sdk_journal import append_sdk_journal
 from ai_dev_loop.scheduler.application.cursor_sdk_reconciliation import (
     CursorSdkReconciliationService,
+)
+from ai_dev_loop.scheduler.application.cursor_sdk_retention import (
+    apply_cursor_sdk_cleanup,
+    maintain_cursor_sdk_conversations,
+    preview_cursor_sdk_cleanup,
 )
 from ai_dev_loop.scheduler.application.cursor_sdk_successor import (
     authenticate_sdk_successor_authority,
@@ -607,6 +612,83 @@ def test_failed_initial_and_correction_recover_through_ticks_and_cli_without_pro
         assert evidence["prompt_path"] == recovered_authority.effective_prompt_path
         assert evidence["prompt_sha256"] == recovered_authority.effective_prompt_sha256
         assert evidence["sdk_successor_recovery_key"] == recovered_authority.recovery_key
+
+
+def test_phase25_7_completed_recovery_lineage_follows_latest_completion(
+    git_repo: Path,
+    isolated_xdg: Path,
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """F-06: superseded blocked ancestors do not keep a finished SDK lineage."""
+
+    test_failed_initial_and_correction_recover_through_ticks_and_cli_without_prompt_drift(
+        git_repo,
+        isolated_xdg,
+        fake_clis,
+        monkeypatch,
+        tmp_path,
+    )
+    store = SqliteSchedulerStore(isolated_xdg / "state/ai_dev_loop/engine.sqlite3")
+    state_root = store.db_path.parent
+    preview = preview_cursor_sdk_cleanup(
+        store,
+        state_root=state_root,
+        now=datetime(2030, 1, 1, tzinfo=UTC),
+    )
+    assert len(preview.conversations) == 1
+    item = preview.conversations[0]
+    assert item.manual_eligible is True
+    assert item.automatic_eligible is True
+    assert item.manual_reasons == ()
+    assert item.definitively_finished_at is not None
+    finished = datetime.fromisoformat(item.definitively_finished_at.replace("Z", "+00:00"))
+    root = state_root / "cursor-sdk" / item.conversation_key
+    assert root.is_dir()
+    held = maintain_cursor_sdk_conversations(
+        store,
+        state_root=state_root,
+        now=finished + timedelta(hours=168) - timedelta(microseconds=1),
+    )
+    assert held.deleted_keys == ()
+    assert root.is_dir()
+    deleted = maintain_cursor_sdk_conversations(
+        store,
+        state_root=state_root,
+        now=finished + timedelta(hours=168),
+    )
+    assert deleted.deleted_keys == (item.conversation_key,)
+    assert not root.exists()
+    with store.begin_read() as conn:
+        receipt = conn.execute(
+            """
+            SELECT receipt_id, receipt_payload
+              FROM scheduler_cursor_sdk_disposals
+             WHERE conversation_key = ?
+            """,
+            (item.conversation_key,),
+        ).fetchone()
+        kinds = [
+            str(row["state_kind"])
+            for row in conn.execute("SELECT state_kind FROM scheduler_runs ORDER BY run_id")
+        ]
+    assert sorted(kinds) == ["blocked", "blocked", "completed"]
+    tombstone = state_root / "cursor-sdk-disposals" / f"{item.conversation_key}.json"
+    assert receipt is not None
+    assert tombstone.read_text(encoding="utf-8") == receipt["receipt_payload"]
+    repeated = maintain_cursor_sdk_conversations(
+        store,
+        state_root=state_root,
+        now=finished + timedelta(hours=168),
+    )
+    assert repeated.deleted_keys == ()
+    with store.begin_read() as conn:
+        again = conn.execute(
+            "SELECT receipt_id FROM scheduler_cursor_sdk_disposals WHERE conversation_key = ?",
+            (item.conversation_key,),
+        ).fetchone()
+    assert again["receipt_id"] == receipt["receipt_id"]
 
 
 def test_correction_capacity_timer_preserves_exact_turn_then_uses_decisive_failure(
@@ -1416,6 +1498,184 @@ def test_killed_abort_reconciliation_preserves_historical_record_and_resumes(
     assert reconciliation_attempts == 3
     replay = abort_service.abort_run(run_id)
     assert replay.idempotent_replay is True and replay.termination_pending is False
+    _assert_clean_abort_is_discoverable(store, run_id)
+
+
+def test_phase25_7_abort_retention_starts_after_native_reconciliation(
+    git_repo: Path,
+    isolated_xdg: Path,
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """F-05: retention waits for authenticated native completion, not aborted_at."""
+
+    stores: list[SqliteSchedulerStore] = []
+    original = _submit_sdk_run
+
+    def clock() -> datetime:
+        if stores:
+            with stores[0].begin_read() as conn:
+                aborted = conn.execute(
+                    "SELECT 1 FROM scheduler_runs WHERE state_kind = 'aborted'"
+                ).fetchone()
+            if aborted is not None:
+                return datetime(2027, 1, 1, 2, tzinfo=UTC)
+        return datetime(2027, 1, 1, tzinfo=UTC)
+
+    def submit(
+        *args: object, **kwargs: object
+    ) -> tuple[str, Path, Path, SqliteSchedulerStore, TickService]:
+        kwargs["now_factory"] = clock
+        result = original(*args, **kwargs)  # type: ignore[arg-type]
+        stores.append(result[3])
+        return result
+
+    namespace = (
+        test_abort_active_sdk_send_persists_native_obligation_until_idempotent_release.__globals__
+    )
+    namespace["_submit_sdk_run"] = submit
+    try:
+        test_abort_active_sdk_send_persists_native_obligation_until_idempotent_release(
+            git_repo,
+            isolated_xdg,
+            fake_clis,
+            monkeypatch,
+            tmp_path,
+        )
+    finally:
+        namespace["_submit_sdk_run"] = original
+    store = stores[0]
+    state_root = store.db_path.parent
+    with store.begin_read() as conn:
+        run = conn.execute("SELECT run_id, state_payload FROM scheduler_runs").fetchone()
+        event = conn.execute(
+            """
+            SELECT created_at FROM scheduler_events
+             WHERE run_id = ? AND event_kind = 'cursor_sdk_reconciled'
+             ORDER BY sequence DESC
+            """,
+            (run["run_id"],),
+        ).fetchone()
+    payload = json.loads(str(run["state_payload"]))
+    assert payload["aborted_at"] == "2027-01-01T01:00:00.000000Z"
+    assert event is not None and event["created_at"] == "2027-01-01T02:00:00.000000Z"
+    key = cursor_conversation_key(str(run["run_id"]))
+    root = state_root / "cursor-sdk" / key
+    assert root.is_dir()
+    abort_boundary = datetime(2027, 1, 8, 1, tzinfo=UTC)
+    completion = datetime(2027, 1, 8, 2, tzinfo=UTC)
+    preview = preview_cursor_sdk_cleanup(store, state_root=state_root, now=abort_boundary)
+    assert len(preview.conversations) == 1
+    assert preview.conversations[0].definitively_finished_at == "2027-01-01T02:00:00.000000Z"
+    assert preview.conversations[0].automatic_eligible is False
+    assert (
+        maintain_cursor_sdk_conversations(
+            store, state_root=state_root, now=abort_boundary
+        ).deleted_keys
+        == ()
+    )
+    assert (
+        maintain_cursor_sdk_conversations(
+            store,
+            state_root=state_root,
+            now=completion - timedelta(microseconds=1),
+        ).deleted_keys
+        == ()
+    )
+    assert root.is_dir()
+    deleted = maintain_cursor_sdk_conversations(store, state_root=state_root, now=completion)
+    assert deleted.deleted_keys == (key,)
+    assert not root.exists()
+    with store.begin_read() as conn:
+        receipt = conn.execute(
+            "SELECT receipt_id, receipt_payload FROM scheduler_cursor_sdk_disposals WHERE conversation_key = ?",
+            (key,),
+        ).fetchone()
+    tombstone = (state_root / "cursor-sdk-disposals" / f"{key}.json").read_text(encoding="utf-8")
+    assert receipt is not None and tombstone == receipt["receipt_payload"]
+    repeated = maintain_cursor_sdk_conversations(store, state_root=state_root, now=completion)
+    assert repeated.deleted_keys == ()
+    with store.begin_read() as conn:
+        again = conn.execute(
+            "SELECT receipt_id, receipt_payload FROM scheduler_cursor_sdk_disposals WHERE conversation_key = ?",
+            (key,),
+        ).fetchone()
+    assert again["receipt_id"] == receipt["receipt_id"]
+    assert (state_root / "cursor-sdk-disposals" / f"{key}.json").read_text(
+        encoding="utf-8"
+    ) == tombstone
+
+
+def _assert_clean_abort_is_discoverable(store: SqliteSchedulerStore, run_id: str) -> None:
+    state_root = store.db_path.parent
+    key = cursor_conversation_key(run_id)
+    root = state_root / "cursor-sdk" / key
+    assert root.is_dir()
+    preview = preview_cursor_sdk_cleanup(
+        store,
+        state_root=state_root,
+        now=datetime(2030, 1, 1, tzinfo=UTC),
+    )
+    assert len(preview.conversations) == 1
+    item = preview.conversations[0]
+    assert item.conversation_key == key
+    assert item.manual_eligible is True
+    assert item.definitively_finished_at is not None
+    finished = datetime.fromisoformat(item.definitively_finished_at.replace("Z", "+00:00"))
+    due = preview_cursor_sdk_cleanup(
+        store,
+        state_root=state_root,
+        now=finished + timedelta(hours=168),
+    )
+    assert due.conversations[0].automatic_eligible is True
+    held = maintain_cursor_sdk_conversations(
+        store,
+        state_root=state_root,
+        now=finished + timedelta(hours=168) - timedelta(microseconds=1),
+    )
+    assert held.deleted_keys == ()
+    assert root.is_dir()
+
+
+def test_phase25_7_blocked_abort_manual_disposal_removes_one_root(
+    git_repo: Path,
+    isolated_xdg: Path,
+    fake_clis: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """F-04: a reconciled abort with no current SDK checkpoint can still be deleted."""
+
+    test_killed_abort_reconciliation_preserves_historical_record_and_resumes(
+        git_repo,
+        isolated_xdg,
+        fake_clis,
+        monkeypatch,
+        tmp_path,
+    )
+    store = SqliteSchedulerStore(isolated_xdg / "state/ai_dev_loop/engine.sqlite3")
+    with store.begin_read() as conn:
+        run_id = str(conn.execute("SELECT run_id FROM scheduler_runs").fetchone()["run_id"])
+    state_root = store.db_path.parent
+    key = cursor_conversation_key(run_id)
+    root = state_root / "cursor-sdk" / key
+    assert root.is_dir()
+    applied = apply_cursor_sdk_cleanup(
+        store,
+        state_root=state_root,
+        now=datetime(2030, 1, 1, tzinfo=UTC),
+        mode="manual",
+        conversation_key=key,
+    )
+    assert applied.action == "deleted"
+    assert not root.exists()
+    with store.begin_read() as conn:
+        still = conn.execute(
+            "SELECT state_kind FROM scheduler_runs WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+    assert still is not None and still["state_kind"] == "aborted"
 
 
 def test_recovered_sdk_sequence_leaf_checkpoints_then_advances_to_codex_provider(

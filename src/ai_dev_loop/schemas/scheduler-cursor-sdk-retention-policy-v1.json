@@ -1,0 +1,51 @@
+{
+  "additionalProperties": false,
+  "description": "Explicit operator retention policy. It is not inferred from directories.",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "policy_id": {
+      "const": "cursor-sdk-retention",
+      "default": "cursor-sdk-retention",
+      "title": "Policy Id",
+      "type": "string"
+    },
+    "automatic_cleanup_enabled": {
+      "title": "Automatic Cleanup Enabled",
+      "type": "boolean"
+    },
+    "retention_hours": {
+      "const": 168,
+      "default": 168,
+      "title": "Retention Hours",
+      "type": "integer"
+    },
+    "decision_source": {
+      "const": "operator_2026-10-20",
+      "default": "operator_2026-10-20",
+      "title": "Decision Source",
+      "type": "string"
+    },
+    "decision_at": {
+      "const": "2026-10-20T00:00:00.000000Z",
+      "default": "2026-10-20T00:00:00.000000Z",
+      "title": "Decision At",
+      "type": "string"
+    },
+    "updated_at": {
+      "minLength": 1,
+      "title": "Updated At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "automatic_cleanup_enabled",
+    "updated_at"
+  ],
+  "title": "CursorSdkRetentionPolicyV1",
+  "type": "object"
+}

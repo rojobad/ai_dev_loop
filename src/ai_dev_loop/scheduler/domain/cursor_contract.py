@@ -62,6 +62,10 @@ def cursor_sdk_attempt_journal_rel(attempt_id: str) -> str:
     return f"cursor/sdk-attempts/{attempt_id}/dispatch-journal.jsonl"
 
 
+def cursor_sdk_wait_progress_rel(attempt_id: str) -> str:
+    return f"cursor/sdk-attempts/{attempt_id}/wait-progress.jsonl"
+
+
 def cursor_sdk_reconciliation_record_rel(
     source_attempt_id: str,
     reconciliation_attempt_id: str | None = None,

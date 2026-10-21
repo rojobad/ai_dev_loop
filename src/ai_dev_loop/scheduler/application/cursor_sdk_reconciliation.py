@@ -27,6 +27,9 @@ from ai_dev_loop.scheduler.application.cursor_sdk_journal import (
     authenticate_sdk_recovery_journal,
     seal_interrupted_sdk_send_journal,
 )
+from ai_dev_loop.scheduler.application.cursor_sdk_progress import (
+    seal_interrupted_sdk_wait_progress,
+)
 from ai_dev_loop.scheduler.application.run_state_bridge import run_state_from_scheduler_context
 from ai_dev_loop.scheduler.application.scheduler_checkpoint import checkpoint_from_state
 from ai_dev_loop.scheduler.domain.common import canonical_json_sha256, encode_utc_instant
@@ -39,6 +42,7 @@ from ai_dev_loop.scheduler.domain.cursor_contract import (
     RUN_CURSOR_TURN_EFFECT_KIND,
     cursor_sdk_attempt_journal_rel,
     cursor_sdk_reconciliation_record_rel,
+    cursor_sdk_wait_progress_rel,
 )
 from ai_dev_loop.scheduler.domain.cursor_sdk_recovery import (
     CursorSdkReconciliationIntentV1,
@@ -745,7 +749,7 @@ class CursorSdkReconciliationService:
             run_id,
         )
         binding: dict[str, object] = {
-            "schema_version": 2,
+            "schema_version": 3 if sdk.schema_version == 2 else 2,
             "runtime": "sdk-local",
             "effect_kind": RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND,
             "repository_root": identity.root,
@@ -775,6 +779,13 @@ class CursorSdkReconciliationService:
             "abort_requested": row["abort_requested_at"] is not None,
             "timeout_seconds": state.context.workflow.cursor_timeout_minutes * 60,
         }
+        if sdk.schema_version == 2:
+            binding.update(
+                {
+                    "store_backend": sdk.store_backend,
+                    "native_store_layout_version": sdk.native_store_layout_version,
+                }
+            )
         if successor is not None:
             binding["sdk_successor_recovery_key"] = successor.recovery_key
         review_source = self.store.get_review_recovery_source_for_successor(
@@ -1472,6 +1483,7 @@ def ensure_aborted_sdk_turn_reconciliation(
     journal_path = resolve_run_relative_path(run_root, journal_rel)
     if not seal_interrupted_sdk_send_journal(journal_path):
         return False
+    seal_interrupted_sdk_wait_progress(run_root / cursor_sdk_wait_progress_rel(attempt_id))
     journal_sha = sha256_file(journal_path)
     records = authenticate_sdk_recovery_journal(
         journal_path,

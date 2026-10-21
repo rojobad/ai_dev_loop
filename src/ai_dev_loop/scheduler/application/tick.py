@@ -305,6 +305,7 @@ class TickService:
                         generation=generation,
                         now=now,
                     )
+                self._maintain_cursor_sdk_retention()
 
         return TickReceipt(
             tick_owner_id=owner_id,
@@ -313,6 +314,17 @@ class TickService:
             run_receipts=tuple(receipts),
             lease_acquired=lease_acquired,
             safe_next_action=admitted_safe_next_action(),
+        )
+
+    def _maintain_cursor_sdk_retention(self) -> None:
+        from ai_dev_loop.scheduler.application.cursor_sdk_retention import (
+            maintain_cursor_sdk_conversations,
+        )
+
+        maintain_cursor_sdk_conversations(
+            self.store,
+            state_root=self.store.db_path.parent,
+            now=self._now_factory(),
         )
 
     def _visit_run(

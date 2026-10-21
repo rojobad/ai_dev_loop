@@ -407,7 +407,7 @@ def test_exact_source_sdk_config_runs_initial_correction_and_read_only_views(
         assert state.cursor.sdk.agent_id == sdk.agent_id
         assert state.context.workflow.max_review_iterations == 1
 
-    assert state.context.schema_version == 7
+    assert state.context.schema_version == 9
     assert state.context.cursor.runtime == "sdk-local"
     assert state.context.cursor.model == "grok-4.7"
     assert state.context.cursor.parameters == {
@@ -415,6 +415,8 @@ def test_exact_source_sdk_config_runs_initial_correction_and_read_only_views(
         "fast": False,
         "reasoning_effort": "high",
     }
+    assert state.context.cursor.store_backend == "sqlite"
+    assert state.context.cursor.native_store_layout_version == 1
     assert state.cursor.iteration == 2
     assert state.cursor.chat_id is None
     assert state.cursor.sdk is not None
@@ -819,7 +821,7 @@ def test_named_manifest_v4_mixed_provider_sequence_preserves_checkpoint_and_fina
     else:
         raise AssertionError("mixed v4 sequence did not reach final staging")
 
-    assert sequence.definition.schema_version == 3
+    assert sequence.definition.schema_version == 4
     assert [entry.implementer.provider for entry in sequence.definition.entries] == list(providers)
     assert sequence.definition.entries[0].cursor.runtime == "sdk-local"
     assert sequence.definition.entries[1].cursor.runtime == "sdk-local"

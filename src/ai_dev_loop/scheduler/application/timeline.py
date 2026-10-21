@@ -12,8 +12,14 @@ from ai_dev_loop.scheduler.application.contracts import (
     TimelineEntry,
     TimelineResult,
 )
+from ai_dev_loop.scheduler.application.cursor_sdk_progress import inspect_sdk_wait
 from ai_dev_loop.scheduler.domain.common import coerce_utc_instant
-from ai_dev_loop.scheduler.infrastructure.paths import default_engine_db_path
+from ai_dev_loop.scheduler.domain.cursor_contract import cursor_sdk_wait_progress_rel
+from ai_dev_loop.scheduler.infrastructure.paths import (
+    default_artifact_root,
+    default_engine_db_path,
+    run_artifact_root,
+)
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
 _TIMELINE_ACTIVE_STATUSES = frozenset({"launching", "active"})
@@ -39,9 +45,32 @@ def _observed_duration_seconds(
     return round((end - start).total_seconds(), 3)
 
 
+def _sdk_wait_projection(
+    artifact_root: Path | None,
+    run_id: str,
+    attempt_id: str,
+) -> tuple[str, str, str]:
+    if artifact_root is None:
+        return "unknown", "unknown", "unknown"
+    inspection = inspect_sdk_wait(
+        run_artifact_root(artifact_root, run_id) / cursor_sdk_wait_progress_rel(attempt_id)
+    )
+    return (
+        inspection.stage,
+        inspection.elapsed_seconds,
+        inspection.waiting_for_initial_response,
+    )
+
+
 class SchedulerTimelineService:
-    def __init__(self, store: SqliteSchedulerStore) -> None:
+    def __init__(
+        self,
+        store: SqliteSchedulerStore,
+        *,
+        artifact_root: Path | None = None,
+    ) -> None:
         self.store = store
+        self.artifact_root = artifact_root
 
     def get_timeline(
         self,
@@ -72,29 +101,39 @@ class SchedulerTimelineService:
             )
         truncated = len(rows) > capped
         selected_rows = rows[:capped]
-        entries = tuple(
-            TimelineEntry(
-                iteration=int(row["iteration"]),
-                phase=str(row["component"]),
-                phase_attempt=int(row["phase_attempt"]),
-                status=_timeline_status(str(row["status"])),
-                launch_requested_at=(
-                    str(row["launch_requested_at"])
-                    if row["launch_requested_at"] is not None
-                    else None
-                ),
-                completed_at=(
-                    str(row["completed_at"]) if row["completed_at"] is not None else None
-                ),
-                observed_duration_seconds=_observed_duration_seconds(
-                    str(row["launch_requested_at"])
-                    if row["launch_requested_at"] is not None
-                    else None,
-                    str(row["completed_at"]) if row["completed_at"] is not None else None,
-                ),
+        entries_list: list[TimelineEntry] = []
+        for row in selected_rows:
+            stage, elapsed, waiting = _sdk_wait_projection(
+                self.artifact_root,
+                run_id,
+                str(row["attempt_id"]),
             )
-            for row in selected_rows
-        )
+            entries_list.append(
+                TimelineEntry(
+                    iteration=int(row["iteration"]),
+                    phase=str(row["component"]),
+                    phase_attempt=int(row["phase_attempt"]),
+                    status=_timeline_status(str(row["status"])),
+                    launch_requested_at=(
+                        str(row["launch_requested_at"])
+                        if row["launch_requested_at"] is not None
+                        else None
+                    ),
+                    completed_at=(
+                        str(row["completed_at"]) if row["completed_at"] is not None else None
+                    ),
+                    observed_duration_seconds=_observed_duration_seconds(
+                        str(row["launch_requested_at"])
+                        if row["launch_requested_at"] is not None
+                        else None,
+                        str(row["completed_at"]) if row["completed_at"] is not None else None,
+                    ),
+                    sdk_wait_stage=stage,
+                    sdk_wait_elapsed_seconds=elapsed,
+                    sdk_wait_waiting_for_initial_response=waiting,
+                )
+            )
+        entries = tuple(entries_list)
         return TimelineResult(
             run_id=run_id,
             order=order,
@@ -104,9 +143,16 @@ class SchedulerTimelineService:
         )
 
 
-def default_timeline_service(*, db_path: Path | None = None) -> SchedulerTimelineService:
+def default_timeline_service(
+    *,
+    db_path: Path | None = None,
+    artifact_root: Path | None = None,
+) -> SchedulerTimelineService:
     path = db_path or default_engine_db_path()
-    return SchedulerTimelineService(SqliteSchedulerStore.open_readonly(path))
+    return SchedulerTimelineService(
+        SqliteSchedulerStore.open_readonly(path),
+        artifact_root=default_artifact_root() if artifact_root is None else artifact_root,
+    )
 
 
 def scheduler_timeline(

@@ -49,7 +49,12 @@ SQLite (por ejemplo, `sqlite3 ... .backup`) y respalda juntos:
 No copies un `engine.sqlite3-wal` activo como si fuese un snapshot consistente.
 Mantén permisos restrictivos. Los stores JSONL son mutables y son autoridad para
 replay de conversaciones SDK todavía recuperables: una política de retención no
-debe borrarlos mientras exista trabajo o recovery asociado.
+debe borrarlos mientras exista trabajo o recovery asociado. Las conversaciones
+nuevas usan el store SQLite nativo dentro del root completo del owner; respalda
+`index.db`, sidecars y `agents/` juntos, no archivos individuales. El initializer
+empaquetado liga ese root antes de iniciar el bridge original. Un wheel que no
+contenga o no pueda resolver ese recurso/runtime debe fallar antes de dispatch y
+no se instala.
 
 ## 3. Instalar el artefacto aceptado y provisionar la credencial
 
@@ -113,4 +118,11 @@ trabajo para inferir qué versión quedó activa. Después de crear records SDK,
 rollback necesita un paquete reader-compatible y otra ventana quiescente. Volver
 solo a un reader pre-Phase-25 es inseguro. No borres ledger, artifacts, store ni
 credenciales como parte del rollback; la limpieza es una autorización destructiva
-distinta.
+distinta. El cutover de estado retirado sigue siendo `scheduler cutover cleanup`
+y solo alcanza `runs/` y `pr-review-v2/`. Una conversación SDK cuya evidencia
+durable demuestra que todo el trabajo relacionado terminó se dispone con
+`scheduler cursor-store cleanup`, o por el tick de mantenimiento cuando han
+pasado 168 horas desde esa terminación autenticada —incluida la reconciliación
+nativa si ocurrió después del abort— y la política del ledger está habilitada.
+Esa política no borra stores recuperables, waits, presupuestos agotados ni
+holds de recovery.

@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "captured_for": "phase-25.7-a-f04",
+  "source_commit": "3d1a7a3074e0edfe8ef2f0aca16d4d12d77c3250",
+  "capture_method": "Executed the pre-change source from git archive HEAD in an isolated temporary directory. SqliteSchedulerStore.dump_state wrote v7/v8, dump_sequence_state wrote the prepared v3 definition, and dump_sequence_entry wrote the v3 entry. The fixture files append one LF framing byte; canonical_sha256 covers the exact pre-change writer output without that LF.",
+  "privacy": "Synthetic repository path, identities, hashes, credential reference, model names, and timestamps; no live artifact or native conversation bytes.",
+  "fixtures": [
+    {
+      "path": "submitted-state-context-v7.json",
+      "canonical_sha256": "0fe9c1dc340a4d1fb30ec95d4583b484dd8f159df11dcf4c84cddff4912824d5",
+      "writer": "SqliteSchedulerStore.dump_state",
+      "contract": "submitted context v7 with historical Cursor SDK binding v1"
+    },
+    {
+      "path": "submitted-state-context-v8.json",
+      "canonical_sha256": "27dcfd56c27e68663a592d63ca1a9e3e2f47b9102a066a54fc6b557137bae414",
+      "writer": "SqliteSchedulerStore.dump_state after build_sequence_run_context",
+      "contract": "materialized context v8 from frozen sequence definition/entry v3"
+    },
+    {
+      "path": "prepared-sequence-definition-v3.json",
+      "canonical_sha256": "21865d6077efe3448d76e6801078f51f10d733aedfbef18269306d37da0f7fb0",
+      "writer": "SqliteSchedulerStore.dump_sequence_state",
+      "contract": "prepared sequence state containing definition and entries v3"
+    },
+    {
+      "path": "frozen-sequence-entry-v3.json",
+      "canonical_sha256": "08b90213335c384493ad77960af2853daa98b5d01579a92ffbe34086c2ce86db",
+      "writer": "SqliteSchedulerStore.dump_sequence_entry",
+      "contract": "first frozen sequence entry v3 and its accepted entry hash"
+    }
+  ]
+}

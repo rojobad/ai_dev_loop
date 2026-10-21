@@ -180,6 +180,9 @@ class TimelineEntry(AppModel):
     launch_requested_at: str | None
     completed_at: str | None
     observed_duration_seconds: float | None
+    sdk_wait_stage: str = "unknown"
+    sdk_wait_elapsed_seconds: str = "unknown"
+    sdk_wait_waiting_for_initial_response: str = "unknown"
 
 
 class TimelineResult(AppModel):
