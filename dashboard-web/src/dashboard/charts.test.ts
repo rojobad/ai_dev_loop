@@ -200,7 +200,7 @@ describe("chart projections", () => {
   it("escapes configured model text in token-flow tooltips", () => {
     const usage = cursorCodexTokenUsage();
     usage.rows[0].configuredModel = '<img src=x onerror="boom">';
-    const option = tokenSankeyOption(projectTokenUsage(usage, { model: null, role: null }));
+    const option = tokenSankeyOption(projectTokenUsage(usage, { models: [], role: null }));
     const node = (option.series as Array<{ data: Array<Record<string, unknown>> }>)[0].data[0];
     const html = (option.tooltip as { formatter: (value: unknown) => string }).formatter({ data: node });
     expect(html).toContain("&lt;img");

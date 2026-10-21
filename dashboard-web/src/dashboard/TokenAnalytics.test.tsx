@@ -1,5 +1,5 @@
 import React from "react";
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -143,7 +143,10 @@ describe("T292-01 token observation owner", () => {
     });
     expect(screen.queryByText(/stale-marker/)).not.toBeInTheDocument();
     expect(screen.getByText("255")).toBeInTheDocument();
+    expect(screen.queryByText("19/10/2026 08:05", { exact: false })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Information about Token Scope" }));
     expect(screen.getByText("19/10/2026 08:05", { exact: false })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     const callsBeforePause = dataSource.tokenCalls.length;
     coordinator.setPaused(true);
@@ -167,7 +170,9 @@ describe("T292-01 token observation owner", () => {
       />,
     );
     expect(await screen.findByText("255")).toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText("Token model"), "cursor:shared");
+    await user.click(screen.getByRole("button", { name: "Token models" }));
+    await user.click(screen.getByRole("checkbox", { name: "Cursor · shared" }));
+    await user.keyboard("{Escape}");
     expect(screen.getByText("140")).toBeInTheDocument();
 
     dataSource.hold = true;
@@ -184,7 +189,7 @@ describe("T292-01 token observation owner", () => {
       await Promise.resolve();
     });
     expect(screen.getByText("140")).toBeInTheDocument();
-    expect(screen.getByLabelText("Token model")).toHaveValue("cursor:shared");
+    expect(screen.getByRole("button", { name: "Token models" })).toHaveTextContent("Cursor · shared");
     const refresh = dataSource.gates.at(-1);
     if (!refresh) throw new Error("same-scope refresh was not held");
     refresh.reject(new Error("refresh failed"));
@@ -219,7 +224,7 @@ describe("T292-01 token observation owner", () => {
     });
     expect(screen.queryByText("255")).not.toBeInTheDocument();
     expect(screen.queryByText("140")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Token model")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Token models" })).not.toBeInTheDocument();
     expect(screen.getAllByText("Reading token usage…").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Token flow" })).toBeInTheDocument();
     const replacement = dataSource.gates.at(-1);
@@ -262,6 +267,40 @@ afterEach(() => {
 });
 
 describe("T292-03 linked token facets", () => {
+  it("selects multiple models by checkbox and keeps chart toggles, keyboard and clear linked", async () => {
+    const user = userEvent.setup();
+    const source = new ImmediateDataSource();
+    render(<TokenAnalytics coordinator={new RefreshCoordinator()} dataSource={source}
+      datasetKey="multi" filters={filters} theme="light" />);
+    expect(await screen.findByText("255")).toBeInTheDocument();
+    const calls = source.tokenCalls.length;
+    const trigger = screen.getByRole("button", { name: "Token models" });
+    await user.click(trigger);
+    await user.click(screen.getByRole("checkbox", { name: "Cursor · shared" }));
+    expect(screen.getByText("140")).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "Codex · shared" }));
+    expect(trigger).toHaveTextContent("2 models");
+    expect(screen.getByText("255")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveFocus();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await user.click(screen.getByRole("button", { name: "Token flow" }));
+    expect(trigger).toHaveTextContent("Codex · shared");
+    expect(screen.getByText("115")).toBeInTheDocument();
+    await user.click(trigger);
+    expect(screen.getByRole("checkbox", { name: "Codex · shared" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Cursor · shared" })).not.toBeChecked();
+    // The last unchecked model returns to the unfiltered source, including its coverage.
+    await user.click(screen.getByRole("checkbox", { name: "Codex · shared" }));
+    expect(trigger).toHaveTextContent("All models");
+    await user.keyboard("{Escape}");
+    await user.selectOptions(screen.getByLabelText("Token role"), "implementer");
+    await user.click(screen.getByRole("button", { name: "Clear selection" }));
+    expect(screen.getByLabelText("Token role")).toHaveValue("");
+    expect(screen.getByText("255")).toBeInTheDocument();
+    expect(source.tokenCalls).toHaveLength(calls);
+  });
+
   it("applies the same model facet from the chart click and the accessible select", async () => {
     const user = userEvent.setup();
     const dataSource = new ImmediateDataSource();
@@ -277,13 +316,13 @@ describe("T292-03 linked token facets", () => {
     expect(await screen.findByText("255")).toBeInTheDocument();
     const before = dataSource.tokenCalls.length;
     await user.click(screen.getByRole("button", { name: "Token flow" }));
-    expect(screen.getByLabelText("Token model")).toHaveValue("cursor:shared");
+    expect(screen.getByRole("button", { name: "Token models" })).toHaveTextContent("Cursor · shared");
     expect(screen.getByText("140")).toBeInTheDocument();
     expect(dataSource.tokenCalls).toHaveLength(before);
     await user.selectOptions(screen.getByLabelText("Token role"), "reviewer");
     expect(screen.getAllByText("No known token consumption for this selection.").length).toBeGreaterThan(0);
     await user.click(screen.getByRole("button", { name: "Clear selection" }));
-    expect(screen.getByLabelText("Token model")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Token models" })).toHaveTextContent("All models");
     expect(screen.getByText("255")).toBeInTheDocument();
     expect(dataSource.tokenCalls.every((call) => call.runId === null)).toBe(true);
   });

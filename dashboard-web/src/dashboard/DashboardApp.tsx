@@ -661,14 +661,6 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
           timeZone={appliedFilters.timeZone}
         />
 
-        <TokenAnalytics
-          coordinator={coordinator}
-          dataSource={dataSource}
-          datasetKey={datasetKey}
-          filters={appliedFilters}
-          theme={theme}
-        />
-
         <div className="linked-inspection-grid">
           {catalogSettled ? (
             <RunMap
@@ -700,6 +692,14 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
           />
         </div>
 
+        <ActivityCalendar
+          coordinator={coordinator}
+          dataSource={dataSource}
+          datasetKey={datasetKey}
+          filters={appliedFilters}
+          theme={theme}
+        />
+
         <RunTokenConsumption
           coordinator={coordinator}
           dataSource={dataSource}
@@ -709,7 +709,7 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
           theme={theme}
         />
 
-        <ActivityCalendar
+        <TokenAnalytics
           coordinator={coordinator}
           dataSource={dataSource}
           datasetKey={datasetKey}

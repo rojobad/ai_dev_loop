@@ -9,33 +9,34 @@
     "dashboard-web/src/dashboard/AttemptModal.tsx": "2a68b35c53be280d65ce2425cbafce4cac7dbc56f8a4c64d0c04879454ef05ee",
     "dashboard-web/src/dashboard/AttemptTimeline.tsx": "eece4c742930e9bf1b76d9e84dce800384a056b37ed88c5f337e79ccd538c792",
     "dashboard-web/src/dashboard/ContentReader.tsx": "604a4d0f4d0db0d937f84eb97aab1a36aa3ac356b02d0e20bb779fc879db3250",
-    "dashboard-web/src/dashboard/DashboardApp.tsx": "f9bd8016dccb46551cd02e4e2c3d5d4074bd49c8a2a944f635b1e74c1fae057c",
+    "dashboard-web/src/dashboard/DashboardApp.tsx": "c3aeba92a5ddc565a0b97f5de42d04b3ac9fac23f91ca346c576425465f8d71f",
     "dashboard-web/src/dashboard/DashboardChart.tsx": "107a93d7e7bd70c5862514215f79e7ab104058273cdeac3612685c562ae75d28",
     "dashboard-web/src/dashboard/InformationControl.tsx": "ce842398b7610ea90a550ba0d39e6feaebff37a7654dcdfcfa860c845cc7dbe0",
     "dashboard-web/src/dashboard/RunMap.tsx": "c6ff7f8c114f38d8580936d4551cbc4bffd28a0343bc555623f553ab7bd1490e",
-    "dashboard-web/src/dashboard/RunTokenConsumption.tsx": "4b9f968c419e84e99b8ef2cddbfdc6a7e64cce0598b4388c9ce316cb000febed",
-    "dashboard-web/src/dashboard/TokenAnalytics.tsx": "ce997b20b84282f5a57d195abb182e3559e72af3146c7be1c74e0b1bdd0e4140",
+    "dashboard-web/src/dashboard/RunTokenConsumption.tsx": "8bb56f9762b33e9b8a2492a7be1ac45459d89483c2f76478c2aa6ad86001062f",
+    "dashboard-web/src/dashboard/TokenAnalytics.tsx": "d045a28c6317eb77e39636caafea786a3a9d661f44c9694a7c626587b4492b52",
+    "dashboard-web/src/dashboard/TokenModelSelect.tsx": "bca9899e455d1f92d8d134f6b4cd0b82c091000592492c1ccd1030b10cfb75bf",
     "dashboard-web/src/dashboard/charts.ts": "6ffb14c6c383574ba1d656807dea443f479382ba2e6b0cb879202c966312fbd8",
     "dashboard-web/src/dashboard/coordinated-data-source.ts": "04ddd94bc154517c1ea6398d83aea4195ab4e90c01450ec8aa0a6781c1645c67",
-    "dashboard-web/src/dashboard/local-fetch-data-source.ts": "1f84a402a89d97c04f0a46d9058fca6a9559f7170d78136b375651d1e9444af0",
+    "dashboard-web/src/dashboard/local-fetch-data-source.ts": "e39c331dc0ea1e26559f24e2cec37211e8cec752303cf9a5e3c6c9078eb2a5bb",
     "dashboard-web/src/dashboard/parsers.ts": "b9d71b61076b22ecad8f9efd7443d8b37f719e97ba43292088681e449581e441",
     "dashboard-web/src/dashboard/refreshCoordinator.ts": "509b61f8f40c12612b7f9990b066acdc51c3cde5ac2bf94441156aa6fc62ad67",
     "dashboard-web/src/dashboard/time.ts": "648fd73c8f791bbad4b78eb665378bba0b451a90d501fd7568fe60ab1a335f66",
-    "dashboard-web/src/dashboard/tokenCharts.ts": "05a073a23d5bacad220f55ad43a0bc578f7dfba550ca7cc312c13a0a545b6cf9",
+    "dashboard-web/src/dashboard/tokenCharts.ts": "4f564a41dba89585c692e6ae7f74cfafb5ff22d073bdd6e2f0bc79a6c9199268",
     "dashboard-web/src/dashboard/types.ts": "3824c28c5c9e6d432bf95826d4cbdb7019f93c3e16c32a3f4fc2dd9700716f57",
     "dashboard-web/src/main.tsx": "789172e299060b2876fd614c5327c9e8dfc64bbac1871066232b88e20c7c7e3a",
-    "dashboard-web/src/styles.css": "7d909c3650e30298f56e978b37180ecf23aad0fa7041b4a21124b346fe778b47",
+    "dashboard-web/src/styles.css": "34a341aaa5fdb4ee2d393f0dbb7dadf0734337bffab1a06725aeda3ce594837d",
     "dashboard-web/tsconfig.json": "6d00d89c7b11aedea1e8861b32024f3202a95ffda62e506e5ea9c00b22b35891",
     "dashboard-web/vite.config.ts": "aa460188ccaf49a342a7c3661cc08b63b7acbef596adb2625dfce7b3b75d4afb"
   },
   "outputs": {
     "assets/dashboard.css": {
-      "sha256": "6fcc62e166be5e4089f960b599b0b4ed05ca2cce63bb2a2705d4a53fe6a9cdff",
-      "size": 12074
+      "sha256": "cc25a73c0765f889166c44ad86039e1cb481c205c8e22035ecdd13f019d6df49",
+      "size": 13305
     },
     "assets/dashboard.js": {
-      "sha256": "89cc98870731328fac36ba6b63d6e4736ab32d60449a2f458143fd1436a626d1",
-      "size": 969642
+      "sha256": "b19e99390e23212b4ccae4bc334bec97d0a23140c8f20b9169b82d098205c416",
+      "size": 972153
     },
     "index.html": {
       "sha256": "4daf46ff9a868dacd44afbce2f2edbd36434b3b0479007d452e2cf13f04cf1c7",

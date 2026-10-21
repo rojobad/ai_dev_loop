@@ -681,7 +681,7 @@ button:disabled {
   margin-top: 0.85rem;
 }
 
-.token-analytics > .panel-heading,
+.token-scope,
 .token-sankey-slot,
 .token-pair {
   min-width: 0;
@@ -753,7 +753,96 @@ button:disabled {
   font-weight: 700;
 }
 
-.token-facet-summary,
+.token-facets select {
+  width: 100%;
+  min-width: 0;
+  min-height: 2.5rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 400;
+}
+
+.token-model-control {
+  position: relative;
+  display: grid;
+  gap: 0.35rem;
+  width: min(22rem, 100%);
+  min-width: 0;
+}
+
+.token-model-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.token-model-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+}
+
+.token-model-trigger > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.token-model-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  width: 100%;
+  max-height: min(18rem, 40vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 8px 26px rgb(15 35 60 / 15%);
+}
+
+.token-model-menu > button {
+  width: 100%;
+  margin-bottom: 0.3rem;
+}
+
+.token-model-menu label {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 0.5rem;
+  border-radius: 6px;
+  color: var(--text);
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.token-model-menu label:hover {
+  background: var(--surface-muted);
+}
+
+.token-model-menu input {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+}
+
+.token-model-menu label span {
+  overflow-wrap: anywhere;
+}
+
 .token-known-total,
 .token-state {
   color: var(--muted);

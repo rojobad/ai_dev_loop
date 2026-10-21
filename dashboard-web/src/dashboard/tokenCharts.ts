@@ -35,11 +35,11 @@ export interface TokenModelFacet {
 }
 
 export interface TokenFacets {
-  model: TokenModelFacet | null;
+  models: TokenModelFacet[];
   role: TokenRoleName | null;
 }
 
-export const EMPTY_TOKEN_FACETS: TokenFacets = { model: null, role: null };
+export const EMPTY_TOKEN_FACETS: TokenFacets = { models: [], role: null };
 
 export interface TokenSelectionTarget {
   kind: "model" | "role" | "leaf";
@@ -225,20 +225,18 @@ function sameModel(row: TokenUsageRow, facet: TokenModelFacet): boolean {
 
 export function filterTokenRows(rows: TokenUsageRow[], facets: TokenFacets): TokenUsageRow[] {
   return rows.filter((row) => {
-    if (facets.model && !sameModel(row, facets.model)) return false;
+    if (facets.models.length && !facets.models.some((model) => sameModel(row, model))) return false;
     if (facets.role && row.role !== facets.role) return false;
     return true;
   });
 }
 
 export function reconcileTokenFacets(facets: TokenFacets, rows: TokenUsageRow[]): TokenFacets {
-  if (!facets.model && !facets.role) return facets;
-  const modelRows = facets.model ? rows.filter((row) => sameModel(row, facets.model!)) : rows;
-  if (facets.model && modelRows.length === 0) return EMPTY_TOKEN_FACETS;
-  if (facets.role && !modelRows.some((row) => row.role === facets.role)) {
-    return { model: facets.model, role: null };
-  }
-  return facets;
+  const models = facets.models.filter((model) => rows.some((row) => sameModel(row, model)));
+  if (facets.models.length && !models.length) return EMPTY_TOKEN_FACETS;
+  const modelRows = models.length ? rows.filter((row) => models.some((model) => sameModel(row, model))) : rows;
+  const role = facets.role && !modelRows.some((row) => row.role === facets.role) ? null : facets.role;
+  return models.length === facets.models.length && role === facets.role ? facets : { models, role };
 }
 
 function flowAmount(rows: TokenUsageRow[], name: TokenFlowName): TokenFlowAmount {
@@ -320,7 +318,7 @@ function sourceFlows(flows: TokenFlow[]): TokenFlowAmount[] {
 
 export function projectTokenUsage(data: TokenUsageData, facets: TokenFacets): TokenUsageView {
   const filteredRows = filterTokenRows(data.rows, facets);
-  const filtered = facets.model !== null || facets.role !== null;
+  const filtered = facets.models.length > 0 || facets.role !== null;
   const buckets = bucketRows(filteredRows);
   const heatmap = heatmapRows(filteredRows);
   if (!filtered) {
@@ -867,11 +865,20 @@ export function tokenSelectionFromChartEvent(value: unknown): TokenSelectionTarg
   };
 }
 
-export function facetsFromSelection(target: TokenSelectionTarget): TokenFacets {
-  return {
-    model: { provider: target.provider, configuredModel: target.configuredModel },
-    role: target.kind === "model" ? null : target.role,
-  };
+export function facetsFromSelection(
+  target: TokenSelectionTarget,
+  current: TokenFacets = EMPTY_TOKEN_FACETS,
+): TokenFacets {
+  const model = { provider: target.provider, configuredModel: target.configuredModel };
+  const key = modelFacetKey(model);
+  const selected = current.models.some((item) => modelFacetKey(item) === key);
+  if (target.kind === "model") {
+    return {
+      models: selected ? current.models.filter((item) => modelFacetKey(item) !== key) : [...current.models, model],
+      role: current.role,
+    };
+  }
+  return { models: selected ? current.models : [...current.models, model], role: target.role };
 }
 
 export function isUnsupportedTokenUsage(error: unknown): boolean {

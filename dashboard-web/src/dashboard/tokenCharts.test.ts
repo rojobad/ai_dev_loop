@@ -151,9 +151,40 @@ function fiveLeafRow(model: string): TokenUsageRow {
 }
 
 describe("T292-02 token chart arithmetic", () => {
+  it("unions multiple provider-qualified models once across all three charts", () => {
+    const rows = cursorCodexTokenUsage().rows;
+    const data = withRows([...rows, { ...rows[0], configuredModel: "excluded" }]);
+    const models = [
+      { provider: "cursor" as const, configuredModel: "shared" },
+      { provider: "codex" as const, configuredModel: "shared" },
+    ];
+    const view = projectTokenUsage(data, { models: [...models, models[0]], role: null });
+    expect(view.knownTotalTokens).toBe(255);
+    expect(view.heatmap.map((row) => row.label)).toEqual(["Codex · shared", "Cursor · shared"]);
+    expect(sankeyLeafValues(tokenSankeyOption(view)).reduce((sum, value) => sum + value, 0)).toBe(255);
+    expect(sunburstLeafValues(tokenSunburstOption(view)).reduce((sum, value) => sum + value, 0)).toBe(255);
+    expect(projectTokenUsage(data, { models, role: "reviewer" }).knownTotalTokens).toBeNull();
+  });
+
+  it("toggles chart models, preserves other choices and only drops vanished models on refresh", () => {
+    const cursor = { provider: "cursor" as const, configuredModel: "shared" };
+    const codex = { provider: "codex" as const, configuredModel: "shared" };
+    const current = { models: [cursor, codex], role: "reviewer" as const };
+    const toggled = facetsFromSelection({ ...cursor, kind: "model", role: null }, current);
+    expect(toggled).toEqual({ models: [codex], role: "reviewer" });
+    const role = facetsFromSelection({ ...cursor, kind: "role", role: "implementer" }, current);
+    expect(role).toEqual({ models: [cursor, codex], role: "implementer" });
+    const reconciled = reconcileTokenFacets(
+      { models: [cursor, codex, { ...cursor, configuredModel: "gone" }], role: "implementer" },
+      cursorCodexTokenUsage().rows,
+    );
+    expect(reconciled).toEqual({ models: [cursor, codex], role: "implementer" });
+    expect(reconcileTokenFacets(current, [])).toEqual({ models: [], role: null });
+  });
+
   it("counts cache and reasoning once and keeps provider identity", () => {
     const data = cursorCodexTokenUsage();
-    const view = projectTokenUsage(data, { model: null, role: null });
+    const view = projectTokenUsage(data, { models: [], role: null });
     expect(data.source.knownTotalTokens).toBe(255);
     expect(view.knownTotalTokens).toBe(255);
     expect(view.flows.map((item) => [item.name, item.knownTotal])).toEqual([
@@ -199,7 +230,7 @@ describe("T292-02 token chart arithmetic", () => {
   });
 
   it("keeps unknown, partial, and recorded zero distinct", () => {
-    const view = projectTokenUsage(mixedTokenUsage(), { model: null, role: null });
+    const view = projectTokenUsage(mixedTokenUsage(), { models: [], role: null });
     expect(view.heatmap.some((row) => row.configuredModel === null)).toBe(true);
     const option = tokenHeatmapOption(view);
     const cells = heatmapCells(option);
@@ -231,7 +262,7 @@ describe("T292-02 token chart arithmetic", () => {
     });
 
     const zeroOnly = projectTokenUsage(mixedTokenUsage(), {
-      model: { provider: "cursor", configuredModel: "recorded-zero" },
+      models: [{ provider: "cursor", configuredModel: "recorded-zero" }],
       role: null,
     });
     const zeroOption = tokenHeatmapOption(zeroOnly);
@@ -240,7 +271,7 @@ describe("T292-02 token chart arithmetic", () => {
   });
 
   it("escapes model text and omits technical ids from tooltips", () => {
-    const view = projectTokenUsage(mixedTokenUsage(), { model: null, role: null });
+    const view = projectTokenUsage(mixedTokenUsage(), { models: [], role: null });
     const option = tokenSankeyOption(view);
     const formatter = (option.tooltip as { formatter: (value: unknown) => string }).formatter;
     const malicious = (option.series as Array<{ data: Array<Record<string, unknown>> }>)[0].data.find((node) =>
@@ -257,7 +288,7 @@ describe("T292-02 token chart arithmetic", () => {
 
   it("selects provider-qualified model and role without treating a heatmap column as a leaf", () => {
     const data = cursorCodexTokenUsage();
-    const sankey = tokenSankeyOption(projectTokenUsage(data, { model: null, role: null }));
+    const sankey = tokenSankeyOption(projectTokenUsage(data, { models: [], role: null }));
     const cursor = (sankey.series as Array<{ data: Array<Record<string, unknown>> }>)[0].data.find((node) =>
       node.displayLabel === "Cursor · shared" && String(node.name).startsWith("model"),
     );
@@ -273,7 +304,7 @@ describe("T292-02 token chart arithmetic", () => {
     expect(filtered.knownTotalTokens).toBe(140);
     expect(filtered.heatmap.map((row) => row.label)).toEqual(["Cursor · shared"]);
 
-    const heatmap = tokenHeatmapOption(projectTokenUsage(data, { model: null, role: null }));
+    const heatmap = tokenHeatmapOption(projectTokenUsage(data, { models: [], role: null }));
     const cell = heatmapCells(heatmap).find((item) => item.displayLabel === "Codex · shared · Cache write");
     const fromCell = tokenSelectionFromChartEvent({ data: cell });
     expect(fromCell).toMatchObject({
@@ -284,18 +315,18 @@ describe("T292-02 token chart arithmetic", () => {
     });
     expect(TOKEN_HEATMAP_COLUMNS).not.toContain("cache_write_input_tokens");
     expect(reconcileTokenFacets(
-      { model: { provider: "cursor", configuredModel: "missing" }, role: "reviewer" },
+      { models: [{ provider: "cursor", configuredModel: "missing" }], role: "reviewer" },
       data.rows,
-    )).toEqual({ model: null, role: null });
+    )).toEqual({ models: [], role: null });
   });
 
   it("aggregates a Sankey model across both roles, including an unknown role", () => {
     const cursor = cursorCodexTokenUsage().rows.find((row) => row.provider === "cursor");
     if (!cursor) throw new Error("Cursor fixture row is missing.");
     const both = withRows([cursor, { ...cursor, role: "reviewer", stage: "review" }]);
-    const bothView = projectTokenUsage(both, { model: null, role: null });
+    const bothView = projectTokenUsage(both, { models: [], role: null });
     const filtered = projectTokenUsage(both, {
-      model: { provider: "cursor", configuredModel: "shared" },
+      models: [{ provider: "cursor", configuredModel: "shared" }],
       role: null,
     });
     const sankey = sankeyModel(tokenSankeyOption(bothView), "Cursor · shared");
@@ -308,9 +339,9 @@ describe("T292-02 token chart arithmetic", () => {
     expect(sunburst.coverage).toBe(filtered.coverage);
 
     const mixed = withRows([cursor, unknownRole(cursor)]);
-    const mixedView = projectTokenUsage(mixed, { model: null, role: null });
+    const mixedView = projectTokenUsage(mixed, { models: [], role: null });
     const mixedFiltered = projectTokenUsage(mixed, {
-      model: { provider: "cursor", configuredModel: "shared" },
+      models: [{ provider: "cursor", configuredModel: "shared" }],
       role: null,
     });
     const mixedSankey = sankeyModel(tokenSankeyOption(mixedView), "Cursor · shared");
@@ -325,7 +356,7 @@ describe("T292-02 token chart arithmetic", () => {
 
   it("gives every Sankey node a positive height when eight models have five leaves", () => {
     const rows = Array.from({ length: 8 }, (_, index) => fiveLeafRow(`model-${index}`));
-    const view = projectTokenUsage(withRows(rows), { model: null, role: null });
+    const view = projectTokenUsage(withRows(rows), { models: [], role: null });
     const height = tokenSankeyHeight(view);
     expect(height).toBeGreaterThan(480);
     const option = tokenSankeyOption(view);
@@ -364,7 +395,7 @@ describe("T292-02 token chart arithmetic", () => {
   });
 
   it("renders unknown heatmap cells apart from measured zeros", () => {
-    const view = projectTokenUsage(mixedTokenUsage(), { model: null, role: null });
+    const view = projectTokenUsage(mixedTokenUsage(), { models: [], role: null });
     const option = tokenHeatmapOption(view);
     const height = 520;
     const host = document.createElement("div");

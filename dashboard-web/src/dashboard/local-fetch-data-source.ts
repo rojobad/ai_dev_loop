@@ -37,6 +37,26 @@ import {
 
 type Parser<T> = (value: unknown) => T;
 
+// Another dashboard tab can temporarily occupy the server's two read slots.
+// Backoff stays within the coordinator's existing read timeout and cancellation.
+const TOKEN_BUSY_RETRY_MS = [1000, 2000, 4000] as const;
+
+function waitForRetry(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+      reject(signal.reason ?? new DOMException("The token read was cancelled.", "AbortError"));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, milliseconds);
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+  });
+}
+
 function object(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new DashboardDataSourceError("INVALID_RESPONSE", "Dashboard response was invalid.");
@@ -96,7 +116,9 @@ export class LocalFetchDashboardDataSource implements DashboardDataSource {
           ? error.code
           : "INTERNAL_ERROR";
       const message =
-        typeof error.message === "string"
+        response.status === 503
+          ? "The local dashboard service is busy or temporarily unavailable. Please retry shortly."
+          : typeof error.message === "string"
           ? error.message
           : "The local dashboard read failed.";
       throw new DashboardDataSourceError(code, message);
@@ -235,13 +257,26 @@ export class LocalFetchDashboardDataSource implements DashboardDataSource {
     return this.read("machine.codex-capacity", {}, parseCapacityData, signal);
   }
 
-  tokenUsage(
+  async tokenUsage(
     filters: DashboardFilters,
     runId: string | null,
     signal: AbortSignal,
   ): Promise<SourceObservation<TokenUsageData>> {
     const parameters: Record<string, unknown> = { ...filters };
     if (runId !== null) parameters.runId = runId;
-    return this.read("dashboard.token-usage", parameters, parseTokenUsageData, signal);
+    for (let attempt = 0; ; attempt += 1) {
+      signal.throwIfAborted();
+      try {
+        return await this.read("dashboard.token-usage", parameters, parseTokenUsageData, signal);
+      } catch (error) {
+        if (
+          signal.aborted
+          || !(error instanceof DashboardDataSourceError)
+          || error.code !== "SERVICE_UNAVAILABLE"
+          || attempt >= TOKEN_BUSY_RETRY_MS.length
+        ) throw error;
+        await waitForRetry(TOKEN_BUSY_RETRY_MS[attempt], signal);
+      }
+    }
   }
 }

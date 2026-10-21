@@ -178,7 +178,7 @@ export function RunTokenConsumption({
 
   const data = state.observation?.data;
   const view = useMemo(
-    () => (data ? projectTokenUsage(data, { model: null, role: null }) : null),
+    () => (data ? projectTokenUsage(data, { models: [], role: null }) : null),
     [data],
   );
   const authoritative = data?.selectedRun;

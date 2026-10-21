@@ -1,7 +1,32 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { LocalFetchDashboardDataSource } from "./local-fetch-data-source";
 import { activityData, cursorCodexTokenUsage, summaryData } from "./test-fixtures";
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+
+const tokenFilters = {
+  fromUtc: "2026-10-01T00:00:00Z",
+  toUtc: "2026-10-02T00:00:00Z",
+  timeZone: "America/La_Paz",
+};
+
+function busyResponse(): Response {
+  return new Response(JSON.stringify({
+    apiVersion: { major: 1, minor: 13 }, ok: false, observedAt: null, data: null,
+    error: { code: "INTERNAL_ERROR", message: "An internal error occurred." },
+  }), { status: 503 });
+}
+
+function tokenResponse(): Response {
+  return new Response(JSON.stringify({
+    apiVersion: { major: 1, minor: 13 }, ok: true,
+    observedAt: "2026-10-19T12:05:00Z", data: cursorCodexTokenUsage(), error: null,
+  }), { status: 200 });
+}
 
 describe("local fetch transport", () => {
   it("owns the fixed same-origin route and source/received metadata", async () => {
@@ -149,5 +174,72 @@ describe("local fetch transport", () => {
         message: "Unsupported dashboard read operation.",
       });
     expect(JSON.parse(fetchMock.mock.calls[1][1].body).parameters.runId).toBe("run-1");
+  });
+
+  it.each([null, "exact-selected-run"])("recovers token scope %s after temporary HTTP saturation", async (runId) => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(busyResponse())
+      .mockResolvedValueOnce(busyResponse())
+      .mockResolvedValueOnce(tokenResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    const signal = new AbortController().signal;
+    const result = new LocalFetchDashboardDataSource().tokenUsage(tokenFilters, runId, signal);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect((await result).data.source.knownTotalTokens).toBe(255);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const requests = fetchMock.mock.calls.map((call) => JSON.parse(call[1].body));
+    expect(requests.every((request) => request.operation === "dashboard.token-usage")).toBe(true);
+    expect(requests.every((request) => JSON.stringify(request) === JSON.stringify(requests[0]))).toBe(true);
+    expect(requests[0].parameters.runId).toBe(runId ?? undefined);
+    expect(fetchMock.mock.calls.every((call) => call[1].signal === signal)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("bounds saturation retries and reports temporary unavailability", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockImplementation(async () => busyResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    const result = new LocalFetchDashboardDataSource().tokenUsage(tokenFilters, null, new AbortController().signal);
+    const assertion = expect(result).rejects.toMatchObject({
+      code: "SERVICE_UNAVAILABLE", message: expect.stringContaining("temporarily unavailable"),
+    });
+    await vi.advanceTimersByTimeAsync(7000);
+    await assertion;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("cancels backoff immediately when its coordinator signal retires", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockImplementation(async () => busyResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    const result = new LocalFetchDashboardDataSource().tokenUsage(tokenFilters, "retired-run", controller.signal);
+    const assertion = expect(result).rejects.toMatchObject({ name: "AbortError" });
+    await vi.advanceTimersByTimeAsync(0);
+    controller.abort();
+    await assertion;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not retry a genuine internal error", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      apiVersion: { major: 1, minor: 13 }, ok: false, observedAt: null, data: null,
+      error: { code: "INTERNAL_ERROR", message: "An internal error occurred." },
+    }), { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(new LocalFetchDashboardDataSource().tokenUsage(tokenFilters, null, new AbortController().signal))
+      .rejects.toMatchObject({ code: "INTERNAL_ERROR" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

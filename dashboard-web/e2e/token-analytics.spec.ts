@@ -353,10 +353,24 @@ test("linked token charts keep disjoint totals, exact runs, and closed details",
   test.setTimeout(90_000);
   const reads = watchReads(page);
   await applyMapScope(page);
+  await expect(page.getByRole("heading", { name: "Token Scope", exact: true })).toBeVisible();
+  expect(await page.locator(".token-scope").evaluate((element) => {
+    const main = element.closest("main")!;
+    const analytics = element.closest(".token-analytics")!;
+    return main.lastElementChild === analytics
+      && element.classList.contains("panel")
+      && main.querySelector(".activity-panel")!.compareDocumentPosition(analytics) === Node.DOCUMENT_POSITION_FOLLOWING
+      && main.querySelector(".run-token-panel")!.compareDocumentPosition(analytics) === Node.DOCUMENT_POSITION_FOLLOWING;
+  })).toBe(true);
+  await expect(page.getByText("Usage diagnostics:", { exact: false })).toHaveCount(0);
+  await page.getByRole("button", { name: "Information about Token Scope" }).click();
   await expect(page.getByText("19/10/2026 08:05").first()).toBeVisible();
   await expect(page.getByText("20/10/2026 01:05")).toHaveCount(0);
+  await page.getByRole("button", { name: "Close", exact: true }).click();
   await expect(page.getByText("Partial lower bound").first()).toBeVisible();
-  await expect(page.getByRole("option", { name: "Cursor · Unrecorded model" })).toHaveCount(1);
+  await page.getByRole("button", { name: "Token models" }).click();
+  await expect(page.getByRole("checkbox", { name: "Cursor · Unrecorded model" })).toHaveCount(1);
+  await page.keyboard.press("Escape");
   await expect(page.locator("details[open]")).toHaveCount(0);
   await expect(page.locator(".token-details-disclosure")).toHaveCount(0);
 
@@ -385,11 +399,11 @@ test("linked token charts keep disjoint totals, exact runs, and closed details",
   const point = await modelNodePoint(page);
   const readsBeforeClick = reads.operations().filter((operation) => operation === "dashboard.token-usage").length;
   await page.mouse.click(point.x, point.y);
-  await expect(page.getByLabel("Token model")).not.toHaveValue("");
+  await expect(page.getByRole("button", { name: "Token models" })).not.toHaveText("All models▾");
   expect(reads.operations().filter((operation) => operation === "dashboard.token-usage")).toHaveLength(readsBeforeClick);
   await page.getByRole("button", { name: "Clear selection" }).focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByLabel("Token model")).toHaveValue("");
+  await expect(page.getByRole("button", { name: "Token models" })).toContainText("All models");
   await expect(page.getByLabel("Token role")).toHaveValue("");
   await expect(page.getByText("363", { exact: true })).toBeVisible();
 
@@ -401,7 +415,7 @@ test("linked token charts keep disjoint totals, exact runs, and closed details",
   const beforeFacets = tokenCount();
   const rolePoint = await colorPoint(page, "Token composition", 82, 101, 127);
   await page.mouse.click(rolePoint.x, rolePoint.y);
-  await expect(page.getByLabel("Token model")).not.toHaveValue("");
+  await expect(page.getByRole("button", { name: "Token models" })).not.toHaveText("All models▾");
   await expect(page.getByLabel("Token role")).not.toHaveValue("");
   const roleValue = await page.getByLabel("Token role").inputValue();
   expect(roleValue === "implementer" || roleValue === "reviewer").toBe(true);
@@ -409,20 +423,20 @@ test("linked token charts keep disjoint totals, exact runs, and closed details",
   await expect(page.getByLabel("Token role")).toHaveValue("");
   const sunburstModel = await colorPoint(page, "Token composition", 142, 160, 184);
   await page.mouse.click(sunburstModel.x, sunburstModel.y);
-  await expect(page.getByLabel("Token model")).not.toHaveValue("");
+  await expect(page.getByRole("button", { name: "Token models" })).not.toHaveText("All models▾");
   await expect(page.getByLabel("Token role")).toHaveValue("");
   await page.getByRole("button", { name: "Clear selection" }).click();
   const unknownCell = await colorPoint(page, "Token categories", 217, 211, 197, true);
   await page.mouse.click(unknownCell.x, unknownCell.y);
-  await expect(page.getByLabel("Token model")).toHaveValue("cursor:");
+  await expect(page.getByRole("button", { name: "Token models" })).toContainText("Cursor · Unrecorded model");
   await expect(page.getByLabel("Token role")).toHaveValue("");
   await page.getByRole("button", { name: "Clear selection" }).click();
   const zeroCell = await colorPoint(page, "Token categories", 231, 238, 246, true, true);
   await page.mouse.click(zeroCell.x, zeroCell.y);
   await expect(page.getByLabel("Token role")).toHaveValue("");
-  const zeroModel = await page.getByLabel("Token model").inputValue();
-  expect(zeroModel.startsWith("cursor:")).toBe(true);
-  expect(zeroModel).not.toBe("cursor:");
+  const zeroModel = await page.getByRole("button", { name: "Token models" }).textContent();
+  expect(zeroModel).toContain("Cursor ·");
+  expect(zeroModel).not.toContain("Unrecorded model");
   expect(tokenCount()).toBe(beforeFacets);
   expect(await page.locator(".filters select").inputValue()).toBe(project);
   expect(await page.getByLabel("From").inputValue()).toBe(from);
@@ -430,7 +444,9 @@ test("linked token charts keep disjoint totals, exact runs, and closed details",
   expect(await page.getByLabel("Select loaded run").inputValue()).toBe(selectedRun);
   await page.getByRole("button", { name: "Clear selection" }).click();
 
-  await page.getByLabel("Token model").selectOption(`codex:${'review<img alt="x">'}`);
+  await page.getByRole("button", { name: "Token models" }).click();
+  await page.getByRole("checkbox", { name: 'Codex · review<img alt="x">', exact: true }).check();
+  await page.keyboard.press("Escape");
   await expect(page.locator("[data-run-token-total]")).toHaveCount(0);
   const xssPoint = await modelNodePoint(page);
   await page.mouse.move(xssPoint.x, xssPoint.y);
@@ -455,7 +471,9 @@ test("linked token charts keep disjoint totals, exact runs, and closed details",
   await expect(page.locator(".token-details-disclosure")).not.toHaveAttribute("open");
   await expect(page.locator("[data-run-token-total]")).toHaveAttribute("data-run-token-total", "140");
   await expect(page.getByText("363", { exact: true })).toBeVisible();
-  await page.getByLabel("Token model").selectOption("codex:shared");
+  await page.getByRole("button", { name: "Token models" }).click();
+  await page.getByRole("checkbox", { name: "Codex · shared", exact: true }).check();
+  await page.keyboard.press("Escape");
   await expect(page.locator("[data-run-token-total]")).toHaveAttribute("data-run-token-total", "140");
   await page.getByRole("button", { name: "Clear selection" }).click();
   await page.getByLabel("Select loaded run").selectOption("current-map-run");
@@ -487,6 +505,75 @@ test("linked token charts keep disjoint totals, exact runs, and closed details",
   await expect(page.getByText("paused")).toBeVisible();
   await clickWithoutScrolling(page, "Refresh current scope");
   await expect(page.getByText("363", { exact: true })).toBeVisible();
+});
+
+test("multiple model choices stay linked to chart clicks without requests or page jumps", async ({ page }) => {
+  await applyMapScope(page);
+  await page.getByRole("button", { name: "Pause automatic refresh" }).click();
+  await page.getByLabel("Select loaded run").selectOption("older-map-run");
+  await expect(page.locator("[data-run-token-total]")).toHaveAttribute("data-run-token-total", "140");
+  const reads = watchReads(page);
+  const picker = page.getByRole("button", { name: "Token models" });
+  await picker.scrollIntoViewIfNeeded();
+  const before = await geometry(page);
+  await picker.click();
+  await page.getByRole("checkbox", { name: "Cursor · shared", exact: true }).check();
+  await expect(page.locator(".token-scope .token-known-total strong")).toHaveText("30");
+  await page.getByRole("checkbox", { name: "Codex · shared", exact: true }).check();
+  await expect(picker).toContainText("2 models");
+  await expect(page.locator(".token-scope .token-known-total strong")).toHaveText("56");
+  await page.keyboard.press("Escape");
+  await expect(picker).toBeFocused();
+  const after = await geometry(page);
+  expect(Math.abs(after.scrollY - before.scrollY)).toBeLessThanOrEqual(2);
+  expect(Math.abs(after.panelTop - before.panelTop)).toBeLessThanOrEqual(2);
+  expect(Math.abs(after.height - before.height)).toBeLessThanOrEqual(2);
+  const point = await modelNodePoint(page);
+  await page.mouse.click(point.x, point.y);
+  await expect(picker).not.toContainText("2 models");
+  expect(["30", "26"]).toContain(await page.locator(".token-scope .token-known-total strong").textContent());
+  await picker.click();
+  await expect(page.getByRole("checkbox", { checked: true })).toHaveCount(1);
+  await page.getByRole("button", { name: "All models", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".token-scope .token-known-total strong")).toHaveText("363");
+  await expect(page.locator("[data-run-token-total]")).toHaveAttribute("data-run-token-total", "140");
+  expect(reads.operations()).not.toContain("dashboard.token-usage");
+});
+
+test("token reads recover from temporary saturation without exposing an internal error", async ({ page }) => {
+  await applyMapScope(page);
+  await page.getByRole("button", { name: "Pause automatic refresh" }).click();
+  const calls = new Map<string, number>();
+  await page.route("**/api/dashboard/read", async (route) => {
+    const request = route.request().postDataJSON() as {
+      operation: string; parameters: { runId?: string };
+    };
+    if (request.operation !== "dashboard.token-usage") return route.continue();
+    const key = request.parameters.runId ?? "cohort";
+    const count = (calls.get(key) ?? 0) + 1;
+    calls.set(key, count);
+    if (count !== 1) return route.continue();
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({
+        apiVersion: { major: 1, minor: 13 }, ok: false,
+        observedAt: null, data: null,
+        error: { code: "INTERNAL_ERROR", message: "An internal error occurred." },
+      }),
+    });
+  });
+  const stamp = await page.locator("[data-token-observed-at]").getAttribute("data-token-observed-at");
+  await clickWithoutScrolling(page, "Refresh current scope");
+  await expect.poll(() => calls.get("cohort")).toBe(2);
+  await expect(page.locator("[data-token-observed-at]")).not.toHaveAttribute("data-token-observed-at", stamp!);
+  await expect(page.locator(".token-scope .error-banner")).toHaveCount(0);
+  await expect(page.getByText("363", { exact: true })).toBeVisible();
+  await page.getByLabel("Select loaded run").selectOption("older-map-run");
+  await expect(page.locator("[data-run-token-total]")).toHaveAttribute("data-run-token-total", "140");
+  expect(calls.get("older-map-run")).toBe(2);
+  await expect(page.getByText("An internal error occurred.", { exact: false })).toHaveCount(0);
 });
 
 test("held token refresh keeps the page geometry", async ({ page }) => {
@@ -528,8 +615,12 @@ test("held token refresh keeps the page geometry", async ({ page }) => {
   await expect(page.locator("[data-run-token-total]")).toHaveAttribute("data-run-token-total", "140");
   const runAfter = await geometry(page);
   const runPanelAfter = await page.locator(".run-token-panel").boundingBox();
-  expect(Math.abs(runAfter.panelTop - facetBefore.panelTop)).toBeLessThanOrEqual(2);
   if (!runPanelBefore || !runPanelAfter) throw new Error("Run token panel has no layout box.");
+  // Run selection can expand the upstream attempt timeline. The token section
+  // follows that content, keeping its spacing and the direct panel's own height.
+  const gapBefore = facetAfter.panelTop - (runPanelBefore.y + facetAfter.scrollY + runPanelBefore.height);
+  const gapAfter = runAfter.panelTop - (runPanelAfter.y + runAfter.scrollY + runPanelAfter.height);
+  expect(Math.abs(gapAfter - gapBefore)).toBeLessThanOrEqual(2);
   expect(Math.abs(runPanelAfter.height - runPanelBefore.height)).toBeLessThanOrEqual(2);
 });
 

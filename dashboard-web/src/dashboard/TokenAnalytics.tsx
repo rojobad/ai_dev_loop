@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { DashboardChart } from "./DashboardChart";
 import { InformationControl } from "./InformationControl";
+import { TokenModelSelect } from "./TokenModelSelect";
 import {
   SUMMARY_REFRESH_MS,
   type RefreshCoordinator,
@@ -220,7 +221,7 @@ export function TokenAnalytics({
   const showHeatmap = view !== null && view.heatmap.length > 0;
   const onSelect = (value: unknown) => {
     const target = tokenSelectionFromChartEvent(value);
-    if (target) setFacets(facetsFromSelection(target));
+    if (target) setFacets((current) => facetsFromSelection(target, current));
   };
   const modelOptions = useMemo(() => {
     const options = new Map<string, string>();
@@ -236,6 +237,7 @@ export function TokenAnalytics({
       <p>Models are the configured model on the authenticated invocation, qualified by provider. The same spelling on Cursor and Codex stays separate. An unrecorded model stays unrecorded.</p>
       <p>Widths use the producer&apos;s disjoint leaves for runs whose first execution launch is in the applied scope. Later direct usage of those runs is included. Cache and reasoning are counted once. Unknown amounts have no width.</p>
       <p>A partial total is a lower bound. Model and role selection filters these three charts locally and does not change Inspection scope, the run map, or the selected run.</p>
+      <p>Choose several models using the checkboxes. With no specific models selected, all models are included. Clicking a model in a chart toggles it; a role or leaf adds its model and applies that role. Clear selection resets both filters.</p>
     </>
   );
   const observed = state.observation
@@ -248,88 +250,83 @@ export function TokenAnalytics({
       aria-labelledby="token-analytics-heading"
       data-token-status={state.status}
     >
-      <div className="panel-heading">
-        <h2 id="token-analytics-heading">Token usage</h2>
-        <InformationControl label="Token usage">
-          {flowExplanation}
-          {observed ? <p>{observed}</p> : null}
-        </InformationControl>
-      </div>
-      {state.status === "unsupported" ? (
-        <p className="token-state" role="status">
-          Token usage is not available from this dashboard service. Overview, map, timeline, and activity stay available.
-        </p>
-      ) : null}
-      {state.status === "error" ? (
-        <p className="error-banner" role="alert">
-          Token read: {state.error}
-          <button type="button" onClick={() => coordinator.refresh(key)}>Retry token read</button>
-        </p>
-      ) : null}
-      {state.status === "loading" && !data ? (
-        <p className="loading-line" role="status">Reading token usage…</p>
-      ) : null}
-      {data && view ? (
-        <>
-          <p
-            className="token-known-total panel-load-count"
-            data-token-observed-at={data.observedAt}
-            data-token-project={data.filters.projectName ?? ""}
-          >
-            Known total <strong>{formatTokenExact(view.knownTotalTokens)}</strong>
-            {" · "}{coverageLabel(view.coverage)}
-            {" · "}{data.cohortRunCount} started runs
-            {observed ? ` · ${observed}` : ""}
+      <section className="panel token-scope" aria-labelledby="token-analytics-heading">
+        <div className="panel-heading">
+          <h2 id="token-analytics-heading">Token Scope</h2>
+          <InformationControl label="Token Scope">
+            {flowExplanation}
+            {observed ? <p>{observed}</p> : null}
+            {data ? <p>{data.cohortRunCount} started runs in Inspection scope.</p> : null}
+            {data && view ? <>
+              {message ? <p>{message}</p> : null}
+              {view.diagnostics.length ? (
+                <p>Usage diagnostics: {view.diagnostics.join(", ")}.</p>
+              ) : null}
+            </> : null}
+          </InformationControl>
+        </div>
+        {state.status === "unsupported" ? (
+          <p className="token-state" role="status">
+            Token usage is not available from this dashboard service. Overview, map, timeline, and activity stay available.
           </p>
-          {message ? <p className="token-state">{message}</p> : null}
-          {view.diagnostics.length ? (
-            <p className="token-state">Usage diagnostics: {view.diagnostics.join(", ")}.</p>
-          ) : null}
-          <div className="token-facets">
-            <label>
-              Model
-              <select
-                aria-label="Token model"
-                value={facets.model ? modelFacetKey(facets.model) : ""}
-                onChange={(event) => {
-                  const model = modelFacetFromKey(event.target.value);
-                  setFacets((current) => ({ ...current, model }));
+        ) : null}
+        {state.status === "error" ? (
+          <p className="error-banner" role="alert">
+            Token read: {state.error}
+            <button type="button" onClick={() => coordinator.refresh(key)}>Retry token read</button>
+          </p>
+        ) : null}
+        {state.status === "loading" && !data ? (
+          <p className="loading-line" role="status">Reading token usage…</p>
+        ) : null}
+        {data && view ? (
+          <>
+            <p
+              className="token-known-total panel-load-count"
+              data-token-observed-at={data.observedAt}
+              data-token-project={data.filters.projectName ?? ""}
+            >
+              Known total <strong>{formatTokenExact(view.knownTotalTokens)}</strong>
+              {" · "}{coverageLabel(view.coverage)}
+            </p>
+            {message && view.coverage !== "partial" ? <p className="token-state">{message}</p> : null}
+            <div className="token-facets">
+              <TokenModelSelect
+                options={modelOptions}
+                selected={facets.models.map(modelFacetKey)}
+                onChange={(keys) => {
+                  const models = keys.flatMap((key) => {
+                    const model = modelFacetFromKey(key);
+                    return model ? [model] : [];
+                  });
+                  setFacets((current) => ({ ...current, models }));
                 }}
-              >
-                <option value="">All models</option>
-                {modelOptions.map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Role
-              <select
-                aria-label="Token role"
-                value={facets.role ?? ""}
-                onChange={(event) => {
-                  const role = event.target.value;
-                  setFacets((current) => ({
-                    ...current,
-                    role: role === "implementer" || role === "reviewer" ? role as TokenRoleName : null,
-                  }));
-                }}
-              >
-                <option value="">All roles</option>
-                <option value="implementer">{roleLabel("implementer")}</option>
-                <option value="reviewer">{roleLabel("reviewer")}</option>
-              </select>
-            </label>
-            <button type="button" onClick={() => setFacets(EMPTY_TOKEN_FACETS)}>
-              Clear selection
-            </button>
-            <span className="token-facet-summary">
-              {facets.model ? configuredModelLabel(facets.model.provider, facets.model.configuredModel) : "All models"}
-              {" · "}{facets.role ? roleLabel(facets.role) : "All roles"}
-            </span>
-          </div>
-        </>
-      ) : null}
+              />
+              <label>
+                Role
+                <select
+                  aria-label="Token role"
+                  value={facets.role ?? ""}
+                  onChange={(event) => {
+                    const role = event.target.value;
+                    setFacets((current) => ({
+                      ...current,
+                      role: role === "implementer" || role === "reviewer" ? role as TokenRoleName : null,
+                    }));
+                  }}
+                >
+                  <option value="">All roles</option>
+                  <option value="implementer">{roleLabel("implementer")}</option>
+                  <option value="reviewer">{roleLabel("reviewer")}</option>
+                </select>
+              </label>
+              <button type="button" onClick={() => setFacets(EMPTY_TOKEN_FACETS)}>
+                Clear selection
+              </button>
+            </div>
+          </>
+        ) : null}
+      </section>
       <div className="token-sankey-slot">
         <TokenChartPanel
           title="Token flow"
@@ -353,7 +350,7 @@ export function TokenAnalytics({
           explanation={(
             <>
               <p>Rings keep the order configured model, role, then disjoint token leaf. The center repeats the known total. Leaf colors match Token flow.</p>
-              <p>Selecting a sector applies that model, or that model and role, to all three charts. It does not convert a leaf into an overlapping counter.</p>
+              <p>Selecting a model sector toggles that model across all three charts. A role or leaf adds its model and applies its role, keeping other model choices. It does not convert a leaf into an overlapping counter.</p>
             </>
           )}
           option={showFlow && view ? tokenSunburstOption(view) : null}
