@@ -10,6 +10,7 @@ import {
   parseRunInspectData,
   parseRunsData,
   parseSummaryData,
+  parseTokenUsageData,
 } from "./parsers";
 import {
   DASHBOARD_API_MAJOR,
@@ -31,6 +32,7 @@ import {
   type ReviewDetailData,
   type RunInspectData,
   type SourceObservation,
+  type TokenUsageData,
 } from "./types";
 
 type Parser<T> = (value: unknown) => T;
@@ -231,5 +233,15 @@ export class LocalFetchDashboardDataSource implements DashboardDataSource {
 
   capacity(signal: AbortSignal): Promise<SourceObservation<CodexCapacityData>> {
     return this.read("machine.codex-capacity", {}, parseCapacityData, signal);
+  }
+
+  tokenUsage(
+    filters: DashboardFilters,
+    runId: string | null,
+    signal: AbortSignal,
+  ): Promise<SourceObservation<TokenUsageData>> {
+    const parameters: Record<string, unknown> = { ...filters };
+    if (runId !== null) parameters.runId = runId;
+    return this.read("dashboard.token-usage", parameters, parseTokenUsageData, signal);
   }
 }

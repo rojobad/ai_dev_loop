@@ -6,11 +6,14 @@ import {
   parseProjectsData,
   parseRunsData,
   parseSummaryData,
+  parseTokenUsageData,
 } from "./parsers";
 import {
   activityData,
   capacityData,
   completeCoverage,
+  cursorCodexTokenUsage,
+  mixedTokenUsage,
   standaloneRun,
   summaryData,
 } from "./test-fixtures";
@@ -95,5 +98,21 @@ describe("explicit public DTO parsers", () => {
       page,
       totalCount: 0,
     })).toThrow("must not exceed 100");
+  });
+
+  it("accepts the disjoint 29.1 token partition and rejects invented leaf sums", () => {
+    const parsed = parseTokenUsageData({ ...cursorCodexTokenUsage(), futureField: true });
+    expect(parsed.source.knownTotalTokens).toBe(255);
+    expect(parsed.rows.map((row) => row.provider)).toEqual(["codex", "cursor"]);
+    expect(parsed.rows[1].configuredModel).toBe("shared");
+    const mixed = parseTokenUsageData(mixedTokenUsage());
+    expect(mixed.rows.some((row) => row.configuredModel === null)).toBe(true);
+    expect(mixed.source.knownTotalTokens).toBe(275);
+    const broken = cursorCodexTokenUsage();
+    broken.source.flows[0].knownTotal = 1;
+    expect(() => parseTokenUsageData(broken)).toThrow("leaves disagree");
+    const infinite = cursorCodexTokenUsage();
+    infinite.source.knownTotalTokens = Number.POSITIVE_INFINITY;
+    expect(() => parseTokenUsageData(infinite)).toThrow("safe integer");
   });
 });

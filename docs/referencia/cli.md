@@ -819,9 +819,11 @@ el primer lanzamiento de ejecución; `activity` fecha eventos o intervalos y
 entrega segundos para `process-hours`. `token-usage` agrega el uso directo de
 esa misma cohorte, o de un run directo cuando `--run-id` pertenece a ella. El
 modelo es el configurado en la invocación autenticada. Las categorías pueden
-solaparse; las hojas de flujo no se solapan y suman el total conocido. Los
-gráficos llegan en la fase 29.2. Los límites de scope/tiempo/envelope
-fallan sin resultados parciales. Estas órdenes no leen contenido sensible ni
+solaparse; las hojas de flujo no se solapan y suman el total conocido. El
+Dashboard muestra esa consulta como flujo, composición y categorías de la
+cohorte, y como consumo directo del run seleccionado. Los límites de
+scope/tiempo/envelope fallan sin resultados parciales. Estas órdenes no leen
+contenido sensible ni
 observan capacidad actual.
 
 Detalle del sobre, códigos de error, paginación y lecturas sensibles:

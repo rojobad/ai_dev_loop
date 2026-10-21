@@ -76,9 +76,16 @@ reescriben.
 
 ## Refresco y contenido sensible
 
-El refresco automático usa como máximo dos lecturas activas. Summary, primera
-página visible del mapa y actividad usan 30 segundos; el run/timeline
-seleccionado usa 10 segundos; capacidad usa 60 segundos. El mapa solicita hasta
+El refresco automático usa como máximo dos lecturas activas. Summary, la
+primera página visible del mapa, la actividad y el uso de tokens de la cohorte
+usan 30 segundos. El run/timeline seleccionado y su consumo directo de tokens
+usan 10 segundos. Capacidad usa 60 segundos. Esas dos lecturas de tokens son
+independientes: la de cohorte alimenta los tres gráficos y la del run solo
+aparece cuando hay un run seleccionado. Elegir modelo o rol filtra los tres
+gráficos en memoria y no cambia el scope, el mapa ni el run. Un productor sin
+`dashboardTokenUsage` deja el uso como no disponible; no lo muestra como cero
+ni detiene el resto del dashboard. La lectura de tokens no abre el prompt, la
+review ni la salida de proceso. El mapa solicita hasta
 1000 runs y sigue las páginas automáticamente. Si una página no cabe en el sobre
 de 240 KiB, reduce ese lote de forma acotada; las páginas históricas cargadas no
 se convierten en polling periódico. Progreso, cobertura incompleta y `Retry`

@@ -440,10 +440,13 @@ def _assert_api(site: InstalledSite) -> None:
         env=site.environment,
     )
     info_payload = json.loads(info.stdout)
-    if info_payload["apiVersion"] != {"major": 1, "minor": 11}:
-        raise RuntimeError("installed Integration API version is not 1.11")
-    if info_payload["data"]["capabilities"]["dashboard"] is not True:
+    if info_payload["apiVersion"] != {"major": 1, "minor": 13}:
+        raise RuntimeError("installed Integration API version is not 1.13")
+    capabilities = info_payload["data"]["capabilities"]
+    if capabilities["dashboard"] is not True:
         raise RuntimeError("installed dashboard capability is not registered")
+    if capabilities.get("dashboardTokenUsage") is not True:
+        raise RuntimeError("installed dashboardTokenUsage capability is not registered")
 
     summary = _http_read(site.port, "dashboard.summary", common)
     if summary["totals"]["runsStarted"] != fixture.runs_started:
@@ -571,6 +574,25 @@ def _assert_api(site: InstalledSite) -> None:
     if active["complete"] is not False or active["nextOffset"] is None:
         raise RuntimeError("installed active output did not preserve pollable EOF semantics")
 
+    cohort_tokens = _http_read(site.port, "dashboard.token-usage", common)
+    if (
+        cohort_tokens["scope"] != "cohort"
+        or cohort_tokens["modelProvenance"] != "configured"
+        or "knownTotalTokens" not in cohort_tokens["source"]
+    ):
+        raise RuntimeError("installed cohort token usage did not return the public contract")
+    direct_tokens = _http_read(
+        site.port,
+        "dashboard.token-usage",
+        {**common, "runId": fixture.replacement_run_id},
+    )
+    if (
+        direct_tokens["scope"] != "direct"
+        or direct_tokens["selectedRun"]["runId"] != fixture.replacement_run_id
+        or direct_tokens["selectedRunCount"] != 1
+    ):
+        raise RuntimeError("installed direct token usage did not stay on the requested run")
+
     connection = http.client.HTTPConnection("127.0.0.1", site.port, timeout=5)
     body = json.dumps(
         {
@@ -603,6 +625,8 @@ def _assert_api(site: InstalledSite) -> None:
     for path, marker in (
         ("/", b"/assets/dashboard.js"),
         ("/assets/dashboard.js", b"Refresh current scope"),
+        ("/assets/dashboard.js", b"Token flow"),
+        ("/assets/dashboard.js", b"Selected run consumption"),
         ("/assets/dashboard.css", b"information-dialog"),
     ):
         status, _, content = _http_get(site.port, path)

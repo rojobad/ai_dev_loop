@@ -5,6 +5,8 @@ import { AttemptTimeline } from "./AttemptTimeline";
 import { DashboardChart } from "./DashboardChart";
 import { InformationControl } from "./InformationControl";
 import { RunMap } from "./RunMap";
+import { RunTokenConsumption } from "./RunTokenConsumption";
+import { TokenAnalytics } from "./TokenAnalytics";
 import {
   CAPACITY_REFRESH_MS,
   SUMMARY_REFRESH_MS,
@@ -659,6 +661,14 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
           timeZone={appliedFilters.timeZone}
         />
 
+        <TokenAnalytics
+          coordinator={coordinator}
+          dataSource={dataSource}
+          datasetKey={datasetKey}
+          filters={appliedFilters}
+          theme={theme}
+        />
+
         <div className="linked-inspection-grid">
           {catalogSettled ? (
             <RunMap
@@ -689,6 +699,15 @@ export function DashboardApp({ dataSource }: { dataSource: DashboardDataSource }
             timeZone={appliedFilters.timeZone}
           />
         </div>
+
+        <RunTokenConsumption
+          coordinator={coordinator}
+          dataSource={dataSource}
+          datasetKey={datasetKey}
+          filters={appliedFilters}
+          selectedRun={selectedRun}
+          theme={theme}
+        />
 
         <ActivityCalendar
           coordinator={coordinator}

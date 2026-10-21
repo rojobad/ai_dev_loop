@@ -31,6 +31,7 @@ from ai_dev_loop.dashboard.adapters.http import (  # noqa: E402
     default_http_service_factories,
 )
 from ai_dev_loop.dashboard.server import DashboardServer  # noqa: E402
+from token_fixture import FixtureTokenDashboard  # noqa: E402
 from ai_dev_loop.integration_api.errors import IntegrationApiError  # noqa: E402
 from ai_dev_loop.integration_api.models import (  # noqa: E402
     IntegrationCodexCapacityData,
@@ -648,8 +649,10 @@ def main() -> None:
         process_output=lambda: FixtureProcessOutputReadService(args.state_root),
     )
     base_run_factory = factories.run
+    base_dashboard_factory = factories.dashboard
     factories = replace(
         factories,
+        dashboard=lambda: FixtureTokenDashboard(base_dashboard_factory(), args.state_root),
         run=lambda: HoldingRunReadService(base_run_factory(), args.state_root),
     )
     dispatcher = DashboardHttpDispatcher(factories)

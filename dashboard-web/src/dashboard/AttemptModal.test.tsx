@@ -298,6 +298,7 @@ describe("C265-3 modal accessibility and focus ownership", () => {
     const dataSource = new ModalDataSource();
     render(<AttemptTimeline coordinator={new RefreshCoordinator()} dataSource={dataSource} selectedRun={standaloneRun} theme="light" />);
     const row = await screen.findByRole("button", { name: /^1 - Iteration 1 - Implementer/ });
+    row.closest("details")?.setAttribute("open", "");
     await user.click(row);
     const close = screen.getByRole("button", { name: "Close attempt details" });
     await waitFor(() => expect(close).toHaveFocus());

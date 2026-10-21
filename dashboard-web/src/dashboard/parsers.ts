@@ -30,7 +30,20 @@ import type {
   ReviewContentKind,
   ReviewDetailData,
   RunInspectData,
+  TokenCategory,
+  TokenCoverage,
+  TokenFlow,
+  TokenFlowName,
+  TokenProviderName,
+  TokenRoleName,
+  TokenStageName,
+  TokenUsageData,
+  TokenUsageDimension,
+  TokenUsageRow,
+  TokenUsageSource,
+  TokenSelectedRun,
 } from "./types";
+import { TOKEN_FLOW_NAMES } from "./types";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -698,5 +711,230 @@ export function parseCapacityData(value: unknown): CodexCapacityData {
     status: text(data.status, "status"),
     reason: nullableText(data.reason, "reason"),
     limits: array(data.limits, "limits").map(capacityLimit),
+  };
+}
+
+const TOKEN_SAFE_INTEGER = 9_007_199_254_740_991;
+
+function safeInteger(value: unknown, context: string): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    value > TOKEN_SAFE_INTEGER
+  ) {
+    throw new TypeError(`${context} must be a non-negative safe integer.`);
+  }
+  return value;
+}
+
+function nullableSafeInteger(value: unknown, context: string): number | null {
+  return value === null ? null : safeInteger(value, context);
+}
+
+function tokenCoverage(value: unknown, context: string): TokenCoverage {
+  const result = text(value, context);
+  if (!new Set(["complete", "partial", "unknown", "not_applicable"]).has(result)) {
+    throw new TypeError(`${context} is unsupported.`);
+  }
+  return result as TokenCoverage;
+}
+
+function oneOf<T extends string>(value: unknown, allowed: readonly T[], context: string): T {
+  const result = text(value, context);
+  if (!allowed.includes(result as T)) {
+    throw new TypeError(`${context} is unsupported.`);
+  }
+  return result as T;
+}
+
+function tokenCategory(value: unknown, context: string): TokenCategory {
+  const item = record(value, context);
+  return {
+    knownTotal: nullableSafeInteger(item.knownTotal, `${context}.knownTotal`),
+    knownObservations: safeInteger(item.knownObservations, `${context}.knownObservations`),
+    observationCount: safeInteger(item.observationCount, `${context}.observationCount`),
+    coverage: tokenCoverage(item.coverage, `${context}.coverage`),
+  };
+}
+
+function tokenCategories(value: unknown, context: string): Record<string, TokenCategory> {
+  const item = record(value, context);
+  return Object.fromEntries(
+    Object.entries(item).map(([name, category]) => {
+      if (name.length === 0 || name.length > 80) {
+        throw new TypeError(`${context} names must be short non-empty strings.`);
+      }
+      return [name, tokenCategory(category, `${context}.${name}`)];
+    }),
+  );
+}
+
+function tokenFlows(value: unknown, context: string): TokenFlow[] {
+  const items = array(value, context);
+  if (items.length !== TOKEN_FLOW_NAMES.length) {
+    throw new TypeError(`${context} must contain the disjoint token leaves.`);
+  }
+  return TOKEN_FLOW_NAMES.map((name, index) => {
+    const item = record(items[index], `${context}[${index}]`);
+    const parsedName = oneOf<TokenFlowName>(
+      item.name,
+      TOKEN_FLOW_NAMES,
+      `${context}[${index}].name`,
+    );
+    if (parsedName !== name) {
+      throw new TypeError(`${context} leaves must stay in producer order.`);
+    }
+    return {
+      name,
+      knownTotal: nullableSafeInteger(item.knownTotal, `${context}[${index}].knownTotal`),
+      knownObservations: safeInteger(
+        item.knownObservations,
+        `${context}[${index}].knownObservations`,
+      ),
+      observationCount: safeInteger(
+        item.observationCount,
+        `${context}[${index}].observationCount`,
+      ),
+      coverage: tokenCoverage(item.coverage, `${context}[${index}].coverage`),
+    };
+  });
+}
+
+function assertTokenPartition(
+  knownTotal: number | null,
+  flows: TokenFlow[],
+  context: string,
+): void {
+  const known = flows.flatMap((item) => (item.knownTotal === null ? [] : [item.knownTotal]));
+  const leafSum = known.reduce((sum, item) => sum + item, 0);
+  if (knownTotal === null) {
+    if (known.length > 0) {
+      throw new TypeError(`${context} leaves disagree with the known total.`);
+    }
+    return;
+  }
+  if (!Number.isSafeInteger(leafSum) || leafSum !== knownTotal) {
+    throw new TypeError(`${context} leaves disagree with the known total.`);
+  }
+}
+
+function tokenDimension(value: JsonRecord, context: string): TokenUsageDimension {
+  const knownTotalTokens = nullableSafeInteger(
+    value.knownTotalTokens,
+    `${context}.knownTotalTokens`,
+  );
+  const inferenceAttempts = safeInteger(value.inferenceAttempts, `${context}.inferenceAttempts`);
+  const knownAttempts = safeInteger(value.knownAttempts, `${context}.knownAttempts`);
+  const partialAttempts = safeInteger(value.partialAttempts, `${context}.partialAttempts`);
+  const unknownAttempts = safeInteger(value.unknownAttempts, `${context}.unknownAttempts`);
+  if (knownAttempts + partialAttempts + unknownAttempts !== inferenceAttempts) {
+    throw new TypeError(`${context} attempt counts must add up.`);
+  }
+  const flows = tokenFlows(value.flows, `${context}.flows`);
+  assertTokenPartition(knownTotalTokens, flows, context);
+  return {
+    knownTotalTokens,
+    inferenceAttempts,
+    knownAttempts,
+    partialAttempts,
+    unknownAttempts,
+    coverage: tokenCoverage(value.coverage, `${context}.coverage`),
+    categories: tokenCategories(value.categories, `${context}.categories`),
+    flows,
+  };
+}
+
+function tokenSelectedRun(value: unknown): TokenSelectedRun {
+  const item = record(value, "selectedRun");
+  const shortName = text(item.shortName, "selectedRun.shortName");
+  if ([...shortName].length > 35) {
+    throw new TypeError("selectedRun.shortName is too long.");
+  }
+  const runId = text(item.runId, "selectedRun.runId");
+  if (runId.length > 256) {
+    throw new TypeError("selectedRun.runId is too long.");
+  }
+  return {
+    runId,
+    shortName,
+    projectName: text(item.projectName, "selectedRun.projectName"),
+  };
+}
+
+function tokenRow(value: unknown, index: number): TokenUsageRow {
+  const item = record(value, `rows[${index}]`);
+  const configuredModel = item.configuredModel === null
+    ? null
+    : text(item.configuredModel, `rows[${index}].configuredModel`);
+  if (configuredModel !== null && (configuredModel.trim() === "" || configuredModel.trim() !== configuredModel)) {
+    throw new TypeError(`rows[${index}].configuredModel must be null when unrecorded.`);
+  }
+  oneOf(item.modelProvenance, ["configured"] as const, `rows[${index}].modelProvenance`);
+  return {
+    ...tokenDimension(item, `rows[${index}]`),
+    provider: oneOf<TokenProviderName>(
+      item.provider,
+      ["cursor", "codex"],
+      `rows[${index}].provider`,
+    ),
+    configuredModel,
+    modelProvenance: "configured",
+    role: oneOf<TokenRoleName>(
+      item.role,
+      ["implementer", "reviewer"],
+      `rows[${index}].role`,
+    ),
+    stage: oneOf<TokenStageName>(
+      item.stage,
+      ["initial", "correction", "review"],
+      `rows[${index}].stage`,
+    ),
+    nativeCategories: tokenCategories(item.nativeCategories, `rows[${index}].nativeCategories`),
+  };
+}
+
+export function parseTokenUsageData(value: unknown): TokenUsageData {
+  const data = record(value, "dashboard.token-usage data");
+  const scope = oneOf(data.scope, ["cohort", "direct"] as const, "scope");
+  const selectedRun = data.selectedRun === null ? null : tokenSelectedRun(data.selectedRun);
+  const selectedRunCount = safeInteger(data.selectedRunCount, "selectedRunCount");
+  const cohortRunCount = safeInteger(data.cohortRunCount, "cohortRunCount");
+  if (scope === "cohort" && selectedRun !== null) {
+    throw new TypeError("cohort token usage has no selected run.");
+  }
+  if (scope === "direct" && (selectedRun === null || selectedRunCount !== 1)) {
+    throw new TypeError("direct token usage includes one selected run.");
+  }
+  if (selectedRunCount > cohortRunCount) {
+    throw new TypeError("selected run count cannot exceed the cohort.");
+  }
+  if (scope === "cohort" && selectedRunCount !== cohortRunCount) {
+    throw new TypeError("cohort token usage counts every included run.");
+  }
+  oneOf(data.modelProvenance, ["configured"] as const, "modelProvenance");
+  oneOf(data.normalizationVersion, ["provider-usage-v1"] as const, "normalizationVersion");
+  const sourceRecord = record(data.source, "source");
+  const sourceDimension = tokenDimension(sourceRecord, "source");
+  const diagnostics = array(sourceRecord.diagnostics, "source.diagnostics").map((item, index) => {
+    const diagnostic = text(item, `source.diagnostics[${index}]`);
+    if (diagnostic.length > 80) {
+      throw new TypeError(`source.diagnostics[${index}] is too long.`);
+    }
+    return diagnostic;
+  });
+  const source: TokenUsageSource = { ...sourceDimension, diagnostics };
+  return {
+    observedAt: utcInstant(data.observedAt, "observedAt"),
+    filters: filters(data.filters),
+    scope,
+    modelProvenance: "configured",
+    normalizationVersion: "provider-usage-v1",
+    selectedRun,
+    selectedRunCount,
+    cohortRunCount,
+    cohortCoverage: coverage(data.cohortCoverage),
+    source,
+    rows: array(data.rows, "rows").map(tokenRow),
   };
 }

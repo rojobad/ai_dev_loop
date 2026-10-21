@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { LocalFetchDashboardDataSource } from "./local-fetch-data-source";
-import { activityData, summaryData } from "./test-fixtures";
+import { activityData, cursorCodexTokenUsage, summaryData } from "./test-fixtures";
 
 describe("local fetch transport", () => {
   it("owns the fixed same-origin route and source/received metadata", async () => {
@@ -112,5 +112,42 @@ describe("local fetch transport", () => {
         new AbortController().signal,
       ),
     ).rejects.toMatchObject({ code: "SERVICE_UNAVAILABLE" });
+  });
+
+  it("requests cohort token usage without a run id and direct usage with the exact id", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        apiVersion: { major: 1, minor: 13 },
+        ok: true,
+        observedAt: "2026-10-19T12:05:00Z",
+        data: cursorCodexTokenUsage(),
+        error: null,
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        apiVersion: { major: 1, minor: 13 },
+        ok: false,
+        observedAt: null,
+        data: null,
+        error: { code: "INVALID_ARGUMENT", message: "Unsupported dashboard read operation." },
+      }), { status: 400 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const filters = {
+      fromUtc: "2026-10-01T00:00:00Z",
+      toUtc: "2026-10-02T00:00:00Z",
+      timeZone: "America/La_Paz",
+    };
+    const source = new LocalFetchDashboardDataSource();
+    const cohort = await source.tokenUsage(filters, null, new AbortController().signal);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+      operation: "dashboard.token-usage",
+      parameters: filters,
+    });
+    expect(cohort.data.source.knownTotalTokens).toBe(255);
+    await expect(source.tokenUsage(filters, "run-1", new AbortController().signal))
+      .rejects.toMatchObject({
+        code: "INVALID_ARGUMENT",
+        message: "Unsupported dashboard read operation.",
+      });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).parameters.runId).toBe("run-1");
   });
 });

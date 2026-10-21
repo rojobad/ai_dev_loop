@@ -171,10 +171,11 @@ para operación y refresco.
 
 Los inspect de run/secuencia pueden incluir el resumen aditivo `tokenUsage`.
 Ese informe sigue siendo por run o secuencia e incluye el scope
-`recoveryLineage`. Los gráficos del Dashboard llegan en la fase 29.2; esta
-superficie solo publica la consulta que los alimentará. KPIs, review rounds y
-process-hours continúan derivándose solo del ledger de ejecución; la ausencia o
-cobertura parcial de uso no oculta runs ni cambia actividad.
+`recoveryLineage`. El Dashboard consume `dashboard.token-usage` en el flujo
+Sankey, la composición y el mapa de categorías de la cohorte, y en el consumo
+directo del run seleccionado. Esas lecturas no sustituyen los KPIs. Los review
+rounds y process-hours continúan derivándose solo del ledger de ejecución; la
+ausencia o cobertura parcial de uso no oculta runs ni cambia actividad.
 
 ## Uso de tokens de la cohorte
 
@@ -237,4 +238,17 @@ La consulta conserva los límites de 366 días, 10.000 runs de la cohorte,
 incluye la lectura autenticada de artefactos y se comprueba entre lecturas
 acotadas. Superar alcance, plazo o sobre falla con el error tipado de alcance
 estrecho y no publica un total parcial ni muestreado. La ausencia de
-`dashboardTokenUsage` significa que el productor no ofrece esta consulta.
+`dashboardTokenUsage` significa que el productor no ofrece esta consulta. El
+Dashboard entonces muestra el uso como no disponible; no lo convierte en cero
+ni oculta el resto de la página.
+
+Los tres gráficos de cohorte comparten una sola lectura, con la cadencia de 30
+segundos del summary. El run seleccionado tiene otra lectura, cada 10 segundos,
+y solo existe cuando hay una selección. Elegir un modelo o un rol filtra esos
+tres gráficos en memoria: no cambia el scope, el mapa ni el run, y no pide otra
+consulta. Un clic en una celda del mapa de categorías selecciona el modelo de
+la fila, no la columna solapada. El consumo del run usa solo sus hojas
+disjuntas y no hereda ese filtro. Los anchos positivos salen de hojas
+conocidas; un valor ausente no tiene ancho, un cero registrado sigue en cero y
+una cobertura parcial se muestra como límite inferior. La hora observada usa la
+zona IANA elegida. Los detalles numéricos y los IDs permanecen cerrados.

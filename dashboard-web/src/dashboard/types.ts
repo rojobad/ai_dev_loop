@@ -298,6 +298,100 @@ export interface CodexCapacityData {
   limits: CapacityLimit[];
 }
 
+export type TokenCoverage = "complete" | "partial" | "unknown" | "not_applicable";
+export type TokenProviderName = "cursor" | "codex";
+export type TokenRoleName = "implementer" | "reviewer";
+export type TokenStageName = "initial" | "correction" | "review";
+export type TokenFlowName =
+  | "input_other"
+  | "cache_read"
+  | "cache_write"
+  | "input_unsplit"
+  | "output_other"
+  | "reasoning_output"
+  | "output_unsplit";
+
+export const TOKEN_FLOW_NAMES: readonly TokenFlowName[] = [
+  "input_other",
+  "cache_read",
+  "cache_write",
+  "input_unsplit",
+  "output_other",
+  "reasoning_output",
+  "output_unsplit",
+];
+
+/** Overlapping normalized counters. These columns are not a flow partition. */
+export const TOKEN_HEATMAP_COLUMNS = [
+  "input_total",
+  "input_uncached",
+  "cache_read",
+  "cache_write",
+  "output_total",
+  "reasoning_output",
+] as const;
+
+export type TokenHeatmapColumn = (typeof TOKEN_HEATMAP_COLUMNS)[number];
+
+export interface TokenCategory {
+  knownTotal: number | null;
+  knownObservations: number;
+  observationCount: number;
+  coverage: TokenCoverage;
+}
+
+export interface TokenFlow {
+  name: TokenFlowName;
+  knownTotal: number | null;
+  knownObservations: number;
+  observationCount: number;
+  coverage: TokenCoverage;
+}
+
+export interface TokenSelectedRun {
+  runId: string;
+  shortName: string;
+  projectName: string;
+}
+
+export interface TokenUsageDimension {
+  knownTotalTokens: number | null;
+  inferenceAttempts: number;
+  knownAttempts: number;
+  partialAttempts: number;
+  unknownAttempts: number;
+  coverage: TokenCoverage;
+  categories: Record<string, TokenCategory>;
+  flows: TokenFlow[];
+}
+
+export interface TokenUsageSource extends TokenUsageDimension {
+  diagnostics: string[];
+}
+
+export interface TokenUsageRow extends TokenUsageDimension {
+  provider: TokenProviderName;
+  configuredModel: string | null;
+  modelProvenance: "configured";
+  role: TokenRoleName;
+  stage: TokenStageName;
+  nativeCategories: Record<string, TokenCategory>;
+}
+
+export interface TokenUsageData {
+  observedAt: string;
+  filters: DashboardFilterEcho;
+  scope: "cohort" | "direct";
+  modelProvenance: "configured";
+  normalizationVersion: "provider-usage-v1";
+  selectedRun: TokenSelectedRun | null;
+  selectedRunCount: number;
+  cohortRunCount: number;
+  cohortCoverage: DashboardCoverage;
+  source: TokenUsageSource;
+  rows: TokenUsageRow[];
+}
+
 export interface SourceObservation<T> {
   data: T;
   source: "local";
@@ -358,6 +452,11 @@ export interface DashboardDataSource {
     signal: AbortSignal,
   ): Promise<SourceObservation<ProcessOutputChunk>>;
   capacity(signal: AbortSignal): Promise<SourceObservation<CodexCapacityData>>;
+  tokenUsage(
+    filters: DashboardFilters,
+    runId: string | null,
+    signal: AbortSignal,
+  ): Promise<SourceObservation<TokenUsageData>>;
 }
 
 export class DashboardDataSourceError extends Error {

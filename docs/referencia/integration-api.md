@@ -261,7 +261,8 @@ solaparse, y `flows` es la partición disjunta cuyo total conocido coincide con
 `knownTotalTokens`. Una cohorte vacía es `not_applicable`; evidencia ausente es
 `unknown` con total `null`. Los límites son 366 días, 10.000 runs, 100.000
 intentos de inferencia, 5 segundos y 240 KiB, con fallo tipado y sin total
-parcial. Los gráficos que consumen esta consulta llegan en la fase 29.2.
+parcial. El Dashboard consume esta consulta en el flujo, la composición y las
+categorías de la cohorte, y en el consumo directo del run seleccionado.
 
 ## Implementer, capacidad y timeout por rol (API 1.7+)
 
