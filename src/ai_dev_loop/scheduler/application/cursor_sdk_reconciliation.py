@@ -27,6 +27,9 @@ from ai_dev_loop.scheduler.application.cursor_sdk_journal import (
     authenticate_sdk_recovery_journal,
     seal_interrupted_sdk_send_journal,
 )
+from ai_dev_loop.scheduler.application.cursor_sdk_progress import (
+    seal_interrupted_sdk_wait_progress,
+)
 from ai_dev_loop.scheduler.application.run_state_bridge import run_state_from_scheduler_context
 from ai_dev_loop.scheduler.application.scheduler_checkpoint import checkpoint_from_state
 from ai_dev_loop.scheduler.domain.common import canonical_json_sha256, encode_utc_instant
@@ -39,6 +42,7 @@ from ai_dev_loop.scheduler.domain.cursor_contract import (
     RUN_CURSOR_TURN_EFFECT_KIND,
     cursor_sdk_attempt_journal_rel,
     cursor_sdk_reconciliation_record_rel,
+    cursor_sdk_wait_progress_rel,
 )
 from ai_dev_loop.scheduler.domain.cursor_sdk_recovery import (
     CursorSdkReconciliationIntentV1,
@@ -1479,6 +1483,7 @@ def ensure_aborted_sdk_turn_reconciliation(
     journal_path = resolve_run_relative_path(run_root, journal_rel)
     if not seal_interrupted_sdk_send_journal(journal_path):
         return False
+    seal_interrupted_sdk_wait_progress(run_root / cursor_sdk_wait_progress_rel(attempt_id))
     journal_sha = sha256_file(journal_path)
     records = authenticate_sdk_recovery_journal(
         journal_path,

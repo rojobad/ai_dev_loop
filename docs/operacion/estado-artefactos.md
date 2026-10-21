@@ -31,6 +31,7 @@ $XDG_STATE_HOME/ai_dev_loop/
 │       implementer/turns/<NN>.<attempt-id>.{jsonl,stderr.txt,metadata.json,...}
 │       cursor/sdk-identity.json
 │       cursor/sdk-attempts/<attempt-id>/dispatch-journal.jsonl
+│       cursor/sdk-attempts/<attempt-id>/wait-progress.jsonl
 │       cursor/iterations/<NN>/<attempt-id>/{sdk-envelopes.jsonl,sdk-metadata.json,final.txt,stderr.txt}
 │       codex/fresh-reviewer-input.json
 │       codex/fresh-reviewer-binding.json
@@ -131,8 +132,22 @@ No existe `recover` publico en el scheduler central. Ante fallos:
   record ya publicado de ese intento: se autentica su path y digest y no se
   abre otra observación. Los records v1 conservan sus resultados
   anteriores. Los journals v1 siguen leyéndose con su autoridad anterior y no
-  habilitan esta cancelación. El presupuesto de preparación no sustituye el
-  deadline congelado de un envío ya autorizado;
+  habilitan esta cancelación.   El presupuesto de preparación no sustituye el
+  deadline congelado de un envío ya autorizado. Ping, autenticación, inventario,
+  get y cancel conservan un tope corto de transporte. Resume, send y stream
+  usan el resto de ese deadline congelado; el temporizador del worker y la
+  terminación del árbol de procesos siguen siendo el reloj de pared. Un timeout
+  HTTP por inactividad no diagnostica un bloqueo. `wait-progress.jsonl` (schema 1)
+  anota la autorización del send, el enlace del handle nativo y la observación
+  terminal. Un fallo ordinario de send, readiness o stream sella esa espera.
+  `scheduler timeline` y el stderr de resultado del intento muestran la etapa
+  y el tiempo, o `unknown` si falta la evidencia. Una espera abierta crece; un
+  sello `interrupted` sin handle nativo queda cerrado, sin inventar el handle
+  ni un resultado terminal, y no crece en inspecciones posteriores. El stderr
+  autenticado del hijo SDK no recibe esas líneas. Silencio, CPU o
+  un estado nativo `running` no cuentan como progreso ni como stall. Un send
+  perdido sigue la reconciliación nativa autenticada ya existente, sin un
+  segundo prompt.
 - `scheduler abort` cancela sin borrar artefactos ni cambios staged;
 - para trabajo nuevo tras un run terminal, `scheduler submit` con
   `--short-name`, `--resubmission-id <uuid>`, modelo y razonamiento de review

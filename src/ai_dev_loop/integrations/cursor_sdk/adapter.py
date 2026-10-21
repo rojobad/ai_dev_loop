@@ -7,8 +7,10 @@ import importlib.metadata
 import importlib.resources
 import os
 import re
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
+from contextvars import ContextVar, Token
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from types import ModuleType
@@ -60,6 +62,42 @@ _BUNDLED_BRIDGE_FILES = (
     "bin/node",
     "dist/bin/cursor-sdk-bridge.js",
 )
+# Ping, auth, inventory, get, and cancel stay on this short unary cap.
+# launch_bridge applies one client_timeout to both unary and stream, so send,
+# stream, and resume then select a public with_options view. That view carries
+# the remaining frozen attempt deadline. httpx applies the number as an
+# inactivity ceiling; the worker SIGALRM and owned process-tree termination
+# remain the wall-clock authority.
+ADMINISTRATIVE_RPC_TIMEOUT_SECONDS = 60
+_OPERATION_DEADLINE: ContextVar[float | None] = ContextVar(
+    "cursor_sdk_operation_deadline",
+    default=None,
+)
+
+
+class CursorSdkOperationBudgetExhausted(BaseException):
+    """The frozen attempt budget is gone, so no resume, send, or stream starts."""
+
+
+def bind_cursor_sdk_operation_deadline(deadline_monotonic: float) -> Token[float | None]:
+    """Install the attempt deadline once. Resume, send, and stream must not reset it."""
+
+    if deadline_monotonic <= 0:
+        raise ValueError("Cursor SDK operation deadline must be positive")
+    return _OPERATION_DEADLINE.set(deadline_monotonic)
+
+
+def reset_cursor_sdk_operation_deadline(token: Token[float | None]) -> None:
+    _OPERATION_DEADLINE.reset(token)
+
+
+def operation_budget_remaining() -> float | None:
+    """Seconds left on the frozen deadline, or None when no attempt deadline is bound."""
+
+    deadline = _OPERATION_DEADLINE.get()
+    if deadline is None:
+        return None
+    return deadline - time.monotonic()
 
 
 def resolve_cursor_sdk_native_bridge_command() -> tuple[str, ...]:
@@ -219,7 +257,7 @@ class CursorSdkAdapter:
                     "state_root": self._config.state_root,
                     "local": local_options,
                     "timeout": 30,
-                    "client_timeout": 60,
+                    "client_timeout": ADMINISTRATIVE_RPC_TIMEOUT_SECONDS,
                     "max_retries": 0,
                     "allow_api_key_env_fallback": True,
                 }
@@ -336,7 +374,10 @@ class CursorSdkAdapter:
         if invalid is not None:
             return CursorSdkOutcome.failed(invalid)
         try:
-            agent = self._client.resume_agent(agent_id, self._agent_options())
+            view = self._deadline_client(stream=False)
+            agent = view.resume_agent(agent_id, self._agent_options())
+            if view is not self._client and hasattr(agent, "client"):
+                agent.client = self._client
             resumed_id = str(getattr(agent, "agent_id", ""))
             if resumed_id != agent_id:
                 return CursorSdkOutcome.failed(
@@ -348,6 +389,8 @@ class CursorSdkAdapter:
                 )
             self._agents[agent_id] = agent
             return CursorSdkOutcome.success(CursorSdkAgentIdentity(agent_id=agent_id))
+        except CursorSdkOperationBudgetExhausted:
+            raise
         except Exception as exc:
             return CursorSdkOutcome.failed(
                 self._classify(exc, CursorSdkOperation.RESUME, agent_id=agent_id)
@@ -372,7 +415,12 @@ class CursorSdkAdapter:
                 return CursorSdkOutcome.failed(resumed.failure)
             agent = self._agents[agent_id]
         try:
-            run = agent.send(prompt, self._send_options())
+            view = self._deadline_client(stream=True)
+            agent.client = view
+            try:
+                run = agent.send(prompt, self._send_options())
+            finally:
+                agent.client = self._client
             run_id = self._run_id(run)
             returned_agent_id = str(getattr(run, "agent_id", agent_id))
             if not run_id or returned_agent_id != agent_id:
@@ -385,6 +433,8 @@ class CursorSdkAdapter:
                 )
             self._runs[run_id] = run
             return CursorSdkOutcome.success(CursorSdkRunIdentity(agent_id=agent_id, run_id=run_id))
+        except CursorSdkOperationBudgetExhausted:
+            raise
         except Exception as exc:
             return CursorSdkOutcome.failed(
                 self._classify(exc, CursorSdkOperation.SEND, agent_id=agent_id)
@@ -407,8 +457,11 @@ class CursorSdkAdapter:
         if invalid is not None:
             return CursorSdkOutcome.failed(invalid)
         try:
+            view = self._deadline_client(stream=True)
             if mode == "replay":
                 run = self._get_public_run(agent_id, run_id)
+                if hasattr(run, "client"):
+                    run.client = view
                 # Pinned 1.0.37 reports supports("observe") == false even when
                 # public replay works. Invoke observe directly and never gate it.
                 # ObserveRun does not mutate a handle created by GetRun, so use
@@ -421,6 +474,8 @@ class CursorSdkAdapter:
                 run = self._runs.get(run_id)
                 if run is None:
                     run = self._get_public_run(agent_id, run_id)
+                if hasattr(run, "client"):
+                    run.client = view
                 iterator = run.events() if hasattr(run, "events") else run.stream()
                 for event in iterator:
                     if on_envelope is not None:
@@ -436,6 +491,8 @@ class CursorSdkAdapter:
                     )
                 )
             return CursorSdkOutcome.success(converted)
+        except CursorSdkOperationBudgetExhausted:
+            raise
         except Exception as exc:
             return CursorSdkOutcome.failed(
                 self._classify(
@@ -584,6 +641,26 @@ class CursorSdkAdapter:
                     run_id=run_id,
                 )
             )
+
+    def _deadline_client(self, *, stream: bool) -> Any:
+        """Public client view for resume, send, or stream.
+
+        Administrative RPCs keep the base client. A bound attempt rechecks the
+        remaining frozen deadline and does not start the RPC when it is gone.
+        The returned view does not replace the base client's short unary cap.
+        """
+
+        client = self._client
+        remaining = operation_budget_remaining()
+        if client is None or remaining is None or not hasattr(client, "with_options"):
+            if remaining is not None and remaining <= 0:
+                raise CursorSdkOperationBudgetExhausted()
+            return client
+        if remaining <= 0:
+            raise CursorSdkOperationBudgetExhausted()
+        if stream:
+            return client.with_options(stream_timeout=remaining)
+        return client.with_options(unary_timeout=remaining)
 
     def _sdk_version(self, sdk: Any) -> str:
         if self._sdk_loader is not None:

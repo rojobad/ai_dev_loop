@@ -38,8 +38,18 @@ ai_dev_loop scheduler timeline <run-id> --limit 20 --order newest
 Proyeccion acotada de intentos Cursor/Codex por iteracion. Cada fila incluye fase,
 ordinal de reintento, estado seguro, marcas de tiempo durables y
 `observed_duration_seconds` solo cuando existen inicio y fin observados en el
-ledger. No sustituye a `history` ni expone IDs internos, artefactos ni salidas
-raw. La cola y el preflight no aparecen como duracion de fase.
+ledger. Un turno Cursor SDK añade la etapa de espera del primer resultado
+(`sdk_wait_stage`), si esa espera sigue abierta
+(`sdk_wait_waiting_for_initial_response`) y el tiempo transcurrido
+(`sdk_wait_elapsed_seconds`). Sin evidencia utilizable los tres valores son
+`unknown`. Una espera abierta acumula tiempo. Un cierre `interrupted` sin
+handle nativo deja de contarse como espera activa y congela el tiempo en el
+sello, o lo deja en `unknown` si el cierre no es medible; no afirma que el
+handle o el resultado terminal existan. Con handle enlazado, el tiempo queda
+congelado en ese enlace. Esa linea no interpreta silencio, CPU ni un run nativo `running`
+como bloqueo o avance del modelo. No sustituye a `history` ni expone IDs
+internos, prompts ni salidas raw. La cola y el preflight no aparecen como
+duracion de fase.
 
 Limite por defecto: 50 filas. `--limit` acepta valores positivos hasta 200; por
 encima de 200 se trunca al maximo duro. Si hay mas intentos que el limite

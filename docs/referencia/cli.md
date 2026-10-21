@@ -568,7 +568,19 @@ no es el antiguo `recover` ni un envío fresco con `--resubmission-id`.
 `scheduler timeline` devuelve una tabla acotada de intentos Cursor/Codex por
 iteracion: fase, ordinal de reintento, estado seguro, marcas de tiempo durables
 y `observed_duration_seconds` solo cuando existen `launch_requested_at` y
-`completed_at`. No incluye cola, preflight, IDs internos, artefactos ni salidas
+`completed_at`. Para un turno Cursor SDK tambien proyecta `sdk_wait_stage`,
+`sdk_wait_waiting_for_initial_response` y `sdk_wait_elapsed_seconds` desde el
+artefacto `wait-progress.jsonl` de ese intento. Si el artefacto no existe o no
+se puede autenticar, los tres campos son `unknown`. Una espera abierta crece
+con el reloj de inspeccion. Un sello `interrupted` sin handle nativo queda
+cerrado: `sdk_wait_stage` es `interrupted`, la espera ya no esta abierta y el
+tiempo queda congelado entre la autorizacion y el sello, o `unknown` si ese
+cierre no se puede establecer. No inventa un handle ni un resultado terminal.
+Si el handle ya estaba enlazado, la etapa sigue siendo ese enlace y el tiempo
+queda congelado en el enlace. La espera del primer
+resultado nativo no afirma que el modelo este detenido ni que haya progresado:
+un estado nativo `running`, el uso de CPU o la ausencia de texto no cambian
+esa proyeccion. No incluye cola, preflight, IDs internos, prompts ni salidas
 raw. Limite por defecto 50; maximo duro 200. Valores mayores se truncan y
 `truncated` indica overflow.
 
