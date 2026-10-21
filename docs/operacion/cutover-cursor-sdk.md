@@ -49,7 +49,12 @@ SQLite (por ejemplo, `sqlite3 ... .backup`) y respalda juntos:
 No copies un `engine.sqlite3-wal` activo como si fuese un snapshot consistente.
 Mantén permisos restrictivos. Los stores JSONL son mutables y son autoridad para
 replay de conversaciones SDK todavía recuperables: una política de retención no
-debe borrarlos mientras exista trabajo o recovery asociado.
+debe borrarlos mientras exista trabajo o recovery asociado. Las conversaciones
+nuevas usan el store SQLite nativo dentro del root completo del owner; respalda
+`index.db`, sidecars y `agents/` juntos, no archivos individuales. El initializer
+empaquetado liga ese root antes de iniciar el bridge original. Un wheel que no
+contenga o no pueda resolver ese recurso/runtime debe fallar antes de dispatch y
+no se instala.
 
 ## 3. Instalar el artefacto aceptado y provisionar la credencial
 

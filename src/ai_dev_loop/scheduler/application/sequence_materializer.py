@@ -12,6 +12,7 @@ from ai_dev_loop.scheduler.domain.sequence import (
 )
 from ai_dev_loop.scheduler.domain.state import (
     SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE,
+    SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SQLITE_SEQUENCE,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
     SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
     ControllerBinding,
@@ -66,12 +67,16 @@ def build_sequence_run_context(
 ) -> SubmittedRunContext:
     return SubmittedRunContext(
         schema_version=(
-            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE
-            if entry.schema_version == 3
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SQLITE_SEQUENCE
+            if entry.schema_version == 4
             else (
-                SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE
-                if entry.schema_version == 2
-                else SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE
+                SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE
+                if entry.schema_version == 3
+                else (
+                    SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE
+                    if entry.schema_version == 2
+                    else SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE
+                )
             )
         ),
         implementer=entry.implementer,

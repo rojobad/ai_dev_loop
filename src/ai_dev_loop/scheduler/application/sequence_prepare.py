@@ -387,8 +387,8 @@ class SequencePrepareService:
             raise ValidationError("resolved sequence manifest exceeds size limit")
 
         now = self._now_factory()
-        frozen_schema_version: Literal[1, 2, 3] = (
-            1 if manifest.schema_version == 1 else (3 if manifest.schema_version == 4 else 2)
+        frozen_schema_version: Literal[1, 2, 4] = (
+            1 if manifest.schema_version == 1 else (4 if manifest.schema_version == 4 else 2)
         )
         frozen_entries: list[FrozenSequenceEntry] = []
         retired_cursor_ordinals: list[int] = []

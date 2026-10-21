@@ -14,6 +14,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
+from typing import Literal
 
 from ai_dev_loop.config import CursorSdkSection
 from ai_dev_loop.integrations.cursor_sdk.adapter import (
@@ -24,11 +25,12 @@ from ai_dev_loop.integrations.cursor_sdk.port import (
     CursorSdkEnvelope,
     CursorSdkErrorCode,
     CursorSdkFailure,
+    CursorSdkOperation,
     CursorSdkOutcome,
     CursorSdkRunIdentity,
     CursorSdkTerminalRun,
 )
-from ai_dev_loop.paths import cursor_conversation_key
+from ai_dev_loop.paths import CursorSdkPathError, cursor_conversation_key
 from ai_dev_loop.runners.cursor_output import (
     capture_cursor_output_fingerprint,
 )
@@ -339,11 +341,19 @@ def _sdk_adapter(evidence: dict[str, object]) -> CursorSdkAdapter:
     if cursor_conversation_key(owner) != expected_key:
         raise ValueError("Cursor SDK conversation ownership binding is invalid")
     repository_root = Path(str(evidence["repository_root"]))
+    evidence_schema = evidence.get("schema_version")
+    store_backend: Literal["jsonl", "sqlite"] = "sqlite" if evidence_schema == 3 else "jsonl"
+    native_store_layout_version: Literal[1] = 1
+    if evidence_schema == 3 and evidence.get("store_backend") != "sqlite":
+        raise ValueError("Cursor SDK SQLite storage binding is invalid")
     config = build_cursor_sdk_client_config(
         _sdk_selection(evidence),
         workspace=repository_root,
         repository_root=repository_root,
         conversation_owner_identity=owner,
+        store_backend=store_backend,
+        native_store_layout_version=native_store_layout_version,
+        require_existing_native_state=bool(evidence.get("agent_id")),
     )
     return CursorSdkAdapter(config, repository_root=repository_root)
 
@@ -510,6 +520,19 @@ def _load_creation_inventory(
     identity = json.loads(identity_path.read_text(encoding="utf-8"))
     if not isinstance(identity, dict):
         raise ValueError("Cursor SDK identity artifact is invalid")
+    evidence_schema = evidence.get("schema_version")
+    expected_identity_schema = 2 if evidence_schema == 3 else 1
+    identity_schema = identity.get("schema_version")
+    if (expected_identity_schema == 2 and identity_schema != 2) or (
+        expected_identity_schema == 1 and identity_schema not in {None, 1}
+    ):
+        raise ValueError("Cursor SDK identity storage schema mismatch")
+    if expected_identity_schema == 2 and (
+        identity.get("store_backend") != evidence.get("store_backend")
+        or identity.get("native_store_layout_version")
+        != evidence.get("native_store_layout_version")
+    ):
+        raise ValueError("Cursor SDK identity storage binding mismatch")
     journal_rel = identity.get("create_journal_path")
     journal_sha = identity.get("create_journal_sha256")
     if not isinstance(journal_rel, str) or not isinstance(journal_sha, str):
@@ -1521,6 +1544,12 @@ def _run_sdk_turn_operation(
         resumed = adapter.resume_agent(agent_id) if preflight.failure is None else None
         if preflight.failure is not None or resumed is None or resumed.failure is not None:
             failure = preflight.failure if preflight.failure is not None else resumed.failure  # type: ignore[union-attr]
+            bound_agent_missing = (
+                resumed is not None
+                and resumed.failure is not None
+                and resumed.failure.operation is CursorSdkOperation.RESUME
+                and resumed.failure.code is CursorSdkErrorCode.UNKNOWN_IDENTITY
+            )
             return {
                 "runtime": "sdk-local",
                 "effect_kind": RUN_CURSOR_TURN_EFFECT_KIND,
@@ -1529,7 +1558,11 @@ def _run_sdk_turn_operation(
                 "timed_out": False,
                 "parse_ok": False,
                 "has_completion_signal": False,
-                "failure_kind": "cursor_sdk_preflight_failed",
+                "failure_kind": (
+                    "cursor_sdk_native_unavailable"
+                    if bound_agent_missing
+                    else "cursor_sdk_preflight_failed"
+                ),
                 "sdk_failure": _sdk_failure_payload(failure),
                 **empty_capture_payload,
                 **_outcome_identity(evidence),
@@ -2388,19 +2421,35 @@ def main(argv: list[str] | None = None) -> int:
             )
     except (Exception, CursorSdkOperationTimeout) as exc:
         sdk_timed_out = isinstance(exc, CursorSdkOperationTimeout)
+        native_state_unavailable = (
+            isinstance(exc, CursorSdkPathError) and exc.code == "native_state_unavailable"
+        )
         failure_kind = (
-            "cursor_chat_create_failed"
-            if effect_kind == CREATE_CHAT_EFFECT_KIND
+            "cursor_sdk_native_unavailable"
+            if native_state_unavailable
             else (
-                "cursor_sdk_reconciliation_failed"
-                if effect_kind == RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND
-                else "cursor_turn_execution_failed"
+                "cursor_chat_create_failed"
+                if effect_kind == CREATE_CHAT_EFFECT_KIND
+                else (
+                    "cursor_sdk_reconciliation_failed"
+                    if effect_kind == RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND
+                    else "cursor_turn_execution_failed"
+                )
             )
         )
         diagnostic_payload: dict[str, object] = {"failure_kind": failure_kind}
+        if native_state_unavailable:
+            diagnostic_payload.update(
+                {
+                    "runtime": "sdk-local",
+                    "returncode": 1,
+                    "timed_out": False,
+                }
+            )
         if (
             evidence.get("runtime") == "sdk-local"
             and effect_kind != RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND
+            and not native_state_unavailable
         ):
             diagnostic_payload.update(
                 _sdk_uncertainty_payload(

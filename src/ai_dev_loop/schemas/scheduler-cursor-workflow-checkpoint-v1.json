@@ -117,8 +117,11 @@
       "description": "Durable exact SDK agent/run identity without machine-local private paths.",
       "properties": {
         "schema_version": {
-          "const": 1,
           "default": 1,
+          "enum": [
+            1,
+            2
+          ],
           "title": "Schema Version",
           "type": "integer"
         },
@@ -181,6 +184,32 @@
           "pattern": "^[0-9a-f]{64}$",
           "title": "Latest Journal Sha256",
           "type": "string"
+        },
+        "store_backend": {
+          "anyOf": [
+            {
+              "const": "sqlite",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Store Backend"
+        },
+        "native_store_layout_version": {
+          "anyOf": [
+            {
+              "const": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Native Store Layout Version"
         }
       },
       "required": [

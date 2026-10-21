@@ -55,7 +55,8 @@ $XDG_STATE_HOME/ai_dev_loop/
   reviewer B independiente. Los contextos históricos sin esa metadata se
   proyectan como Cursor para lectura; su runtime CLI ya no puede iniciar trabajo.
 - Un submit Cursor con config v2 congela runtime SDK, versión, modelo+parámetros,
-  referencia de credencial, fuentes, sandbox y policy en contexto v7. El worker
+  referencia de credencial, fuentes, sandbox, policy y SQLite/layout en contexto
+  v9. El worker
   persiste `create_intent` antes de crear, liga el agent exacto antes del primer
   send y persiste `send_intent` antes de inferir. Los envelopes NDJSON acotados,
   final, metadata y hashes permanecen separados. La identidad lógica no expone
@@ -108,7 +109,7 @@ No existe `recover` publico en el scheduler central. Ante fallos:
   reserva pero no puede ejecutar. Para la hoja vigente de secuencia,
   `scheduler_sequence_implementer_replacements` liga ordinal, generación, entrada
   congelada y adopción; lineage registra `implementer_retry`;
-- para Cursor SDK v7/v8, el ledger
+- para Cursor SDK v7-v10, el ledger
   `scheduler_cursor_sdk_reconciliations` y los records protegidos enlazan el
   intento fallido, journal, owner/key/agent, inventario pre-envío y resultado
   nativo. Solo una reconciliación exacta habilita el retry automático o manual.
@@ -177,9 +178,10 @@ sonda acotada al CLI Codex en `PATH`.
 Manifest v3 exige `short_name` de secuencia y fase, mientras definición/entrada
 v2 sigue congelando runtimes históricos por ordinal y las hojas usan contexto
 submitido v6. Manifest SDK v4 conserva los nombres y exige runtime/modelo/parámetros
-completos por fase; definición/entrada v3 y contexto v8 congelan esa selección,
-incluso en secuencias mixtas Cursor-SDK/Codex. Los envelopes de ciclo de vida de
-secuencia siguen v1.
+completos por fase; las preparaciones nuevas usan definición/entrada v4 y contexto
+v10 para congelar también SQLite/layout, incluso en secuencias mixtas
+Cursor-SDK/Codex. Definición/entrada v3 y contexto v8 permanecen históricos y
+JSONL. Los envelopes de ciclo de vida de secuencia siguen v1.
 Entradas históricas v1 y contextos v4 conservan Cursor, identidad y hashes.
 Preparaciones v1/v2 ya aceptadas conservan replay exacto. Si tienen una hoja
 Cursor CLI efectiva no pueden start/materializar/handoff/recovery; una definición

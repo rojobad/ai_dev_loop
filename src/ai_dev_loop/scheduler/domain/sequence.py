@@ -22,8 +22,8 @@ from ai_dev_loop.scheduler.domain.state import (
 )
 
 SEQUENCE_MANIFEST_SCHEMA_VERSION = 4
-PREPARED_SEQUENCE_SCHEMA_VERSION = 3
-FROZEN_SEQUENCE_ENTRY_SCHEMA_VERSION = 3
+PREPARED_SEQUENCE_SCHEMA_VERSION = 4
+FROZEN_SEQUENCE_ENTRY_SCHEMA_VERSION = 4
 PREPARED_SEQUENCE_STATE_KIND = "prepared"
 ACTIVE_SEQUENCE_STATE_KIND = "active"
 ABORT_PENDING_SEQUENCE_STATE_KIND = "abort_pending"
@@ -292,7 +292,7 @@ class SequenceManifest(DomainModel):
 
 
 class FrozenSequenceEntry(DomainModel):
-    schema_version: Literal[1, 2, 3] = 1
+    schema_version: Literal[1, 2, 3, 4] = 1
     ordinal: int
     phase_name: NonEmptyStr
     planned_run_id: NonEmptyStr
@@ -307,13 +307,19 @@ class FrozenSequenceEntry(DomainModel):
     @model_validator(mode="after")
     def validate_implementer_version(self) -> FrozenSequenceEntry:
         if (self.schema_version >= 2) != (self.implementer is not None):
-            raise ValueError("entry v2/v3 requires implementer; v1 must omit it")
+            raise ValueError("entry v2/v3/v4 requires implementer; v1 must omit it")
         if self.schema_version < 3 and not isinstance(self.cursor, CursorBinding):
             raise ValueError("historical entries require Cursor CLI binding")
         if self.schema_version == 3 and not isinstance(self.cursor, CursorSdkBinding):
             raise ValueError("entry v3 requires Cursor SDK binding")
+        if self.schema_version == 4 and not isinstance(self.cursor, CursorSdkBinding):
+            raise ValueError("entry v4 requires Cursor SDK binding")
+        if isinstance(self.cursor, CursorSdkBinding):
+            expected_binding_version = 2 if self.schema_version == 4 else 1
+            if self.cursor.schema_version != expected_binding_version:
+                raise ValueError("Cursor SDK binding version disagrees with entry schema")
         if (
-            self.schema_version == 3
+            self.schema_version in {3, 4}
             and self.implementer is not None
             and self.implementer.provider == "cursor"
             and self.implementer.schema_version != 2
@@ -341,7 +347,7 @@ class FrozenSequenceEntry(DomainModel):
 
 
 class PreparedSequenceDefinition(DomainModel):
-    schema_version: Literal[1, 2, 3] = 1
+    schema_version: Literal[1, 2, 3, 4] = 1
     sequence_id: NonEmptyStr
     name: NonEmptyStr
     project_name: NonEmptyStr

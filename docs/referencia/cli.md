@@ -353,7 +353,7 @@ ai_dev_loop scheduler cursor-retry <run-id> [--check | --force] [--output text|j
 sigue autorizando solo el reintento de un timeout Cursor ya terminado, con el mismo
 prompt, chat y salida que antes.
 
-En contextos Cursor SDK v7/v8, el scheduler prueba primero la ausencia del árbol
+En contextos Cursor SDK v7-v10, el scheduler prueba primero la ausencia del árbol
 de procesos y reconcilia el run nativo con un cliente fresco ligado al mismo
 owner/key/agent. Un run terminal conocido se reproduce sin otro envío; uno no
 terminal se cancela y confirma antes de habilitar la política normal de retry. Si

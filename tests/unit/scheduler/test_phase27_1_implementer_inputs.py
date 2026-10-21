@@ -240,7 +240,7 @@ def test_reviewer_fields_stay_independent_of_implementer(
     assert caught.value.kind == SchedulerEngineErrorKind.CONFLICT
 
 
-def test_sdk_cursor_submit_is_schema_7_and_replays(
+def test_sdk_cursor_submit_is_schema_9_and_replays(
     git_repo: Path,
     scheduler_paths: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
@@ -260,7 +260,8 @@ def test_sdk_cursor_submit_is_schema_7_and_replays(
     assert replay.run_id == first.run_id
     assert replay.reused_existing is True
     state = _load_state(scheduler_paths, first.run_id)
-    assert state.context.schema_version == 7
+    assert state.context.schema_version == 9
+    assert state.context.cursor.store_backend == "sqlite"
     assert state.context.implementer.provider == "cursor"
     assert state.context.implementer.session_id is None
     root = run_artifact_root(scheduler_paths["artifact_root"], first.run_id)

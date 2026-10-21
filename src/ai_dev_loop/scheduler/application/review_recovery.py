@@ -795,6 +795,7 @@ def _authenticate_sdk_review_checkpoint(
             )
         )
         sdk = CursorSdkRuntimeBinding(
+            schema_version=2 if evidence.get("schema_version") == 3 else 1,
             conversation_owner_run_id=owner,
             conversation_key=key,
             agent_id=agent,
@@ -803,6 +804,8 @@ def _authenticate_sdk_review_checkpoint(
             identity_artifact_sha256=identity.expected_sha256,
             latest_journal_path=journal.relative_path,
             latest_journal_sha256=journal.expected_sha256,
+            store_backend=("sqlite" if evidence.get("schema_version") == 3 else None),
+            native_store_layout_version=(1 if evidence.get("schema_version") == 3 else None),
         )
     except ValueError as exc:
         raise SchedulerEngineError(SchedulerEngineErrorKind.VALIDATION, str(exc)) from exc

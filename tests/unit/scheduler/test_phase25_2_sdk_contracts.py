@@ -16,7 +16,11 @@ from ai_dev_loop.dashboard.application.ports import AttemptObservation, RunObser
 from ai_dev_loop.dashboard.domain.metrics import first_execution_launches
 from ai_dev_loop.paths import schema_path
 from ai_dev_loop.scheduler.domain.sequence import SequenceManifest
-from ai_dev_loop.scheduler.domain.state import CursorSdkRuntimeBinding, ImplementerBinding
+from ai_dev_loop.scheduler.domain.state import (
+    CursorSdkBinding,
+    CursorSdkRuntimeBinding,
+    ImplementerBinding,
+)
 
 
 def _validate_schema(payload: object, name: str) -> None:
@@ -164,6 +168,48 @@ def test_sdk_runtime_identity_rejects_malformed_agent_and_native_run_ids(
             latest_journal_path="cursor/sdk-journal.jsonl",
             latest_journal_sha256="c" * 64,
         )
+
+
+def test_sdk_storage_binding_versions_preserve_historical_json_and_freeze_sqlite() -> None:
+    common = {
+        "sdk_version": "1.0.37",
+        "model": "grok-4.7",
+        "parameters": {"context": "256k", "fast": False},
+        "credential_ref": "cursor-default",
+        "setting_sources": ("project",),
+        "sandbox": "enabled",
+    }
+    historical = CursorSdkBinding(**common)
+    historical_payload = historical.model_dump(mode="json")
+    assert historical_payload["schema_version"] == 1
+    assert "store_backend" not in historical_payload
+    assert "native_store_layout_version" not in historical_payload
+
+    current = CursorSdkBinding(
+        schema_version=2,
+        store_backend="sqlite",
+        native_store_layout_version=1,
+        **common,
+    )
+    current_payload = current.model_dump(mode="json")
+    assert current_payload["store_backend"] == "sqlite"
+    assert current_payload["native_store_layout_version"] == 1
+    with pytest.raises(ValidationError):
+        CursorSdkBinding(schema_version=2, **common)
+
+    runtime = CursorSdkRuntimeBinding(
+        schema_version=2,
+        conversation_owner_run_id="project-sdk-run",
+        conversation_key="a" * 64,
+        agent_id="019abc00-1111-4222-8333-444444444444",
+        identity_artifact_path="cursor/sdk-identity.json",
+        identity_artifact_sha256="b" * 64,
+        latest_journal_path="cursor/sdk-journal.jsonl",
+        latest_journal_sha256="c" * 64,
+        store_backend="sqlite",
+        native_store_layout_version=1,
+    )
+    assert runtime.model_dump(mode="json")["store_backend"] == "sqlite"
 
 
 def test_genuine_historical_fixtures_keep_recorded_bytes_and_parse() -> None:

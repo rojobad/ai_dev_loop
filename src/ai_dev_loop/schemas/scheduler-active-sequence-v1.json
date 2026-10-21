@@ -71,7 +71,9 @@
               }
             }
         },
-        { "$ref": "scheduler-sequence-definition-v2.json" }
+        { "$ref": "scheduler-sequence-definition-v2.json" },
+        { "$ref": "scheduler-sequence-definition-v3.json" },
+        { "$ref": "scheduler-sequence-definition-v4.json" }
       ]
     },
     "current_ordinal": { "type": "integer", "minimum": 1 },

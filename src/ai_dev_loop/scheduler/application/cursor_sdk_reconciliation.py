@@ -745,7 +745,7 @@ class CursorSdkReconciliationService:
             run_id,
         )
         binding: dict[str, object] = {
-            "schema_version": 2,
+            "schema_version": 3 if sdk.schema_version == 2 else 2,
             "runtime": "sdk-local",
             "effect_kind": RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND,
             "repository_root": identity.root,
@@ -775,6 +775,13 @@ class CursorSdkReconciliationService:
             "abort_requested": row["abort_requested_at"] is not None,
             "timeout_seconds": state.context.workflow.cursor_timeout_minutes * 60,
         }
+        if sdk.schema_version == 2:
+            binding.update(
+                {
+                    "store_backend": sdk.store_backend,
+                    "native_store_layout_version": sdk.native_store_layout_version,
+                }
+            )
         if successor is not None:
             binding["sdk_successor_recovery_key"] = successor.recovery_key
         review_source = self.store.get_review_recovery_source_for_successor(

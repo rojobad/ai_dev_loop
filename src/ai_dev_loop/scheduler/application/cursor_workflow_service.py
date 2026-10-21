@@ -1086,6 +1086,13 @@ class CursorWorkflowService:
     ) -> TickRunReceipt:
         attempt_id = str(attempt["attempt_id"])  # type: ignore[index]
         dispatch_id = str(attempt["dispatch_id"])  # type: ignore[index]
+        with self.store.begin_read() as conn:
+            current, _, _ = self.store.load_validated_snapshot(conn, run_id)
+        if not isinstance(current, PreflightCompleteState) or not isinstance(
+            current.context.cursor, CursorSdkBinding
+        ):
+            return TickRunReceipt(run_id=run_id, action="ingest_state_changed")
+        frozen_sdk = current.context.cursor
         failure_kind = str(outcome.get("failure_kind", ""))
         if failure_kind:
             uncertain = failure_kind in {
@@ -1137,8 +1144,8 @@ class CursorWorkflowService:
                 or terminal.get("outcome") != "success"
             ):
                 raise ValueError("Cursor SDK create journal identity mismatch")
-            identity_payload = {
-                "schema_version": 1,
+            identity_payload: dict[str, object] = {
+                "schema_version": 2 if frozen_sdk.schema_version == 2 else 1,
                 "runtime": "sdk-local",
                 "conversation_owner_run_id": owner,
                 "conversation_key": conversation_key,
@@ -1147,6 +1154,13 @@ class CursorWorkflowService:
                 "create_journal_path": journal_rel,
                 "create_journal_sha256": journal_sha,
             }
+            if frozen_sdk.schema_version == 2:
+                identity_payload.update(
+                    {
+                        "store_backend": frozen_sdk.store_backend,
+                        "native_store_layout_version": frozen_sdk.native_store_layout_version,
+                    }
+                )
             stored = self.artifacts.write_text(
                 run_id,
                 CURSOR_SDK_IDENTITY_ARTIFACT,
@@ -1154,6 +1168,7 @@ class CursorWorkflowService:
                 max_bytes=32_768,
             )
             sdk_runtime = CursorSdkRuntimeBinding(
+                schema_version=frozen_sdk.schema_version,
                 conversation_owner_run_id=owner,
                 conversation_key=conversation_key,
                 agent_id=agent_id,
@@ -1161,6 +1176,8 @@ class CursorWorkflowService:
                 identity_artifact_sha256=stored.sha256,
                 latest_journal_path=journal_rel,
                 latest_journal_sha256=journal_sha,
+                store_backend=frozen_sdk.store_backend,
+                native_store_layout_version=frozen_sdk.native_store_layout_version,
             )
         except (ValueError, OSError, ProtectedArtifactError) as exc:
             return self._block_from_ingest(
@@ -1337,7 +1354,7 @@ class CursorWorkflowService:
                 kind="cursor_turn_blocked",
                 reason_kind=failure_kind,
                 summary=("Cursor SDK in-unit preflight failed before send intent"),
-                retain_reservation=False,
+                retain_reservation=failure_kind == "cursor_sdk_native_unavailable",
             )
         iteration = _outcome_int(outcome, "iteration", INITIAL_CURSOR_ITERATION)
         native_run_id = str(outcome.get("native_run_id", ""))

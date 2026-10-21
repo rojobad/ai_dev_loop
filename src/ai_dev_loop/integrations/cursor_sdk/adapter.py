@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.metadata
+import importlib.resources
 import os
 import re
 from collections.abc import Callable, Iterator
@@ -54,6 +55,50 @@ _SAFE_NUMERIC_USAGE_FIELDS = frozenset(
     }
 )
 
+_NATIVE_STORE_INITIALIZER = "native_store_initializer.mjs"
+_BUNDLED_BRIDGE_FILES = (
+    "bin/node",
+    "dist/bin/cursor-sdk-bridge.js",
+)
+
+
+def resolve_cursor_sdk_native_bridge_command() -> tuple[str, ...]:
+    """Resolve the pinned bridge and packaged native-store initializer.
+
+    The initializer derives the public JavaScript SDK modules from the original
+    bridge entrypoint, so this resolver never bakes a development checkout or
+    installation prefix into the command.
+    """
+
+    try:
+        distribution = importlib.metadata.distribution("cursor-sdk")
+    except importlib.metadata.PackageNotFoundError as exc:
+        raise CursorSdkPathError("cursor_sdk_distribution_unavailable") from exc
+    if distribution.version != CURSOR_SDK_VERSION:
+        raise CursorSdkPathError("cursor_sdk_distribution_version_mismatch")
+    try:
+        bridge_root = Path(str(distribution.locate_file("cursor_sdk/_vendor/bridge"))).resolve(
+            strict=True
+        )
+        initializer_resource = importlib.resources.files(
+            "ai_dev_loop.integrations.cursor_sdk"
+        ).joinpath(_NATIVE_STORE_INITIALIZER)
+        initializer = Path(str(initializer_resource)).resolve(strict=True)
+    except (FileNotFoundError, ModuleNotFoundError, TypeError, ValueError) as exc:
+        raise CursorSdkPathError("cursor_sdk_native_initializer_unavailable") from exc
+    node, entrypoint = (bridge_root / relative for relative in _BUNDLED_BRIDGE_FILES)
+    if (
+        initializer.is_symlink()
+        or not initializer.is_file()
+        or node.is_symlink()
+        or not node.is_file()
+        or not os.access(node, os.X_OK)
+        or entrypoint.is_symlink()
+        or not entrypoint.is_file()
+    ):
+        raise CursorSdkPathError("cursor_sdk_native_runtime_unavailable")
+    return (str(node), "--import", str(initializer), str(entrypoint))
+
 
 def build_cursor_sdk_client_config(
     selection: CursorSdkSection,
@@ -61,17 +106,25 @@ def build_cursor_sdk_client_config(
     workspace: Path,
     repository_root: Path,
     conversation_owner_identity: str,
+    store_backend: Literal["jsonl", "sqlite"] = "jsonl",
+    native_store_layout_version: Literal[1] = 1,
+    require_existing_native_state: bool = False,
 ) -> CursorSdkClientConfig:
     paths = ensure_cursor_sdk_client_paths(
         workspace=workspace,
         repository_root=repository_root,
         conversation_owner_identity=conversation_owner_identity,
+        store_backend=store_backend,
+        native_store_layout_version=native_store_layout_version,
+        require_existing_native_state=require_existing_native_state,
     )
     return CursorSdkClientConfig(
         sdk_version=selection.sdk_version,
         workspace=paths.workspace,
         state_root=paths.state_root,
         store_root=paths.store_root,
+        store_backend=store_backend,
+        native_store_layout_version=native_store_layout_version,
         model=selection.model,
         parameters=selection.wire_parameters(),
         credential_ref=selection.credential_ref,
@@ -103,10 +156,14 @@ class CursorSdkAdapter:
         *,
         repository_root: Path,
         sdk_loader: Callable[[], ModuleType | Any] | None = None,
+        bridge_command_resolver: Callable[[], tuple[str, ...]] | None = None,
     ) -> None:
         self._config = config
         self._repository_root = repository_root
         self._sdk_loader = sdk_loader
+        self._bridge_command_resolver = (
+            bridge_command_resolver or resolve_cursor_sdk_native_bridge_command
+        )
         self._sdk: Any = None
         self._client: Any = None
         self._api_key: str | None = None
@@ -153,15 +210,23 @@ class CursorSdkAdapter:
             # SDK launch error cannot copy it into otherwise-safe metadata.
             self._api_key = api_key
             local_options = self._local_options(sdk)
+            bridge_command = (
+                self._bridge_command_resolver() if self._config.store_backend == "sqlite" else None
+            )
             with _without_cursor_auth_environment(api_key):
+                launch_options: dict[str, object] = {
+                    "workspace": self._config.workspace,
+                    "state_root": self._config.state_root,
+                    "local": local_options,
+                    "timeout": 30,
+                    "client_timeout": 60,
+                    "max_retries": 0,
+                    "allow_api_key_env_fallback": True,
+                }
+                if bridge_command is not None:
+                    launch_options["command"] = bridge_command
                 client = sdk.CursorClient.launch_bridge(
-                    workspace=self._config.workspace,
-                    state_root=self._config.state_root,
-                    local=local_options,
-                    timeout=30,
-                    client_timeout=60,
-                    max_retries=0,
-                    allow_api_key_env_fallback=True,
+                    **launch_options,
                 )
             self._client = client
             ping = client.ping()
@@ -529,11 +594,16 @@ class CursorSdkAdapter:
             return ""
 
     def _local_options(self, sdk: Any) -> Any:
+        store = (
+            sdk.LocalAgentStoreConfig(type="sqlite")
+            if self._config.store_backend == "sqlite"
+            else sdk.LocalAgentStoreConfig(type="jsonl", root_dir=str(self._config.store_root))
+        )
         return sdk.LocalAgentOptions(
             cwd=self._config.workspace,
             setting_sources=list(self._config.setting_sources),
             sandbox_options=sdk.SandboxOptions(enabled=self._config.sandbox == "enabled"),
-            store=sdk.LocalAgentStoreConfig(type="jsonl", root_dir=str(self._config.store_root)),
+            store=store,
         )
 
     def _model_selection(self) -> Any:

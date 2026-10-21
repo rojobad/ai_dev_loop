@@ -52,6 +52,8 @@ SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER = 5
 SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE = 6
 SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK = 7
 SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE = 8
+SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SQLITE = 9
+SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SQLITE_SEQUENCE = 10
 
 CURSOR_SDK_TOOL_POLICY = "scheduler-owned-no-shell"
 _CURSOR_SDK_AGENT_ID = re.compile(
@@ -137,7 +139,7 @@ class CursorBinding(DomainModel):
 class CursorSdkBinding(DomainModel):
     """Complete immutable SDK selection for one submitted implementation."""
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     runtime: Literal["sdk-local"] = "sdk-local"
     sdk_version: Literal["1.0.37"]
     model: NonEmptyStr
@@ -146,6 +148,8 @@ class CursorSdkBinding(DomainModel):
     setting_sources: tuple[NonEmptyStr, ...]
     sandbox: Literal["enabled", "disabled"]
     tool_policy: Literal["scheduler-owned-no-shell"] = "scheduler-owned-no-shell"
+    store_backend: Literal["sqlite"] | None = None
+    native_store_layout_version: Literal[1] | None = None
 
     @field_validator("parameters", mode="before")
     @classmethod
@@ -153,6 +157,25 @@ class CursorSdkBinding(DomainModel):
         if not isinstance(value, dict) or not value:
             raise ValueError("SDK parameters must be a non-empty mapping")
         return {key: value[key] for key in sorted(value)}
+
+    @model_validator(mode="after")
+    def storage_matches_version(self) -> CursorSdkBinding:
+        if self.schema_version == 1:
+            if self.store_backend is not None or self.native_store_layout_version is not None:
+                raise ValueError("historical SDK binding must not include storage fields")
+        elif self.store_backend != "sqlite" or self.native_store_layout_version != 1:
+            raise ValueError("SDK binding v2 requires SQLite native layout v1")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _serialize_sdk_binding(
+        self, handler: Callable[[CursorSdkBinding], dict[str, object]]
+    ) -> dict[str, object]:
+        data = handler(self)
+        if self.schema_version == 1:
+            data.pop("store_backend", None)
+            data.pop("native_store_layout_version", None)
+        return data
 
 
 class WorkflowLimits(DomainModel):
@@ -301,8 +324,10 @@ class SubmittedRunContext(DomainModel):
             SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SQLITE,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SQLITE_SEQUENCE,
         }:
-            raise ValueError("schema_version must be between 1 and 8")
+            raise ValueError("schema_version must be between 1 and 10")
         return value
 
     @model_validator(mode="after")
@@ -319,6 +344,8 @@ class SubmittedRunContext(DomainModel):
                 SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
                 SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK,
                 SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE,
+                SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SQLITE,
+                SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SQLITE_SEQUENCE,
             }
             and self.implementer is not None
         ):
@@ -391,6 +418,8 @@ class SubmittedRunContext(DomainModel):
         elif self.schema_version in {
             SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SQLITE,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SQLITE_SEQUENCE,
         }:
             if not isinstance(self.codex, FreshCodexReviewerBinding):
                 raise ValueError("Cursor SDK contexts require a fresh Codex reviewer")
@@ -405,16 +434,22 @@ class SubmittedRunContext(DomainModel):
                 raise ValueError("Cursor SDK contexts must not include baseline fields")
             if self.implementer is None:
                 raise ValueError("Cursor SDK contexts require implementer metadata")
-            if self.schema_version == SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK and (
-                self.implementer.provider != "cursor" or self.implementer.schema_version != 2
-            ):
+            if self.schema_version in {
+                SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK,
+                SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SQLITE,
+            } and (self.implementer.provider != "cursor" or self.implementer.schema_version != 2):
                 raise ValueError("standalone Cursor SDK context requires SDK implementer binding")
             if self.implementer.provider == "cursor" and self.implementer.schema_version != 2:
                 raise ValueError("Cursor SDK implementer requires implementer schema v2")
-            if (self.schema_version == SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE) != (
-                self.sequence is not None
-            ):
-                raise ValueError("context v8 requires sequence; v7 must omit it")
+            sequence_schema = self.schema_version in {
+                SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE,
+                SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SQLITE_SEQUENCE,
+            }
+            if sequence_schema != (self.sequence is not None):
+                raise ValueError("Cursor SDK sequence context requires sequence binding")
+            expected_binding_version = 2 if self.schema_version >= 9 else 1
+            if self.cursor.schema_version != expected_binding_version:
+                raise ValueError("Cursor SDK binding version disagrees with context schema")
         return self
 
     @model_serializer(mode="wrap")
@@ -430,6 +465,8 @@ class SubmittedRunContext(DomainModel):
             SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SQLITE,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SQLITE_SEQUENCE,
         }:
             data.pop("baseline_status_artifact_path", None)
             data.pop("baseline_status_sha256", None)
@@ -437,6 +474,7 @@ class SubmittedRunContext(DomainModel):
             SUBMITTED_CONTEXT_SCHEMA_VERSION_SEQUENCE,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SQLITE_SEQUENCE,
         }:
             data.pop("sequence", None)
         if self.schema_version not in {
@@ -444,6 +482,8 @@ class SubmittedRunContext(DomainModel):
             SUBMITTED_CONTEXT_SCHEMA_VERSION_IMPLEMENTER_SEQUENCE,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK,
             SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SEQUENCE,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SQLITE,
+            SUBMITTED_CONTEXT_SCHEMA_VERSION_CURSOR_SDK_SQLITE_SEQUENCE,
         }:
             data.pop("implementer", None)
         return data
@@ -857,7 +897,7 @@ class ReviewRecoveryLineage(DomainModel):
 class CursorSdkRuntimeBinding(DomainModel):
     """Durable exact SDK agent/run identity without machine-local private paths."""
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     runtime: Literal["sdk-local"] = "sdk-local"
     conversation_owner_run_id: NonEmptyStr
     conversation_key: Sha256Hex
@@ -867,6 +907,27 @@ class CursorSdkRuntimeBinding(DomainModel):
     identity_artifact_sha256: Sha256Hex
     latest_journal_path: NonEmptyStr
     latest_journal_sha256: Sha256Hex
+    store_backend: Literal["sqlite"] | None = None
+    native_store_layout_version: Literal[1] | None = None
+
+    @model_validator(mode="after")
+    def storage_matches_version(self) -> CursorSdkRuntimeBinding:
+        if self.schema_version == 1:
+            if self.store_backend is not None or self.native_store_layout_version is not None:
+                raise ValueError("historical SDK runtime must not include storage fields")
+        elif self.store_backend != "sqlite" or self.native_store_layout_version != 1:
+            raise ValueError("SDK runtime v2 requires SQLite native layout v1")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _serialize_sdk_runtime(
+        self, handler: Callable[[CursorSdkRuntimeBinding], dict[str, object]]
+    ) -> dict[str, object]:
+        data = handler(self)
+        if self.schema_version == 1:
+            data.pop("store_backend", None)
+            data.pop("native_store_layout_version", None)
+        return data
 
     @field_validator("agent_id")
     @classmethod

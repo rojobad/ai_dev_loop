@@ -194,7 +194,7 @@ def test_mixed_three_phase_smoke_freezes_distinct_sessions_and_two_checkpoints(
     assert git(git_repo, "status", "--porcelain") == status_before
     assert not fake_clis["codex_log"].exists()
     seq = sequence_state(scheduler_paths, result.sequence_id)
-    assert seq.definition.schema_version == 3
+    assert seq.definition.schema_version == 4
     assert [e.implementer.provider for e in seq.definition.entries] == list(providers)
     start_sequence(result.sequence_id, db_path=scheduler_paths["db_path"])
     tick = _tick(git_repo, scheduler_paths)
@@ -209,7 +209,7 @@ def test_mixed_three_phase_smoke_freezes_distinct_sessions_and_two_checkpoints(
     ):
         leaf = leaf_state(scheduler_paths, materialized.run_id)
         assert leaf.kind == "completed"
-        assert leaf.context.schema_version == 8
+        assert leaf.context.schema_version == 10
         assert leaf.context.sequence.entry_hash == frozen_entry_hash(frozen)
         assert leaf.context.implementer == frozen.implementer
         assert leaf.context.codex.review_model == "gpt-6.1-sol"
@@ -407,7 +407,7 @@ def test_prepare_frozen_inputs_idempotence_config_precedence_and_drift(
     for entry in final.materialized_entries:
         validate_schema(
             leaf_state(scheduler_paths, entry.run_id).context.model_dump(mode="json"),
-            "scheduler-submitted-run-context-v8.json",
+            "scheduler-submitted-run-context-v10.json",
         )
 
 
@@ -446,6 +446,21 @@ def test_manifest_v4_freezes_per_phase_cursor_overrides(
     entry = sequence_state(scheduler_paths, result.sequence_id).definition.entries[phase_index]
     assert entry.cursor.model == expected_model
     assert entry.workflow.cursor_timeout_minutes == expected_timeout
+
+
+def test_fresh_sqlite_sequence_prepare_does_not_mutate_historical_sdk_inputs(
+    git_repo,
+    scheduler_paths,
+):
+    historical = Path(__file__).parents[1] / "fixtures/phase25_7_historical"
+    before = {path.name: path.read_bytes() for path in historical.glob("*.json")}
+
+    result = prepare(git_repo, scheduler_paths, ("cursor", "codex"))
+    definition = sequence_state(scheduler_paths, result.sequence_id).definition
+
+    assert definition.schema_version == 4
+    assert all(entry.cursor.store_backend == "sqlite" for entry in definition.entries)
+    assert {path.name: path.read_bytes() for path in historical.glob("*.json")} == before
 
 
 def test_v1_stays_cursor_and_rejects_implementer_metadata(git_repo, scheduler_paths, monkeypatch):

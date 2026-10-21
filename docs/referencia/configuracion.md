@@ -148,15 +148,22 @@ no symlink, pertenecer al usuario y tener modo `0600`. El valor debe ser UTF-8 d
 una sola linea, como maximo 16 KiB. El YAML, ledger, artefactos, argv, salida y
 errores nunca contienen el valor.
 
-Cada conversacion SDK usa workspace explicito dentro del repositorio y dos roots
-privados separados bajo
-`$XDG_STATE_HOME/ai_dev_loop/cursor-sdk/<sha256-owner>/`: `bridge/` para
-`state_root` y `store/` para el store JSONL nativo. Ninguno puede solaparse con
-el repositorio. La identidad del owner se convierte en un digest SHA-256; no se
-usa un nombre inferido, path libre ni estado dentro del checkout.
+Cada conversacion SDK usa workspace explicito dentro del repositorio y un root
+privado bajo `$XDG_STATE_HOME/ai_dev_loop/cursor-sdk/<sha256-owner>/`, fuera del
+checkout. Una conversacion nueva liga ese mismo root como `state_root` y store
+SQLite nativo. Antes de iniciar el entrypoint original del bridge, un initializer
+empaquetado abre `SqliteLocalAgentStore` con ese root y llama la API publica
+`configureCursorSdk`; el launcher publico recibe el comando resuelto de la
+distribucion fijada. Fallar al resolver el recurso/runtime o abrir SQLite detiene
+el intento antes de crear, reanudar o enviar. No hay fallback al store global.
+Las formas historicas conservan sus dos roots `bridge/` y `store/` y semantica
+JSONL. Ningun root puede solaparse con el repositorio. La identidad del owner se
+convierte en un digest SHA-256; no se usa un nombre inferido, path libre ni estado
+dentro del checkout.
 
 El flujo vigente permite que `scheduler submit` con implementer Cursor congele config v2
-en un contexto v7. `submit` no importa el SDK, abre el bridge, lee la credencial ni
+en un contexto v9 con binding SDK v2 (`store_backend: sqlite`, layout nativo v1).
+`submit` no importa el SDK, abre el bridge, lee la credencial ni
 consulta el catalogo. El intento aislado hace ese preflight y persiste, antes de
 inferir, el intent de creación, el `agent_id` exacto y luego el intent de envío y
 el run nativo. Una selección Codex sigue siendo independiente y no requiere
@@ -164,8 +171,9 @@ binario, package, credencial ni environment de Cursor.
 
 Las secuencias SDK nuevas usan manifest v4: conservan los `short_name` de v3 y
 exigen `runtime`, `model` y `parameters` completos en cada fase. La definición y
-entrada congeladas son v3 y cada hoja materializa contexto v8. Manifests v1-v3 ya
-aceptados conservan sus hashes y semántica de lectura; no se convierten a SDK.
+entrada congeladas son v4 y cada hoja materializa contexto v10. Definiciones v3,
+contextos v7/v8 y demás formas históricas conservan sus hashes y semántica JSONL;
+no se reinterpretan ni migran a SQLite.
 Una definición histórica Codex-only puede seguir ejecutando y recuperando. Si
 contiene una hoja Cursor CLI efectiva, start, materialización, handoff y recovery
 rechazan la secuencia completa sin modificar el registro.

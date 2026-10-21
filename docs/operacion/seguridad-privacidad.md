@@ -105,12 +105,18 @@ valor coincida con la llave, y las restaura al retornar; no captura ni persiste 
 environment. Fallos tipados conservan solo codigo, operacion, IDs nativos y
 metadata acotada segura; no conservan mensajes del SDK ni el secreto.
 
-El workspace SDK es la raiz explicita admitida dentro del repositorio. El estado
-del bridge y el store JSONL nativo son roots privados y separados bajo
-`$XDG_STATE_HOME/ai_dev_loop/cursor-sdk/<sha256-owner>/`, fuera del checkout. El
-store nativo es la autoridad de replay/consulta de la conversacion; el ledger no
-duplica transcript, eventos ni uso como nueva verdad. El bridge se cierra en el
-boundary de lifecycle del adapter tanto en salida normal como excepcional.
+El workspace SDK es la raiz explicita admitida dentro del repositorio. Para una
+conversacion nueva, el estado del bridge y el store SQLite nativo comparten el
+root privado `$XDG_STATE_HOME/ai_dev_loop/cursor-sdk/<sha256-owner>/`, fuera del
+checkout. Un initializer de aplicacion empaquetado usa las APIs publicas
+`SqliteLocalAgentStore.open` y `configureCursorSdk` antes del entrypoint original;
+el launcher no depende de `NODE_OPTIONS`, no modifica el vendor y no cae al
+store global. Las formas historicas mantienen `bridge/` y `store/` separados con
+JSONL.
+El store nativo es la autoridad de replay/consulta de la conversacion; el ledger
+no duplica transcript, eventos ni uso como nueva verdad. El bridge se cierra en
+el boundary de lifecycle del adapter tanto en salida normal como excepcional, y
+un fallo de recurso/runtime/open se clasifica antes de cualquier envío.
 
 El servidor `dashboard serve` es una superficie local sin login: enlaza únicamente
 IPv4 `127.0.0.1` y exige Host/Origin same-origin exactos. No debe publicarse mediante

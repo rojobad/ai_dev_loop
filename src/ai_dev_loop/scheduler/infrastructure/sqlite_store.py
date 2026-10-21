@@ -2606,10 +2606,10 @@ class SqliteSchedulerStore:
             )
         sequence_filter = ""
         if kind == "standalone":
-            sequence_filter = " AND COALESCE(json_extract(state_payload, '$.context.schema_version'), 0) NOT IN (4, 6, 8)"
+            sequence_filter = " AND COALESCE(json_extract(state_payload, '$.context.schema_version'), 0) NOT IN (4, 6, 8, 10)"
         elif kind == "sequence":
             sequence_filter = (
-                " AND json_extract(state_payload, '$.context.schema_version') IN (4, 6, 8)"
+                " AND json_extract(state_payload, '$.context.schema_version') IN (4, 6, 8, 10)"
             )
         elif kind != "all":
             raise SchedulerEngineError(
@@ -5653,6 +5653,8 @@ class SqliteSchedulerStore:
         *,
         source_run_id: str,
     ) -> list[sqlite3.Row]:
+        if "scheduler_cursor_initial_recoveries" not in self._table_names(conn):
+            return []
         rows = conn.execute(
             """
             SELECT * FROM scheduler_cursor_initial_recoveries
@@ -5670,6 +5672,8 @@ class SqliteSchedulerStore:
         source_run_id: str,
         failed_attempt_id: str,
     ) -> sqlite3.Row | None:
+        if "scheduler_cursor_initial_recoveries" not in self._table_names(conn):
+            return None
         row = conn.execute(
             """
             SELECT * FROM scheduler_cursor_initial_recoveries
@@ -5685,6 +5689,8 @@ class SqliteSchedulerStore:
         *,
         successor_run_id: str,
     ) -> sqlite3.Row | None:
+        if "scheduler_cursor_initial_recoveries" not in self._table_names(conn):
+            return None
         row = conn.execute(
             """
             SELECT * FROM scheduler_cursor_initial_recoveries
@@ -5700,6 +5706,8 @@ class SqliteSchedulerStore:
         *,
         recovery_key: str,
     ) -> sqlite3.Row | None:
+        if "scheduler_cursor_initial_recoveries" not in self._table_names(conn):
+            return None
         row = conn.execute(
             """
             SELECT * FROM scheduler_cursor_initial_recoveries
@@ -5713,6 +5721,8 @@ class SqliteSchedulerStore:
         self,
         conn: sqlite3.Connection,
     ) -> list[sqlite3.Row]:
+        if "scheduler_cursor_initial_recoveries" not in self._table_names(conn):
+            return []
         rows = conn.execute(
             """
             SELECT * FROM scheduler_cursor_initial_recoveries

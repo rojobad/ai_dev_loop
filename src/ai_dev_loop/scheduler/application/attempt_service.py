@@ -1352,7 +1352,7 @@ class AttemptService:
 
             sdk = context.cursor
             binding: dict[str, object] = {
-                "schema_version": 2,
+                "schema_version": 3 if sdk.schema_version == 2 else 2,
                 "runtime": "sdk-local",
                 "effect_kind": effect_kind,
                 "repository_root": identity.root,
@@ -1379,6 +1379,13 @@ class AttemptService:
                 ),
                 "timeout_seconds": context.workflow.cursor_timeout_minutes * 60,
             }
+            if sdk.schema_version == 2:
+                binding.update(
+                    {
+                        "store_backend": sdk.store_backend,
+                        "native_store_layout_version": sdk.native_store_layout_version,
+                    }
+                )
             if effect_kind == CREATE_CHAT_EFFECT_KIND:
                 return binding
             if state.cursor.sdk is None:
@@ -1387,6 +1394,12 @@ class AttemptService:
                 state.cursor.sdk.conversation_owner_run_id
             ):
                 raise ValidationError("Cursor SDK identity owner disagrees with conversation key")
+            if (
+                state.cursor.sdk.schema_version != sdk.schema_version
+                or state.cursor.sdk.store_backend != sdk.store_backend
+                or state.cursor.sdk.native_store_layout_version != sdk.native_store_layout_version
+            ):
+                raise ValidationError("Cursor SDK runtime storage binding changed")
             if isinstance(state, WaitingForCursorFixState):
                 prompt_path = state.codex.latest_correction_envelope_path
                 prompt_sha = state.codex.latest_correction_envelope_sha256

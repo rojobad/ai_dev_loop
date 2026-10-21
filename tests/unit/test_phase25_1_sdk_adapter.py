@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import os
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ from typing import Any
 import pytest
 
 from ai_dev_loop.config import CursorSdkSection
+from ai_dev_loop.integrations.cursor_sdk import adapter as cursor_sdk_adapter
 from ai_dev_loop.integrations.cursor_sdk.adapter import (
     CursorSdkAdapter,
     build_cursor_sdk_client_config,
@@ -107,7 +109,7 @@ class SandboxOptions:
 @dataclass
 class LocalAgentStoreConfig:
     type: str
-    root_dir: str
+    root_dir: str | None = None
 
 
 @dataclass
@@ -385,6 +387,86 @@ def test_credential_and_store_paths_are_private_confined_and_distinct(
     assert oct(first.store_root.stat().st_mode & 0o777) == "0o700"
 
 
+def test_sqlite_paths_are_owner_confined_and_bound_state_is_never_recreated(
+    git_repo: Path,
+    isolated_xdg: Path,
+) -> None:
+    first = ensure_cursor_sdk_client_paths(
+        workspace=git_repo,
+        repository_root=git_repo,
+        conversation_owner_identity="sqlite-owner-one",
+        store_backend="sqlite",
+    )
+    second = ensure_cursor_sdk_client_paths(
+        workspace=git_repo,
+        repository_root=git_repo,
+        conversation_owner_identity="sqlite-owner-two",
+        store_backend="sqlite",
+    )
+    assert first.state_root == first.conversation_root == first.store_root
+    assert second.state_root != first.state_root
+    assert first.state_root.parent == second.state_root.parent
+    assert not (first.state_root / "index.db").exists()
+
+    with pytest.raises(CursorSdkPathError, match="native_state_unavailable"):
+        ensure_cursor_sdk_client_paths(
+            workspace=git_repo,
+            repository_root=git_repo,
+            conversation_owner_identity="sqlite-owner-one",
+            store_backend="sqlite",
+            require_existing_native_state=True,
+        )
+    assert not (first.state_root / "index.db").exists()
+    with sqlite3.connect(first.state_root / "index.db") as connection:
+        connection.execute("CREATE TABLE persisted_state (key TEXT PRIMARY KEY)")
+    reopened = ensure_cursor_sdk_client_paths(
+        workspace=git_repo,
+        repository_root=git_repo,
+        conversation_owner_identity="sqlite-owner-one",
+        store_backend="sqlite",
+        require_existing_native_state=True,
+    )
+    assert reopened == first
+    (first.state_root / "index.db").write_bytes(b"")
+    with pytest.raises(CursorSdkPathError, match="native_state_unavailable"):
+        ensure_cursor_sdk_client_paths(
+            workspace=git_repo,
+            repository_root=git_repo,
+            conversation_owner_identity="sqlite-owner-one",
+            store_backend="sqlite",
+            require_existing_native_state=True,
+        )
+    (first.state_root / "index.db").write_bytes(b"SQLite format 3\x00truncated")
+    with pytest.raises(CursorSdkPathError, match="native_state_unavailable"):
+        ensure_cursor_sdk_client_paths(
+            workspace=git_repo,
+            repository_root=git_repo,
+            conversation_owner_identity="sqlite-owner-one",
+            store_backend="sqlite",
+            require_existing_native_state=True,
+        )
+    (first.state_root / "index.db").write_bytes(b"not a sqlite database")
+    with pytest.raises(CursorSdkPathError, match="native_state_unavailable"):
+        ensure_cursor_sdk_client_paths(
+            workspace=git_repo,
+            repository_root=git_repo,
+            conversation_owner_identity="sqlite-owner-one",
+            store_backend="sqlite",
+            require_existing_native_state=True,
+        )
+
+    missing_root = first.state_root.parent / cursor_conversation_key("missing-bound-owner")
+    with pytest.raises(CursorSdkPathError, match="native_state_unavailable"):
+        ensure_cursor_sdk_client_paths(
+            workspace=git_repo,
+            repository_root=git_repo,
+            conversation_owner_identity="missing-bound-owner",
+            store_backend="sqlite",
+            require_existing_native_state=True,
+        )
+    assert not missing_root.exists()
+
+
 def test_credential_rejects_symlink_mode_multiline_and_repository_overlap(
     git_repo: Path,
     isolated_xdg: Path,
@@ -490,6 +572,118 @@ def test_adapter_passes_exact_public_options_without_key_in_bridge_environment(
     assert SECRET not in repr(created)
     assert SECRET not in repr(sent)
     assert SECRET not in caplog.text
+
+
+def test_adapter_selects_public_sqlite_without_jsonl_root(
+    git_repo: Path,
+    isolated_xdg: Path,
+) -> None:
+    _credential(isolated_xdg, SECRET + "\n")
+    client = FakeClient()
+    config = build_cursor_sdk_client_config(
+        _selection(),
+        workspace=git_repo,
+        repository_root=git_repo,
+        conversation_owner_identity="sqlite-adapter-owner",
+        store_backend="sqlite",
+    )
+    adapter = CursorSdkAdapter(
+        config,
+        repository_root=git_repo,
+        sdk_loader=lambda: _fake_sdk(client),
+        bridge_command_resolver=lambda: (
+            "/bundled/node",
+            "--import",
+            "/installed/native_store_initializer.mjs",
+            "/bundled/cursor-sdk-bridge.js",
+        ),
+    )
+    assert adapter.open().value is not None
+    launch = FakeCursorClient.launch_calls[0]
+    assert launch["command"] == (
+        "/bundled/node",
+        "--import",
+        "/installed/native_store_initializer.mjs",
+        "/bundled/cursor-sdk-bridge.js",
+    )
+    local = launch["local"]
+    assert isinstance(local, LocalAgentOptions)
+    assert local.store.type == "sqlite"
+    assert local.store.root_dir is None
+    assert launch["state_root"] == config.state_root == config.store_root
+    adapter.close()
+
+
+@pytest.mark.parametrize(
+    ("missing_resource", "unavailable_reason"),
+    [
+        ("initializer", "cursor_sdk_native_initializer_unavailable"),
+        ("runtime", "cursor_sdk_native_runtime_unavailable"),
+    ],
+)
+def test_missing_native_bridge_prerequisite_fails_open_before_launch_or_send(
+    git_repo: Path,
+    isolated_xdg: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    missing_resource: str,
+    unavailable_reason: str,
+) -> None:
+    _credential(isolated_xdg, SECRET + "\n")
+    client = FakeClient()
+    config = build_cursor_sdk_client_config(
+        _selection(),
+        workspace=git_repo,
+        repository_root=git_repo,
+        conversation_owner_identity="missing-initializer-owner",
+        store_backend="sqlite",
+    )
+    distribution_root = tmp_path / "distribution"
+    bridge_root = distribution_root / "cursor_sdk/_vendor/bridge"
+    bridge_root.mkdir(parents=True)
+    application_root = tmp_path / "application"
+    application_root.mkdir()
+    if missing_resource != "initializer":
+        (application_root / "native_store_initializer.mjs").write_text(
+            "// isolated test initializer\n", encoding="utf-8"
+        )
+    if missing_resource != "runtime":
+        node = bridge_root / "bin/node"
+        node.parent.mkdir()
+        node.write_text("#!/bin/sh\n", encoding="utf-8")
+        node.chmod(0o700)
+        entrypoint = bridge_root / "dist/bin/cursor-sdk-bridge.js"
+        entrypoint.parent.mkdir(parents=True)
+        entrypoint.write_text("// isolated test bridge\n", encoding="utf-8")
+    distribution = SimpleNamespace(
+        version=cursor_sdk_adapter.CURSOR_SDK_VERSION,
+        locate_file=lambda relative: distribution_root / str(relative),
+    )
+    monkeypatch.setattr(
+        cursor_sdk_adapter.importlib.metadata,
+        "distribution",
+        lambda name: distribution,
+    )
+    monkeypatch.setattr(
+        cursor_sdk_adapter.importlib.resources,
+        "files",
+        lambda package: application_root,
+    )
+    with pytest.raises(CursorSdkPathError, match=unavailable_reason):
+        cursor_sdk_adapter.resolve_cursor_sdk_native_bridge_command()
+
+    adapter = CursorSdkAdapter(
+        config,
+        repository_root=git_repo,
+        sdk_loader=lambda: _fake_sdk(client),
+    )
+    outcome = adapter.open()
+    assert outcome.failure is not None
+    assert outcome.failure.code is CursorSdkErrorCode.INVALID_LOCAL_PATH
+    assert outcome.failure.operation.value == "open"
+    assert FakeCursorClient.launch_calls == []
+    assert client.create_calls == []
+    assert client.agent.send_calls == []
 
 
 def test_live_stream_combines_run_identity_with_terminal_result(

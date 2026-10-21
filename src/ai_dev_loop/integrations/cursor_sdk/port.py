@@ -83,6 +83,8 @@ class CursorSdkClientConfig:
     credential_ref: str
     setting_sources: tuple[str, ...]
     sandbox: Literal["enabled", "disabled"]
+    store_backend: Literal["jsonl", "sqlite"] = "jsonl"
+    native_store_layout_version: Literal[1] = 1
 
 
 @dataclass(frozen=True)
