@@ -779,12 +779,13 @@ def test_cli_inspection_does_not_create_or_migrate_a_ledger(isolated_xdg: Path) 
     SqliteSchedulerStore(database)
     with sqlite3.connect(database) as conn:
         for table in (
+            "scheduler_cursor_sdk_no_progress",
             "scheduler_cursor_sdk_retention_policy",
             "scheduler_cursor_sdk_conversation_fences",
             "scheduler_cursor_sdk_disposals",
         ):
             conn.execute(f"DROP TABLE {table}")
-        conn.execute("DELETE FROM scheduler_schema_migrations WHERE version = 19")
+        conn.execute("DELETE FROM scheduler_schema_migrations WHERE version >= 19")
         conn.execute("PRAGMA user_version = 18")
         conn.commit()
     before = _ledger_snapshot(database, parent)

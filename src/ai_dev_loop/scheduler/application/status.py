@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import TypedDict
 
 from ai_dev_loop.scheduler.application.contracts import (
     SchedulerEngineError,
@@ -26,6 +27,31 @@ from ai_dev_loop.scheduler.application.safe_actions import safe_next_action_for_
 from ai_dev_loop.scheduler.domain.state import SchedulerState
 from ai_dev_loop.scheduler.infrastructure.paths import default_engine_db_path
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
+
+
+class _NoProgressSummaryFields(TypedDict, total=False):
+    sdk_no_progress_category: str | None
+    sdk_no_progress_action: str | None
+    sdk_no_progress_consumed: int | None
+    sdk_no_progress_due_at: str | None
+
+
+def _no_progress_summary_fields(
+    store: SqliteSchedulerStore,
+    conn: sqlite3.Connection,
+    run_id: str,
+) -> _NoProgressSummaryFields:
+    from ai_dev_loop.scheduler.application.cursor_sdk_no_progress import no_progress_projection
+
+    projection = no_progress_projection(store, conn, run_id)
+    if projection is None:
+        return {}
+    return {
+        "sdk_no_progress_category": projection.category,
+        "sdk_no_progress_action": projection.action,
+        "sdk_no_progress_consumed": projection.consumed,
+        "sdk_no_progress_due_at": projection.due_at,
+    }
 
 
 class SchedulerStatusService:
@@ -101,6 +127,7 @@ class SchedulerStatusService:
             codex_routing_failure_post_probe_reason=projection[
                 "codex_routing_failure_post_probe_reason"
             ],
+            **_no_progress_summary_fields(self.store, conn, state.run_id),
         )
 
     def get_status(self, run_id: str) -> SchedulerStatusResult:

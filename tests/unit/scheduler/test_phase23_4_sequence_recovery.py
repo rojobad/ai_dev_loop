@@ -43,8 +43,9 @@ def test_schema_migration_reopens_v12_without_rewriting_lineage(tmp_path: Path) 
     db = tmp_path / "engine.sqlite3"
     store = SqliteSchedulerStore(db)
     store.bootstrap()
-    assert SCHEMA_VERSION == 19
+    assert SCHEMA_VERSION == 20
     with store.begin_immediate() as conn:
+        conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_no_progress")
         conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_retention_policy")
         conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_conversation_fences")
         conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_disposals")

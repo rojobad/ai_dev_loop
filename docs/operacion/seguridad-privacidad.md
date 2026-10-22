@@ -253,6 +253,10 @@ Por defecto, la CLI no imprime:
 
 Los artefactos crudos se guardan localmente con permisos restrictivos cuando el filesystem lo permite.
 
+El diagnóstico de resume SDK sin progreso nombra la categoría y la siguiente acción.
+No imprime el mensaje nativo, no muestra IDs de run o sesión completos y no afirma
+que la causa haya sido la red.
+
 `prepare` puede leer rollouts JSONL de una sesion UUID exacta, pero solo procesa eventos allowlisted (`session_meta`, `thread_settings_applied`, `turn_context`, incluidos wrappers `event_msg`). No retiene mensajes, prompts, herramientas ni payloads arbitrarios. `codex/session-runtime.json` contiene solo metadata permitida, un prefijo del session ID y ninguna ruta absoluta al rollout.
 
 ## Actualizaciones de Codex CLI

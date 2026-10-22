@@ -737,10 +737,14 @@ class ImplementerRetryService:
                     now_factory=self.now,
                 ).force(run_id)
                 return ImplementerRetryResult(
-                    run_id=recovery_result.successor_run_id,
+                    run_id=(
+                        recovery_result.source_run_id
+                        if recovery_result.automatic_continuation
+                        else recovery_result.successor_run_id
+                    ),
                     provider="cursor",
                     changed=recovery_result.changed,
-                    available_at=None,
+                    available_at=recovery_result.automatic_due_at,
                     automatic_retries=0,
                 )
             from ai_dev_loop.scheduler.application.implementer_failure_recovery import (

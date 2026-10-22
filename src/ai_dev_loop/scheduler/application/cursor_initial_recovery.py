@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from pydantic import ValidationError
+from pydantic import ValidationError, model_serializer
 
 from ai_dev_loop.scheduler.application.contracts import (
     AppModel,
@@ -125,6 +125,18 @@ class CursorInitialRecoveryResult(AppModel):
     agent_execution_ready: bool
     safe_next_action: SafeNextAction
     turn_kind: Literal["initial", "correction"] = "initial"
+    automatic_continuation: bool = False
+    automatic_due_at: str | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_automatic_fields(
+        self, handler: Callable[[object], dict[str, object]]
+    ) -> dict[str, object]:
+        payload = handler(self)
+        if not payload.get("automatic_continuation"):
+            payload.pop("automatic_continuation", None)
+            payload.pop("automatic_due_at", None)
+        return payload
 
 
 def _invalid(message: str) -> SchedulerEngineError:
@@ -1019,6 +1031,12 @@ def render_cursor_initial_recovery_output(
 ) -> str:
     if output == "json":
         return result.model_dump_json(indent=2) + "\n"
+    if result.automatic_continuation and result.publication_status == "pending":
+        return (
+            f"Cursor SDK no-progress continuation: source={result.source_run_id} "
+            f"publication=pending due_at={result.automatic_due_at} "
+            "agent_execution_ready=no\n"
+        )
     reuse = "reused" if result.idempotent_replay else "created"
     ready = "yes" if result.agent_execution_ready else "no"
     return (

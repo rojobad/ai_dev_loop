@@ -101,6 +101,29 @@ class CursorTimeoutRetryEvent(DomainModel):
     available_at: NonEmptyStr | None = None
 
 
+class CursorSdkNoProgressAuthorizedEvent(DomainModel):
+    """Safe audit that a terminal SDK no-progress turn reserved or refused continuation."""
+
+    kind: Literal["cursor_sdk_no_progress_authorized"] = "cursor_sdk_no_progress_authorized"
+    run_id: NonEmptyStr
+    attempt_id: NonEmptyStr
+    category: Literal["cursor_sdk_resume_no_progress"] = "cursor_sdk_resume_no_progress"
+    action: Literal["automatic", "exhausted", "manual"]
+    consumed_count: int | None = None
+    due_at: NonEmptyStr | None = None
+
+    @field_validator("consumed_count", mode="before")
+    @classmethod
+    def strict_consumed_count(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("consumed_count must be a JSON integer")
+        if value not in (0, 1):
+            raise ValueError("consumed_count must be 0 or 1")
+        return value
+
+
 class CodexImplementerTimeoutRetryEvent(DomainModel):
     kind: Literal["codex_implementer_timeout_retry"] = "codex_implementer_timeout_retry"
     run_id: NonEmptyStr
@@ -1205,6 +1228,10 @@ def _scheduler_event_discriminator(value: object) -> str:
 
 SchedulerEvent = Annotated[
     Annotated[CursorTimeoutRetryEvent, Tag("cursor_timeout_retry")]
+    | Annotated[
+        CursorSdkNoProgressAuthorizedEvent,
+        Tag("cursor_sdk_no_progress_authorized"),
+    ]
     | Annotated[
         CodexImplementerTimeoutRetryEvent,
         Tag("codex_implementer_timeout_retry"),

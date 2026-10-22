@@ -120,6 +120,24 @@ No existe `recover` publico en el scheduler central. Ante fallos:
   `scheduler_cursor_sdk_reconciliations` y los records protegidos enlazan el
   intento fallido, journal, owner/key/agent, inventario pre-envío y resultado
   nativo. Solo una reconciliación exacta habilita el retry automático o manual.
+  El status público exacto de resume sin progreso añade
+  `scheduler_cursor_sdk_no_progress` y `cursor/sdk-no-progress/<attempt>/witness-v1.json`.
+  Esa fila reserva una continuación, vence a los 60 segundos y consume una sola
+  vez el turno lógico; no cambia los hashes históricos de reconciliación ni de
+  sucesor. El testigo ata el digest de la captura completa y rechaza una
+  secuencia terminal contradictoria. La relectura nativa corre en el worker de
+  reconciliación. Si el run sigue en `error`, un tick posterior publica; si
+  terminó con salida válida, la ingesta terminal reinyecta sin otro prompt. El
+  sucesor de esa reinyección no puede despachar hasta instalar la salida; un
+  fallo de copia deja el efecto cercado y el mismo sucesor se reanuda. Una
+  lectura perdida se retira contra la reconciliación ready, sin cambiar su hash
+  ni el consumo, y solo se reprograma si no publicó resultado. El
+  envío vuelve a comprobar ese digest. Abortar la hoja vigente, o su secuencia,
+  cancela una reinyección que aún espera instalar la salida, aunque la
+  autorización todavía no tenga `successor_run_id`, y conserva el consumo y los
+  hashes de la recuperación ready. Abortar el origen no reescribe una
+  continuación que ya empezó o fue entregada.
+  Sin el testigo, el fallo sigue siendo manual.
   `cursor-retry --check/--force` y la rama Cursor de `implementer-retry` conservan
   agente, reviewer, presupuesto, ordinal y short name. Una creación incierta o
   cero/varios candidatos retienen la reserva sin redispatch; `scheduler abort`

@@ -1,0 +1,176 @@
+{
+  "additionalProperties": false,
+  "description": "One reserved automatic continuation for a logical implementer turn.",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "logical_turn_key": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Logical Turn Key",
+      "type": "string"
+    },
+    "consumed_count": {
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Consumed Count",
+      "type": "integer"
+    },
+    "status": {
+      "enum": [
+        "reserved",
+        "publishing",
+        "published",
+        "held",
+        "cancelled"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "category": {
+      "const": "cursor_sdk_resume_no_progress",
+      "default": "cursor_sdk_resume_no_progress",
+      "title": "Category",
+      "type": "string"
+    },
+    "source_run_id": {
+      "minLength": 1,
+      "title": "Source Run Id",
+      "type": "string"
+    },
+    "source_attempt_id": {
+      "minLength": 1,
+      "title": "Source Attempt Id",
+      "type": "string"
+    },
+    "witness_path": {
+      "minLength": 1,
+      "title": "Witness Path",
+      "type": "string"
+    },
+    "witness_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Witness Sha256",
+      "type": "string"
+    },
+    "authorized_at": {
+      "minLength": 1,
+      "title": "Authorized At",
+      "type": "string"
+    },
+    "due_at": {
+      "minLength": 1,
+      "title": "Due At",
+      "type": "string"
+    },
+    "turn_kind": {
+      "enum": [
+        "initial",
+        "correction"
+      ],
+      "title": "Turn Kind",
+      "type": "string"
+    },
+    "conversation_key": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Conversation Key",
+      "type": "string"
+    },
+    "base_prompt_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Base Prompt Sha256",
+      "type": "string"
+    },
+    "reviews_completed": {
+      "minimum": 0,
+      "title": "Reviews Completed",
+      "type": "integer"
+    },
+    "fix_prompt_sha256": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fix Prompt Sha256"
+    },
+    "review_result_sha256": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Review Result Sha256"
+    },
+    "successor_run_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Successor Run Id"
+    },
+    "recovery_key": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Recovery Key"
+    }
+  },
+  "required": [
+    "logical_turn_key",
+    "consumed_count",
+    "status",
+    "source_run_id",
+    "source_attempt_id",
+    "witness_path",
+    "witness_sha256",
+    "authorized_at",
+    "due_at",
+    "turn_kind",
+    "conversation_key",
+    "base_prompt_sha256",
+    "reviews_completed"
+  ],
+  "title": "CursorSdkNoProgressAuthorizationV1",
+  "type": "object"
+}

@@ -1,0 +1,125 @@
+{
+  "additionalProperties": false,
+  "description": "Bounded witness that a captured status event is the known terminal failure.",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "category": {
+      "const": "cursor_sdk_resume_no_progress",
+      "default": "cursor_sdk_resume_no_progress",
+      "title": "Category",
+      "type": "string"
+    },
+    "attempt_id": {
+      "minLength": 1,
+      "title": "Attempt Id",
+      "type": "string"
+    },
+    "dispatch_id": {
+      "minLength": 1,
+      "title": "Dispatch Id",
+      "type": "string"
+    },
+    "agent_id": {
+      "minLength": 1,
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "native_run_id": {
+      "minLength": 1,
+      "title": "Native Run Id",
+      "type": "string"
+    },
+    "offset": {
+      "minLength": 1,
+      "title": "Offset",
+      "type": "string"
+    },
+    "capture_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Capture Sha256",
+      "type": "string"
+    },
+    "events_path": {
+      "minLength": 1,
+      "title": "Events Path",
+      "type": "string"
+    },
+    "journal_path": {
+      "minLength": 1,
+      "title": "Journal Path",
+      "type": "string"
+    },
+    "journal_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Journal Sha256",
+      "type": "string"
+    },
+    "events_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Events Sha256",
+      "type": "string"
+    },
+    "events_truncated": {
+      "const": false,
+      "default": false,
+      "title": "Events Truncated",
+      "type": "boolean"
+    },
+    "capture_complete": {
+      "default": false,
+      "title": "Capture Complete",
+      "type": "boolean"
+    },
+    "final_native_status": {
+      "const": "error",
+      "default": "error",
+      "title": "Final Native Status",
+      "type": "string"
+    },
+    "event_type": {
+      "const": "status",
+      "default": "status",
+      "title": "Event Type",
+      "type": "string"
+    },
+    "event_status": {
+      "const": "ERROR",
+      "default": "ERROR",
+      "title": "Event Status",
+      "type": "string"
+    },
+    "message_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Message Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "attempt_id",
+    "dispatch_id",
+    "agent_id",
+    "native_run_id",
+    "offset",
+    "capture_sha256",
+    "events_path",
+    "journal_path",
+    "journal_sha256",
+    "events_sha256",
+    "message_sha256"
+  ],
+  "title": "CursorSdkNoProgressWitnessV1",
+  "type": "object"
+}

@@ -113,9 +113,9 @@ class SequenceReconcileService:
         state, _, _ = self.store.load_validated_snapshot(conn, run_id)
         sdk_hold = is_cursor_sdk_reservation_hold(state)
         if sdk_hold and getattr(state, "block_reason_kind", None) == "cursor_failure":
-            # A reconciled generic SDK failure is intentionally terminal for the
-            # current sequence leaf.  Blocking the sequence does not release its
-            # reservation; the authenticated successor transition transfers it.
+            # Reconciled SDK failures, including one reserved resume-no-progress
+            # continuation, block the current leaf. Adoption still requires that
+            # blocked leaf; the continuation row keeps it recoverable until due.
             sdk_hold = False
         implementer_hold = (
             is_codex_implementer_reservation_hold(state) or sdk_hold
@@ -172,6 +172,12 @@ class SequenceReconcileService:
         worktree_key: str,
         now: datetime,
     ) -> None:
+        from ai_dev_loop.scheduler.application.cursor_sdk_no_progress import (
+            no_progress_retains_repository,
+        )
+
+        if no_progress_retains_repository(self.store, conn, run_id):
+            return
         reservation = self.store.get_reservation_for_run(conn, run_id)
         if reservation is None:
             return

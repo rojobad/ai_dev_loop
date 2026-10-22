@@ -505,6 +505,30 @@ como el sucesor manual exigen primero el record de reconciliación nativa; el
 sucesor conserva owner/key/agent, reviewer B, presupuesto y short name. El comando
 Cursor existente conserva su compatibilidad y sus recibos propios.
 
+Un turno SDK cuyo evento público `status` termina exactamente con
+`Agent turn stopped after repeated resume attempts made no progress`, el agente
+y el run nativo propios, y el estado nativo final `error`, reserva una sola
+continuación automática de ese turno lógico. El despacho más temprano es 60
+segundos después de la autorización. `status` muestra la categoría, la acción,
+el consumo `1` y `due_at`; durante la espera no pide otro `--force`. Un segundo
+fallo igual queda para `implementer-retry --force` y conserva el consumo. Un
+fallo distinto, un timeout, una espera de capacidad o un registro histórico sin
+ese testigo siguen el camino manual. Antes de publicar, el worker de
+reconciliación —con su plazo y su terminación de proceso ya existentes— vuelve
+a leer el run nativo. Si sigue en `error`, un tick posterior publica el sucesor.
+Una observación no terminal o desconocida no envía otro prompt; un `finished`
+con salida recuperable se reinyecta por la ingesta terminal y, si el origen es
+una secuencia, por la adopción de la hoja vigente. Ese sucesor no puede
+despachar hasta que la salida recuperada queda instalada; si la copia falla, el
+efecto queda cercado y el siguiente tick reanuda el mismo sucesor. Una lectura
+cuyo worker se pierde se retira sin cambiar la reconciliación ready ni el
+consumo, y solo se reprograma cuando no llegó a publicar resultado. El envío vuelve a autenticar
+el digest completo de la captura original. Abortar la hoja vigente, o su
+secuencia, cancela una reinyección que aún espera instalar la salida y conserva
+el consumo y los hashes de la recuperación ready. Abortar el origen solo cancela la
+continuación mientras no ha empezado ni se ha entregado. El diagnóstico no
+atribuye una causa de red ni imprime el mensaje crudo o IDs nativos completos.
+
 `--force` rechaza timeouts, esperas de capacidad, abortos, terminación incierta,
 identidad no ligada, hojas obsoletas sin relación y evidencia corrupta sin crear
 sucesor. `status` e inspect de run/secuencia exponen

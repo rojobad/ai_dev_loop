@@ -31,6 +31,14 @@ def safe_next_action_for_scheduler_state(
     conn: sqlite3.Connection,
     state: SchedulerState,
 ) -> SafeNextAction:
+    if isinstance(state, BlockedState) and state.block_reason_kind == "cursor_failure":
+        from ai_dev_loop.scheduler.application.cursor_sdk_no_progress import (
+            no_progress_safe_action,
+        )
+
+        specialized = no_progress_safe_action(store, conn, state)
+        if specialized is not None:
+            return specialized
     if isinstance(state, BlockedState) and state.block_reason_kind in {
         "cursor_failure",
         "codex_implementer_failure",
