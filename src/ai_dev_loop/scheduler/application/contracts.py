@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_serializer
 
 from ai_dev_loop.errors import AiDevLoopError, ValidationError
 from ai_dev_loop.scheduler.domain.state import (
@@ -95,6 +96,23 @@ class SchedulerRunSummary(AppModel):
     sequence_id_prefix: str | None = None
     sequence_ordinal: int | None = None
     sequence_total_phases: int | None = None
+    sdk_no_progress_category: str | None = None
+    sdk_no_progress_action: str | None = None
+    sdk_no_progress_consumed: int | None = None
+    sdk_no_progress_due_at: str | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_no_progress(
+        self,
+        handler: Callable[[object], dict[str, object]],
+    ) -> dict[str, object]:
+        payload = handler(self)
+        if payload.get("sdk_no_progress_category") is None:
+            payload.pop("sdk_no_progress_category", None)
+            payload.pop("sdk_no_progress_action", None)
+            payload.pop("sdk_no_progress_consumed", None)
+            payload.pop("sdk_no_progress_due_at", None)
+        return payload
 
 
 class SchedulerStatusResult(AppModel):
@@ -673,6 +691,10 @@ def summary_from_context(
     codex_routing_auto_retry_limit: int | None = None,
     codex_routing_failure_post_probe_status: str | None = None,
     codex_routing_failure_post_probe_reason: str | None = None,
+    sdk_no_progress_category: str | None = None,
+    sdk_no_progress_action: str | None = None,
+    sdk_no_progress_consumed: int | None = None,
+    sdk_no_progress_due_at: str | None = None,
 ) -> SchedulerRunSummary:
     reviewer_prefix = reviewer_session_id_prefix_for_projection(
         context,
@@ -731,6 +753,10 @@ def summary_from_context(
         sequence_total_phases=(
             sequence_binding.total_phases if sequence_binding is not None else None
         ),
+        sdk_no_progress_category=sdk_no_progress_category,
+        sdk_no_progress_action=sdk_no_progress_action,
+        sdk_no_progress_consumed=sdk_no_progress_consumed,
+        sdk_no_progress_due_at=sdk_no_progress_due_at,
     )
 
 

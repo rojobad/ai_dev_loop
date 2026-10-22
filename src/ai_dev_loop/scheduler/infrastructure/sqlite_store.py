@@ -61,7 +61,7 @@ if TYPE_CHECKING:
         | AwaitingFinalizationSequenceState
     )
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 SEQUENCE_SCHEMA_VERSION = 5
 REVIEW_RETRY_SCHEMA_VERSION = 6
 SEQUENCE_RUN_LINEAGE_SCHEMA_VERSION = 9
@@ -85,6 +85,7 @@ MIGRATION_V16_NAME = "0016_sequence_implementer_replacement"
 MIGRATION_V17_NAME = "0017_presentation_short_names"
 MIGRATION_V18_NAME = "0018_cursor_sdk_reconciliation"
 MIGRATION_V19_NAME = "0019_cursor_sdk_retention"
+MIGRATION_V20_NAME = "0020_cursor_sdk_no_progress"
 SEQUENCE_REVIEW_RECOVERY_SCHEMA_VERSION = 11
 CURSOR_INITIAL_RECOVERY_SCHEMA_VERSION = 12
 CURSOR_SEQUENCE_REPLACEMENT_SCHEMA_VERSION = 13
@@ -92,6 +93,7 @@ CODEX_IMPLEMENTER_RECOVERY_SCHEMA_VERSION = 15
 SEQUENCE_IMPLEMENTER_REPLACEMENT_SCHEMA_VERSION = 16
 CURSOR_SDK_RECONCILIATION_SCHEMA_VERSION = 18
 CURSOR_SDK_RETENTION_SCHEMA_VERSION = 19
+CURSOR_SDK_NO_PROGRESS_SCHEMA_VERSION = 20
 REQUIRED_TABLES_V18 = frozenset(
     {
         "scheduler_schema_migrations",
@@ -123,10 +125,13 @@ REQUIRED_TABLES_V18 = frozenset(
         "scheduler_cursor_sdk_reconciliations",
     }
 )
-REQUIRED_TABLES = REQUIRED_TABLES_V18 | {
+REQUIRED_TABLES_V19 = REQUIRED_TABLES_V18 | {
     "scheduler_cursor_sdk_retention_policy",
     "scheduler_cursor_sdk_conversation_fences",
     "scheduler_cursor_sdk_disposals",
+}
+REQUIRED_TABLES = REQUIRED_TABLES_V19 | {
+    "scheduler_cursor_sdk_no_progress",
 }
 REQUIRED_TABLES_V17 = REQUIRED_TABLES_V18 - {"scheduler_cursor_sdk_reconciliations"}
 REQUIRED_TABLES_V16 = REQUIRED_TABLES_V17 - {
@@ -176,8 +181,12 @@ REQUIRED_INDEXES_V18 = frozenset(
         "idx_scheduler_cursor_sdk_reconciliations_run",
     }
 )
-REQUIRED_INDEXES = REQUIRED_INDEXES_V18 | {
+REQUIRED_INDEXES_V19 = REQUIRED_INDEXES_V18 | {
     "idx_scheduler_cursor_sdk_disposals_status",
+}
+REQUIRED_INDEXES = REQUIRED_INDEXES_V19 | {
+    "idx_scheduler_cursor_sdk_no_progress_run",
+    "idx_scheduler_cursor_sdk_no_progress_due",
 }
 REQUIRED_TABLES_V6 = REQUIRED_TABLES_V7 - {"scheduler_checkpoint_holds"}
 REQUIRED_INDEXES_V17 = REQUIRED_INDEXES_V18 - {
@@ -354,6 +363,10 @@ def _migration_v19_sql() -> str:
     return _migration_sql("0019_cursor_sdk_retention.sql")
 
 
+def _migration_v20_sql() -> str:
+    return _migration_sql("0020_cursor_sdk_no_progress.sql")
+
+
 def _split_sql_statements(sql: str) -> list[str]:
     statements: list[str] = []
     for chunk in sql.split(";"):
@@ -408,6 +421,8 @@ def migration_checksum(version: int) -> str:
         return hashlib.sha256(_migration_v18_sql().encode("utf-8")).hexdigest()
     if version == 19:
         return hashlib.sha256(_migration_v19_sql().encode("utf-8")).hexdigest()
+    if version == 20:
+        return hashlib.sha256(_migration_v20_sql().encode("utf-8")).hexdigest()
     raise ValueError(f"unsupported migration version {version}")
 
 
@@ -638,6 +653,10 @@ class SqliteSchedulerStore:
                 for migration_version in range(1, 19):
                     self._verify_migration_checksum(conn, migration_version)
                 self._migrate_v18_to_v19(conn)
+            elif version == 19:
+                for migration_version in range(1, 20):
+                    self._verify_migration_checksum(conn, migration_version)
+                self._migrate_v19_to_v20(conn)
             else:
                 self._verify_current_schema(conn)
             self._apply_database_permissions(self.db_path)
@@ -1137,7 +1156,7 @@ class SqliteSchedulerStore:
 
     def _migrate_v18_to_v19(self, conn: sqlite3.Connection) -> None:
         if self._user_version(conn) >= 19:
-            self._verify_current_schema(conn)
+            self._migrate_v19_to_v20(conn)
             return
         for migration_version in range(1, 19):
             self._verify_migration_checksum(conn, migration_version)
@@ -1155,6 +1174,33 @@ class SqliteSchedulerStore:
                 (19, MIGRATION_V19_NAME, migration_checksum(19), applied_at),
             )
             conn.execute("PRAGMA user_version = 19")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        self._apply_database_permissions(self.db_path)
+        self._migrate_v19_to_v20(conn)
+
+    def _migrate_v19_to_v20(self, conn: sqlite3.Connection) -> None:
+        if self._user_version(conn) >= 20:
+            self._verify_current_schema(conn)
+            return
+        for migration_version in range(1, 20):
+            self._verify_migration_checksum(conn, migration_version)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for statement in _split_sql_statements(_migration_v20_sql()):
+                self._fault_maybe_raise_migration(statement)
+                conn.execute(statement)
+            applied_at = encode_utc_instant(datetime.now(tz=UTC))
+            conn.execute(
+                """
+                INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (20, MIGRATION_V20_NAME, migration_checksum(20), applied_at),
+            )
+            conn.execute("PRAGMA user_version = 20")
             conn.commit()
         except Exception:
             conn.rollback()
@@ -1201,6 +1247,9 @@ class SqliteSchedulerStore:
         if target >= SCHEMA_VERSION:
             tables = REQUIRED_TABLES
             indexes = REQUIRED_INDEXES
+        elif target >= 19:
+            tables = REQUIRED_TABLES_V19
+            indexes = REQUIRED_INDEXES_V19
         elif target >= 18:
             tables = REQUIRED_TABLES_V18
             indexes = REQUIRED_INDEXES_V18
@@ -1271,6 +1320,13 @@ class SqliteSchedulerStore:
             conn
         ) >= CURSOR_SDK_RECONCILIATION_SCHEMA_VERSION and self.schema_has_table(
             conn, "scheduler_cursor_sdk_reconciliations"
+        )
+
+    def schema_supports_cursor_sdk_no_progress(self, conn: sqlite3.Connection) -> bool:
+        return self._user_version(
+            conn
+        ) >= CURSOR_SDK_NO_PROGRESS_SCHEMA_VERSION and self.schema_has_table(
+            conn, "scheduler_cursor_sdk_no_progress"
         )
 
     @staticmethod
@@ -5998,6 +6054,211 @@ class SqliteSchedulerStore:
             WHERE run_id = ? AND status NOT IN ('ready', 'cancelled')
             """,
             (now_text, now_text, run_id),
+        )
+        return cursor.rowcount
+
+    def get_cursor_sdk_no_progress(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        logical_turn_key: str,
+    ) -> sqlite3.Row | None:
+        if not self.schema_supports_cursor_sdk_no_progress(conn):
+            return None
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_cursor_sdk_no_progress
+            WHERE logical_turn_key = ?
+            """,
+            (logical_turn_key,),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def get_cursor_sdk_no_progress_for_source(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_run_id: str,
+    ) -> sqlite3.Row | None:
+        if not self.schema_supports_cursor_sdk_no_progress(conn):
+            return None
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_cursor_sdk_no_progress
+            WHERE source_run_id = ?
+            ORDER BY
+              CASE status
+                WHEN 'publishing' THEN 0
+                WHEN 'reserved' THEN 1
+                WHEN 'published' THEN 2
+                WHEN 'held' THEN 3
+                ELSE 4
+              END,
+              created_at DESC,
+              logical_turn_key DESC
+            LIMIT 1
+            """,
+            (source_run_id,),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def get_cursor_sdk_no_progress_for_source_attempt(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source_run_id: str,
+        source_attempt_id: str,
+    ) -> sqlite3.Row | None:
+        if not self.schema_supports_cursor_sdk_no_progress(conn):
+            return None
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_cursor_sdk_no_progress
+            WHERE source_run_id = ? AND source_attempt_id = ?
+            """,
+            (source_run_id, source_attempt_id),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def get_cursor_sdk_no_progress_for_successor(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        successor_run_id: str,
+    ) -> sqlite3.Row | None:
+        if not self.schema_supports_cursor_sdk_no_progress(conn):
+            return None
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_cursor_sdk_no_progress
+            WHERE successor_run_id = ?
+            ORDER BY created_at ASC, logical_turn_key ASC
+            LIMIT 1
+            """,
+            (successor_run_id,),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def list_open_cursor_sdk_no_progress(
+        self,
+        conn: sqlite3.Connection,
+    ) -> list[sqlite3.Row]:
+        if not self.schema_supports_cursor_sdk_no_progress(conn):
+            return []
+        rows = conn.execute(
+            """
+            SELECT * FROM scheduler_cursor_sdk_no_progress
+            WHERE status IN ('reserved', 'publishing')
+            ORDER BY due_at ASC, logical_turn_key ASC
+            """
+        ).fetchall()
+        return [cast(sqlite3.Row, row) for row in rows]
+
+    def insert_cursor_sdk_no_progress(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        logical_turn_key: str,
+        consumed_count: int,
+        status: str,
+        source_run_id: str,
+        source_attempt_id: str,
+        witness_path: str,
+        witness_sha256: str,
+        authorized_at: str,
+        due_at: str,
+        payload: str,
+        payload_sha256: str,
+        now: datetime,
+    ) -> bool:
+        if not self.schema_supports_cursor_sdk_no_progress(conn):
+            return False
+        if isinstance(consumed_count, bool) or consumed_count not in (0, 1):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "SDK no-progress consumed_count must be 0 or 1",
+            )
+        now_text = encode_utc_instant(now)
+        cursor = conn.execute(
+            """
+            INSERT INTO scheduler_cursor_sdk_no_progress(
+                logical_turn_key, consumed_count, status, source_run_id,
+                source_attempt_id, witness_path, witness_sha256, authorized_at,
+                due_at, successor_run_id, recovery_key, payload, payload_sha256,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)
+            ON CONFLICT(logical_turn_key) DO NOTHING
+            """,
+            (
+                logical_turn_key,
+                consumed_count,
+                status,
+                source_run_id,
+                source_attempt_id,
+                witness_path,
+                witness_sha256,
+                authorized_at,
+                due_at,
+                payload,
+                payload_sha256,
+                now_text,
+                now_text,
+            ),
+        )
+        return cursor.rowcount == 1
+
+    def update_cursor_sdk_no_progress(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        logical_turn_key: str,
+        expected_statuses: tuple[str, ...],
+        status: str,
+        successor_run_id: str | None,
+        recovery_key: str | None,
+        payload: str,
+        payload_sha256: str,
+        now: datetime,
+    ) -> bool:
+        if not expected_statuses or not self.schema_supports_cursor_sdk_no_progress(conn):
+            return False
+        placeholders = ",".join("?" for _ in expected_statuses)
+        cursor = conn.execute(
+            f"""
+            UPDATE scheduler_cursor_sdk_no_progress
+            SET status = ?, successor_run_id = ?, recovery_key = ?,
+                payload = ?, payload_sha256 = ?, updated_at = ?
+            WHERE logical_turn_key = ? AND status IN ({placeholders})
+            """,  # noqa: S608 - placeholders are generated, never caller text
+            (
+                status,
+                successor_run_id,
+                recovery_key,
+                payload,
+                payload_sha256,
+                encode_utc_instant(now),
+                logical_turn_key,
+                *expected_statuses,
+            ),
+        )
+        return cursor.rowcount == 1
+
+    def cancel_cursor_sdk_no_progress_for_run(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        run_id: str,
+        now: datetime,
+    ) -> int:
+        if not self.schema_supports_cursor_sdk_no_progress(conn):
+            return 0
+        cursor = conn.execute(
+            """
+            UPDATE scheduler_cursor_sdk_no_progress
+            SET status = 'cancelled', updated_at = ?
+            WHERE source_run_id = ? AND status IN ('reserved', 'publishing')
+            """,
+            (encode_utc_instant(now), run_id),
         )
         return cursor.rowcount
 

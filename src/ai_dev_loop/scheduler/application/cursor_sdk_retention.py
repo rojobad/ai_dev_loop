@@ -1143,6 +1143,21 @@ def _continuation_reasons(
         run_ids,
     ):
         reasons.append("abort_reconciliation")
+    if _has_table(conn, "scheduler_cursor_sdk_no_progress"):
+        pending = conn.execute(
+            f"""
+            SELECT 1 FROM scheduler_cursor_sdk_no_progress
+             WHERE status IN ('reserved', 'publishing')
+               AND (
+                    source_run_id IN ({placeholders})
+                    OR successor_run_id IN ({placeholders})
+               )
+             LIMIT 1
+            """,
+            (*values, *values),
+        ).fetchone()
+        if pending is not None:
+            reasons.append("sdk_no_progress_pending")
     if _open_status_exists(conn, "scheduler_cursor_initial_recoveries", "source_run_id", run_ids):
         reasons.append("recovery_publication")
     if _open_status_exists(

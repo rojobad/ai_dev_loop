@@ -160,10 +160,23 @@ class SchedulerAbortService:
         now = self._now_factory()
         with self.store.begin_read() as conn:
             state, _, _ = self.store.load_validated_snapshot(conn, run_id)
+            from ai_dev_loop.scheduler.application.cursor_sdk_no_progress import (
+                obsolete_no_progress_source,
+                source_has_open_no_progress,
+            )
+
+            if obsolete_no_progress_source(self.store, conn, run_id):
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CONFLICT,
+                    "automatic continuation already left this source; abort the current run",
+                )
             held_implementer = (
-                is_codex_implementer_reservation_hold(state)
-                or is_cursor_sdk_reservation_hold(state)
-            ) and self.store.get_reservation_for_run(conn, run_id) is not None
+                (
+                    is_codex_implementer_reservation_hold(state)
+                    or is_cursor_sdk_reservation_hold(state)
+                )
+                and self.store.get_reservation_for_run(conn, run_id) is not None
+            ) or source_has_open_no_progress(self.store, conn, run_id)
         if isinstance(state, AbortedState):
             return self._reconcile_existing_abort(run_id, now=now)
         if state.kind in SCHEDULER_TERMINAL_STATE_KINDS and not held_implementer:
@@ -183,10 +196,23 @@ class SchedulerAbortService:
         deferred_checkpoint_abort = False
         with self.store.begin_immediate() as conn:
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
+            from ai_dev_loop.scheduler.application.cursor_sdk_no_progress import (
+                obsolete_no_progress_source,
+                source_has_open_no_progress,
+            )
+
+            if obsolete_no_progress_source(self.store, conn, run_id):
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.CONFLICT,
+                    "automatic continuation already left this source; abort the current run",
+                )
             held_implementer = (
-                is_codex_implementer_reservation_hold(state)
-                or is_cursor_sdk_reservation_hold(state)
-            ) and self.store.get_reservation_for_run(conn, run_id) is not None
+                (
+                    is_codex_implementer_reservation_hold(state)
+                    or is_cursor_sdk_reservation_hold(state)
+                )
+                and self.store.get_reservation_for_run(conn, run_id) is not None
+            ) or source_has_open_no_progress(self.store, conn, run_id)
             if isinstance(state, AbortedState):
                 concurrent_aborted = True
             elif state.kind in SCHEDULER_TERMINAL_STATE_KINDS and not held_implementer:
@@ -278,6 +304,23 @@ class SchedulerAbortService:
                     self.store,
                     conn,
                     run_id=run_id,
+                    now=now,
+                )
+                from ai_dev_loop.scheduler.application.cursor_sdk_no_progress import (
+                    cancel_adopted_replay_for_aborted_successor,
+                    cancel_no_progress_for_abort,
+                )
+
+                cancel_no_progress_for_abort(
+                    self.store,
+                    conn,
+                    run_id=run_id,
+                    now=now,
+                )
+                cancel_adopted_replay_for_aborted_successor(
+                    self.store,
+                    conn,
+                    successor_run_id=run_id,
                     now=now,
                 )
                 hold = self.store.get_checkpoint_reconciliation_hold_row(conn, run_id)

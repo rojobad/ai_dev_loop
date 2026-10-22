@@ -328,6 +328,11 @@ operativos documentados son:
   provider congelado. En Codex conserva sesión, modelo, effort, timeout y prompt;
   admite tres reintentos automáticos por turno con espera de 30 minutos. No toma
   valores nuevos de YAML ni de la configuración local de Codex.
+  Un fallo terminal SDK con el status público exacto de resume sin progreso reserva
+  una continuación automática del mismo agente, como máximo una por turno lógico,
+  despachable desde 60 segundos. No es un ajuste de `ai_dev_loop.yaml`. El segundo
+  fallo igual queda en el `--force` manual y los registros sin ese testigo no se
+  reintentan solos.
   `--force` publica o repite un sucesor para un fallo genérico Codex terminado y
   autenticado. Conserva los settings enviados y las identidades exactas; no permite
   cambiar provider/modelo ni reintentar una identidad incierta. Una hoja vigente de

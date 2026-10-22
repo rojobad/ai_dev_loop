@@ -323,6 +323,27 @@ def _current_attempt_published_record(
     return record_path, record_sha
 
 
+def _effect_requests_no_progress_reobserve(
+    dispatch: sqlite3.Row | None,
+    recovery_key: str,
+) -> bool:
+    """True only for this phase's owned reobserve, not a normal reconciliation."""
+
+    if dispatch is None or not recovery_key:
+        return False
+    if str(dispatch["effect_kind"]) != RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND:
+        return False
+    try:
+        payload = json.loads(str(dispatch["effect_payload"]))
+    except (TypeError, ValueError):
+        return False
+    return (
+        isinstance(payload, dict)
+        and payload.get("no_progress_reobserve") is True
+        and str(payload.get("recovery_key", "")) == recovery_key
+    )
+
+
 def authenticated_published_reconciliation_result(
     store: SqliteSchedulerStore,
     artifacts: ProtectedArtifactStore,
@@ -336,6 +357,34 @@ def authenticated_published_reconciliation_result(
     """Authenticate a record published before its worker lost the result envelope."""
 
     row = store.get_cursor_sdk_reconciliation_by_key(conn, recovery_key=recovery_key)
+    if row is not None and str(row["run_id"]) == run_id and str(row["status"]) == "ready":
+        dispatch = store.get_effect_by_dispatch_id(conn, reconciliation_dispatch_id)
+        if not _effect_requests_no_progress_reobserve(dispatch, recovery_key):
+            raise _invalid("interrupted Cursor SDK reconciliation authority is not pending")
+        intent = _intent_from_row(row)
+        historical_path = str(row["result_artifact_path"] or "")
+        historical_sha = str(row["result_sha256"] or "")
+        if not historical_path or not historical_sha:
+            raise _invalid("historical Cursor SDK reconciliation binding is incomplete")
+        historical = _authenticate_reconciliation_record(
+            artifacts,
+            run_id=run_id,
+            intent=intent,
+            record_path=historical_path,
+            record_sha256=historical_sha,
+        )
+        if (
+            historical.reconciliation_attempt_id == reconciliation_attempt_id
+            or historical.reconciliation_dispatch_id == reconciliation_dispatch_id
+        ):
+            raise _invalid("current reconciliation result moved to a historical path")
+        return _current_attempt_published_record(
+            artifacts,
+            intent=intent,
+            run_id=run_id,
+            reconciliation_attempt_id=reconciliation_attempt_id,
+            reconciliation_dispatch_id=reconciliation_dispatch_id,
+        )
     if row is None or str(row["run_id"]) != run_id or str(row["status"]) != "pending":
         raise _invalid("interrupted Cursor SDK reconciliation authority is not pending")
     intent = _intent_from_row(row)
@@ -700,9 +749,12 @@ class CursorSdkReconciliationService:
         *,
         run_id: str,
         recovery_key: str,
+        allow_ready: bool = False,
     ) -> dict[str, object]:
         row = self.store.get_cursor_sdk_reconciliation_by_key(conn, recovery_key=recovery_key)
-        if row is None or str(row["run_id"]) != run_id or str(row["status"]) != "pending":
+        status = None if row is None else str(row["status"])
+        allowed = status == "pending" or (allow_ready and status == "ready")
+        if row is None or str(row["run_id"]) != run_id or not allowed:
             raise _invalid("Cursor SDK reconciliation authority is not pending")
         intent = _intent_from_row(row)
         state, _, _ = self.store.load_validated_snapshot(conn, run_id)
@@ -889,6 +941,7 @@ class CursorSdkReconciliationService:
                 raise ValueError("Cursor SDK reconciliation record version is unsupported")
         except (ProtectedArtifactError, OSError, ModelValidationError, ValueError) as exc:
             raise _invalid("Cursor SDK reconciliation record failed authentication") from exc
+        sequence_replay = False
         with self.store.begin_immediate() as conn:
             persisted_attempt = self.store.get_attempt_by_id(conn, attempt_id)
             if (
@@ -919,332 +972,432 @@ class CursorSdkReconciliationService:
                 raise _invalid("Cursor SDK reconciliation record disagrees with intent")
             now = self.now()
             state, version, _ = self.store.load_validated_snapshot(conn, run_id)
-            status = (
-                "ready"
-                if record.outcome
-                in {
-                    "terminal_recovered",
-                    "continuation_ready",
-                    "abort_reconciled",
-                    "prompt_unsent",
-                }
-                else "blocked"
-            )
-            if not self.store.update_cursor_sdk_reconciliation_status(
-                conn,
-                recovery_key=str(row["recovery_key"]),
-                expected_statuses=("pending",),
-                status=status,
-                result_artifact_path=record_path,
-                result_sha256=record_sha,
-                now=now,
-            ):
-                return TickRunReceipt(run_id=run_id, action="ingest_state_changed")
-            event: CursorSdkReconciledEvent | CursorSdkReconciledEventV2
-            if isinstance(record, CursorSdkReconciliationRecordV2):
-                if record.outcome != "prompt_unsent":
-                    raise _invalid("Cursor SDK v2 reconciliation is not an unsent prompt")
-                event = CursorSdkReconciledEventV2(
-                    run_id=run_id,
-                    recovery_key=str(row["recovery_key"]),
-                    source_attempt_id=record.source_attempt_id,
-                    reconciliation_attempt_id=attempt_id,
-                    outcome="prompt_unsent",
-                    record_path=record_path,
-                    record_sha256=record_sha,
-                )
-            else:
-                event = CursorSdkReconciledEvent(
-                    run_id=run_id,
-                    recovery_key=str(row["recovery_key"]),
-                    source_attempt_id=record.source_attempt_id,
-                    reconciliation_attempt_id=attempt_id,
-                    outcome=record.outcome,
-                    record_path=record_path,
-                    record_sha256=record_sha,
-                )
-            event_id = self.event_id()
-            self.store.append_event(
-                conn,
-                event_id=event_id,
-                run_id=run_id,
-                sequence=self.store.next_event_sequence(conn, run_id),
-                event=event,
-                now=now,
-            )
-            self.store.mark_attempt_ingested(conn, attempt_id=attempt_id, now=now)
-            if isinstance(state, AbortedState):
-                return TickRunReceipt(run_id=run_id, action="cursor_sdk_abort_reconciled")
-            if not isinstance(state, (CursorReadyState, WaitingForCursorFixState)):
-                return TickRunReceipt(run_id=run_id, action="ingest_state_changed")
-            common_cursor = state.cursor.model_copy(
-                update={
-                    "sdk_recovery_pending": None,
-                    "sdk_reconciliation_path": record_path,
-                    "sdk_reconciliation_sha256": record_sha,
-                    "wait_until": None,
-                    "sdk": state.cursor.sdk.model_copy(
-                        update={"native_run_id": record.native_run_id}
-                    )
-                    if state.cursor.sdk is not None
-                    else None,
-                }
-            )
-            if record.outcome == "terminal_recovered":
-                run_state = run_state_from_scheduler_context(
-                    run_id=run_id,
-                    context=state.context,
-                    repo_root=Path(state.context.repository.root),
-                    checkpoint=checkpoint_from_state(state),
-                    artifacts=self.artifacts,
-                )
-                verify_recorded_cursor_fingerprint(
-                    run_state,
-                    self.artifacts.run_root(run_id),
-                    iteration_number=intent.iteration,
-                    recorded_path=record.cursor_output_fingerprint_path or "",
-                    recorded_sha256=record.cursor_output_fingerprint_sha256 or "",
-                )
-                turn_event = CursorSdkTurnCompletedEvent(
-                    run_id=run_id,
-                    iteration=intent.iteration,
-                    native_run_id=record.native_run_id or "",
-                    journal_path=intent.source_journal_path,
-                    journal_sha256=intent.source_journal_sha256,
-                    cursor_output_fingerprint_path=record.cursor_output_fingerprint_path or "",
-                    cursor_output_fingerprint_sha256=(
-                        record.cursor_output_fingerprint_sha256 or ""
-                    ),
-                )
-                self.store.append_event(
-                    conn,
-                    event_id=self.event_id(),
-                    run_id=run_id,
-                    sequence=self.store.next_event_sequence(conn, run_id),
-                    event=turn_event,
-                    now=now,
-                )
-                terminal_updated = CursorReadyState(
-                    run_id=state.run_id,
-                    version=version + 1,
-                    submitted_at=state.submitted_at,
-                    updated_at=encode_utc_instant(now),
-                    idempotency_key=state.idempotency_key,
-                    context=state.context,
-                    checkpoint=state.checkpoint,
-                    cursor=common_cursor.model_copy(
-                        update={
-                            "cursor_output_fingerprint_path": (
-                                record.cursor_output_fingerprint_path
-                            ),
-                            "cursor_output_fingerprint_sha256": (
-                                record.cursor_output_fingerprint_sha256
-                            ),
-                        }
-                    ),
-                    codex=state.codex,
-                )
-                if not self.store.compare_and_swap_state(
-                    conn,
-                    run_id=run_id,
-                    expected_version=version,
-                    new_state=terminal_updated,
-                    now=now,
+            dispatch = self.store.get_effect_by_dispatch_id(conn, str(attempt["dispatch_id"]))
+            reobserve_payload: dict[str, object] | None = None
+            if dispatch is not None:
+                try:
+                    parsed_effect = json.loads(str(dispatch["effect_payload"]))
+                except (TypeError, ValueError):
+                    parsed_effect = None
+                if (
+                    isinstance(parsed_effect, dict)
+                    and parsed_effect.get("no_progress_reobserve") is True
                 ):
-                    raise _invalid("Cursor SDK reconciliation lost state update")
-                self.store.insert_effect(
-                    conn,
-                    dispatch_id=self.dispatch_id(),
-                    source_event_id=event_id,
-                    run_id=run_id,
-                    effect_id=NORMALIZE_STAGING_EFFECT_ID,
-                    effect_kind=NORMALIZE_STAGING_EFFECT_KIND,
-                    effect_payload={"iteration": intent.iteration},
-                    available_at=now,
-                    claimed_run_version=terminal_updated.version,
-                    now=now,
+                    reobserve_payload = parsed_effect
+            if reobserve_payload is not None:
+                from ai_dev_loop.scheduler.application.cursor_sdk_no_progress import (
+                    consume_no_progress_reobserve,
                 )
-                return TickRunReceipt(run_id=run_id, action="cursor_sdk_terminal_recovered")
-            if record.outcome == "continuation_ready" and intent.failure_class == "capacity":
-                capacity_due = now + timedelta(
-                    seconds=intent.retry_after_seconds or int(CAPACITY_FALLBACK.total_seconds())
-                )
-                capacity_updated = WaitingUsageLimitState(
-                    run_id=state.run_id,
-                    version=version + 1,
-                    submitted_at=state.submitted_at,
-                    updated_at=encode_utc_instant(now),
-                    idempotency_key=state.idempotency_key,
-                    context=state.context,
-                    checkpoint=state.checkpoint,
-                    cursor=common_cursor.model_copy(
-                        update={
-                            "wait_until": encode_utc_instant(capacity_due),
-                            "original_prompt_path": intent.prompt_path,
-                            "original_prompt_sha256": intent.prompt_sha256,
-                        }
-                    ),
-                    codex=state.codex,
-                )
-                if not self.store.compare_and_swap_state(
-                    conn,
-                    run_id=run_id,
-                    expected_version=version,
-                    new_state=capacity_updated,
-                    now=now,
-                ):
-                    raise _invalid("Cursor SDK capacity reconciliation lost state update")
-                self.store.insert_retry_timer(
-                    conn,
-                    timer_id=f"tmr-{secrets.token_hex(16)}",
-                    source_event_id=event_id,
-                    run_id=run_id,
-                    due_at=capacity_due,
-                    target_effect_id=RUN_CURSOR_TURN_EFFECT_ID,
-                    expected_run_version=capacity_updated.version,
-                    now=now,
-                )
-                return TickRunReceipt(run_id=run_id, action="waiting_usage_limit")
-            updated: CursorReadyState | WaitingForCursorFixState = state.model_copy(
-                update={
-                    "version": version + 1,
-                    "updated_at": encode_utc_instant(now),
-                    "cursor": common_cursor,
-                }
-            )
-            if record.outcome == "continuation_ready" and intent.failure_class == "timeout":
-                from ai_dev_loop.scheduler.application.cursor_timeout_retry import (
-                    MAX_AUTOMATIC_TIMEOUT_RETRIES,
-                    TIMEOUT_RETRY_DELAY,
-                )
-                from ai_dev_loop.scheduler.domain.events import CursorTimeoutRetryEvent
 
-                retries = state.cursor.timeout_automatic_retries
-                automatic = retries < MAX_AUTOMATIC_TIMEOUT_RETRIES
-                retry_due = now + TIMEOUT_RETRY_DELAY if automatic else None
-                timeout_event = CursorTimeoutRetryEvent(
-                    run_id=run_id,
-                    attempt_id=record.source_attempt_id,
-                    iteration=intent.iteration,
-                    automatic_retries=retries + int(automatic),
-                    action="automatic" if automatic else "exhausted",
-                    available_at=(encode_utc_instant(retry_due) if retry_due is not None else None),
-                )
-                timeout_event_id = self.event_id()
-                self.store.append_event(
+                if str(row["status"]) != "ready":
+                    raise _invalid("no-progress reobserve lost historical reconciliation")
+                kind = consume_no_progress_reobserve(
+                    self.store,
+                    self.artifacts,
                     conn,
-                    event_id=timeout_event_id,
                     run_id=run_id,
-                    sequence=self.store.next_event_sequence(conn, run_id),
-                    event=timeout_event,
+                    attempt_id=attempt_id,
+                    intent=intent,
+                    record=record,
                     now=now,
                 )
-                updated = updated.model_copy(
+                sequence_replay = kind == "sequence"
+                if not sequence_replay:
+                    action = {
+                        "replayed": "cursor_sdk_no_progress_replayed",
+                        "send": "cursor_sdk_no_progress_observed",
+                        "held": "cursor_sdk_no_progress_held",
+                    }[kind]
+                    return TickRunReceipt(run_id=run_id, action=action)
+            else:
+                sequence_replay = False
+            if not sequence_replay:
+                status = (
+                    "ready"
+                    if record.outcome
+                    in {
+                        "terminal_recovered",
+                        "continuation_ready",
+                        "abort_reconciled",
+                        "prompt_unsent",
+                    }
+                    else "blocked"
+                )
+                if not self.store.update_cursor_sdk_reconciliation_status(
+                    conn,
+                    recovery_key=str(row["recovery_key"]),
+                    expected_statuses=("pending",),
+                    status=status,
+                    result_artifact_path=record_path,
+                    result_sha256=record_sha,
+                    now=now,
+                ):
+                    return TickRunReceipt(run_id=run_id, action="ingest_state_changed")
+                event: CursorSdkReconciledEvent | CursorSdkReconciledEventV2
+                if isinstance(record, CursorSdkReconciliationRecordV2):
+                    if record.outcome != "prompt_unsent":
+                        raise _invalid("Cursor SDK v2 reconciliation is not an unsent prompt")
+                    event = CursorSdkReconciledEventV2(
+                        run_id=run_id,
+                        recovery_key=str(row["recovery_key"]),
+                        source_attempt_id=record.source_attempt_id,
+                        reconciliation_attempt_id=attempt_id,
+                        outcome="prompt_unsent",
+                        record_path=record_path,
+                        record_sha256=record_sha,
+                    )
+                else:
+                    event = CursorSdkReconciledEvent(
+                        run_id=run_id,
+                        recovery_key=str(row["recovery_key"]),
+                        source_attempt_id=record.source_attempt_id,
+                        reconciliation_attempt_id=attempt_id,
+                        outcome=record.outcome,
+                        record_path=record_path,
+                        record_sha256=record_sha,
+                    )
+                event_id = self.event_id()
+                self.store.append_event(
+                    conn,
+                    event_id=event_id,
+                    run_id=run_id,
+                    sequence=self.store.next_event_sequence(conn, run_id),
+                    event=event,
+                    now=now,
+                )
+                self.store.mark_attempt_ingested(conn, attempt_id=attempt_id, now=now)
+                if isinstance(state, AbortedState):
+                    return TickRunReceipt(run_id=run_id, action="cursor_sdk_abort_reconciled")
+                if not isinstance(state, (CursorReadyState, WaitingForCursorFixState)):
+                    return TickRunReceipt(run_id=run_id, action="ingest_state_changed")
+                common_cursor = state.cursor.model_copy(
                     update={
-                        "cursor": common_cursor.model_copy(
-                            update={
-                                "timeout_attempt_id": record.source_attempt_id,
-                                "timeout_automatic_retries": timeout_event.automatic_retries,
-                                "wait_until": timeout_event.available_at,
-                            }
+                        "sdk_recovery_pending": None,
+                        "sdk_reconciliation_path": record_path,
+                        "sdk_reconciliation_sha256": record_sha,
+                        "wait_until": None,
+                        "sdk": state.cursor.sdk.model_copy(
+                            update={"native_run_id": record.native_run_id}
                         )
+                        if state.cursor.sdk is not None
+                        else None,
                     }
                 )
-                if not self.store.compare_and_swap_state(
-                    conn,
-                    run_id=run_id,
-                    expected_version=version,
-                    new_state=updated,
-                    now=now,
-                ):
-                    raise _invalid("Cursor SDK timeout reconciliation lost state update")
-                if automatic:
-                    assert retry_due is not None
+                if record.outcome == "terminal_recovered":
+                    run_state = run_state_from_scheduler_context(
+                        run_id=run_id,
+                        context=state.context,
+                        repo_root=Path(state.context.repository.root),
+                        checkpoint=checkpoint_from_state(state),
+                        artifacts=self.artifacts,
+                    )
+                    verify_recorded_cursor_fingerprint(
+                        run_state,
+                        self.artifacts.run_root(run_id),
+                        iteration_number=intent.iteration,
+                        recorded_path=record.cursor_output_fingerprint_path or "",
+                        recorded_sha256=record.cursor_output_fingerprint_sha256 or "",
+                    )
+                    turn_event = CursorSdkTurnCompletedEvent(
+                        run_id=run_id,
+                        iteration=intent.iteration,
+                        native_run_id=record.native_run_id or "",
+                        journal_path=intent.source_journal_path,
+                        journal_sha256=intent.source_journal_sha256,
+                        cursor_output_fingerprint_path=record.cursor_output_fingerprint_path or "",
+                        cursor_output_fingerprint_sha256=(
+                            record.cursor_output_fingerprint_sha256 or ""
+                        ),
+                    )
+                    self.store.append_event(
+                        conn,
+                        event_id=self.event_id(),
+                        run_id=run_id,
+                        sequence=self.store.next_event_sequence(conn, run_id),
+                        event=turn_event,
+                        now=now,
+                    )
+                    terminal_updated = CursorReadyState(
+                        run_id=state.run_id,
+                        version=version + 1,
+                        submitted_at=state.submitted_at,
+                        updated_at=encode_utc_instant(now),
+                        idempotency_key=state.idempotency_key,
+                        context=state.context,
+                        checkpoint=state.checkpoint,
+                        cursor=common_cursor.model_copy(
+                            update={
+                                "cursor_output_fingerprint_path": (
+                                    record.cursor_output_fingerprint_path
+                                ),
+                                "cursor_output_fingerprint_sha256": (
+                                    record.cursor_output_fingerprint_sha256
+                                ),
+                            }
+                        ),
+                        codex=state.codex,
+                    )
+                    if not self.store.compare_and_swap_state(
+                        conn,
+                        run_id=run_id,
+                        expected_version=version,
+                        new_state=terminal_updated,
+                        now=now,
+                    ):
+                        raise _invalid("Cursor SDK reconciliation lost state update")
                     self.store.insert_effect(
                         conn,
                         dispatch_id=self.dispatch_id(),
-                        source_event_id=timeout_event_id,
+                        source_event_id=event_id,
                         run_id=run_id,
-                        effect_id=RUN_CURSOR_TURN_EFFECT_ID,
-                        effect_kind=RUN_CURSOR_TURN_EFFECT_KIND,
+                        effect_id=NORMALIZE_STAGING_EFFECT_ID,
+                        effect_kind=NORMALIZE_STAGING_EFFECT_KIND,
                         effect_payload={"iteration": intent.iteration},
-                        available_at=retry_due,
-                        claimed_run_version=updated.version,
+                        available_at=now,
+                        claimed_run_version=terminal_updated.version,
                         now=now,
                     )
-                return TickRunReceipt(
-                    run_id=run_id,
-                    action=(
-                        "cursor_timeout_retry_scheduled"
-                        if automatic
-                        else "cursor_timeout_retry_exhausted"
-                    ),
-                )
-            if record.outcome == "prompt_unsent":
-                updated = state.model_copy(
+                    return TickRunReceipt(run_id=run_id, action="cursor_sdk_terminal_recovered")
+                if record.outcome == "continuation_ready" and intent.failure_class == "capacity":
+                    capacity_due = now + timedelta(
+                        seconds=intent.retry_after_seconds or int(CAPACITY_FALLBACK.total_seconds())
+                    )
+                    capacity_updated = WaitingUsageLimitState(
+                        run_id=state.run_id,
+                        version=version + 1,
+                        submitted_at=state.submitted_at,
+                        updated_at=encode_utc_instant(now),
+                        idempotency_key=state.idempotency_key,
+                        context=state.context,
+                        checkpoint=state.checkpoint,
+                        cursor=common_cursor.model_copy(
+                            update={
+                                "wait_until": encode_utc_instant(capacity_due),
+                                "original_prompt_path": intent.prompt_path,
+                                "original_prompt_sha256": intent.prompt_sha256,
+                            }
+                        ),
+                        codex=state.codex,
+                    )
+                    if not self.store.compare_and_swap_state(
+                        conn,
+                        run_id=run_id,
+                        expected_version=version,
+                        new_state=capacity_updated,
+                        now=now,
+                    ):
+                        raise _invalid("Cursor SDK capacity reconciliation lost state update")
+                    self.store.insert_retry_timer(
+                        conn,
+                        timer_id=f"tmr-{secrets.token_hex(16)}",
+                        source_event_id=event_id,
+                        run_id=run_id,
+                        due_at=capacity_due,
+                        target_effect_id=RUN_CURSOR_TURN_EFFECT_ID,
+                        expected_run_version=capacity_updated.version,
+                        now=now,
+                    )
+                    return TickRunReceipt(run_id=run_id, action="waiting_usage_limit")
+                updated: CursorReadyState | WaitingForCursorFixState = state.model_copy(
                     update={
                         "version": version + 1,
                         "updated_at": encode_utc_instant(now),
                         "cursor": common_cursor,
                     }
                 )
-                if not self.store.compare_and_swap_state(
-                    conn,
-                    run_id=run_id,
-                    expected_version=version,
-                    new_state=updated,
-                    now=now,
-                ):
-                    raise _invalid("Cursor SDK unsent-prompt reconciliation lost state update")
-                self.store.insert_effect(
-                    conn,
-                    dispatch_id=self.dispatch_id(),
-                    source_event_id=event_id,
-                    run_id=run_id,
-                    effect_id=RUN_CURSOR_TURN_EFFECT_ID,
-                    effect_kind=RUN_CURSOR_TURN_EFFECT_KIND,
-                    effect_payload={"iteration": intent.iteration},
-                    available_at=now,
-                    claimed_run_version=updated.version,
-                    now=now,
+                if record.outcome == "continuation_ready" and intent.failure_class == "timeout":
+                    from ai_dev_loop.scheduler.application.cursor_timeout_retry import (
+                        MAX_AUTOMATIC_TIMEOUT_RETRIES,
+                        TIMEOUT_RETRY_DELAY,
+                    )
+                    from ai_dev_loop.scheduler.domain.events import CursorTimeoutRetryEvent
+
+                    retries = state.cursor.timeout_automatic_retries
+                    automatic = retries < MAX_AUTOMATIC_TIMEOUT_RETRIES
+                    retry_due = now + TIMEOUT_RETRY_DELAY if automatic else None
+                    timeout_event = CursorTimeoutRetryEvent(
+                        run_id=run_id,
+                        attempt_id=record.source_attempt_id,
+                        iteration=intent.iteration,
+                        automatic_retries=retries + int(automatic),
+                        action="automatic" if automatic else "exhausted",
+                        available_at=(
+                            encode_utc_instant(retry_due) if retry_due is not None else None
+                        ),
+                    )
+                    timeout_event_id = self.event_id()
+                    self.store.append_event(
+                        conn,
+                        event_id=timeout_event_id,
+                        run_id=run_id,
+                        sequence=self.store.next_event_sequence(conn, run_id),
+                        event=timeout_event,
+                        now=now,
+                    )
+                    updated = updated.model_copy(
+                        update={
+                            "cursor": common_cursor.model_copy(
+                                update={
+                                    "timeout_attempt_id": record.source_attempt_id,
+                                    "timeout_automatic_retries": timeout_event.automatic_retries,
+                                    "wait_until": timeout_event.available_at,
+                                }
+                            )
+                        }
+                    )
+                    if not self.store.compare_and_swap_state(
+                        conn,
+                        run_id=run_id,
+                        expected_version=version,
+                        new_state=updated,
+                        now=now,
+                    ):
+                        raise _invalid("Cursor SDK timeout reconciliation lost state update")
+                    if automatic:
+                        assert retry_due is not None
+                        self.store.insert_effect(
+                            conn,
+                            dispatch_id=self.dispatch_id(),
+                            source_event_id=timeout_event_id,
+                            run_id=run_id,
+                            effect_id=RUN_CURSOR_TURN_EFFECT_ID,
+                            effect_kind=RUN_CURSOR_TURN_EFFECT_KIND,
+                            effect_payload={"iteration": intent.iteration},
+                            available_at=retry_due,
+                            claimed_run_version=updated.version,
+                            now=now,
+                        )
+                    return TickRunReceipt(
+                        run_id=run_id,
+                        action=(
+                            "cursor_timeout_retry_scheduled"
+                            if automatic
+                            else "cursor_timeout_retry_exhausted"
+                        ),
+                    )
+                if record.outcome == "prompt_unsent":
+                    updated = state.model_copy(
+                        update={
+                            "version": version + 1,
+                            "updated_at": encode_utc_instant(now),
+                            "cursor": common_cursor,
+                        }
+                    )
+                    if not self.store.compare_and_swap_state(
+                        conn,
+                        run_id=run_id,
+                        expected_version=version,
+                        new_state=updated,
+                        now=now,
+                    ):
+                        raise _invalid("Cursor SDK unsent-prompt reconciliation lost state update")
+                    self.store.insert_effect(
+                        conn,
+                        dispatch_id=self.dispatch_id(),
+                        source_event_id=event_id,
+                        run_id=run_id,
+                        effect_id=RUN_CURSOR_TURN_EFFECT_ID,
+                        effect_kind=RUN_CURSOR_TURN_EFFECT_KIND,
+                        effect_payload={"iteration": intent.iteration},
+                        available_at=now,
+                        claimed_run_version=updated.version,
+                        now=now,
+                    )
+                    return TickRunReceipt(
+                        run_id=run_id, action="cursor_sdk_unsent_prompt_dispatched"
+                    )
+                else:
+                    reason = (
+                        "cursor_failure"
+                        if record.outcome == "continuation_ready"
+                        else f"cursor_sdk_{record.outcome}"
+                    )
+                    if record.outcome == "continuation_ready":
+                        from ai_dev_loop.scheduler.application.cursor_sdk_no_progress import (
+                            diagnose_continuation_ready,
+                        )
+
+                        summary, decision = diagnose_continuation_ready(
+                            self.store,
+                            self.artifacts,
+                            conn,
+                            state=state,
+                            intent=intent,
+                            record=record,
+                            now=now,
+                        )
+                    else:
+                        from ai_dev_loop.scheduler.application.cursor_sdk_no_progress import (
+                            UNSAFE_CONTINUATION_SUMMARY,
+                        )
+
+                        summary = UNSAFE_CONTINUATION_SUMMARY
+                        decision = None
+                    blocked_event = CursorTurnBlockedEvent(
+                        run_id=run_id,
+                        block_reason_kind=reason,
+                        block_reason_summary=summary,
+                    )
+                    reconciled_state = state.model_copy(update={"cursor": common_cursor})
+                    blocked = apply_cursor_turn_blocked(
+                        reconciled_state,
+                        blocked_event,
+                        now_text=encode_utc_instant(now),
+                    )
+                    self.store.append_event(
+                        conn,
+                        event_id=self.event_id(),
+                        run_id=run_id,
+                        sequence=self.store.next_event_sequence(conn, run_id),
+                        event=blocked_event,
+                        now=now,
+                    )
+                    if not self.store.compare_and_swap_state(
+                        conn,
+                        run_id=run_id,
+                        expected_version=version,
+                        new_state=blocked,
+                        now=now,
+                    ):
+                        raise _invalid("Cursor SDK reconciliation block lost state update")
+                    if decision is not None:
+                        from ai_dev_loop.scheduler.application.cursor_sdk_no_progress import (
+                            record_no_progress_decision,
+                        )
+
+                        record_no_progress_decision(
+                            self.store,
+                            conn,
+                            run_id=run_id,
+                            decision=decision,
+                            now=now,
+                        )
+                    return TickRunReceipt(run_id=run_id, action="blocked", detail=reason)
+        if sequence_replay:
+            from ai_dev_loop.scheduler.application.cursor_sdk_no_progress import (
+                _authorization_from_row,
+                finish_no_progress_terminal_replay,
+            )
+
+            with self.store.begin_read() as conn:
+                authorization_row = self.store.get_cursor_sdk_no_progress_for_source(
+                    conn, source_run_id=run_id
                 )
-                return TickRunReceipt(run_id=run_id, action="cursor_sdk_unsent_prompt_dispatched")
-            else:
-                reason = (
-                    "cursor_failure"
-                    if record.outcome == "continuation_ready"
-                    else f"cursor_sdk_{record.outcome}"
-                )
-                blocked_event = CursorTurnBlockedEvent(
+            authorization = (
+                None if authorization_row is None else _authorization_from_row(authorization_row)
+            )
+            if authorization is None:
+                return TickRunReceipt(
                     run_id=run_id,
-                    block_reason_kind=reason,
-                    block_reason_summary=(
-                        "Cursor SDK native reconciliation did not establish one safe continuation."
-                    ),
+                    action="cursor_sdk_no_progress_held",
+                    detail="replay",
                 )
-                reconciled_state = state.model_copy(update={"cursor": common_cursor})
-                blocked = apply_cursor_turn_blocked(
-                    reconciled_state,
-                    blocked_event,
-                    now_text=encode_utc_instant(now),
-                )
-                self.store.append_event(
-                    conn,
-                    event_id=self.event_id(),
-                    run_id=run_id,
-                    sequence=self.store.next_event_sequence(conn, run_id),
-                    event=blocked_event,
-                    now=now,
-                )
-                if not self.store.compare_and_swap_state(
-                    conn,
-                    run_id=run_id,
-                    expected_version=version,
-                    new_state=blocked,
-                    now=now,
-                ):
-                    raise _invalid("Cursor SDK reconciliation block lost state update")
-                return TickRunReceipt(run_id=run_id, action="blocked", detail=reason)
+            return finish_no_progress_terminal_replay(
+                self.store,
+                self.artifacts,
+                authorization,
+                self.now(),
+            )
         raise AssertionError("Cursor SDK reconciliation did not return an outcome")
 
     def _resume_interrupted_reconciliation(
@@ -1284,6 +1437,45 @@ class CursorSdkReconciliationService:
                 conn,
                 recovery_key=recovery_key,
             )
+            reobserve = _effect_requests_no_progress_reobserve(dispatch, recovery_key)
+            if reobserve:
+                if (
+                    not recovery_key
+                    or row is None
+                    or str(row["run_id"]) != run_id
+                    or str(row["status"]) != "ready"
+                ):
+                    raise _invalid("interrupted no-progress reobserve lost its ready authority")
+                historical_path = str(row["result_artifact_path"] or "")
+                historical_sha = str(row["result_sha256"] or "")
+                if not historical_path or not historical_sha:
+                    raise _invalid("historical Cursor SDK reconciliation binding is incomplete")
+                if (
+                    sha256_file(
+                        resolve_run_relative_path(self.artifacts.run_root(run_id), historical_path)
+                    )
+                    != historical_sha
+                ):
+                    raise _invalid("historical Cursor SDK reconciliation binding changed")
+                _intent_from_row(row)
+                self.store.mark_attempt_ingested(conn, attempt_id=attempt_id, now=now)
+                from ai_dev_loop.scheduler.application.cursor_sdk_no_progress import (
+                    schedule_lost_reobserve_replacement,
+                )
+
+                schedule_lost_reobserve_replacement(
+                    self.store,
+                    conn,
+                    run_id=run_id,
+                    recovery_key=recovery_key,
+                    lost_attempt_id=attempt_id,
+                    now=now,
+                )
+                return TickRunReceipt(
+                    run_id=run_id,
+                    action="cursor_sdk_reconciliation_interrupted",
+                    detail=attempt_id,
+                )
             if (
                 not recovery_key
                 or row is None

@@ -126,6 +126,19 @@ def _render_summary(summary: SchedulerRunSummary, *, output: str) -> dict[str, o
         )
     if summary.block_reason_kind:
         lines.append(f"Block reason: {summary.block_reason_kind}")
+    if summary.sdk_no_progress_category:
+        consumed = (
+            str(summary.sdk_no_progress_consumed)
+            if summary.sdk_no_progress_consumed is not None
+            else "unknown"
+        )
+        lines.append(
+            "SDK no-progress: "
+            f"category={summary.sdk_no_progress_category} "
+            f"action={summary.sdk_no_progress_action} "
+            f"consumed={consumed} "
+            f"due_at={summary.sdk_no_progress_due_at or 'none'}"
+        )
     lines.append(f"Next action: {summary.safe_next_action.command}")
     return lines
 

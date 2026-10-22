@@ -98,6 +98,27 @@ a new prompt.
 - Confirmed Cursor turn timeouts support three automatic retries per turn at
   30-minute intervals. `scheduler cursor-retry` can advance the wait or continue
   after automatic retries are exhausted, without creating a new chat or review.
+- An authenticated Cursor SDK turn whose public terminal status message is exactly
+  `Agent turn stopped after repeated resume attempts made no progress`, with the
+  owned agent and native run and final native status `error`, reserves one
+  automatic same-agent continuation for that logical turn. Dispatch is not eligible
+  before 60 seconds. The fresh native read and a finished replay run in the owned
+  reconciliation worker. A finished replay completes through terminal ingestion on
+  the same run, or through current-leaf adoption when the source is a sequence.
+  That successor cannot dispatch until the recovered output is installed. A lost
+  reobserve retires against the ready reconciliation and reschedules only when
+  that attempt published no result.   The send rechecks the original capture digest.
+  Abort of the current successor, or of its sequence, cancels a replay that is
+  still waiting to install output and leaves the ready recovery hashes in place.
+  Abort of the source cancels only
+  a continuation that has not started or been handed off. The continuation reuses native reconciliation, owned-process
+  termination, and current-leaf sequence adoption. It preserves owner/key/agent,
+  partial work, the reviewer, the exact base correction, the fixed recovery note,
+  frozen limits, and the ordinal. Restarts and automatic or manual successors carry
+  the consumed count; only a genuinely new logical turn resets it. A second failure
+  of that turn waits for explicit `implementer-retry --force`. Assistant text, tool
+  text, and arbitrary exceptions never qualify. Missing historical evidence stays
+  manual.
 - `scheduler cursor-retry --force` publishes one same-agent successor for an
   eligible terminated standalone `cursor_failure` or the current blocked sequence
   leaf, including a failed recovery successor. Initial turns and corrections both

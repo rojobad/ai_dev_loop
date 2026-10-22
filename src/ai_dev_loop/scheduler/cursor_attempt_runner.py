@@ -99,7 +99,10 @@ from ai_dev_loop.scheduler.domain.cursor_sdk_recovery import (
     CursorSdkReconciliationRecordV2,
 )
 from ai_dev_loop.scheduler.domain.effects import CURSOR_ATTEMPT_EFFECT_KINDS
-from ai_dev_loop.scheduler.infrastructure.paths import run_artifact_root
+from ai_dev_loop.scheduler.infrastructure.paths import (
+    resolve_run_relative_path,
+    run_artifact_root,
+)
 from ai_dev_loop.state import (
     RUN_STATE_SCHEMA_VERSION_FRESH,
     CodexState,
@@ -419,6 +422,49 @@ def _sdk_adapter(evidence: dict[str, object]) -> CursorSdkAdapter:
         ),
     )
     return CursorSdkAdapter(config, repository_root=repository_root)
+
+
+def _no_progress_send_guard(
+    adapter: CursorSdkAdapter,
+    evidence: dict[str, object],
+    agent_id: str,
+    run_root: Path,
+) -> str | None:
+    """Block a continuation send unless the frozen capture and native error still match.
+
+    The expected events digest is the authorization witness, not a fresh copy.
+    A missing, changed, or conflicting capture does not send.
+    """
+
+    refused = evidence.get("no_progress_evidence_refused") is True
+    native_run_id = str(evidence.get("no_progress_guard_native_run_id") or "")
+    events_sha = str(evidence.get("no_progress_events_sha256") or "")
+    if not refused and not native_run_id and not events_sha:
+        return None
+    if refused or not native_run_id or not events_sha:
+        return "cursor_sdk_native_run_uncertain"
+    source_run_id = str(evidence.get("no_progress_source_run_id") or "")
+    events_path = str(evidence.get("no_progress_events_path") or "")
+    if not source_run_id or not events_path:
+        return "cursor_sdk_native_run_uncertain"
+    try:
+        source_root = run_artifact_root(run_root.parent.parent, source_run_id)
+        digest = sha256_file(resolve_run_relative_path(source_root, events_path))
+    except (OSError, ValueError):
+        return "cursor_sdk_native_run_uncertain"
+    if digest != events_sha:
+        return "cursor_sdk_native_run_uncertain"
+    try:
+        observed = adapter.get_run(agent_id, native_run_id)
+    except Exception:
+        return "cursor_sdk_native_run_uncertain"
+    if observed.failure is not None or observed.value is None:
+        return "cursor_sdk_native_run_uncertain"
+    if observed.value.run_id != native_run_id or observed.value.agent_id != agent_id:
+        return "cursor_sdk_native_run_uncertain"
+    if observed.value.status.strip().lower() != "error":
+        return "cursor_sdk_native_run_uncertain"
+    return None
 
 
 def _sdk_failure_payload(failure: CursorSdkFailure | None) -> dict[str, object]:
@@ -1614,6 +1660,72 @@ def _run_sdk_turn(
         return _run_sdk_turn_operation(evidence, run_root, attempt_id=attempt_id)
 
 
+def _write_no_progress_witness(
+    run_root: Path,
+    *,
+    attempt_id: str,
+    dispatch_id: str,
+    agent_id: str,
+    native_run_id: str,
+    events_rel: str,
+    journal_rel: str,
+    journal_path: Path,
+    terminal_status: str,
+    truncated: bool,
+    status_hits: tuple[tuple[str, str], ...],
+    terminal_status_names: tuple[str, ...],
+    events_path: Path,
+    capture_complete: bool,
+) -> dict[str, str]:
+    """Persist a witness only for one exact public status event and terminal error.
+
+    A later or contradictory public terminal status, a truncated capture, or
+    more than one exact no-progress line leaves the turn on the manual path.
+    """
+
+    if (
+        terminal_status != "error"
+        or truncated
+        or len(status_hits) != 1
+        or terminal_status_names != ("ERROR",)
+    ):
+        return {}
+    from ai_dev_loop.scheduler.domain.cursor_sdk_no_progress import (
+        NO_PROGRESS_MESSAGE_SHA256,
+        CursorSdkNoProgressWitnessV1,
+        no_progress_witness_rel,
+    )
+
+    offset, capture_sha = status_hits[0]
+    journal_sha = sha256_file(journal_path)
+    events_sha = sha256_file(events_path)
+    witness = CursorSdkNoProgressWitnessV1(
+        attempt_id=attempt_id,
+        dispatch_id=dispatch_id,
+        agent_id=agent_id,
+        native_run_id=native_run_id,
+        offset=offset,
+        capture_sha256=capture_sha,
+        events_path=events_rel,
+        journal_path=journal_rel,
+        journal_sha256=journal_sha,
+        events_sha256=events_sha,
+        events_truncated=False,
+        capture_complete=capture_complete,
+        message_sha256=NO_PROGRESS_MESSAGE_SHA256,
+    )
+    relative = no_progress_witness_rel(attempt_id)
+    atomic_write_text(
+        run_root / relative,
+        witness.canonical_bytes().decode("utf-8"),
+        sensitive=True,
+    )
+    return {
+        "no_progress_witness_path": relative,
+        "no_progress_witness_sha256": sha256_file(run_root / relative),
+    }
+
+
 def _run_sdk_turn_operation(
     evidence: dict[str, object],
     run_root: Path,
@@ -1719,6 +1831,20 @@ def _run_sdk_turn_operation(
                 **_outcome_identity(evidence),
             }
         baseline_run_ids = sorted(run.run_id for run in baseline_runs)
+        guarded = _no_progress_send_guard(adapter, evidence, agent_id, run_root)
+        if guarded is not None:
+            return {
+                "runtime": "sdk-local",
+                "effect_kind": RUN_CURSOR_TURN_EFFECT_KIND,
+                "iteration": iteration,
+                "returncode": 1,
+                "timed_out": False,
+                "parse_ok": False,
+                "has_completion_signal": False,
+                "failure_kind": guarded,
+                **empty_capture_payload,
+                **_outcome_identity(evidence),
+            }
         inventory = _load_creation_inventory(evidence, run_root)
         journal_version = JOURNAL_SCHEMA_VERSION
         if (
@@ -1796,6 +1922,8 @@ def _run_sdk_turn_operation(
         stored = 0
         truncated = False
         stream_usages: list[CursorUsageEvent] = []
+        status_hits: list[tuple[str, str]] = []
+        terminal_status_names: list[str] = []
 
         def capture(envelope: CursorSdkEnvelope) -> None:
             nonlocal stored, truncated
@@ -1829,6 +1957,20 @@ def _run_sdk_turn_operation(
             finally:
                 os.close(descriptor)
             stored += len(line)
+            from ai_dev_loop.scheduler.domain.cursor_sdk_no_progress import (
+                exact_status_no_progress,
+                public_terminal_status_name,
+            )
+
+            terminal_name = public_terminal_status_name(envelope.payload)
+            if terminal_name is not None:
+                terminal_status_names.append(terminal_name)
+            if exact_status_no_progress(
+                envelope.payload,
+                agent_id=agent_id,
+                native_run_id=native_run_id,
+            ):
+                status_hits.append((envelope.offset, hashlib.sha256(line).hexdigest()))
 
         try:
             streamed = adapter.stream(agent_id, native_run_id, on_envelope=capture)
@@ -1927,6 +2069,22 @@ def _run_sdk_turn_operation(
             schema_version=journal_version,
         )
         _note_sdk_wait(run_root, attempt_id, iteration, TERMINAL_OBSERVED)
+        witness_fields = _write_no_progress_witness(
+            run_root,
+            attempt_id=attempt_id,
+            dispatch_id=str(evidence["dispatch_id"]),
+            agent_id=agent_id,
+            native_run_id=native_run_id,
+            events_rel=events_rel,
+            journal_rel=journal_rel,
+            journal_path=journal,
+            terminal_status=terminal.status,
+            truncated=truncated,
+            status_hits=tuple(status_hits),
+            terminal_status_names=tuple(terminal_status_names),
+            events_path=events_path,
+            capture_complete=_cursor_sdk_capture_complete(terminal.status),
+        )
         return {
             "runtime": "sdk-local",
             "effect_kind": RUN_CURSOR_TURN_EFFECT_KIND,
@@ -1944,6 +2102,7 @@ def _run_sdk_turn_operation(
             "cursor_output_fingerprint_sha256": post_fp.aggregate_sha256,
             "journal_path": journal_rel,
             "journal_sha256": sha256_file(journal),
+            **witness_fields,
             **_outcome_identity(evidence),
         }
     finally:
@@ -2253,28 +2412,32 @@ def _run_sdk_reconciliation_operation(
                     initial_status = terminal.status
                     status = terminal.status.lower()
                     if status not in {"finished", "failed", "cancelled", "canceled", "error"}:
-                        cancelled = adapter.cancel(agent_id, native_run_id)
-                        cancellation_requested = True
-                        if cancelled.failure is not None:
+                        if evidence.get("no_progress_reobserve") is True:
                             terminal = None
                             outcome = "native_unavailable"
                         else:
-                            confirmed = adapter.get_run(agent_id, native_run_id)
-                            if confirmed.failure is not None or confirmed.value is None:
+                            cancelled = adapter.cancel(agent_id, native_run_id)
+                            cancellation_requested = True
+                            if cancelled.failure is not None:
                                 terminal = None
                                 outcome = "native_unavailable"
                             else:
-                                terminal = confirmed.value
-                                status = terminal.status.lower()
-                                if status not in {
-                                    "finished",
-                                    "failed",
-                                    "cancelled",
-                                    "canceled",
-                                    "error",
-                                }:
+                                confirmed = adapter.get_run(agent_id, native_run_id)
+                                if confirmed.failure is not None or confirmed.value is None:
                                     terminal = None
                                     outcome = "native_unavailable"
+                                else:
+                                    terminal = confirmed.value
+                                    status = terminal.status.lower()
+                                    if status not in {
+                                        "finished",
+                                        "failed",
+                                        "cancelled",
+                                        "canceled",
+                                        "error",
+                                    }:
+                                        terminal = None
+                                        outcome = "native_unavailable"
                     if terminal is not None:
                         final_status = terminal.status
                         candidate_final_statuses[native_run_id] = terminal.status.lower()
@@ -2371,7 +2534,13 @@ def _run_sdk_reconciliation_operation(
                                 )
                                 outcome = "terminal_recovered"
                         elif outcome != "native_unavailable":
-                            outcome = "continuation_ready"
+                            if (
+                                evidence.get("no_progress_reobserve") is True
+                                and terminal.status.lower() != "error"
+                            ):
+                                outcome = "native_unavailable"
+                            else:
+                                outcome = "continuation_ready"
     finally:
         adapter.close()
     if not blocker_ok:
@@ -2429,6 +2598,7 @@ def _run_sdk_reconciliation_operation(
         schema_version=2 if outcome == "prompt_unsent" else 1,
     )
     atomic_write_json(run_root / record_rel, record.model_dump(mode="json"), sensitive=True)
+    _maybe_interrupt("reconciliation_record")
     record_sha = sha256_file(run_root / record_rel)
     return {
         "runtime": "sdk-local",

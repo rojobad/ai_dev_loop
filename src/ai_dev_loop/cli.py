@@ -591,7 +591,13 @@ def scheduler_implementer_retry_command(
         if output.value == "json":
             typer.echo(result.model_dump_json(indent=2))
         else:
-            if force:
+            if force and result.provider == "cursor" and result.available_at and not result.changed:
+                typer.echo(
+                    "Cursor SDK no-progress continuation pending: "
+                    f"source={result.run_id} due_at={result.available_at} "
+                    "publication=pending agent_execution_ready=no"
+                )
+            elif force:
                 typer.echo(
                     f"{result.provider.title()} implementer recovery successor: {result.run_id}; "
                     f"changed={str(result.changed).lower()}"

@@ -12,6 +12,8 @@ from datetime import UTC, datetime
 from pydantic import ValidationError as ModelValidationError
 
 from ai_dev_loop.scheduler.application.contracts import (
+    SafeNextAction,
+    SafeNextActionKind,
     SchedulerEngineError,
     SchedulerEngineErrorKind,
 )
@@ -124,174 +126,226 @@ class CursorSdkSuccessorService:
             raise _corrupt("multiple Cursor SDK successors exist for one source")
         if sdk_rows:
             return self._resume(sdk_rows[0], replay=True)
+        from ai_dev_loop.scheduler.application.cursor_sdk_no_progress import (
+            pending_automatic_retry_result,
+        )
+
+        pending = pending_automatic_retry_result(
+            self.store,
+            source_run_id,
+            now=self.now(),
+        )
+        if pending is not None:
+            return pending
         now = self.now()
+        deferred_pending: CursorInitialRecoveryResult | None = None
         with self.store.begin_immediate() as conn:
-            source, _, _ = self.store.load_validated_snapshot(conn, source_run_id)
-            if (
-                not isinstance(source, BlockedState)
-                or source.block_reason_kind != "cursor_failure"
-                or not isinstance(source.context.cursor, CursorSdkBinding)
-            ):
-                raise _invalid("Cursor SDK forced recovery requires a cursor_failure block")
-            if (
-                self.store.get_nonterminal_attempt_for_run(conn, source_run_id) is not None
-                or self.store.has_abort_requested_for_run(conn, source_run_id)
-                or self.store.has_unresolved_abort_hold(conn, source_run_id)
-                or self.store.has_checkpoint_reconciliation_hold(conn, source_run_id)
-            ):
-                raise _invalid(
-                    "Cursor SDK forced recovery requires proved process termination and no abort hold"
-                )
-            from ai_dev_loop.scheduler.application.cursor_sdk_reconciliation import (
-                decisive_ready_sdk_reconciliation,
+            from ai_dev_loop.scheduler.application.cursor_sdk_no_progress import (
+                pending_result_for_connection,
             )
 
-            relation, rec_intent, result = decisive_ready_sdk_reconciliation(
-                self.store,
-                self.artifacts,
-                conn,
-                state=source,
-            )
-            result_path = str(relation["result_artifact_path"] or "")
-            result_sha = str(relation["result_sha256"] or "")
-            if not result_path or not result_sha:
-                raise _corrupt("Cursor SDK reconciliation result binding is incomplete")
-            if result.outcome != "continuation_ready":
-                raise _invalid("Cursor SDK successor requires a reconciled failed native turn")
-            source_turn: CursorReadyState | WaitingForCursorFixState
-            try:
-                if rec_intent.turn_kind == "correction":
-                    source_turn = WaitingForCursorFixState.model_validate(rec_intent.source_state)
-                else:
-                    source_turn = CursorReadyState.model_validate(rec_intent.source_state)
-            except ModelValidationError as exc:
-                raise _corrupt("Cursor SDK predecessor checkpoint is invalid") from exc
-            if source_turn.run_id != source_run_id or source_turn.cursor.sdk is None:
-                raise _corrupt("Cursor SDK predecessor checkpoint identity is invalid")
-            successor_id = self.run_id(source.context.project_name, now)
-            recovery_key = hashlib.sha256(
-                json.dumps(
-                    {
-                        "schema": "cursor-sdk-successor-key-v1",
-                        "source_run_id": source_run_id,
-                        "failed_attempt_id": rec_intent.source_attempt_id,
-                    },
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode("utf-8")
-            ).hexdigest()
-            pending = self._pending_intent(
-                source_run_id=source_run_id,
-                successor_run_id=successor_id,
-                rec_intent=rec_intent,
-                relation_path=result_path,
-                relation_sha=result_sha,
-                source_turn=source_turn,
-                recovery_key=recovery_key,
-            )
-            successor = self._successor_state(
-                successor_run_id=successor_id,
-                source_turn=source_turn,
-                now=now,
-            )
-            kind, payload, digest = self.store.dump_state(successor)
-            now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            conn.execute(
-                """
-                INSERT INTO scheduler_runs(
-                    run_id, state_kind, state_payload, state_payload_sha256,
-                    version, idempotency_key, worktree_key, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    successor_id,
-                    kind,
-                    payload,
-                    digest,
-                    successor.version,
-                    successor.idempotency_key,
-                    successor.context.repository.worktree_key,
-                    now_text,
-                    now_text,
-                ),
-            )
-            if not self.store.claim_reservation_for_successor(
-                conn,
-                successor_run_id=successor_id,
-                source_run_id=source_run_id,
-                worktree_key=source.context.repository.worktree_key,
-                repository_root=source.context.repository.root,
-                now=now,
-            ):
-                raise _conflict("repository reservation is held by another run")
-            pending_bytes = pending.canonical_bytes()
-            if not self.store.insert_cursor_initial_recovery(
-                conn,
-                recovery_key=recovery_key,
-                source_run_id=source_run_id,
-                failed_attempt_id=rec_intent.source_attempt_id,
-                successor_run_id=successor_id,
-                dispatch_id=rec_intent.source_dispatch_id,
-                parent_recovery_key=None,
-                intent_payload=pending_bytes.decode("utf-8"),
-                intent_payload_sha256=hashlib.sha256(pending_bytes).hexdigest(),
-                now=now,
-            ):
-                raise _conflict("Cursor SDK successor relation already exists")
-            self.store.copy_run_short_name_if_absent(
-                conn,
-                source_run_id=source_run_id,
-                successor_run_id=successor_id,
-                now=now,
-            )
-            created = CursorInitialRecoverySuccessorCreatedEvent(
-                source_run_id=source_run_id,
-                successor_run_id=successor_id,
-                recovery_key=recovery_key,
-                failed_attempt_id=rec_intent.source_attempt_id,
-                iteration=rec_intent.iteration,
-            )
-            admitted = WorktreeAdmittedEvent(
-                run_id=successor_id,
-                admission_status_artifact_path=source_turn.checkpoint.admission_status_artifact_path,
-                admission_status_sha256=source_turn.checkpoint.admission_status_sha256,
-                resolved_root=source.context.repository.root,
-            )
-            agent = CursorSdkAgentCreatedEvent(
-                run_id=successor_id,
-                agent_id=source_turn.cursor.sdk.agent_id,
-                conversation_key=source_turn.cursor.sdk.conversation_key,
-                identity_artifact_path=source_turn.cursor.sdk.identity_artifact_path,
-                identity_artifact_sha256=source_turn.cursor.sdk.identity_artifact_sha256,
-                journal_path=source_turn.cursor.sdk.latest_journal_path,
-                journal_sha256=source_turn.cursor.sdk.latest_journal_sha256,
-            )
-            for event in (created, admitted, agent):
-                self.store.append_event(
-                    conn,
-                    event_id=self.event_id(),
-                    run_id=successor_id,
-                    sequence=self.store.next_event_sequence(conn, successor_id),
-                    event=event,
-                    now=now,
+            raced = [
+                item
+                for item in self.store.list_cursor_initial_recoveries_for_source(
+                    conn, source_run_id=source_run_id
                 )
-            if source.context.sequence is not None:
-                from ai_dev_loop.scheduler.application.sequence_cursor_recovery import (
-                    bind_pending_cursor_sequence_intent,
-                )
-
-                bind_pending_cursor_sequence_intent(
+                if json.loads(str(item["intent_payload"])).get("schema_version") == 3
+            ]
+            if len(raced) > 1:
+                raise _corrupt("multiple Cursor SDK successors exist for one source")
+            row: sqlite3.Row | None
+            if raced:
+                row = raced[0]
+                replay = True
+            else:
+                deferred_pending = pending_result_for_connection(
                     self.store,
                     conn,
-                    source_run_id=source_run_id,
-                    successor_run_id=successor_id,
-                    recovery_key=recovery_key,
+                    source_run_id,
                     now=now,
                 )
-            row = self.store.get_cursor_initial_recovery_by_key(conn, recovery_key=recovery_key)
+                if deferred_pending is not None:
+                    row = None
+                    replay = False
+                else:
+                    row = self._insert_sdk_successor_locked(conn, source_run_id, now)
+                    replay = False
+        if deferred_pending is not None:
+            return deferred_pending
         if row is None:
             raise _conflict("Cursor SDK successor relation disappeared")
-        return self._resume(row, replay=False)
+        return self._resume(row, replay=replay)
+
+    def _insert_sdk_successor_locked(
+        self,
+        conn: sqlite3.Connection,
+        source_run_id: str,
+        now: datetime,
+    ) -> sqlite3.Row | None:
+        source, _, _ = self.store.load_validated_snapshot(conn, source_run_id)
+        if (
+            not isinstance(source, BlockedState)
+            or source.block_reason_kind != "cursor_failure"
+            or not isinstance(source.context.cursor, CursorSdkBinding)
+        ):
+            raise _invalid("Cursor SDK forced recovery requires a cursor_failure block")
+        if (
+            self.store.get_nonterminal_attempt_for_run(conn, source_run_id) is not None
+            or self.store.has_abort_requested_for_run(conn, source_run_id)
+            or self.store.has_unresolved_abort_hold(conn, source_run_id)
+            or self.store.has_checkpoint_reconciliation_hold(conn, source_run_id)
+        ):
+            raise _invalid(
+                "Cursor SDK forced recovery requires proved process termination and no abort hold"
+            )
+        from ai_dev_loop.scheduler.application.cursor_sdk_reconciliation import (
+            decisive_ready_sdk_reconciliation,
+        )
+
+        relation, rec_intent, result = decisive_ready_sdk_reconciliation(
+            self.store,
+            self.artifacts,
+            conn,
+            state=source,
+        )
+        result_path = str(relation["result_artifact_path"] or "")
+        result_sha = str(relation["result_sha256"] or "")
+        if not result_path or not result_sha:
+            raise _corrupt("Cursor SDK reconciliation result binding is incomplete")
+        if result.outcome != "continuation_ready":
+            raise _invalid("Cursor SDK successor requires a reconciled failed native turn")
+        source_turn: CursorReadyState | WaitingForCursorFixState
+        try:
+            if rec_intent.turn_kind == "correction":
+                source_turn = WaitingForCursorFixState.model_validate(rec_intent.source_state)
+            else:
+                source_turn = CursorReadyState.model_validate(rec_intent.source_state)
+        except ModelValidationError as exc:
+            raise _corrupt("Cursor SDK predecessor checkpoint is invalid") from exc
+        if source_turn.run_id != source_run_id or source_turn.cursor.sdk is None:
+            raise _corrupt("Cursor SDK predecessor checkpoint identity is invalid")
+        successor_id = self.run_id(source.context.project_name, now)
+        recovery_key = hashlib.sha256(
+            json.dumps(
+                {
+                    "schema": "cursor-sdk-successor-key-v1",
+                    "source_run_id": source_run_id,
+                    "failed_attempt_id": rec_intent.source_attempt_id,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        pending = self._pending_intent(
+            source_run_id=source_run_id,
+            successor_run_id=successor_id,
+            rec_intent=rec_intent,
+            relation_path=result_path,
+            relation_sha=result_sha,
+            source_turn=source_turn,
+            recovery_key=recovery_key,
+        )
+        successor = self._successor_state(
+            successor_run_id=successor_id,
+            source_turn=source_turn,
+            now=now,
+        )
+        kind, payload, digest = self.store.dump_state(successor)
+        now_text = now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        conn.execute(
+            """
+            INSERT INTO scheduler_runs(
+                run_id, state_kind, state_payload, state_payload_sha256,
+                version, idempotency_key, worktree_key, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                successor_id,
+                kind,
+                payload,
+                digest,
+                successor.version,
+                successor.idempotency_key,
+                successor.context.repository.worktree_key,
+                now_text,
+                now_text,
+            ),
+        )
+        if not self.store.claim_reservation_for_successor(
+            conn,
+            successor_run_id=successor_id,
+            source_run_id=source_run_id,
+            worktree_key=source.context.repository.worktree_key,
+            repository_root=source.context.repository.root,
+            now=now,
+        ):
+            raise _conflict("repository reservation is held by another run")
+        pending_bytes = pending.canonical_bytes()
+        if not self.store.insert_cursor_initial_recovery(
+            conn,
+            recovery_key=recovery_key,
+            source_run_id=source_run_id,
+            failed_attempt_id=rec_intent.source_attempt_id,
+            successor_run_id=successor_id,
+            dispatch_id=rec_intent.source_dispatch_id,
+            parent_recovery_key=None,
+            intent_payload=pending_bytes.decode("utf-8"),
+            intent_payload_sha256=hashlib.sha256(pending_bytes).hexdigest(),
+            now=now,
+        ):
+            raise _conflict("Cursor SDK successor relation already exists")
+        self.store.copy_run_short_name_if_absent(
+            conn,
+            source_run_id=source_run_id,
+            successor_run_id=successor_id,
+            now=now,
+        )
+        created = CursorInitialRecoverySuccessorCreatedEvent(
+            source_run_id=source_run_id,
+            successor_run_id=successor_id,
+            recovery_key=recovery_key,
+            failed_attempt_id=rec_intent.source_attempt_id,
+            iteration=rec_intent.iteration,
+        )
+        admitted = WorktreeAdmittedEvent(
+            run_id=successor_id,
+            admission_status_artifact_path=source_turn.checkpoint.admission_status_artifact_path,
+            admission_status_sha256=source_turn.checkpoint.admission_status_sha256,
+            resolved_root=source.context.repository.root,
+        )
+        agent = CursorSdkAgentCreatedEvent(
+            run_id=successor_id,
+            agent_id=source_turn.cursor.sdk.agent_id,
+            conversation_key=source_turn.cursor.sdk.conversation_key,
+            identity_artifact_path=source_turn.cursor.sdk.identity_artifact_path,
+            identity_artifact_sha256=source_turn.cursor.sdk.identity_artifact_sha256,
+            journal_path=source_turn.cursor.sdk.latest_journal_path,
+            journal_sha256=source_turn.cursor.sdk.latest_journal_sha256,
+        )
+        for event in (created, admitted, agent):
+            self.store.append_event(
+                conn,
+                event_id=self.event_id(),
+                run_id=successor_id,
+                sequence=self.store.next_event_sequence(conn, successor_id),
+                event=event,
+                now=now,
+            )
+        if source.context.sequence is not None:
+            from ai_dev_loop.scheduler.application.sequence_cursor_recovery import (
+                bind_pending_cursor_sequence_intent,
+            )
+
+            bind_pending_cursor_sequence_intent(
+                self.store,
+                conn,
+                source_run_id=source_run_id,
+                successor_run_id=successor_id,
+                recovery_key=recovery_key,
+                now=now,
+            )
+        row = self.store.get_cursor_initial_recovery_by_key(conn, recovery_key=recovery_key)
+        return row
 
     def _pending_intent(
         self,
@@ -384,6 +438,8 @@ class CursorSdkSuccessorService:
         replay: bool,
     ) -> CursorInitialRecoveryResult:
         intent = _row_intent(row)
+        if str(row["status"]) == "cancelled":
+            return self._cancelled_result(intent)
         if str(row["status"]) == "ready":
             authenticate_sdk_successor_authority(
                 self.store, self.artifacts, None, intent.successor_run_id
@@ -391,6 +447,9 @@ class CursorSdkSuccessorService:
             return self._result(intent, changed=False, replay=True)
         if str(row["status"]) != "pending":
             raise _conflict("Cursor SDK successor publication was cancelled")
+        cancelled = self._cancel_if_aborted(intent)
+        if cancelled is not None:
+            return cancelled
         pending_sha = str(row["intent_payload_sha256"])
         self._publish_artifacts(intent, pending_sha=pending_sha)
         record = CursorSdkSuccessorRecordV1(
@@ -432,13 +491,35 @@ class CursorSdkSuccessorService:
         )
         ready_bytes = ready.canonical_bytes()
         now = self.now()
+        aborted_publication = False
         with self.store.begin_immediate() as conn:
             current = self.store.get_cursor_initial_recovery_by_key(
                 conn, recovery_key=intent.recovery_key
             )
             if current is None:
                 raise _conflict("Cursor SDK successor relation disappeared")
-            if str(current["status"]) == "pending":
+            if str(current["status"]) == "cancelled":
+                aborted_publication = True
+            elif str(current["status"]) == "pending" and (
+                self.store.has_abort_requested_for_run(conn, intent.source_run_id)
+                or self.store.has_abort_requested_for_run(conn, intent.successor_run_id)
+            ):
+                cancelled_intent = intent.model_copy(update={"status": "cancelled"})
+                cancelled_bytes = cancelled_intent.canonical_bytes()
+                if not self.store.update_cursor_initial_recovery_status(
+                    conn,
+                    recovery_key=intent.recovery_key,
+                    expected_status="pending",
+                    status="cancelled",
+                    intent_payload=cancelled_bytes.decode("utf-8"),
+                    intent_payload_sha256=hashlib.sha256(cancelled_bytes).hexdigest(),
+                    record_artifact_path=None,
+                    record_sha256=None,
+                    now=now,
+                ):
+                    raise _conflict("Cursor SDK successor status changed")
+                aborted_publication = True
+            elif str(current["status"]) == "pending":
                 if not self.store.update_cursor_initial_recovery_status(
                     conn,
                     recovery_key=intent.recovery_key,
@@ -475,12 +556,14 @@ class CursorSdkSuccessorService:
                     claimed_run_version=version,
                     now=now,
                 )
+        if aborted_publication:
+            return self._cancelled_result(intent)
         if intent.source_run_id and self._source_has_sequence(intent.source_run_id):
             from ai_dev_loop.scheduler.application.sequence_cursor_recovery import (
                 ensure_sequence_cursor_adoption,
             )
 
-            ensure_sequence_cursor_adoption(
+            adopted = ensure_sequence_cursor_adoption(
                 self.store,
                 self.artifacts,
                 source_run_id=intent.source_run_id,
@@ -488,6 +571,13 @@ class CursorSdkSuccessorService:
                 recovery_key=intent.recovery_key,
                 now=now,
             )
+            if not adopted:
+                with self.store.begin_read() as conn:
+                    aborted = self.store.has_abort_requested_for_run(
+                        conn, intent.source_run_id
+                    ) or self.store.has_abort_requested_for_run(conn, intent.successor_run_id)
+                if aborted:
+                    return self._cancelled_result(intent)
         authenticated_sdk_successor_launch(
             self.store,
             self.artifacts,
@@ -663,6 +753,58 @@ class CursorSdkSuccessorService:
                 rec.source_journal_path,
                 rec.source_journal_sha256,
             )
+
+    def _cancel_if_aborted(
+        self,
+        intent: CursorSdkSuccessorIntentV1,
+    ) -> CursorInitialRecoveryResult | None:
+        with self.store.begin_read() as conn:
+            aborted = self.store.has_abort_requested_for_run(
+                conn, intent.source_run_id
+            ) or self.store.has_abort_requested_for_run(conn, intent.successor_run_id)
+        if not aborted:
+            return None
+        now = self.now()
+        cancelled = intent.model_copy(update={"status": "cancelled"})
+        payload = cancelled.canonical_bytes()
+        with self.store.begin_immediate() as conn:
+            current = self.store.get_cursor_initial_recovery_by_key(
+                conn, recovery_key=intent.recovery_key
+            )
+            if current is not None and str(current["status"]) == "pending":
+                self.store.update_cursor_initial_recovery_status(
+                    conn,
+                    recovery_key=intent.recovery_key,
+                    expected_status="pending",
+                    status="cancelled",
+                    intent_payload=payload.decode("utf-8"),
+                    intent_payload_sha256=hashlib.sha256(payload).hexdigest(),
+                    record_artifact_path=None,
+                    record_sha256=None,
+                    now=now,
+                )
+        return self._cancelled_result(intent)
+
+    def _cancelled_result(
+        self,
+        intent: CursorSdkSuccessorIntentV1,
+    ) -> CursorInitialRecoveryResult:
+        return CursorInitialRecoveryResult(
+            source_run_id=intent.source_run_id,
+            successor_run_id=intent.successor_run_id,
+            changed=True,
+            idempotent_replay=False,
+            publication_status="cancelled",
+            agent_execution_ready=False,
+            safe_next_action=SafeNextAction(
+                kind=SafeNextActionKind.SCHEDULER_ABORT,
+                command=(
+                    f"ai_dev_loop scheduler abort {intent.source_run_id} "
+                    "already fences this Cursor SDK continuation."
+                ),
+            ),
+            turn_kind=intent.turn_kind,
+        )
 
     def _result(
         self,

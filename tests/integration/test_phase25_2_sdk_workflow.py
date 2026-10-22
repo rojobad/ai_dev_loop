@@ -402,6 +402,28 @@ def _install_fake_sdk(root: Path) -> None:
                     if os.environ.get("FAKE_CURSOR_SDK_BLOCK_TREE") == "1":
                         _spawn_owned_tree()
                         while True: time.sleep(0.1)
+                    if os.environ.get("FAKE_CURSOR_SDK_NO_PROGRESS") == "1":
+                        yield SimpleNamespace(
+                            offset="9",
+                            kind="sdk_message",
+                            sdk_message=SimpleNamespace(
+                                type=os.environ.get("FAKE_CURSOR_SDK_STATUS_TYPE", "status"),
+                                status=os.environ.get("FAKE_CURSOR_SDK_STATUS_NAME", "ERROR"),
+                                message=os.environ.get(
+                                    "FAKE_CURSOR_SDK_STATUS_MESSAGE",
+                                    "Agent turn stopped after repeated resume attempts made no progress",
+                                ),
+                                agent_id=os.environ.get("FAKE_CURSOR_SDK_STATUS_AGENT_ID", self.agent_id),
+                                run_id=os.environ.get("FAKE_CURSOR_SDK_STATUS_RUN_ID", self.id),
+                            ),
+                        )
+                    assistant_text = os.environ.get("FAKE_CURSOR_SDK_ASSISTANT_TEXT", "")
+                    if assistant_text:
+                        yield SimpleNamespace(
+                            offset="10",
+                            kind="sdk_message",
+                            sdk_message=SimpleNamespace(type="assistant", message=assistant_text),
+                        )
                 def observe(self, after_offset=None):
                     if os.environ.get("FAKE_CURSOR_SDK_REPLAY_SUCCESS") != "1":
                         raise RuntimeError("synthetic replay transport failure")

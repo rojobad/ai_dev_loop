@@ -10,7 +10,11 @@ ai_dev_loop scheduler status <run-id> --output json
 ```
 
 Muestra estado resumido del ledger central, iteracion actual, identidad de agentes
-(redactada), ultimo error y siguiente accion segura.
+(redactada), ultimo error y siguiente accion segura. Cuando un turno SDK reservó
+la continuación automática por resume sin progreso, el texto y el JSON añaden la
+categoría, la acción, el consumo entero y `due_at`. Esos campos no incluyen el
+mensaje nativo, un ID completo ni una causa de red. Un registro histórico sin esa
+autorización omite los campos.
 
 ## Scheduler list
 
@@ -50,6 +54,10 @@ congelado en ese enlace. Esa linea no interpreta silencio, CPU ni un run nativo 
 como bloqueo o avance del modelo. No sustituye a `history` ni expone IDs
 internos, prompts ni salidas raw. La cola y el preflight no aparecen como
 duracion de fase.
+
+`history` puede incluir `cursor_sdk_no_progress_authorized` con categoría, acción,
+consumo solo cuando es 0 o 1, y `due_at`. `timeline` sigue mostrando solo intentos
+y esperas seguras; no interpreta ese status como un fallo de red.
 
 Limite por defecto: 50 filas. `--limit` acepta valores positivos hasta 200; por
 encima de 200 se trunca al maximo duro. Si hay mas intentos que el limite

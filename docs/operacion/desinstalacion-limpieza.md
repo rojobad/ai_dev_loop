@@ -127,8 +127,10 @@ abort. No hay un timer
 aparte ni un cambio de `linger`. Deshabilitar la política detiene solo el
 borrado automático. La evidencia de terminación ausente, un payload dañado, un
 intento vivo o incierto, una reserva, un wait, un presupuesto agotado, un
-checkpoint, un handoff o un recovery pendiente conservan el root aunque los
-archivos sean antiguos.
+checkpoint, un handoff, un recovery pendiente o una continuación SDK por resume
+sin progreso en `reserved` o `publishing` —incluido su linaje— conservan el root
+aunque los archivos sean antiguos. La terminación definitiva de ese linaje
+vuelve a iniciar el plazo ordinario de 168 horas.
 
 El ledger, los artefactos, las credenciales, los repositorios, los backups del
 operador, Codex y las demás conversaciones permanecen.

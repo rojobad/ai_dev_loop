@@ -108,6 +108,7 @@ from ai_dev_loop.scheduler.domain.state import (
     AbortedState,
     AdmittedState,
     AwaitingCodexReviewState,
+    BlockedState,
     CursorReadyState,
     CursorSdkBinding,
     PreflightCompleteState,
@@ -143,6 +144,36 @@ _CURSOR_ATTEMPT_STATES = (
 _CODEX_ATTEMPT_STATES = (AwaitingCodexReviewState,)
 _CODEX_IMPLEMENTER_ATTEMPT_STATES = (PreflightCompleteState, WaitingForCursorFixState)
 _ATTEMPT_RECONCILE_STATES = (AdmittedState, *_CURSOR_ATTEMPT_STATES, *_CODEX_ATTEMPT_STATES)
+
+
+def _effect_is_no_progress_reobserve(dispatch: sqlite3.Row | None) -> bool:
+    if dispatch is None:
+        return False
+    if str(dispatch["effect_kind"]) != RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND:
+        return False
+    try:
+        payload = json.loads(str(dispatch["effect_payload"]))
+    except (TypeError, ValueError):
+        return False
+    return isinstance(payload, dict) and payload.get("no_progress_reobserve") is True
+
+
+def _cursor_reobserve_attempt(
+    store: SqliteSchedulerStore,
+    conn: sqlite3.Connection,
+    attempt_id: str,
+) -> bool:
+    """The owned fresh read is the only cursor attempt a blocked run may run."""
+
+    attempt_row = store.get_attempt_by_id(conn, attempt_id)
+    if attempt_row is None:
+        return False
+    dispatch = store.get_effect_by_dispatch_id(conn, str(attempt_row["dispatch_id"]))
+    return _effect_is_no_progress_reobserve(dispatch)
+
+
+def _blocked_no_progress_reobserve(state: object, dispatch: sqlite3.Row | None) -> bool:
+    return isinstance(state, BlockedState) and _effect_is_no_progress_reobserve(dispatch)
 
 
 def _initial_recovery_prompt_applies(
@@ -762,6 +793,7 @@ class AttemptService:
                     WaitingUsageLimitState,
                     WaitingForCursorFixState,
                     AbortedState,
+                    BlockedState,
                 ),
             ):
                 return None
@@ -780,6 +812,14 @@ class AttemptService:
             dispatch_row = cursor_effects[0]
             dispatch_id = str(dispatch_row["dispatch_id"])
             effect_kind = str(dispatch_row["effect_kind"])
+            effect_payload: dict[str, object] = {}
+            if effect_kind == RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND:
+                parsed_payload = json.loads(str(dispatch_row["effect_payload"]))
+                if isinstance(parsed_payload, dict):
+                    effect_payload = parsed_payload
+            reobserve = effect_payload.get("no_progress_reobserve") is True
+            if isinstance(state, BlockedState) and not reobserve:
+                return None
             if (
                 isinstance(state, AbortedState)
                 and effect_kind != RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND
@@ -804,6 +844,8 @@ class AttemptService:
             if isinstance(cursor_state.context.cursor, CursorSdkBinding):
                 if isinstance(cursor_state, AbortedState):
                     raise ValidationError("aborted SDK run cannot dispatch a timeout retry")
+                if isinstance(cursor_state, BlockedState):
+                    return TickRunReceipt(run_id=run_id, action="attempt_state_changed")
                 evidence = self._cursor_binding(
                     cursor_state,
                     effect_kind=effect_kind,
@@ -837,11 +879,20 @@ class AttemptService:
                     self.store,
                     self.artifacts,
                     now_factory=self._now_factory,
-                ).binding(conn, run_id=run_id, recovery_key=str(payload["recovery_key"]))
+                ).binding(
+                    conn,
+                    run_id=run_id,
+                    recovery_key=str(payload["recovery_key"]),
+                    allow_ready=reobserve,
+                )
+            if reobserve:
+                evidence["no_progress_reobserve"] = True
         else:
             try:
                 if isinstance(cursor_state, AbortedState):
                     raise ValidationError("aborted SDK run can only reconcile native state")
+                if isinstance(cursor_state, BlockedState):
+                    return TickRunReceipt(run_id=run_id, action="attempt_state_changed")
                 evidence = self._cursor_binding(
                     cursor_state, effect_kind=effect_kind, run_id=run_id
                 )
@@ -892,8 +943,11 @@ class AttemptService:
                     WaitingUsageLimitState,
                     WaitingForCursorFixState,
                     AbortedState,
+                    BlockedState,
                 ),
             ):
+                return None
+            if isinstance(state, BlockedState) and not reobserve:
                 return None
             if (
                 isinstance(state, AbortedState)
@@ -1440,6 +1494,7 @@ class AttemptService:
                 sdk_successor_prompt_applies,
             )
 
+            dispatch_authority: dict[str, object] | None = None
             with self.store.begin_read() as conn:
                 sdk_authority = authenticate_sdk_successor_authority(
                     self.store, self.artifacts, conn, run_id
@@ -1453,6 +1508,18 @@ class AttemptService:
                     )
                     if source_state.context != state.context:
                         raise ValidationError("SDK review successor changed frozen inputs")
+                if sdk_authority is not None:
+                    from ai_dev_loop.scheduler.application.cursor_sdk_no_progress import (
+                        no_progress_dispatch_authority,
+                    )
+
+                    dispatch_authority = no_progress_dispatch_authority(
+                        self.store,
+                        self.artifacts,
+                        conn,
+                        source_run_id=sdk_authority.source_run_id,
+                        failed_attempt_id=sdk_authority.failed_attempt_id,
+                    )
             if review_source is not None:
                 binding["sdk_review_recovery_source_run_id"] = str(review_source["source_run_id"])
             if sdk_authority is not None:
@@ -1461,6 +1528,8 @@ class AttemptService:
             if anchor is not None:
                 binding.update(anchor)
             if sdk_authority is not None and sdk_successor_prompt_applies(state, sdk_authority):
+                if dispatch_authority is not None:
+                    binding.update(dispatch_authority)
                 # The SDK successor record authenticates the complete correction
                 # ancestry.  The resumed public SDK send consumes the copy-once
                 # effective prompt rather than reinterpreting that prompt as a
@@ -1658,7 +1727,11 @@ class AttemptService:
                     run_id=run_id,
                     attempt=attempt,
                 )
-            if not isinstance(state, _ATTEMPT_RECONCILE_STATES) and not aborted_sdk_reconciliation:
+            if (
+                not isinstance(state, _ATTEMPT_RECONCILE_STATES)
+                and not aborted_sdk_reconciliation
+                and not _blocked_no_progress_reobserve(state, dispatch)
+            ):
                 return TickRunReceipt(run_id=run_id, action="attempt_state_changed")
             attempt_id = str(attempt["attempt_id"])
             unit_identity = str(attempt["unit_identity"])
@@ -2168,7 +2241,10 @@ class AttemptService:
                 if not isinstance(state, _CODEX_ATTEMPT_STATES):
                     return TickRunReceipt(run_id=run_id, action="attempt_state_changed")
             elif cursor_attempt:
-                if not isinstance(state, (*_CURSOR_ATTEMPT_STATES, AbortedState)):
+                reobserve = _cursor_reobserve_attempt(self.store, conn, attempt_id)
+                if not isinstance(state, (*_CURSOR_ATTEMPT_STATES, AbortedState)) and not (
+                    isinstance(state, BlockedState) and reobserve
+                ):
                     return TickRunReceipt(run_id=run_id, action="attempt_state_changed")
             elif not isinstance(state, AdmittedState):
                 return TickRunReceipt(run_id=run_id, action="attempt_state_changed")
@@ -2580,7 +2656,11 @@ class AttemptService:
                     action="attempt_result_stale",
                     detail="run_aborted",
                 )
-            if not isinstance(state, _ATTEMPT_RECONCILE_STATES) and not aborted_sdk_reconciliation:
+            if (
+                not isinstance(state, _ATTEMPT_RECONCILE_STATES)
+                and not aborted_sdk_reconciliation
+                and not _blocked_no_progress_reobserve(state, dispatch_row)
+            ):
                 return TickRunReceipt(run_id=run_id, action="attempt_state_changed")
             attempt_row = self.store.get_attempt_by_id(conn, attempt_id)
             if attempt_row is not None and str(attempt_row["status"]) == ATTEMPT_STATUS_CANCELLED:

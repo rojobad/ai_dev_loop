@@ -372,6 +372,12 @@ def test_fresh_legacy_rejection_does_not_change_existing_ledger(
     legacy_path.write_text(yaml.safe_dump(legacy), encoding="utf-8")
 
     SqliteSchedulerStore(paths["db_path"])
+    if schema_version < 20:
+        with sqlite3.connect(paths["db_path"]) as conn:
+            conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_no_progress")
+            conn.execute("DELETE FROM scheduler_schema_migrations WHERE version >= 20")
+            conn.execute("PRAGMA user_version = 19")
+            conn.commit()
     if schema_version < 19:
         with sqlite3.connect(paths["db_path"]) as conn:
             conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_retention_policy")
@@ -599,6 +605,7 @@ def test_schema16_read_fallback_and_v17_migration_preserve_authority(
     immutable_before = _immutable_snapshot(paths["db_path"])
     artifacts_before = _artifact_digests(paths["artifact_root"])
     with sqlite3.connect(paths["db_path"]) as conn:
+        conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_no_progress")
         conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_retention_policy")
         conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_conversation_fences")
         conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_disposals")
@@ -637,7 +644,7 @@ def test_schema16_read_fallback_and_v17_migration_preserve_authority(
 
     migrated = SqliteSchedulerStore(paths["db_path"])
     with migrated.begin_read() as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 19
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 20
         assert migrated.sequence_short_name(conn, prepared.sequence_id) == "fixture-sequence"
         assert migrated.run_short_name(conn, submitted.run_id) == submitted.run_id[:35]
         entries = conn.execute(
@@ -677,6 +684,7 @@ def test_schema17_migration_fault_rolls_back_all_presentation_tables(
     paths = _paths(isolated_xdg)
     SqliteSchedulerStore(paths["db_path"])
     with sqlite3.connect(paths["db_path"]) as conn:
+        conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_no_progress")
         conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_retention_policy")
         conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_conversation_fences")
         conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_disposals")

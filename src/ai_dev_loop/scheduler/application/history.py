@@ -86,6 +86,14 @@ def _safe_detail_for_event(event_kind: str, payload_text: str) -> str:
             return f"{event_kind}: reviewer={prefix}"
     if event_kind in {"cursor_chat_created"}:
         return f"{event_kind} (identity redacted)"
+    if event_kind == "cursor_sdk_no_progress_authorized":
+        consumed = payload.get("consumed_count")
+        consumed_text = f" consumed={consumed}" if consumed in (0, 1) else ""
+        return (
+            f"{event_kind}: category={payload.get('category')} "
+            f"action={payload.get('action')}{consumed_text} "
+            f"due_at={payload.get('due_at')}"
+        )
     if event_kind in {
         "worktree_admission_blocked",
         "preflight_blocked",
@@ -96,6 +104,13 @@ def _safe_detail_for_event(event_kind: str, payload_text: str) -> str:
         "codex_review_blocked",
     }:
         kind = payload.get("block_reason_kind")
+        summary = payload.get("block_reason_summary")
+        if (
+            event_kind == "cursor_turn_blocked"
+            and isinstance(summary, str)
+            and summary.startswith("Cursor SDK ")
+        ):
+            return f"{event_kind}: block_reason_kind={kind} summary={_redact_text(summary)}"
         return f"{event_kind}: block_reason_kind={kind}"
     if event_kind in {"cursor_timeout_retry", "codex_implementer_timeout_retry"}:
         return (

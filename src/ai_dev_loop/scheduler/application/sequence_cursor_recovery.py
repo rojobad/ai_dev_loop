@@ -512,10 +512,28 @@ def ensure_sequence_cursor_adoption(
     if row is None:
         raise _corrupt("sequence cursor recovery is missing its replacement intent")
     if row["cancelled_at"] is not None:
+        with store.begin_read() as conn:
+            aborted = store.has_abort_requested_for_run(
+                conn, source_run_id
+            ) or store.has_abort_requested_for_run(conn, successor_run_id)
+        if aborted:
+            return False
         raise _conflict("cursor sequence replacement was cancelled")
     if str(row["successor_run_id"]) != successor_run_id:
         raise _corrupt("cursor sequence replacement successor disagrees with publication")
     with store.begin_immediate() as conn:
+        if store.has_abort_requested_for_run(
+            conn, source_run_id
+        ) or store.has_abort_requested_for_run(conn, successor_run_id):
+            sequence_id = str(row["sequence_id"])
+            cancel_pending_cursor_sequence_recovery(
+                store,
+                conn,
+                sequence_id=sequence_id,
+                source_run_id=source_run_id,
+                now=now,
+            )
+            return False
         digest = authenticate_cursor_publication_for_adoption(
             store,
             artifacts,

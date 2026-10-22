@@ -139,6 +139,7 @@ def _submit_sdk_run(
     short_name: str,
     now_factory: Callable[[], datetime] | None = None,
     backend: object | None = None,
+    max_review_iterations: int | None = None,
 ) -> tuple[str, Path, Path, SqliteSchedulerStore, TickService]:
     _configure_v2(git_repo)
     (git_repo / "tracked.txt").write_text("baseline\n", encoding="utf-8")
@@ -164,6 +165,7 @@ def _submit_sdk_run(
                 controller_session_id=CONTROLLER_SESSION,
                 codex_review_model="gpt-6.1-sol",
                 codex_review_reasoning_effort="high",
+                max_review_iterations=max_review_iterations,
                 db_path=db,
                 artifact_root=artifacts_root,
             )

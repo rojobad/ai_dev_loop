@@ -86,6 +86,18 @@ become a general-purpose controller of every worktree change.
   an explicitly increased review ceiling after `max_iterations_reached`.
   `implementer-retry --force` on a current Codex or Cursor sequence leaf reuses
   the same sequence and ordinal; a stale leaf with no existing relation is rejected.
+  The one exception is an authenticated Cursor SDK terminal status whose public
+  message is exactly `Agent turn stopped after repeated resume attempts made no progress`:
+  the scheduler reserves one same-agent continuation for that logical turn and
+  dispatches it on a later tick at least 60 seconds later. The fresh read and a
+  finished replay use the owned reconciliation worker. The successor cannot
+  dispatch until recovered output is installed. A lost read retires against the
+  ready reconciliation and reschedules only when that attempt published no
+  result. The send rechecks the original capture digest. Abort of the current
+  successor or its sequence cancels a replay still waiting to install output and
+  keeps the ready recovery hashes. Abort of the old source cancels only a continuation
+  that has not started or been handed off. A second such failure
+  stays manual. Other generic failures, timeouts, and capacity waits do not.
 - Same-reviewer recovery preserves the authenticated reviewer binding. An
   eligible blocked run may have a successor; the blocked source is immutable.
   `scheduler extend` is a separate explicit same-run transition and does not
