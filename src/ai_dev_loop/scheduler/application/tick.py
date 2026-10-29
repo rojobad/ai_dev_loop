@@ -5,6 +5,7 @@ from __future__ import annotations
 import secrets
 import sqlite3
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -89,6 +90,9 @@ class TickService:
     ) -> None:
         self.store = store
         self.artifacts = artifacts
+        from ai_dev_loop.scheduler.application.usage_ingestion import bind_usage_artifacts
+
+        bind_usage_artifacts(store, artifacts)
         self.git_admission = git_admission
         self._now_factory = now_factory or (lambda: utc_now())
         self._tick_owner_factory = tick_owner_factory or (lambda: f"tick-{secrets.token_hex(8)}")
@@ -233,6 +237,17 @@ class TickService:
                     receipts.extend(
                         self._sequence_restart_reconcile.reconcile_pending_restart_work(conn)
                     )
+
+            from ai_dev_loop.scheduler.application.usage_ingestion import (
+                reconcile_unacknowledged_usage,
+            )
+
+            with suppress(Exception):
+                reconcile_unacknowledged_usage(
+                    self.store,
+                    self.artifacts,
+                    now=self._now_factory(),
+                )
 
             from ai_dev_loop.scheduler.application.cursor_initial_recovery import (
                 reconcile_pending_cursor_initial_recoveries,

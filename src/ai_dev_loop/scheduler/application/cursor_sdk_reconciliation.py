@@ -540,6 +540,9 @@ class CursorSdkReconciliationService:
     ) -> None:
         self.store = store
         self.artifacts = artifacts
+        from ai_dev_loop.scheduler.application.usage_ingestion import bind_usage_artifacts
+
+        bind_usage_artifacts(store, artifacts)
         self.now = now_factory
         self.event_id = event_id_factory or (lambda: f"evt-{secrets.token_hex(16)}")
         self.dispatch_id = dispatch_id_factory or (lambda: f"fx-{secrets.token_hex(16)}")

@@ -160,8 +160,10 @@ def _attempt_from_authenticated(
     row: sqlite3.Row,
     invocation: dict[str, object],
     outcome: dict[str, object] | None,
+    *,
+    effect_kind: str | None = None,
 ) -> _Attempt | None:
-    effect = str(row["effect_kind"])
+    effect = effect_kind if effect_kind is not None else str(row["effect_kind"])
     if effect not in _INFERENCE_EFFECTS:
         return None
     if (

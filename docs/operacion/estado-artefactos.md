@@ -42,6 +42,25 @@ $XDG_STATE_HOME/ai_dev_loop/
 ```
 
 - `scheduler submit` congela un run `queued` sin lanzar agentes ni mutar el repo.
+- Schema 21 añade `scheduler_usage_attempt_facts` y
+  `scheduler_usage_observations`. La migración solo crea tablas e índices; no
+  recorre artefactos ni infiere consumo. Tras autenticar el resultado de un
+  intento terminal, el scheduler guarda atribución, cobertura y contadores
+  nativos/normalizados, o una obligación de reconciliación solo estadística.
+  Esas filas no contienen prompts, parches, errores libres, rutas absolutas ni
+  secretos. Un conflicto de la misma clave conserva el hecho conocido anterior.
+  Un fallo transitorio de escritura, también desde un publicador de
+  reconciliación sobre un hecho ya asentado, deja una obligación pendiente que
+  nombra el intento lógico y ese publicador, conserva los contadores ya
+  conocidos y no se clasifica como deuda por evidencia ausente. Una carga
+  Codex parcial recupera las contribuciones publicadas que falten desde el
+  JSONL autenticado y asienta esa materialización. La cobertura del proveedor
+  sigue parcial cuando un turno completado omitió usage. Una contribución
+  publicada que no se puede recuperar conserva los contadores sobrevivientes
+  como deuda estadística. La confianza queda fijada en la importación: los lectores públicos de uso
+  siguen autenticando artefactos hasta el cambio de consulta posterior. La
+  integridad numérica en SQLite no reautentica el contenido fuente ni autoriza
+  recuperación, review o Git.
 - Schema 17 guarda aliases editables en `scheduler_run_presentation`,
   `scheduler_sequence_presentation` y `scheduler_planned_run_presentation`. La
   migración desde schema 16 rellena valores acotados sin tocar payloads/hashes y

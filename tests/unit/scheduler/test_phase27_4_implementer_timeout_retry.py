@@ -96,9 +96,10 @@ class _Clock:
 class _InlineCodexBackend(FakeAgentProcessBackend):
     """Run the production adapter in-process with a deterministic provider transport."""
 
-    def __init__(self, modes: list[str]) -> None:
+    def __init__(self, modes: list[str], *, success_usage: dict[str, int] | None = None) -> None:
         super().__init__()
         self.modes = modes
+        self.success_usage = success_usage
         self.implementer_calls = 0
         self.provider_argv: list[list[str]] = []
         self.prompt_bytes: list[bytes] = []
@@ -137,6 +138,8 @@ class _InlineCodexBackend(FakeAgentProcessBackend):
                         "item": {"type": "agent_message", "text": "implemented"},
                     }
                 )
+                if self.success_usage is not None:
+                    events.append({"type": "turn.completed", "usage": self.success_usage})
                 returncode, timed_out, stderr = 0, False, ""
             elif mode == "usage_limit":
                 events.extend(
@@ -168,6 +171,8 @@ class _InlineCodexBackend(FakeAgentProcessBackend):
                 encoding="utf-8",
             )
             stderr_path.write_text(stderr, encoding="utf-8")
+            stdout_path.chmod(0o600)
+            stderr_path.chmod(0o600)
             return StreamingProcessResult(
                 args=argv,
                 returncode=returncode,

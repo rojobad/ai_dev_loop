@@ -785,6 +785,8 @@ def test_cli_inspection_does_not_create_or_migrate_a_ledger(isolated_xdg: Path) 
             "scheduler_cursor_sdk_disposals",
         ):
             conn.execute(f"DROP TABLE {table}")
+        conn.execute("DROP TABLE IF EXISTS scheduler_usage_observations")
+        conn.execute("DROP TABLE IF EXISTS scheduler_usage_attempt_facts")
         conn.execute("DELETE FROM scheduler_schema_migrations WHERE version >= 19")
         conn.execute("PRAGMA user_version = 18")
         conn.commit()

@@ -130,6 +130,9 @@ class SequenceHandoffService:
     ) -> None:
         self.store = store
         self.artifacts = artifacts
+        from ai_dev_loop.scheduler.application.usage_ingestion import bind_usage_artifacts
+
+        bind_usage_artifacts(store, artifacts)
         self._git_checkpoint = git_checkpoint or ProductionGitCheckpointPort()
         self._materializer = materializer or SequenceRunMaterializer(artifacts)
         self._now_factory = now_factory or (lambda: utc_now())

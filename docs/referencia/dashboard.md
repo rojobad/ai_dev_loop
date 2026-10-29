@@ -196,6 +196,15 @@ en el alcance `direct` y su `shortName` es la metadata de presentación vigente.
 la cohorte, 1 en alcance directo, o 0 si no hay runs elegibles. El linaje de
 recovery no se expande ni se suma con el uso directo.
 
+Las lecturas públicas de `token-usage`, inspect y el Dashboard siguen
+autenticando los artefactos protegidos en cada consulta. Schema 21 ya puede
+contener hechos compactos capturados en la ingestión, pero esos lectores no
+cambian de fuente en esta fase: quitar artefactos sigue pudiendo volver
+desconocido un total que el ledger ya materializó. La validación de importación
+no se repite al leer, y una fila estadística no autoriza reanudar un agente.
+Los alcances de cohorte, el filtro de modelo y el formato de fechas permanecen
+los de DUX-06/09.
+
 `configuredModel` sale de la invocación autenticada de ese intento. Cursor usa
 el modelo del turno; el implementer Codex usa su modelo; el reviewer usa el
 modelo de review. No se relee el YAML actual como sustituto histórico. Un

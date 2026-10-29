@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from importlib import resources
@@ -61,7 +61,7 @@ if TYPE_CHECKING:
         | AwaitingFinalizationSequenceState
     )
 
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 SEQUENCE_SCHEMA_VERSION = 5
 REVIEW_RETRY_SCHEMA_VERSION = 6
 SEQUENCE_RUN_LINEAGE_SCHEMA_VERSION = 9
@@ -86,6 +86,7 @@ MIGRATION_V17_NAME = "0017_presentation_short_names"
 MIGRATION_V18_NAME = "0018_cursor_sdk_reconciliation"
 MIGRATION_V19_NAME = "0019_cursor_sdk_retention"
 MIGRATION_V20_NAME = "0020_cursor_sdk_no_progress"
+MIGRATION_V21_NAME = "0021_usage_statistics"
 SEQUENCE_REVIEW_RECOVERY_SCHEMA_VERSION = 11
 CURSOR_INITIAL_RECOVERY_SCHEMA_VERSION = 12
 CURSOR_SEQUENCE_REPLACEMENT_SCHEMA_VERSION = 13
@@ -94,6 +95,7 @@ SEQUENCE_IMPLEMENTER_REPLACEMENT_SCHEMA_VERSION = 16
 CURSOR_SDK_RECONCILIATION_SCHEMA_VERSION = 18
 CURSOR_SDK_RETENTION_SCHEMA_VERSION = 19
 CURSOR_SDK_NO_PROGRESS_SCHEMA_VERSION = 20
+USAGE_STATISTICS_SCHEMA_VERSION = 21
 REQUIRED_TABLES_V18 = frozenset(
     {
         "scheduler_schema_migrations",
@@ -130,8 +132,12 @@ REQUIRED_TABLES_V19 = REQUIRED_TABLES_V18 | {
     "scheduler_cursor_sdk_conversation_fences",
     "scheduler_cursor_sdk_disposals",
 }
-REQUIRED_TABLES = REQUIRED_TABLES_V19 | {
+REQUIRED_TABLES_V20 = REQUIRED_TABLES_V19 | {
     "scheduler_cursor_sdk_no_progress",
+}
+REQUIRED_TABLES = REQUIRED_TABLES_V20 | {
+    "scheduler_usage_attempt_facts",
+    "scheduler_usage_observations",
 }
 REQUIRED_TABLES_V17 = REQUIRED_TABLES_V18 - {"scheduler_cursor_sdk_reconciliations"}
 REQUIRED_TABLES_V16 = REQUIRED_TABLES_V17 - {
@@ -184,10 +190,101 @@ REQUIRED_INDEXES_V18 = frozenset(
 REQUIRED_INDEXES_V19 = REQUIRED_INDEXES_V18 | {
     "idx_scheduler_cursor_sdk_disposals_status",
 }
-REQUIRED_INDEXES = REQUIRED_INDEXES_V19 | {
+REQUIRED_INDEXES_V20 = REQUIRED_INDEXES_V19 | {
     "idx_scheduler_cursor_sdk_no_progress_run",
     "idx_scheduler_cursor_sdk_no_progress_due",
 }
+REQUIRED_INDEXES = REQUIRED_INDEXES_V20 | {
+    "idx_scheduler_usage_facts_provider_role",
+    "idx_scheduler_usage_facts_model",
+    "idx_scheduler_usage_facts_run",
+    "idx_scheduler_usage_facts_ack",
+    "idx_scheduler_usage_observations_attempt",
+    "idx_scheduler_usage_observations_provider_role",
+}
+_USAGE_FACT_COLUMNS = (
+    "logical_attempt_id",
+    "run_id",
+    "provider",
+    "role",
+    "stage",
+    "configured_model",
+    "terminal_status",
+    "coverage",
+    "settlement_status",
+    "diagnostic_codes",
+    "fact_payload",
+    "payload_sha256",
+    "schema_version",
+    "normalization_version",
+    "import_origin",
+    "source_paths",
+    "source_digests",
+    "publisher_attempt_id",
+    "source_dispatch_id",
+    "completion_fence_id",
+    "binding_kind",
+    "binding_sha256",
+    "acknowledgement",
+    "provenance_json",
+    "verified_at",
+    "created_at",
+    "updated_at",
+)
+_USAGE_FACT_MUTABLE_COLUMNS = (
+    "configured_model",
+    "coverage",
+    "settlement_status",
+    "diagnostic_codes",
+    "fact_payload",
+    "payload_sha256",
+    "source_paths",
+    "source_digests",
+    "acknowledgement",
+    "verified_at",
+    "updated_at",
+)
+_USAGE_OBSERVATION_COLUMNS = (
+    "observation_id",
+    "logical_attempt_id",
+    "run_id",
+    "provider",
+    "role",
+    "stage",
+    "native_key",
+    "publisher_attempt_id",
+    "source_dispatch_id",
+    "source_relative_path",
+    "source_digest",
+    "source_format",
+    "source_event_ordinal",
+    "source_event_offsets",
+    "capture_complete",
+    "availability",
+    "native_payload",
+    "normalized_payload",
+    "payload_sha256",
+    "schema_version",
+    "normalization_version",
+    "import_origin",
+    "completion_fence_id",
+    "binding_kind",
+    "binding_sha256",
+    "provenance_json",
+    "verified_at",
+    "created_at",
+    "updated_at",
+)
+_USAGE_OBSERVATION_MUTABLE_COLUMNS = (
+    "capture_complete",
+    "availability",
+    "native_payload",
+    "normalized_payload",
+    "payload_sha256",
+    "source_event_offsets",
+    "verified_at",
+    "updated_at",
+)
 REQUIRED_TABLES_V6 = REQUIRED_TABLES_V7 - {"scheduler_checkpoint_holds"}
 REQUIRED_INDEXES_V17 = REQUIRED_INDEXES_V18 - {
     "idx_scheduler_cursor_sdk_reconciliations_run",
@@ -367,6 +464,10 @@ def _migration_v20_sql() -> str:
     return _migration_sql("0020_cursor_sdk_no_progress.sql")
 
 
+def _migration_v21_sql() -> str:
+    return _migration_sql("0021_usage_statistics.sql")
+
+
 def _split_sql_statements(sql: str) -> list[str]:
     statements: list[str] = []
     for chunk in sql.split(";"):
@@ -423,6 +524,8 @@ def migration_checksum(version: int) -> str:
         return hashlib.sha256(_migration_v19_sql().encode("utf-8")).hexdigest()
     if version == 20:
         return hashlib.sha256(_migration_v20_sql().encode("utf-8")).hexdigest()
+    if version == 21:
+        return hashlib.sha256(_migration_v21_sql().encode("utf-8")).hexdigest()
     raise ValueError(f"unsupported migration version {version}")
 
 
@@ -453,6 +556,10 @@ class SqliteSchedulerStore:
         self._migration_fault_hook = migration_fault_hook
         self._apply_database_permissions = apply_database_permissions
         self._read_only = read_only
+        self.usage_artifacts: object | None = None
+        self.usage_ingestion_barrier: str | None = None
+        self.usage_write_fault: str | None = None
+        self._after_commit_callbacks: list[Callable[[], None]] = []
         if bootstrap and not read_only:
             self.bootstrap()
 
@@ -487,6 +594,10 @@ class SqliteSchedulerStore:
         store._migration_fault_hook = None
         store._apply_database_permissions = apply_database_permissions
         store._read_only = True
+        store.usage_artifacts = None
+        store.usage_ingestion_barrier = None
+        store.usage_write_fault = None
+        store._after_commit_callbacks = []
         with store._connect() as conn:
             version = store._user_version(conn)
             if version == 0:
@@ -657,6 +768,10 @@ class SqliteSchedulerStore:
                 for migration_version in range(1, 20):
                     self._verify_migration_checksum(conn, migration_version)
                 self._migrate_v19_to_v20(conn)
+            elif version == 20:
+                for migration_version in range(1, 21):
+                    self._verify_migration_checksum(conn, migration_version)
+                self._migrate_v20_to_v21(conn)
             else:
                 self._verify_current_schema(conn)
             self._apply_database_permissions(self.db_path)
@@ -1183,7 +1298,7 @@ class SqliteSchedulerStore:
 
     def _migrate_v19_to_v20(self, conn: sqlite3.Connection) -> None:
         if self._user_version(conn) >= 20:
-            self._verify_current_schema(conn)
+            self._migrate_v20_to_v21(conn)
             return
         for migration_version in range(1, 20):
             self._verify_migration_checksum(conn, migration_version)
@@ -1201,6 +1316,38 @@ class SqliteSchedulerStore:
                 (20, MIGRATION_V20_NAME, migration_checksum(20), applied_at),
             )
             conn.execute("PRAGMA user_version = 20")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        self._apply_database_permissions(self.db_path)
+        self._migrate_v20_to_v21(conn)
+
+    def _migrate_v20_to_v21(self, conn: sqlite3.Connection) -> None:
+        if self._user_version(conn) >= USAGE_STATISTICS_SCHEMA_VERSION:
+            self._verify_current_schema(conn)
+            return
+        for migration_version in range(1, USAGE_STATISTICS_SCHEMA_VERSION):
+            self._verify_migration_checksum(conn, migration_version)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for statement in _split_sql_statements(_migration_v21_sql()):
+                self._fault_maybe_raise_migration(statement)
+                conn.execute(statement)
+            applied_at = encode_utc_instant(datetime.now(tz=UTC))
+            conn.execute(
+                """
+                INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    USAGE_STATISTICS_SCHEMA_VERSION,
+                    MIGRATION_V21_NAME,
+                    migration_checksum(USAGE_STATISTICS_SCHEMA_VERSION),
+                    applied_at,
+                ),
+            )
+            conn.execute("PRAGMA user_version = 21")
             conn.commit()
         except Exception:
             conn.rollback()
@@ -1247,6 +1394,9 @@ class SqliteSchedulerStore:
         if target >= SCHEMA_VERSION:
             tables = REQUIRED_TABLES
             indexes = REQUIRED_INDEXES
+        elif target >= 20:
+            tables = REQUIRED_TABLES_V20
+            indexes = REQUIRED_INDEXES_V20
         elif target >= 19:
             tables = REQUIRED_TABLES_V19
             indexes = REQUIRED_INDEXES_V19
@@ -1327,6 +1477,13 @@ class SqliteSchedulerStore:
             conn
         ) >= CURSOR_SDK_NO_PROGRESS_SCHEMA_VERSION and self.schema_has_table(
             conn, "scheduler_cursor_sdk_no_progress"
+        )
+
+    def schema_supports_usage_statistics(self, conn: sqlite3.Connection) -> bool:
+        return self._user_version(
+            conn
+        ) >= USAGE_STATISTICS_SCHEMA_VERSION and self.schema_has_table(
+            conn, "scheduler_usage_attempt_facts"
         )
 
     @staticmethod
@@ -1714,8 +1871,23 @@ class SqliteSchedulerStore:
                 yield conn
                 conn.commit()
             except Exception:
+                self._after_commit_callbacks.clear()
                 conn.rollback()
                 raise
+            callbacks = self._after_commit_callbacks
+            self._after_commit_callbacks = []
+        for callback in callbacks:
+            try:
+                callback()
+            except Exception:
+                continue
+
+    def schedule_after_commit(self, callback: Callable[[], None]) -> None:
+        self._after_commit_callbacks.append(callback)
+
+    def _raise_usage_write_fault(self, name: str) -> None:
+        if self.usage_write_fault == name:
+            raise sqlite3.OperationalError("injected usage write fault")
 
     @contextmanager
     def begin_read(self) -> Iterator[sqlite3.Connection]:
@@ -4745,6 +4917,27 @@ class SqliteSchedulerStore:
         attempt_id: str,
         now: datetime,
     ) -> bool:
+        artifacts = self.usage_artifacts
+        if (
+            artifacts is not None
+            and not self._read_only
+            and self.schema_supports_usage_statistics(conn)
+        ):
+            from ai_dev_loop.scheduler.application.usage_ingestion import (
+                settle_ingested_attempt_usage,
+            )
+            from ai_dev_loop.scheduler.infrastructure.protected_artifacts import (
+                ProtectedArtifactStore,
+            )
+
+            if isinstance(artifacts, ProtectedArtifactStore):
+                settle_ingested_attempt_usage(
+                    self,
+                    artifacts,
+                    conn,
+                    attempt_id=attempt_id,
+                    now=now,
+                )
         now_text = encode_utc_instant(now)
         cursor = conn.execute(
             """
@@ -4755,6 +4948,204 @@ class SqliteSchedulerStore:
             (now_text, attempt_id),
         )
         return cursor.rowcount == 1
+
+    def get_usage_attempt_fact(
+        self, conn: sqlite3.Connection, logical_attempt_id: str
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_usage_attempt_facts
+            WHERE logical_attempt_id = ?
+            """,
+            (logical_attempt_id,),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def get_usage_observation(
+        self, conn: sqlite3.Connection, observation_id: str
+    ) -> sqlite3.Row | None:
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_usage_observations
+            WHERE observation_id = ?
+            """,
+            (observation_id,),
+        ).fetchone()
+        return cast(sqlite3.Row | None, row)
+
+    def insert_usage_attempt_fact(
+        self, conn: sqlite3.Connection, values: Mapping[str, object]
+    ) -> None:
+        self._insert_usage_row(conn, "scheduler_usage_attempt_facts", _USAGE_FACT_COLUMNS, values)
+        self._raise_usage_write_fault("insert_fact")
+
+    def insert_usage_observation(
+        self, conn: sqlite3.Connection, values: Mapping[str, object]
+    ) -> None:
+        self._raise_usage_write_fault("insert_observation")
+        self._insert_usage_row(
+            conn, "scheduler_usage_observations", _USAGE_OBSERVATION_COLUMNS, values
+        )
+
+    def update_usage_attempt_fact(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        logical_attempt_id: str,
+        values: Mapping[str, object],
+    ) -> None:
+        self._raise_usage_write_fault("update_fact")
+        self._update_usage_row(
+            conn,
+            "scheduler_usage_attempt_facts",
+            _USAGE_FACT_MUTABLE_COLUMNS,
+            values,
+            key_column="logical_attempt_id",
+            key=logical_attempt_id,
+        )
+
+    def reopen_usage_statistics_obligation(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        logical_attempt_id: str,
+        publisher_attempt_id: str,
+        fact_payload: str,
+        payload_sha256: str,
+        diagnostic_codes: str,
+        import_origin: str,
+        provenance_json: str,
+        now_text: str,
+    ) -> None:
+        """Record a stats-only retry without using the counter-update fault path."""
+
+        conn.execute(
+            """
+            UPDATE scheduler_usage_attempt_facts
+            SET publisher_attempt_id = ?,
+                import_origin = ?,
+                provenance_json = ?,
+                coverage = NULL,
+                settlement_status = 'pending',
+                diagnostic_codes = ?,
+                fact_payload = ?,
+                payload_sha256 = ?,
+                acknowledgement = 'pending',
+                verified_at = NULL,
+                updated_at = ?
+            WHERE logical_attempt_id = ?
+            """,
+            (
+                publisher_attempt_id,
+                import_origin,
+                provenance_json,
+                diagnostic_codes,
+                fact_payload,
+                payload_sha256,
+                now_text,
+                logical_attempt_id,
+            ),
+        )
+
+    def update_usage_observation(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        observation_id: str,
+        values: Mapping[str, object],
+    ) -> None:
+        self._raise_usage_write_fault("update_observation")
+        self._update_usage_row(
+            conn,
+            "scheduler_usage_observations",
+            _USAGE_OBSERVATION_MUTABLE_COLUMNS,
+            values,
+            key_column="observation_id",
+            key=observation_id,
+        )
+
+    def list_unacknowledged_usage_facts(
+        self, conn: sqlite3.Connection, *, limit: int
+    ) -> list[sqlite3.Row]:
+        if not self.schema_supports_usage_statistics(conn) or limit < 1:
+            return []
+        rows = conn.execute(
+            """
+            SELECT logical_attempt_id, publisher_attempt_id, settlement_status
+            FROM scheduler_usage_attempt_facts
+            WHERE acknowledgement = 'pending'
+            ORDER BY created_at, logical_attempt_id
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [cast(sqlite3.Row, row) for row in rows]
+
+    def acknowledge_classified_usage_facts(
+        self, conn: sqlite3.Connection, *, now_text: str
+    ) -> None:
+        if not self.schema_supports_usage_statistics(conn):
+            return
+        self._raise_usage_write_fault("acknowledge_facts")
+        conn.execute(
+            """
+            UPDATE scheduler_usage_attempt_facts
+            SET acknowledgement = 'acknowledged', updated_at = ?
+            WHERE acknowledgement = 'pending'
+              AND settlement_status != 'pending'
+            """,
+            (now_text,),
+        )
+
+    def _insert_usage_row(
+        self,
+        conn: sqlite3.Connection,
+        table: str,
+        columns: tuple[str, ...],
+        values: Mapping[str, object],
+    ) -> None:
+        if set(values) != set(columns):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "usage row columns do not match the schema",
+            )
+        if table not in {"scheduler_usage_attempt_facts", "scheduler_usage_observations"}:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "usage table is not writable",
+            )
+        column_sql = ", ".join(columns)
+        placeholders = ", ".join("?" * len(columns))
+        conn.execute(
+            f"INSERT INTO {table} ({column_sql}) VALUES ({placeholders})",  # noqa: S608
+            tuple(values[column] for column in columns),
+        )
+
+    def _update_usage_row(
+        self,
+        conn: sqlite3.Connection,
+        table: str,
+        columns: tuple[str, ...],
+        values: Mapping[str, object],
+        *,
+        key_column: str,
+        key: str,
+    ) -> None:
+        if set(values) != set(columns):
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "usage update columns do not match the schema",
+            )
+        if table not in {"scheduler_usage_attempt_facts", "scheduler_usage_observations"}:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.VALIDATION,
+                "usage table is not writable",
+            )
+        assignments = ", ".join(f"{column} = ?" for column in columns)
+        conn.execute(
+            f"UPDATE {table} SET {assignments} WHERE {key_column} = ?",  # noqa: S608
+            tuple(values[column] for column in columns) + (key,),
+        )
 
     def cancel_live_work(
         self,
