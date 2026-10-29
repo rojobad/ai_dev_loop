@@ -26,6 +26,7 @@ prompts, credenciales ni IDs de sesiones de agentes.
 
 | [INC-2026-10-15-002](2026-10-15-active-attempt-status-and-retry-action.md) | 2026-10-15 | Intento activo muestra `preflight_complete` y recomienda retry por timeout previo; caso relacionado `cursor_ready` reportado | Abierto; corrección diferida | Proyección de actividad/acción pendiente de análisis |
 | [INC-2026-10-19-001](2026-10-19-cursor-sdk-busy-first-send-ambiguous-missing.md) | 2026-10-19 | Primer `send` del Cursor SDK recibe `busy` por un run de creación y la fase queda en `cursor_sdk_ambiguous_missing` | Abierto; parche en el árbol, sin aceptación en vivo | Run `queued` de `CreateAgent` tratado como envío incierto |
+| [INC-2026-10-29-001](2026-10-29-cursor-unknown-model-grok-4-7.md) | 2026-10-29 | Cursor SDK rechaza `grok-4.7` ("AI Model Not Found") a mitad del turno iter03 de seq Phase 30 fase 3/3; el sucesor de `implementer-retry --force` falla en `resume` (`invalid_request`) | Abierto (decisión de Rodrigo) | Probable inconsistencia catálogo/ejecución en Cursor; recovery reutiliza el mismo modelo |
 
 Una recurrencia debe tener su propia entrada y enlazar los casos relacionados.
 Conserva el diagnóstico original; agrega nueva evidencia identificando cuándo
