@@ -12,7 +12,9 @@ publica `capabilities.dashboard=true`, `capabilities.shortNames=true`,
 `capabilities.tokenUsage=true` y `capabilities.dashboardTokenUsage=true`. SQLite
 schema 17 en adelante almacena los nombres cortos; schema 16 sigue siendo legible mediante
 fallback sin migración ni escritura. El lector abre un snapshot validado de
-`engine.sqlite3` en modo solo lectura y usa los artefactos protegidos como autoridad.
+`engine.sqlite3` en modo solo lectura. El contenido explícito sigue autenticando
+artefactos protegidos. Las estadísticas de tokens de schema 21 en adelante leen
+hechos importados y no reabren esas fuentes.
 
 Las operaciones HTTP allowlisted son:
 
@@ -196,6 +198,23 @@ en el alcance `direct` y su `shortName` es la metadata de presentación vigente.
 la cohorte, 1 en alcance directo, o 0 si no hay runs elegibles. El linaje de
 recovery no se expande ni se suma con el uso directo.
 
+Las lecturas públicas de `token-usage`, inspect y el Dashboard, en schema 21 o
+posterior, usan los hechos SQLite. No vuelven a abrir artefactos para validar
+números ni para atribuir el modelo ya importado. Quitar o modificar la fuente
+no cambia un total materializado; un import explícito posterior detecta un
+desacuerdo sin reemplazar el hecho conocido. La lectura suma solo las
+observaciones nombradas por el hecho. Si falta una de esas filas, o no
+pertenece a ese intento, la consulta falla con integridad de datos y no usa
+una fila no referenciada ni vuelve a los archivos. Un intento terminal sin fila
+informa `backfill_required` y cobertura desconocida, sin caer a los archivos.
+Un ledger anterior permanece en solo lectura sobre artefactos. La validación
+hecha al importar no se repite al leer, y una fila estadística no autoriza
+reanudar un agente. Los alcances de cohorte, el filtro de modelo y el formato
+de fechas permanecen los de DUX-06/09. Una restauración de solo el archivo
+SQLite conserva esos alcances y estos números; no añade un control Apply ni
+reconstruye prompts. El procedimiento de operador está en
+[Respaldo de estadísticas SQLite](../operacion/respaldo-estadisticas-sqlite.md).
+
 `configuredModel` sale de la invocación autenticada de ese intento. Cursor usa
 el modelo del turno; el implementer Codex usa su modelo; el reviewer usa el
 modelo de review. No se relee el YAML actual como sustituto histórico. Un
@@ -235,8 +254,8 @@ publicación de la misma observación no.
 
 La consulta conserva los límites de 366 días, 10.000 runs de la cohorte,
 100.000 intentos de inferencia del alcance, 5 segundos y 240 KiB. El plazo
-incluye la lectura autenticada de artefactos y se comprueba entre lecturas
-acotadas. Superar alcance, plazo o sobre falla con el error tipado de alcance
+incluye la lectura acotada de hechos SQLite, o de artefactos en un ledger
+anterior a schema 21, y se comprueba entre lecturas acotadas. Superar alcance, plazo o sobre falla con el error tipado de alcance
 estrecho y no publica un total parcial ni muestreado. La ausencia de
 `dashboardTokenUsage` significa que el productor no ofrece esta consulta. El
 Dashboard entonces muestra el uso como no disponible; no lo convierte en cero

@@ -15,6 +15,31 @@ and `docs/operacion/estado-artefactos.md`.
 - The scheduler uses `$XDG_STATE_HOME/ai_dev_loop/engine.sqlite3` and protected
   `artifacts/runs/<sha256(run_id)>/` and `artifacts/sequences/` roots. The default
   XDG state home is `~/.local/state`. Never store run state inside target repos.
+- Schema 21 adds compact usage attempt facts and observations at authenticated
+  ingestion. Schema 22 adds resumable backfill job rows that store ids,
+  revisions, and diagnostic codes only. After schema 21, public token statistics
+  read those facts and do not reopen source artifacts; a missing fact is
+  `backfill_required` with honest unknown coverage. Schema 20 and earlier stay
+  on the read-only artifact path and do not migrate during a read or a backfill
+  check. Materialization and provider coverage are separate. Public statistics
+  load only a fact's committed observation ids and fail closed when a required
+  row is missing or does not belong to that fact; unreferenced rows do not
+  enter totals. Backfill readiness uses that same observation binding and
+  counter validation, stays read-only, and does not repair rows or fall back
+  to artifacts. Readiness counts unmaterialized terminal attempts as unknown
+  provider coverage and keeps unresolved debt out of that settled-unknown
+  bucket. Settled unknown does not block readiness; unresolved debt does.
+  A usage row does not authorize recovery, review, Git, or another prompt.
+  Pending and debt settlement are not provider-unknown coverage. A transient statistics write
+  failure, including a reconciliation publisher updating an already settled
+  fact, reopens one pending statistics-only obligation naming that logical
+  attempt and the failed publisher; known observation rows stay, and the
+  obligation is not missing-source debt. A partial Codex load recovers missing
+  published contributions from the authenticated events source and settles
+  that materialization. Provider coverage stays partial when a completed turn
+  omitted usage. Unrecoverable published contributions keep the surviving
+  counters as statistics debt. Numeric integrity is separate
+  from source-content authentication.
 - Validated ledger snapshots/events, reservations, fenced effects/attempts, and
   authenticated artifact bindings are authority. Do not use legacy `state.json`
   or an agent's text report as a replacement.

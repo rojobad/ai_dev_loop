@@ -217,7 +217,7 @@ def test_current_schema_and_real_cli_initial_recovery_preserve_prompt_identity_a
         "completed",
     )
 
-    assert SCHEMA_VERSION == 20
+    assert SCHEMA_VERSION == 22
     assert completed.codex.implementer_session_id == IMPLEMENTER_ID
     assert completed.codex.reviewer_session_id == REVIEWER_ID
     assert [path.read_bytes() for path in sorted(witness.glob("*.bin"))] == [
@@ -726,6 +726,10 @@ def test_v14_migration_adds_relation_without_rewriting_existing_runs(tmp_path: P
         conn.execute("DROP TABLE scheduler_codex_implementer_recoveries")
         conn.execute("DROP INDEX IF EXISTS idx_scheduler_codex_implementer_recoveries_successor")
         conn.execute("DROP INDEX IF EXISTS idx_scheduler_codex_implementer_recoveries_status")
+        conn.execute("DROP TABLE IF EXISTS scheduler_usage_backfill_items")
+        conn.execute("DROP TABLE IF EXISTS scheduler_usage_backfill_jobs")
+        conn.execute("DROP TABLE IF EXISTS scheduler_usage_observations")
+        conn.execute("DROP TABLE IF EXISTS scheduler_usage_attempt_facts")
         conn.execute("DELETE FROM scheduler_schema_migrations WHERE version >= 15")
         conn.execute("PRAGMA user_version = 14")
     historical = SqliteSchedulerStore.open_readonly(db)

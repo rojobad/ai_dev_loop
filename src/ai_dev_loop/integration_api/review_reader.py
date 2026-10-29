@@ -109,8 +109,16 @@ def read_review_content_chunk(
     limit: int,
 ) -> ReviewContentChunk:
     validate_artifact_read_bounds(byte_offset, limit)
-    run_root = confined_run_root(artifact_root, run_id)
     attempt_id = str(attempt_row["attempt_id"])
+
+    def run_root() -> Path:
+        try:
+            return confined_run_root(artifact_root, run_id)
+        except ValueError as exc:
+            raise IntegrationApiError.data_integrity(
+                "Review artifact path is not safe to read."
+            ) from exc
+
     detail = build_review_detail_data(
         run_id=run_id,
         attempt_row=attempt_row,
@@ -132,7 +140,7 @@ def read_review_content_chunk(
         if not auth.prompt_rel or not auth.prompt_sha256 or auth.prompt_size_bytes is None:
             raise IntegrationApiError.data_integrity("Prompt evidence failed verification.")
         slice_data, total = read_confined_chunk(
-            run_root,
+            run_root(),
             auth.prompt_rel,
             expected_sha256=auth.prompt_sha256,
             expected_size=auth.prompt_size_bytes,
@@ -178,7 +186,7 @@ def read_review_content_chunk(
         if result_path != expected:
             raise IntegrationApiError.data_integrity("Review response binding mismatch.")
         slice_data, total = read_confined_chunk(
-            run_root,
+            run_root(),
             result_path,
             expected_sha256=result_sha,
             expected_size=None,

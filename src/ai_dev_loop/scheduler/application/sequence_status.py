@@ -7,6 +7,8 @@ import sqlite3
 from pathlib import Path
 from typing import TypedDict
 
+from pydantic import ValidationError as ModelValidationError
+
 from ai_dev_loop.scheduler.application.contracts import (
     SafeNextAction,
     SchedulerEngineError,
@@ -28,6 +30,11 @@ from ai_dev_loop.scheduler.application.sequence_lineage_projection import (
 )
 from ai_dev_loop.scheduler.application.sequence_report import SEQUENCE_COMPLETION_REPORT_ARTIFACT
 from ai_dev_loop.scheduler.domain.checkpoint import SEQUENCE_CHECKPOINT_RESULT_ARTIFACT
+from ai_dev_loop.scheduler.domain.common import payload_sha256
+from ai_dev_loop.scheduler.domain.events import (
+    SEQUENCE_CHECKPOINT_COMMITTED_EVENT_KIND,
+    SequenceCheckpointCommittedEvent,
+)
 from ai_dev_loop.scheduler.domain.sequence import (
     ABORT_PENDING_SEQUENCE_STATE_KIND,
     ABORTED_SEQUENCE_STATE_KIND,
@@ -42,6 +49,10 @@ from ai_dev_loop.scheduler.domain.sequence import (
     BlockedSequenceState,
     PreparedSequenceState,
 )
+from ai_dev_loop.scheduler.domain.sequence_run_lineage import (
+    SequenceRunLineageValidationError,
+    project_historical_lineage_from_state,
+)
 from ai_dev_loop.scheduler.domain.state import (
     SCHEDULER_TERMINAL_STATE_KINDS,
     CompletedState,
@@ -50,6 +61,13 @@ from ai_dev_loop.scheduler.domain.state import (
 )
 from ai_dev_loop.scheduler.infrastructure.paths import default_engine_db_path
 from ai_dev_loop.scheduler.infrastructure.protected_artifacts import ProtectedArtifactStore
+from ai_dev_loop.scheduler.infrastructure.readonly_protected_artifacts import (
+    ReadOnlyProtectedArtifactStore,
+)
+from ai_dev_loop.scheduler.infrastructure.sequence_run_lineage_store import (
+    load_sequence_run_lineage,
+    load_sequence_run_lineage_rows,
+)
 from ai_dev_loop.scheduler.infrastructure.sqlite_store import SqliteSchedulerStore
 
 
@@ -68,7 +86,7 @@ class SequenceStatusService:
         self,
         store: SqliteSchedulerStore,
         *,
-        artifacts: ProtectedArtifactStore | None = None,
+        artifacts: ProtectedArtifactStore | ReadOnlyProtectedArtifactStore | None = None,
     ) -> None:
         self.store = store
         self._artifacts = artifacts
@@ -183,11 +201,14 @@ class SequenceStatusService:
                 elif isinstance(run_state, CompletedWithResidualRiskState):
                     accepted = "completed_with_residual_risk"
                 if self._artifacts is not None and entry.commit_message is not None:
-                    result_path = (
-                        self._artifacts.run_root(materialized.run_id)
-                        / SEQUENCE_CHECKPOINT_RESULT_ARTIFACT
-                    )
-                    if result_path.is_file():
+                    try:
+                        result_path = (
+                            self._artifacts.run_root(materialized.run_id)
+                            / SEQUENCE_CHECKPOINT_RESULT_ARTIFACT
+                        )
+                    except (OSError, ValueError):
+                        result_path = None
+                    if result_path is not None and result_path.is_file():
                         try:
                             result = json.loads(result_path.read_bytes())
                             commit_sha = str(result.get("commit_sha256", ""))
@@ -227,17 +248,135 @@ class SequenceStatusService:
             )
         return tuple(summaries)
 
+    def _checkpoint_member_run_ids(
+        self,
+        conn: sqlite3.Connection,
+        state: (
+            PreparedSequenceState
+            | ActiveSequenceState
+            | AbortPendingSequenceState
+            | BlockedSequenceState
+            | AbortedSequenceState
+            | AwaitingFinalizationSequenceState
+        ),
+    ) -> tuple[str, ...]:
+        """Runs whose checkpoint events belong to this sequence.
+
+        Membership is the validated lineage, including adopted replacement
+        generations. Historical sequences without lineage rows use the
+        materialized runs projected from sequence state.
+        """
+
+        if self.store.schema_supports_sequence_run_lineage(conn):
+            rows = load_sequence_run_lineage_rows(conn, state.sequence_id)
+            if rows:
+                try:
+                    lineage = load_sequence_run_lineage(
+                        conn,
+                        state.sequence_id,
+                        definition=state.definition,
+                    )
+                except SequenceRunLineageValidationError as exc:
+                    raise SchedulerEngineError(
+                        SchedulerEngineErrorKind.CORRUPTION,
+                        str(exc),
+                    ) from exc
+                return tuple(
+                    dict.fromkeys(
+                        attempt.run_id
+                        for phase in lineage.phase_executions
+                        for attempt in phase.attempts
+                    )
+                )
+        if isinstance(state, PreparedSequenceState):
+            return ()
+        try:
+            historical = project_historical_lineage_from_state(state)
+        except SequenceRunLineageValidationError as exc:
+            raise SchedulerEngineError(
+                SchedulerEngineErrorKind.CORRUPTION,
+                str(exc),
+            ) from exc
+        return tuple(
+            dict.fromkeys(
+                attempt.run_id
+                for phase in historical.phase_executions
+                for attempt in phase.attempts
+            )
+        )
+
+    def _validated_checkpointed_count(
+        self,
+        conn: sqlite3.Connection,
+        state: (
+            PreparedSequenceState
+            | ActiveSequenceState
+            | AbortPendingSequenceState
+            | BlockedSequenceState
+            | AbortedSequenceState
+            | AwaitingFinalizationSequenceState
+        ),
+    ) -> int:
+        """Count distinct member runs with an authenticated checkpoint event.
+
+        Only that sequence's lineage runs are read, so a damaged checkpoint
+        event on another sequence is not validated here. File prefixes stay
+        separate: a database-only restore still reports this count when the
+        checkpoint result file is absent.
+        """
+
+        run_ids = self._checkpoint_member_run_ids(conn, state)
+        if not run_ids:
+            return 0
+        placeholders = ", ".join("?" for _ in run_ids)
+        rows = conn.execute(
+            f"""
+            SELECT run_id, event_payload, event_payload_sha256
+            FROM scheduler_events
+            WHERE event_kind = ?
+              AND run_id IN ({placeholders})
+            ORDER BY sequence
+            """,  # noqa: S608
+            (SEQUENCE_CHECKPOINT_COMMITTED_EVENT_KIND, *run_ids),
+        ).fetchall()
+        checkpointed: set[str] = set()
+        for row in rows:
+            payload = str(row["event_payload"])
+            if payload_sha256(payload) != str(row["event_payload_sha256"]):
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.VALIDATION,
+                    "sequence checkpoint event payload digest mismatch",
+                )
+            try:
+                event = SequenceCheckpointCommittedEvent.model_validate_json(payload)
+            except ModelValidationError as exc:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.VALIDATION,
+                    "sequence checkpoint event payload is invalid",
+                ) from exc
+            if event.run_id != str(row["run_id"]):
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.VALIDATION,
+                    "sequence checkpoint event run binding mismatch",
+                )
+            if event.sequence_id != state.sequence_id:
+                raise SchedulerEngineError(
+                    SchedulerEngineErrorKind.VALIDATION,
+                    "sequence checkpoint event sequence binding mismatch",
+                )
+            checkpointed.add(event.run_id)
+        return len(checkpointed)
+
     def _aggregate_counts(
         self,
         entries: tuple[SequenceEntrySummary, ...],
         entry_count: int,
+        *,
+        checkpointed: int,
     ) -> SequenceAggregateCounts:
         materialized = sum(1 for entry in entries if entry.materialized)
         accepted = sum(1 for entry in entries if entry.accepted_outcome is not None)
         residual_risk = sum(1 for entry in entries if entry.residual_risk)
-        checkpointed = sum(
-            1 for entry in entries if entry.checkpoint_commit_sha256_prefix is not None
-        )
         cancelled = sum(1 for entry in entries if entry.cancelled)
         remaining = entry_count - materialized - cancelled
         attempts = sum(entry.attempt_count for entry in entries)
@@ -255,7 +394,10 @@ class SequenceStatusService:
     def _completion_report_prefix(self, sequence_id: str) -> str | None:
         if self._artifacts is None:
             return None
-        path = self._artifacts.sequence_root(sequence_id) / SEQUENCE_COMPLETION_REPORT_ARTIFACT
+        try:
+            path = self._artifacts.sequence_root(sequence_id) / SEQUENCE_COMPLETION_REPORT_ARTIFACT
+        except (OSError, ValueError):
+            return None
         if not path.is_file():
             return None
         import hashlib
@@ -276,7 +418,11 @@ class SequenceStatusService:
     ) -> SequenceStatusResult:
         definition = state.definition
         entries = self._entry_summaries(conn, state)
-        counts = self._aggregate_counts(entries, len(definition.entries))
+        counts = self._aggregate_counts(
+            entries,
+            len(definition.entries),
+            checkpointed=self._validated_checkpointed_count(conn, state),
+        )
 
         if isinstance(state, AwaitingFinalizationSequenceState):
             return SequenceStatusResult(
@@ -456,7 +602,7 @@ def default_sequence_status_service(
     from ai_dev_loop.scheduler.infrastructure.paths import default_artifact_root
 
     store = SqliteSchedulerStore.open_readonly(db_path or default_engine_db_path())
-    artifacts = ProtectedArtifactStore(artifact_root or default_artifact_root())
+    artifacts = ReadOnlyProtectedArtifactStore(artifact_root or default_artifact_root())
     return SequenceStatusService(store, artifacts=artifacts)
 
 

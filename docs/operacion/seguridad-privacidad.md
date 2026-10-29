@@ -237,6 +237,17 @@ solo revalida los inputs congelados y los checkpoints durablemente registrados.
 - no traduce ni mejora `cursor_fix_prompt`;
 - reenvia exactamente el fix prompt que Codex emitio en JSON validado.
 
+## Estadísticas numéricas y copia solo SQLite
+
+Tras una importación aceptada, los contadores por modelo, rol y etapa viven en
+el ledger. Una copia de solo `engine.sqlite3` conserva esos números y no
+conserva prompts, parches, reviews ni la evidencia de sesión necesaria para
+reanudar un agente. La ausencia de ese texto es `not_recorded` en
+`review-content`; no se reconstruye desde un proveedor. La integridad numérica
+no reautentica el contenido fuente y no autoriza ejecución, Git ni borrado. El
+procedimiento, que no se ejecuta como parte de la documentación, está en
+[Respaldo de estadísticas SQLite](respaldo-estadisticas-sqlite.md).
+
 ## Output sensible
 
 Por defecto, la CLI no imprime:

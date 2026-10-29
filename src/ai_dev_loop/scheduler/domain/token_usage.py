@@ -9,7 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
 
 USAGE_OBSERVATION_SCHEMA_VERSION = 1
-USAGE_NORMALIZATION_VERSION = "provider-usage-v1"
+USAGE_NORMALIZATION_VERSION: Literal["provider-usage-v1"] = "provider-usage-v1"
 
 UsageProvider = Literal["cursor", "codex"]
 UsageRole = Literal["implementer", "reviewer"]

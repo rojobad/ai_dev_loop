@@ -132,6 +132,9 @@ class CursorTimeoutRetryService:
     ) -> None:
         self.store = store
         self.artifacts = artifacts
+        from ai_dev_loop.scheduler.application.usage_ingestion import bind_usage_artifacts
+
+        bind_usage_artifacts(store, artifacts)
         self.now = now_factory
 
     def record_timeout(self, run_id: str, attempt_id: str) -> TickRunReceipt:

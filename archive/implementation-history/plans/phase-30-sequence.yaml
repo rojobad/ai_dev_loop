@@ -1,0 +1,66 @@
+schema_version: 4
+name: phase-30-sqlite-statistics-and-historical-backfill
+short_name: f30 - Estadísticas en SQLite
+phases:
+- name: phase-30-1-sqlite-usage-ingestion
+  short_name: f30.1 - Tokens durables SQLite
+  plan_path: archive/implementation-history/plans/phase-30-1-sqlite-usage-ingestion.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-30-1-sqlite-usage-ingestion.txt
+  implementer:
+    provider: cursor
+  cursor:
+    runtime: sdk-local
+    model: grok-4.7
+    parameters:
+      context: 256k
+      reasoning_effort: high
+      fast: false
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: xhigh
+  workflow:
+    max_review_iterations: 7
+    cursor_timeout_minutes: 90
+    codex_timeout_minutes: 90
+  commit_message: 'feat: persist authenticated token statistics in SQLite'
+- name: phase-30-2-usage-backfill-and-queries
+  short_name: f30.2 - Backfill y consultas SQLite
+  plan_path: archive/implementation-history/plans/phase-30-2-usage-backfill-and-queries.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-30-2-usage-backfill-and-queries.txt
+  implementer:
+    provider: cursor
+  cursor:
+    runtime: sdk-local
+    model: grok-4.7
+    parameters:
+      context: 256k
+      reasoning_effort: high
+      fast: false
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: xhigh
+  workflow:
+    max_review_iterations: 7
+    cursor_timeout_minutes: 90
+    codex_timeout_minutes: 90
+  commit_message: 'feat: backfill token history and query SQLite statistics'
+- name: phase-30-3-database-only-restore-acceptance
+  short_name: f30.3 - Restauración sólo SQLite
+  plan_path: archive/implementation-history/plans/phase-30-3-database-only-restore-acceptance.md
+  prompt_source_path: archive/implementation-history/plans/prompt_phase-30-3-database-only-restore-acceptance.txt
+  implementer:
+    provider: cursor
+  cursor:
+    runtime: sdk-local
+    model: grok-4.7
+    parameters:
+      context: 256k
+      reasoning_effort: high
+      fast: false
+  codex:
+    review_model: gpt-6.1-sol
+    review_reasoning_effort: xhigh
+  workflow:
+    max_review_iterations: 7
+    cursor_timeout_minutes: 90
+    codex_timeout_minutes: 90

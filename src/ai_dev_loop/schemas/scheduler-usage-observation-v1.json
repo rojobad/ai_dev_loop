@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/scheduler-usage-observation-v1.json",
+  "title": "Scheduler usage observation counters v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "normalization_version",
+    "observation_id",
+    "availability",
+    "capture_complete",
+    "native",
+    "normalized"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "normalization_version": { "const": "provider-usage-v1" },
+    "observation_id": { "type": "string", "minLength": 64, "maxLength": 64 },
+    "availability": { "enum": ["known", "partial"] },
+    "capture_complete": { "type": "boolean" },
+    "native": { "$ref": "#/$defs/counters" },
+    "normalized": { "$ref": "#/$defs/counters" }
+  },
+  "$defs": {
+    "counter": { "type": ["integer", "null"], "minimum": 0, "maximum": 9223372036854775807 },
+    "counters": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/counter" }
+    }
+  }
+}

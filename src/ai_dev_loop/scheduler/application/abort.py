@@ -147,6 +147,9 @@ class SchedulerAbortService:
         self.store = store
         self.backend = backend
         self._artifacts = artifacts
+        from ai_dev_loop.scheduler.application.usage_ingestion import bind_usage_artifacts
+
+        bind_usage_artifacts(store, artifacts)
         self._now_factory = now_factory or (lambda: datetime.now(tz=UTC))
         self._event_id_factory = event_id_factory or (lambda: f"evt-{secrets.token_hex(16)}")
         self._fence_id_factory = fence_id_factory or (lambda: f"fnc-{secrets.token_hex(16)}")

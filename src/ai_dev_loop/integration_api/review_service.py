@@ -17,6 +17,7 @@ from ai_dev_loop.integration_api.review_evidence_auth import (
     AuthenticatedReviewEvidence,
     ReviewEvidenceIntegrityError,
     load_authenticated_review_evidence,
+    missing_review_evidence,
 )
 from ai_dev_loop.integration_api.review_projection import (
     build_review_detail_data,
@@ -75,13 +76,25 @@ class IntegrationReviewReadService:
             raise IntegrationApiError.not_found("Review attempt not found.")
         return row, effect_kind
 
+    def _optional_run_root(self, run_id: str) -> Path | None:
+        try:
+            return confined_run_root(self.artifact_root, run_id)
+        except ValueError as exc:
+            if "missing" in str(exc):
+                return None
+            raise IntegrationApiError.data_integrity(
+                "Review artifact path is not safe to read."
+            ) from exc
+
     def _load_auth(
         self,
         run_id: str,
         attempt_row: sqlite3.Row,
         effect_kind: str,
     ) -> AuthenticatedReviewEvidence:
-        run_root = confined_run_root(self.artifact_root, run_id)
+        run_root = self._optional_run_root(run_id)
+        if run_root is None:
+            return missing_review_evidence()
         return load_authenticated_review_evidence(
             run_root,
             attempt_row,
@@ -106,7 +119,7 @@ class IntegrationReviewReadService:
                     offset=offset,
                     limit=limit,
                 )
-                run_root = confined_run_root(self.artifact_root, run_id)
+                run_root = self._optional_run_root(run_id)
                 items = []
                 for row in rows:
                     effect_kind = str(row["effect_kind"] or "")
@@ -146,7 +159,7 @@ class IntegrationReviewReadService:
                     ) from exc
         except SchedulerEngineError as exc:
             raise _map_engine_error(exc) from exc
-        run_root = confined_run_root(self.artifact_root, run_id)
+        run_root = self._optional_run_root(run_id)
         return build_review_detail_data(
             run_id=run_id,
             attempt_row=row,

@@ -1414,6 +1414,9 @@ def consume_no_progress_reobserve(
 ) -> Literal["replayed", "sequence", "send", "held"]:
     """Apply one owned reobserve without rewriting the historical reconciliation."""
 
+    from ai_dev_loop.scheduler.application.usage_ingestion import bind_usage_artifacts
+
+    bind_usage_artifacts(store, artifacts)
     state, version, _ = store.load_validated_snapshot(conn, run_id)
     kind = _record_reobserve_kind(record)
     store.mark_attempt_ingested(conn, attempt_id=attempt_id, now=now)

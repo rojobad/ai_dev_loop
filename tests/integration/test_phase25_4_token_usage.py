@@ -263,18 +263,19 @@ def test_u01_u03_real_codex_roles_publish_and_read_without_provider_runtime(
     public = default_run_read_service(
         db_path=scheduler_paths["db_path"], artifact_root=missing_artifacts
     ).inspect_run(run_id)
-    assert public.token_usage.direct.known_total_tokens is None
-    assert public.token_usage.direct.coverage == "unknown"
+    assert public.token_usage.direct.known_total_tokens == 140
+    assert public.token_usage.direct.coverage == "complete"
     assert public.token_usage.direct.inference_attempts == 2
-    assert "usage_evidence_not_recorded" in public.token_usage.direct.diagnostics
+    assert "usage_evidence_not_recorded" not in public.token_usage.direct.diagnostics
 
     unsafe_artifacts = scheduler_paths["artifact_root"].parent / "unsafe-artifacts"
     unsafe_artifacts.write_text("not a directory", encoding="utf-8")
     unsafe = default_run_read_service(
         db_path=scheduler_paths["db_path"], artifact_root=unsafe_artifacts
     ).inspect_run(run_id)
-    assert unsafe.token_usage.direct.coverage == "unknown"
-    assert "usage_evidence_integrity_error" in unsafe.token_usage.direct.diagnostics
+    assert unsafe.token_usage.direct.known_total_tokens == 140
+    assert unsafe.token_usage.direct.coverage == "complete"
+    assert "usage_evidence_integrity_error" not in unsafe.token_usage.direct.diagnostics
 
 
 def test_u01_real_cursor_sdk_terminal_usage_is_published_once(
@@ -1349,7 +1350,7 @@ def test_f04_live_and_historical_codex_omissions_keep_lower_bound_partial(
     assert historical_implementer.known_total_tokens == 110
     assert historical_implementer.coverage == "partial"
     assert historical_implementer.categories["total_tokens"].coverage == "partial"
-    assert "missing_historical_codex_usage_turn_2" in historical.direct.diagnostics
+    assert "missing_codex_usage_turn_2" in historical.direct.diagnostics
 
 
 def test_f04_missing_published_codex_turn_is_recovered_across_public_reads(
@@ -1410,9 +1411,9 @@ def test_f04_missing_published_codex_turn_is_recovered_across_public_reads(
         if item.provider == "codex" and item.role == "implementer"
     )
     assert lineage_implementer.known_total_tokens == 130
-    assert lineage_implementer.coverage == "partial"
-    assert lineage_implementer.categories["total_tokens"].coverage == "partial"
-    assert "usage_observation_integrity_error" in run_report.direct.diagnostics
+    assert lineage_implementer.coverage == "complete"
+    assert lineage_implementer.categories["total_tokens"].coverage == "complete"
+    assert "usage_observation_integrity_error" not in run_report.direct.diagnostics
 
     sequence_report = service.sequence_report(prepared.sequence_id)
     sequence_implementer = next(
@@ -1421,8 +1422,8 @@ def test_f04_missing_published_codex_turn_is_recovered_across_public_reads(
         if item.provider == "codex" and item.role == "implementer"
     )
     assert sequence_implementer.known_total_tokens == 130
-    assert sequence_implementer.coverage == "partial"
-    assert sequence_implementer.categories["total_tokens"].coverage == "partial"
+    assert sequence_implementer.coverage == "complete"
+    assert sequence_implementer.categories["total_tokens"].coverage == "complete"
 
     run_inspect = default_run_read_service(
         db_path=scheduler_paths["db_path"], artifact_root=scheduler_paths["artifact_root"]
@@ -1433,7 +1434,7 @@ def test_f04_missing_published_codex_turn_is_recovered_across_public_reads(
         if item.provider == "codex" and item.role == "implementer"
     )
     assert inspected_run_implementer.known_total_tokens == 130
-    assert inspected_run_implementer.coverage == "partial"
+    assert inspected_run_implementer.coverage == "complete"
     sequence_inspect = default_sequence_read_service(
         db_path=scheduler_paths["db_path"], artifact_root=scheduler_paths["artifact_root"]
     ).inspect_sequence(prepared.sequence_id)
@@ -1443,7 +1444,7 @@ def test_f04_missing_published_codex_turn_is_recovered_across_public_reads(
         if item.provider == "codex" and item.role == "implementer"
     )
     assert inspected_sequence_implementer.known_total_tokens == 130
-    assert inspected_sequence_implementer.coverage == "partial"
+    assert inspected_sequence_implementer.coverage == "complete"
 
     monkeypatch.setenv("PATH", "/provider-runtime-must-not-be-used")
     run_cli = runner.invoke(app, ["scheduler", "usage", run_id, "--output", "json"])
@@ -1454,7 +1455,7 @@ def test_f04_missing_published_codex_turn_is_recovered_across_public_reads(
         if item["provider"] == "codex" and item["role"] == "implementer"
     )
     assert run_cli_implementer["known_total_tokens"] == 130
-    assert run_cli_implementer["coverage"] == "partial"
+    assert run_cli_implementer["coverage"] == "complete"
     sequence_cli = runner.invoke(
         app,
         ["scheduler", "sequence", "usage", prepared.sequence_id, "--output", "json"],
@@ -1466,7 +1467,7 @@ def test_f04_missing_published_codex_turn_is_recovered_across_public_reads(
         if item["provider"] == "codex" and item["role"] == "implementer"
     )
     assert sequence_cli_implementer["known_total_tokens"] == 130
-    assert sequence_cli_implementer["coverage"] == "partial"
+    assert sequence_cli_implementer["coverage"] == "complete"
     assert scheduler_paths["db_path"].read_bytes() == database_before
     assert {
         path.relative_to(scheduler_paths["artifact_root"]).as_posix(): hashlib.sha256(
@@ -1682,9 +1683,9 @@ def test_u02_u03_sequence_usage_follows_only_authoritative_phase_run_lineage(
     inspected = default_sequence_read_service(
         db_path=scheduler_paths["db_path"], artifact_root=missing_artifacts
     ).inspect_sequence(prepared.sequence_id)
-    assert inspected.token_usage.sequence.known_total_tokens is None
-    assert inspected.token_usage.sequence.coverage == "unknown"
-    assert "usage_evidence_not_recorded" in inspected.token_usage.sequence.diagnostics
+    assert inspected.token_usage.sequence.known_total_tokens == 170
+    assert inspected.token_usage.sequence.coverage == "partial"
+    assert "usage_evidence_not_recorded" not in inspected.token_usage.sequence.diagnostics
 
 
 def test_f06_adopted_sequence_replacement_and_shared_ancestry_count_once(

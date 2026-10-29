@@ -42,6 +42,49 @@ $XDG_STATE_HOME/ai_dev_loop/
 ```
 
 - `scheduler submit` congela un run `queued` sin lanzar agentes ni mutar el repo.
+- Schema 21 añade `scheduler_usage_attempt_facts` y
+  `scheduler_usage_observations`. La migración solo crea tablas e índices; no
+  recorre artefactos ni infiere consumo. Tras autenticar el resultado de un
+  intento terminal, el scheduler guarda atribución, cobertura y contadores
+  nativos/normalizados, o una obligación de reconciliación solo estadística.
+  Esas filas no contienen prompts, parches, errores libres, rutas absolutas ni
+  secretos. Un conflicto de la misma clave conserva el hecho conocido anterior.
+  Un fallo transitorio de escritura, también desde un publicador de
+  reconciliación sobre un hecho ya asentado, deja una obligación pendiente que
+  nombra el intento lógico y ese publicador, conserva los contadores ya
+  conocidos y no se clasifica como deuda por evidencia ausente. Una carga
+  Codex parcial recupera las contribuciones publicadas que falten desde el
+  JSONL autenticado y asienta esa materialización. La cobertura del proveedor
+  sigue parcial cuando un turno completado omitió usage. Una contribución
+  publicada que no se puede recuperar conserva los contadores sobrevivientes
+  como deuda estadística. La confianza queda fijada en la importación.
+- Schema 22 añade `scheduler_usage_backfill_jobs` y
+  `scheduler_usage_backfill_items` para `scheduler usage-backfill`. Esas filas
+  guardan alcance, cursor, revisión y códigos de diagnóstico; no guardan
+  prompts, parches ni texto fuente. `--check` no migra ni escribe.
+  `--apply` migra con el store normal e importa un lote acotado. El recibo de
+  texto incluye `job_id` y `job_status` para reanudar ese trabajo. Reanudar usa
+  el mismo alcance. Un intento terminal sin fila cuenta como cobertura
+  desconocida del proveedor y, por separado, como deuda de materialización.
+  La deuda de asentamiento no cuenta como desconocido asentado y deja la
+  preparación estadística incompleta; un desconocido asentado no la bloquea.
+  Los contadores sobrevivientes de una fuente parcial se conservan. Un hecho
+  ya conocido no se borra si la fuente desaparece, y un conflicto de la misma
+  clave conserva los contadores anteriores. La lectura pública y la
+  preparación de `--check` usan solo los `observation_ids` del hecho y fallan
+  si falta una fila exigida, no pertenece a ese hecho o su contador no
+  coincide. Esa comprobación no repara filas ni abre artefactos.
+- Desde schema 21, `scheduler usage`, `scheduler sequence usage`, `tokenUsage`
+  y las consultas de tokens del Dashboard leen hechos SQLite. No reabren
+  artefactos para validar números. Un intento terminal sin hecho informa
+  `backfill_required` y cobertura desconocida. Un ledger anterior a schema 21
+  sigue en solo lectura sobre artefactos y no se migra al consultarlo. La
+  materialización (qué intentos tienen fila) es distinta de la cobertura del
+  proveedor (cuántos contadores eran utilizables). La integridad numérica en
+  SQLite no reautentica el contenido fuente ni autoriza recuperación, review
+  o Git. El procedimiento de operador para importar, comparar y respaldar ese
+  archivo está en [Respaldo de estadísticas SQLite](respaldo-estadisticas-sqlite.md).
+  Esta fase no ejecuta ese procedimiento sobre el ledger vivo.
 - Schema 17 guarda aliases editables en `scheduler_run_presentation`,
   `scheduler_sequence_presentation` y `scheduler_planned_run_presentation`. La
   migración desde schema 16 rellena valores acotados sin tocar payloads/hashes y

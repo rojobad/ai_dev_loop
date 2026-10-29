@@ -97,6 +97,11 @@ from ai_dev_loop.scheduler.application.token_usage_query import (
     scheduler_sequence_usage,
     scheduler_usage,
 )
+from ai_dev_loop.scheduler.application.usage_backfill import (
+    parse_usage_backfill_request,
+    render_backfill_report,
+    run_usage_backfill,
+)
 from ai_dev_loop.scheduler.domain.cursor_sdk_retention import (
     CURSOR_STORE_CLEANUP_CONFIRMATION,
 )
@@ -451,6 +456,61 @@ def scheduler_usage_command(
     def run() -> None:
         result = scheduler_usage(run_id)
         typer.echo(render_usage_report(result, output=output.value), nl=False)
+
+    _handle(run)
+
+
+@scheduler_app.command("usage-backfill")
+def scheduler_usage_backfill_command(
+    all_runs: Annotated[
+        bool,
+        typer.Option("--all", help="Import every run in the existing ledger."),
+    ] = False,
+    run_id: Annotated[
+        str | None,
+        typer.Option("--run-id", help="Import one exact scheduler run."),
+    ] = None,
+    project_name: Annotated[
+        str | None,
+        typer.Option("--project-name", help="Import one project name."),
+    ] = None,
+    check: Annotated[
+        bool,
+        typer.Option("--check", help="Report readiness without writing or migrating."),
+    ] = False,
+    apply: Annotated[
+        bool,
+        typer.Option("--apply", help="Import one bounded batch into SQLite."),
+    ] = False,
+    batch_size: Annotated[
+        int,
+        typer.Option("--batch-size", help="Maximum attempts visited in one batch."),
+    ] = 32,
+    max_attempts: Annotated[
+        int,
+        typer.Option("--max-attempts", help="Maximum attempts imported by this invocation."),
+    ] = 100,
+    resume: Annotated[
+        str | None,
+        typer.Option("--resume", help="Continue one existing backfill job."),
+    ] = None,
+    output: OutputOption = DEFAULT_OUTPUT,
+) -> None:
+    """Import historical token facts or report materialization readiness."""
+
+    def run() -> None:
+        request = parse_usage_backfill_request(
+            all_runs=all_runs,
+            run_id=run_id,
+            project_name=project_name,
+            check=check,
+            apply=apply,
+            batch_size=batch_size,
+            max_attempts=max_attempts,
+            resume_job_id=resume,
+        )
+        result = run_usage_backfill(request)
+        typer.echo(render_backfill_report(result, output=output.value), nl=False)
 
     _handle(run)
 

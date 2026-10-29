@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-dev-loop.local/schemas/scheduler-usage-fact-v1.json",
+  "title": "Scheduler usage attempt fact v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "normalization_version",
+    "logical_attempt_id",
+    "run_id",
+    "provider",
+    "role",
+    "stage",
+    "configured_model",
+    "terminal_status",
+    "coverage",
+    "settlement_status",
+    "diagnostic_codes",
+    "observation_ids",
+    "import_origin"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "normalization_version": { "const": "provider-usage-v1" },
+    "logical_attempt_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "run_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "provider": { "enum": ["cursor", "codex"] },
+    "role": { "enum": ["implementer", "reviewer"] },
+    "stage": { "enum": ["initial", "correction", "review"] },
+    "configured_model": { "type": ["string", "null"], "minLength": 1, "maxLength": 256 },
+    "terminal_status": { "enum": ["completed", "failed", "cancelled", "uncertain"] },
+    "coverage": {
+      "type": ["string", "null"],
+      "enum": ["complete", "partial", "unknown", "not_applicable", null]
+    },
+    "settlement_status": { "enum": ["settled", "pending", "debt", "conflict"] },
+    "diagnostic_codes": {
+      "type": "array",
+      "maxItems": 16,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,79}$" }
+    },
+    "observation_ids": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 64, "maxLength": 64 }
+    },
+    "import_origin": { "enum": ["ingestion", "reconciliation"] }
+  }
+}

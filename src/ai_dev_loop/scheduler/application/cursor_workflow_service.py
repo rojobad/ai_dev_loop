@@ -124,6 +124,9 @@ class CursorWorkflowService:
     ) -> None:
         self.store = store
         self.artifacts = artifacts
+        from ai_dev_loop.scheduler.application.usage_ingestion import bind_usage_artifacts
+
+        bind_usage_artifacts(store, artifacts)
         self._now_factory = now_factory or (lambda: utc_now())
         self._event_id_factory = event_id_factory or (lambda: f"evt-{secrets.token_hex(16)}")
         self._dispatch_id_factory = dispatch_id_factory or (lambda: f"fx-{secrets.token_hex(16)}")

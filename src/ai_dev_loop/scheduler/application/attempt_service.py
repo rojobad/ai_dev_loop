@@ -244,6 +244,9 @@ class AttemptService:
     ) -> None:
         self.store = store
         self.artifacts = artifacts
+        from ai_dev_loop.scheduler.application.usage_ingestion import bind_usage_artifacts
+
+        bind_usage_artifacts(store, artifacts)
         self.backend = backend
         self._now_factory = now_factory
         self._event_id_factory = event_id_factory

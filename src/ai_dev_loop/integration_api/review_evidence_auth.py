@@ -209,6 +209,26 @@ def _load_authenticated_outcome(
     return outcome, validated, "valid"
 
 
+def missing_review_evidence() -> AuthenticatedReviewEvidence:
+    """Return typed absence when review bytes are not on this copy.
+
+    A database-only restore has no prompt or result files. This does not
+    reconstruct them from a provider or from SQLite statistics.
+    """
+
+    return AuthenticatedReviewEvidence(
+        invocation={},
+        outcome=None,
+        validated=None,
+        result_state="not_produced",
+        prompt_state="not_recorded",
+        prompt_rel=None,
+        prompt_sha256=None,
+        prompt_size_bytes=None,
+        reviewer_session_id=None,
+    )
+
+
 def load_authenticated_review_evidence(
     run_root: Path,
     attempt_row: sqlite3.Row,
@@ -239,6 +259,8 @@ def load_authenticated_review_evidence(
             effect_kind=effect_kind,
         )
     except CodexEvidenceError as exc:
+        if str(exc) == "codex invocation evidence is missing":
+            return missing_review_evidence()
         raise ReviewEvidenceIntegrityError(str(exc)) from exc
     raw_iteration = invocation.get("review_iteration", iteration)
     if isinstance(raw_iteration, bool) or not isinstance(raw_iteration, int):

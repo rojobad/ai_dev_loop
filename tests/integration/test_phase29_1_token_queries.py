@@ -741,7 +741,7 @@ def test_t291_02_03_codex_roles_keep_configured_models_and_historical_jsonl(
         conn.commit()
     forgotten = query()
     missing_model = _row(forgotten, provider="codex", role="implementer", stage="initial")
-    assert missing_model["configuredModel"] is None
+    assert missing_model["configuredModel"] == "gpt-5.5"
     assert missing_model["knownTotalTokens"] == 110
     assert forgotten["source"]["knownTotalTokens"] == 195
     assert "Unknown" not in json.dumps(missing_model)
@@ -845,8 +845,8 @@ def test_t291_02_03_sdk_replay_is_one_configured_model_observation(
         run_id=run_id,
     )
     tampered_body = tampered.model_dump(mode="json", by_alias=True)
-    assert tampered_body["source"]["knownTotalTokens"] != 7519
-    assert "usage_observation_integrity_error" in tampered_body["source"]["diagnostics"]
+    assert tampered_body["source"]["knownTotalTokens"] == 7519
+    assert "usage_observation_integrity_error" not in tampered_body["source"]["diagnostics"]
     _assert_no_private_content(tampered_body)
     assert observation.name not in json.dumps(tampered_body)
 
