@@ -315,6 +315,9 @@ ai_dev_loop scheduler start <run-id>
 ai_dev_loop scheduler tick
 ai_dev_loop scheduler status <run-id> [--output text|json]
 ai_dev_loop scheduler usage <run-id> [--output text|json]
+ai_dev_loop scheduler usage-backfill (--all | --run-id ID | --project-name NAME)
+    (--check | --apply) [--batch-size N] [--max-attempts N] [--resume JOB_ID]
+    [--output text|json]
 ai_dev_loop scheduler list [--output text|json]
 ai_dev_loop scheduler abort <run-id> [--output text|json]
 ai_dev_loop scheduler history <run-id> [--limit N] [--order oldest|newest] [--output text|json]
@@ -341,7 +344,29 @@ run y el total de su linaje de recuperación; `scheduler sequence usage` agrega 
 vez cada run adoptado por el linaje de fases. Ambos muestran el total conocido como
 cota inferior y cobertura `complete`, `partial`, `unknown` o `not_applicable`.
 Conservan categorías nativas y atribuyen Cursor/Codex por rol y etapa. No calculan
-costos, no ejecutan proveedores y no reescriben artefactos históricos.
+costos, no ejecutan proveedores y no reescriben artefactos históricos. En un
+ledger schema 21 o posterior leen hechos SQLite ya importados. Si un intento
+terminal todavía no tiene hecho, el total permanece desconocido y el diagnóstico
+es `backfill_required`. Un ledger más antiguo sigue leyendo artefactos y no se
+migra al consultarlo.
+
+`scheduler usage-backfill` importa esos hechos históricos. Hace falta exactamente
+un alcance (`--all`, `--run-id` o `--project-name`) y exactamente un modo
+(`--check` o `--apply`). `--check` informa materialización y cobertura sin crear
+tablas, directorios ni progreso. También valida las observaciones
+comprometidas de cada hecho; si falta una fila exigida, no pertenece a ese
+hecho o su contador no coincide, el comando falla sin reparar ni leer
+artefactos. `--apply` migra el ledger existente e importa
+como máximo `--max-attempts` intentos, en lotes de `--batch-size`. El recibo
+de texto, igual que el JSON, incluye `job_id` y `job_status`. `--resume`
+continúa ese identificador y rechaza un alcance o unos límites distintos. No
+borra artefactos, no lanza agentes y no convierte un cursor de trabajo completado
+en permiso para borrar fuentes. Un intento terminal todavía no importado entra
+en la cobertura del proveedor como `unknown` y queda contado aparte como deuda
+de materialización. Una deuda de asentamiento no es un desconocido ya asentado
+y deja `remaining` por encima de cero. Un desconocido asentado no bloquea la
+preparación. Una historia materializada puede seguir teniendo cobertura
+`unknown` si el proveedor no registró contadores.
 
 ## `scheduler cursor-retry`
 

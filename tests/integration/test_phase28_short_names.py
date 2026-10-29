@@ -613,6 +613,8 @@ def test_schema16_read_fallback_and_v17_migration_preserve_authority(
         conn.execute("DROP TABLE scheduler_planned_run_presentation")
         conn.execute("DROP TABLE scheduler_run_presentation")
         conn.execute("DROP TABLE scheduler_sequence_presentation")
+        conn.execute("DROP TABLE IF EXISTS scheduler_usage_backfill_items")
+        conn.execute("DROP TABLE IF EXISTS scheduler_usage_backfill_jobs")
         conn.execute("DROP TABLE IF EXISTS scheduler_usage_observations")
         conn.execute("DROP TABLE IF EXISTS scheduler_usage_attempt_facts")
         conn.execute("DELETE FROM scheduler_schema_migrations WHERE version >= 17")
@@ -646,7 +648,7 @@ def test_schema16_read_fallback_and_v17_migration_preserve_authority(
 
     migrated = SqliteSchedulerStore(paths["db_path"])
     with migrated.begin_read() as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 21
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 22
         assert migrated.sequence_short_name(conn, prepared.sequence_id) == "fixture-sequence"
         assert migrated.run_short_name(conn, submitted.run_id) == submitted.run_id[:35]
         entries = conn.execute(
@@ -694,6 +696,8 @@ def test_schema17_migration_fault_rolls_back_all_presentation_tables(
         conn.execute("DROP TABLE scheduler_planned_run_presentation")
         conn.execute("DROP TABLE scheduler_run_presentation")
         conn.execute("DROP TABLE scheduler_sequence_presentation")
+        conn.execute("DROP TABLE IF EXISTS scheduler_usage_backfill_items")
+        conn.execute("DROP TABLE IF EXISTS scheduler_usage_backfill_jobs")
         conn.execute("DROP TABLE IF EXISTS scheduler_usage_observations")
         conn.execute("DROP TABLE IF EXISTS scheduler_usage_attempt_facts")
         conn.execute("DELETE FROM scheduler_schema_migrations WHERE version >= 17")

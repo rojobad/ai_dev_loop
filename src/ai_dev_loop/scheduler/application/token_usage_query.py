@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
+from pydantic import ValidationError
+
 from ai_dev_loop.integration_api.process_output_auth import (
     ProcessOutputIntegrityError,
     authenticate_process_attempt,
@@ -41,6 +43,11 @@ from ai_dev_loop.scheduler.domain.token_usage import (
     UsageScopeReport,
     normalize_codex_usage,
     usage_observation_id,
+)
+from ai_dev_loop.scheduler.domain.usage_facts import (
+    UsageFactPayloadV1,
+    UsageObservationCountersV1,
+    canonical_sha256,
 )
 from ai_dev_loop.scheduler.infrastructure.paths import (
     default_artifact_root,
@@ -557,6 +564,191 @@ def _aggregate_scope(
     )
 
 
+def _usage_statistics_corrupt() -> SchedulerEngineError:
+    return SchedulerEngineError(
+        SchedulerEngineErrorKind.CORRUPTION,
+        "usage statistics payload is invalid",
+    )
+
+
+def _validated_fact_payload(row: sqlite3.Row) -> UsageFactPayloadV1:
+    try:
+        payload = UsageFactPayloadV1.model_validate_json(str(row["fact_payload"]))
+        if canonical_sha256(payload.model_dump(mode="json")) != str(row["payload_sha256"]):
+            raise ValueError("usage fact digest mismatch")
+    except (ValidationError, ValueError, json.JSONDecodeError, TypeError) as exc:
+        raise _usage_statistics_corrupt() from exc
+    return payload
+
+
+def _observation_publishers(
+    conn: sqlite3.Connection,
+    *,
+    attempt_id: str,
+    fact_publisher_id: str,
+) -> set[str]:
+    """Publishers that may own a fact's committed observations."""
+
+    allowed = {attempt_id, fact_publisher_id}
+    tables = {
+        str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    if "scheduler_cursor_sdk_reconciliations" not in tables:
+        return allowed
+    rows = conn.execute(
+        """
+        SELECT attempt.attempt_id
+        FROM scheduler_cursor_sdk_reconciliations AS reconciliation
+        JOIN scheduler_effects AS effect
+          ON effect.run_id = reconciliation.run_id
+         AND effect.effect_kind = ?
+         AND json_extract(effect.effect_payload, '$.recovery_key') = reconciliation.recovery_key
+        JOIN scheduler_attempts AS attempt ON attempt.dispatch_id = effect.dispatch_id
+        WHERE reconciliation.source_attempt_id = ?
+        """,
+        (RECONCILE_CURSOR_SDK_RUN_EFFECT_KIND, attempt_id),
+    ).fetchall()
+    allowed.update(str(row[0]) for row in rows)
+    return allowed
+
+
+def _validated_observations(
+    conn: sqlite3.Connection,
+    attempt_id: str,
+    observation_ids: tuple[str, ...],
+    *,
+    run_id: str,
+    publisher_attempt_id: str,
+    provider: str,
+    role: str,
+    stage: str,
+) -> tuple[UsageObservationV1, ...]:
+    """Load only the fact's committed observation ids, in that order."""
+
+    loaded: list[UsageObservationV1] = []
+    for observation_id in observation_ids:
+        row = conn.execute(
+            """
+            SELECT * FROM scheduler_usage_observations
+            WHERE observation_id = ?
+            """,
+            (observation_id,),
+        ).fetchone()
+        if row is None:
+            raise _usage_statistics_corrupt()
+        if str(row["publisher_attempt_id"]) not in _observation_publishers(
+            conn,
+            attempt_id=attempt_id,
+            fact_publisher_id=publisher_attempt_id,
+        ):
+            raise _usage_statistics_corrupt()
+        if (
+            str(row["logical_attempt_id"]) != attempt_id
+            or str(row["run_id"]) != run_id
+            or str(row["provider"]) != provider
+            or str(row["role"]) != role
+            or str(row["stage"]) != stage
+        ):
+            raise _usage_statistics_corrupt()
+        try:
+            native = ProviderNativeUsage.model_validate_json(str(row["native_payload"]))
+            normalized = NormalizedUsage.model_validate_json(str(row["normalized_payload"]))
+            offsets = json.loads(str(row["source_event_offsets"]))
+            if not isinstance(offsets, list) or any(not isinstance(item, str) for item in offsets):
+                raise ValueError("usage observation offsets are invalid")
+            row_provider = str(row["provider"])
+            row_role = str(row["role"])
+            row_stage = str(row["stage"])
+            if row_provider not in {"cursor", "codex"} or row_role not in {
+                "implementer",
+                "reviewer",
+            }:
+                raise ValueError("usage observation attribution is invalid")
+            if row_stage not in {"initial", "correction", "review"}:
+                raise ValueError("usage observation stage is invalid")
+            availability = str(row["availability"])
+            if availability not in {"known", "partial"}:
+                raise ValueError("usage observation availability is invalid")
+            observation = UsageObservationV1(
+                observation_id=str(row["observation_id"]),
+                run_id=str(row["run_id"]),
+                provider=cast(Literal["cursor", "codex"], row_provider),
+                role=cast(Literal["implementer", "reviewer"], row_role),
+                stage=cast(Literal["initial", "correction", "review"], row_stage),
+                scheduler_attempt_id=str(row["logical_attempt_id"]),
+                publisher_attempt_id=str(row["publisher_attempt_id"]),
+                source_dispatch_id=str(row["source_dispatch_id"]),
+                native_key=str(row["native_key"]),
+                source_artifact_path=str(row["source_relative_path"]),
+                source_artifact_sha256=str(row["source_digest"]),
+                source_format=str(row["source_format"]),
+                source_event_ordinal=int(row["source_event_ordinal"]),
+                source_event_offsets=tuple(offsets),
+                capture_complete=bool(int(row["capture_complete"])),
+                availability=cast(Literal["known", "partial"], availability),
+                native=native,
+                normalized=normalized,
+            )
+            counters = UsageObservationCountersV1(
+                observation_id=observation.observation_id,
+                availability=observation.availability,
+                capture_complete=observation.capture_complete,
+                native=native,
+                normalized=normalized,
+            )
+            if canonical_sha256(counters.semantic_payload()) != str(row["payload_sha256"]):
+                raise ValueError("usage observation digest mismatch")
+            if observation.scheduler_attempt_id != attempt_id:
+                raise ValueError("usage observation attempt mismatch")
+        except (ValidationError, ValueError, json.JSONDecodeError, TypeError) as exc:
+            raise _usage_statistics_corrupt() from exc
+        loaded.append(observation)
+    return tuple(loaded)
+
+
+def _ledger_attempt(row: sqlite3.Row) -> _Attempt | None:
+    """Attribute an attempt from the ledger effect without opening artifacts."""
+
+    effect_kind = str(row["effect_kind"])
+    if effect_kind not in _INFERENCE_EFFECTS:
+        return None
+    provider: Literal["cursor", "codex"]
+    role: Literal["implementer", "reviewer"]
+    stage: Literal["initial", "correction", "review"]
+    if effect_kind in CODEX_ATTEMPT_EFFECT_KINDS:
+        provider, role, stage = "codex", "reviewer", "review"
+    elif effect_kind in IMPLEMENTER_ATTEMPT_EFFECT_KINDS:
+        provider, role = "codex", "implementer"
+        stage = "initial"
+        try:
+            payload = json.loads(str(row["effect_payload"]))
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict) and payload.get("turn") in {"initial", "correction"}:
+            stage = cast(Literal["initial", "correction"], payload["turn"])
+    else:
+        provider, role = "cursor", "implementer"
+        stage = "initial"
+        try:
+            payload = json.loads(str(row["effect_payload"]))
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict):
+            iteration = payload.get("iteration")
+            if isinstance(iteration, int) and not isinstance(iteration, bool) and iteration > 1:
+                stage = "correction"
+    return _Attempt(
+        run_id=str(row["run_id"]),
+        attempt_id=str(row["attempt_id"]),
+        dispatch_id=str(row["dispatch_id"]),
+        provider=provider,
+        role=role,
+        stage=stage,
+        configured_model=None,
+        outcome=None,
+    )
+
+
 class TokenUsageReadService:
     """Projects usage without migrations, backfills, provider runtimes, or auth calls."""
 
@@ -625,6 +817,133 @@ class TokenUsageReadService:
         return tuple(str(row["run_id"]) for row in rows)
 
     def _collect(
+        self,
+        conn: sqlite3.Connection,
+        run_ids: tuple[str, ...],
+        *,
+        checkpoint: Callable[[], None] | None = None,
+    ) -> tuple[
+        dict[str, _Attempt],
+        dict[str, list[UsageObservationV1]],
+        dict[str, bool],
+        int,
+        list[str],
+    ]:
+        if self.store.schema_supports_usage_statistics(conn):
+            return self._collect_from_facts(conn, run_ids, checkpoint=checkpoint)
+        return self._collect_from_artifacts(conn, run_ids, checkpoint=checkpoint)
+
+    def _collect_from_facts(
+        self,
+        conn: sqlite3.Connection,
+        run_ids: tuple[str, ...],
+        *,
+        checkpoint: Callable[[], None] | None = None,
+    ) -> tuple[
+        dict[str, _Attempt],
+        dict[str, list[UsageObservationV1]],
+        dict[str, bool],
+        int,
+        list[str],
+    ]:
+        """Project imported facts. This path does not open source artifacts."""
+
+        attempts: dict[str, _Attempt] = {}
+        observations: dict[str, list[UsageObservationV1]] = {}
+        completeness: dict[str, bool] = {}
+        diagnostics: list[str] = []
+        unattributed = 0
+        for run_id in run_ids:
+            _checkpoint(checkpoint)
+            rows = conn.execute(
+                """
+                SELECT attempt.attempt_id, attempt.run_id, attempt.dispatch_id, attempt.status,
+                       effect.effect_kind, effect.effect_payload
+                FROM scheduler_attempts AS attempt
+                JOIN scheduler_effects AS effect
+                  ON effect.dispatch_id = attempt.dispatch_id
+                WHERE attempt.run_id = ?
+                ORDER BY attempt.created_at, attempt.attempt_id
+                """,
+                (run_id,),
+            ).fetchall()
+            for row in rows:
+                effect_kind = str(row["effect_kind"])
+                if effect_kind not in _INFERENCE_EFFECTS:
+                    continue
+                _checkpoint(checkpoint)
+                attempt_id = str(row["attempt_id"])
+                fact = self.store.get_usage_attempt_fact(conn, attempt_id)
+                if fact is None:
+                    if str(row["status"]) not in {
+                        "completed",
+                        "failed",
+                        "cancelled",
+                        "uncertain",
+                    }:
+                        active = _ledger_attempt(row)
+                        if active is None:
+                            unattributed += 1
+                        else:
+                            attempts[attempt_id] = active
+                            completeness[attempt_id] = False
+                        diagnostics.append("usage_attempt_active")
+                        continue
+                    projected = _ledger_attempt(row)
+                    if projected is None:
+                        unattributed += 1
+                    else:
+                        attempts[attempt_id] = projected
+                        completeness[attempt_id] = False
+                    diagnostics.append("backfill_required")
+                    continue
+                payload = _validated_fact_payload(fact)
+                if payload.logical_attempt_id != attempt_id or payload.run_id != run_id:
+                    raise _usage_statistics_corrupt()
+                if payload.coverage == "not_applicable":
+                    continue
+                loaded = (
+                    ()
+                    if payload.settlement_status == "pending"
+                    else _validated_observations(
+                        conn,
+                        attempt_id,
+                        payload.observation_ids,
+                        run_id=run_id,
+                        publisher_attempt_id=str(fact["publisher_attempt_id"]),
+                        provider=payload.provider,
+                        role=payload.role,
+                        stage=payload.stage,
+                    )
+                )
+                if payload.coverage == "complete" and not loaded:
+                    raise _usage_statistics_corrupt()
+                attempts[attempt_id] = _Attempt(
+                    run_id=run_id,
+                    attempt_id=attempt_id,
+                    dispatch_id=str(fact["source_dispatch_id"]),
+                    provider=payload.provider,
+                    role=payload.role,
+                    stage=payload.stage,
+                    configured_model=payload.configured_model,
+                    outcome=None,
+                )
+                if loaded:
+                    observations[attempt_id] = list(loaded)
+                diagnostics.extend(payload.diagnostic_codes)
+                if payload.settlement_status == "pending":
+                    diagnostics.append("usage_statistics_pending")
+                    completeness[attempt_id] = False
+                elif payload.coverage == "complete" and payload.settlement_status in {
+                    "settled",
+                    "conflict",
+                }:
+                    completeness[attempt_id] = all(item.availability == "known" for item in loaded)
+                else:
+                    completeness[attempt_id] = False
+        return attempts, observations, completeness, unattributed, diagnostics
+
+    def _collect_from_artifacts(
         self,
         conn: sqlite3.Connection,
         run_ids: tuple[str, ...],

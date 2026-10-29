@@ -136,14 +136,16 @@ def _fact(
 def test_fresh_store_is_usage_schema_21(tmp_path: Path) -> None:
     db = tmp_path / "engine.sqlite3"
     store = SqliteSchedulerStore(db)
-    assert SCHEMA_VERSION == 21
+    assert SCHEMA_VERSION == 22
     assert not (tmp_path / "artifacts").exists()
     with store.begin_read() as conn:
-        assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == 21
+        assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == 22
         names = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master")}
         assert store.schema_supports_usage_statistics(conn) is True
     assert "scheduler_usage_attempt_facts" in names
     assert "scheduler_usage_observations" in names
+    assert "scheduler_usage_backfill_jobs" in names
+    assert "scheduler_usage_backfill_items" in names
     assert "scheduler_usage_attempt_facts" in REQUIRED_TABLES
     assert "idx_scheduler_usage_facts_run" in REQUIRED_INDEXES
 
@@ -164,7 +166,7 @@ def test_migration_fault_rolls_back_to_v20_and_retries(tmp_path: Path) -> None:
 
     store = SqliteSchedulerStore(db)
     with store.begin_read() as conn:
-        assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == 21
+        assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == 22
         assert store.schema_supports_usage_statistics(conn) is True
 
 
@@ -172,9 +174,11 @@ def test_readonly_v20_does_not_migrate(tmp_path: Path) -> None:
     db = tmp_path / "engine.sqlite3"
     SqliteSchedulerStore(db)
     with sqlite3.connect(db) as conn:
+        conn.execute("DROP TABLE IF EXISTS scheduler_usage_backfill_items")
+        conn.execute("DROP TABLE IF EXISTS scheduler_usage_backfill_jobs")
         conn.execute("DROP TABLE scheduler_usage_observations")
         conn.execute("DROP TABLE scheduler_usage_attempt_facts")
-        conn.execute("DELETE FROM scheduler_schema_migrations WHERE version = 21")
+        conn.execute("DELETE FROM scheduler_schema_migrations WHERE version >= 21")
         conn.execute("PRAGMA user_version = 20")
     readonly = SqliteSchedulerStore.open_readonly(db)
     with readonly.begin_read() as conn:

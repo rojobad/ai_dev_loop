@@ -249,8 +249,12 @@ conteos de intentos, desglose provider/rol/etapa y cobertura por categoría norm
 y nativa. Un intento inferido sin contador es desconocido, no cero; si todos son
 desconocidos el total conocido es `null`. Cursor usa
 `input + cacheRead + cacheWrite + output`; Codex usa `input + output`, con cache de
-entrada y reasoning como subconjuntos. Las proyecciones históricas no migran ni
-backfillean el ledger y solo leen JSONL Codex cuyo origen está autenticado.
+entrada y reasoning como subconjuntos. Un ledger schema 21 o posterior resuelve esos números desde hechos SQLite y
+solo desde las observaciones comprometidas en cada hecho. Una observación
+exigida ausente o ajena es un fallo de integridad, sin filas no referenciadas
+y sin volver a los archivos. Un ledger anterior no se migra al inspeccionarlo
+y sigue leyendo la evidencia autenticada, incluido JSONL Codex histórico. La
+inspección no ejecuta backfill.
 
 API 1.13 agrega la capacidad opcional `dashboardTokenUsage` y la operación
 `dashboard.token-usage`. No cambia el significado de `tokenUsage` en inspect.

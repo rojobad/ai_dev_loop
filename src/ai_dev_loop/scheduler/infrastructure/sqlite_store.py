@@ -61,7 +61,7 @@ if TYPE_CHECKING:
         | AwaitingFinalizationSequenceState
     )
 
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 SEQUENCE_SCHEMA_VERSION = 5
 REVIEW_RETRY_SCHEMA_VERSION = 6
 SEQUENCE_RUN_LINEAGE_SCHEMA_VERSION = 9
@@ -87,6 +87,7 @@ MIGRATION_V18_NAME = "0018_cursor_sdk_reconciliation"
 MIGRATION_V19_NAME = "0019_cursor_sdk_retention"
 MIGRATION_V20_NAME = "0020_cursor_sdk_no_progress"
 MIGRATION_V21_NAME = "0021_usage_statistics"
+MIGRATION_V22_NAME = "0022_usage_backfill"
 SEQUENCE_REVIEW_RECOVERY_SCHEMA_VERSION = 11
 CURSOR_INITIAL_RECOVERY_SCHEMA_VERSION = 12
 CURSOR_SEQUENCE_REPLACEMENT_SCHEMA_VERSION = 13
@@ -96,6 +97,7 @@ CURSOR_SDK_RECONCILIATION_SCHEMA_VERSION = 18
 CURSOR_SDK_RETENTION_SCHEMA_VERSION = 19
 CURSOR_SDK_NO_PROGRESS_SCHEMA_VERSION = 20
 USAGE_STATISTICS_SCHEMA_VERSION = 21
+USAGE_BACKFILL_SCHEMA_VERSION = 22
 REQUIRED_TABLES_V18 = frozenset(
     {
         "scheduler_schema_migrations",
@@ -135,9 +137,13 @@ REQUIRED_TABLES_V19 = REQUIRED_TABLES_V18 | {
 REQUIRED_TABLES_V20 = REQUIRED_TABLES_V19 | {
     "scheduler_cursor_sdk_no_progress",
 }
-REQUIRED_TABLES = REQUIRED_TABLES_V20 | {
+REQUIRED_TABLES_V21 = REQUIRED_TABLES_V20 | {
     "scheduler_usage_attempt_facts",
     "scheduler_usage_observations",
+}
+REQUIRED_TABLES = REQUIRED_TABLES_V21 | {
+    "scheduler_usage_backfill_jobs",
+    "scheduler_usage_backfill_items",
 }
 REQUIRED_TABLES_V17 = REQUIRED_TABLES_V18 - {"scheduler_cursor_sdk_reconciliations"}
 REQUIRED_TABLES_V16 = REQUIRED_TABLES_V17 - {
@@ -194,13 +200,16 @@ REQUIRED_INDEXES_V20 = REQUIRED_INDEXES_V19 | {
     "idx_scheduler_cursor_sdk_no_progress_run",
     "idx_scheduler_cursor_sdk_no_progress_due",
 }
-REQUIRED_INDEXES = REQUIRED_INDEXES_V20 | {
+REQUIRED_INDEXES_V21 = REQUIRED_INDEXES_V20 | {
     "idx_scheduler_usage_facts_provider_role",
     "idx_scheduler_usage_facts_model",
     "idx_scheduler_usage_facts_run",
     "idx_scheduler_usage_facts_ack",
     "idx_scheduler_usage_observations_attempt",
     "idx_scheduler_usage_observations_provider_role",
+}
+REQUIRED_INDEXES = REQUIRED_INDEXES_V21 | {
+    "idx_scheduler_usage_backfill_items_status",
 }
 _USAGE_FACT_COLUMNS = (
     "logical_attempt_id",
@@ -468,6 +477,10 @@ def _migration_v21_sql() -> str:
     return _migration_sql("0021_usage_statistics.sql")
 
 
+def _migration_v22_sql() -> str:
+    return _migration_sql("0022_usage_backfill.sql")
+
+
 def _split_sql_statements(sql: str) -> list[str]:
     statements: list[str] = []
     for chunk in sql.split(";"):
@@ -526,6 +539,8 @@ def migration_checksum(version: int) -> str:
         return hashlib.sha256(_migration_v20_sql().encode("utf-8")).hexdigest()
     if version == 21:
         return hashlib.sha256(_migration_v21_sql().encode("utf-8")).hexdigest()
+    if version == 22:
+        return hashlib.sha256(_migration_v22_sql().encode("utf-8")).hexdigest()
     raise ValueError(f"unsupported migration version {version}")
 
 
@@ -558,6 +573,7 @@ class SqliteSchedulerStore:
         self._read_only = read_only
         self.usage_artifacts: object | None = None
         self.usage_ingestion_barrier: str | None = None
+        self.usage_backfill_barrier: str | None = None
         self.usage_write_fault: str | None = None
         self._after_commit_callbacks: list[Callable[[], None]] = []
         if bootstrap and not read_only:
@@ -596,6 +612,7 @@ class SqliteSchedulerStore:
         store._read_only = True
         store.usage_artifacts = None
         store.usage_ingestion_barrier = None
+        store.usage_backfill_barrier = None
         store.usage_write_fault = None
         store._after_commit_callbacks = []
         with store._connect() as conn:
@@ -772,6 +789,10 @@ class SqliteSchedulerStore:
                 for migration_version in range(1, 21):
                     self._verify_migration_checksum(conn, migration_version)
                 self._migrate_v20_to_v21(conn)
+            elif version == 21:
+                for migration_version in range(1, USAGE_BACKFILL_SCHEMA_VERSION):
+                    self._verify_migration_checksum(conn, migration_version)
+                self._migrate_v21_to_v22(conn)
             else:
                 self._verify_current_schema(conn)
             self._apply_database_permissions(self.db_path)
@@ -1325,7 +1346,7 @@ class SqliteSchedulerStore:
 
     def _migrate_v20_to_v21(self, conn: sqlite3.Connection) -> None:
         if self._user_version(conn) >= USAGE_STATISTICS_SCHEMA_VERSION:
-            self._verify_current_schema(conn)
+            self._migrate_v21_to_v22(conn)
             return
         for migration_version in range(1, USAGE_STATISTICS_SCHEMA_VERSION):
             self._verify_migration_checksum(conn, migration_version)
@@ -1348,6 +1369,38 @@ class SqliteSchedulerStore:
                 ),
             )
             conn.execute("PRAGMA user_version = 21")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        self._apply_database_permissions(self.db_path)
+        self._migrate_v21_to_v22(conn)
+
+    def _migrate_v21_to_v22(self, conn: sqlite3.Connection) -> None:
+        if self._user_version(conn) >= USAGE_BACKFILL_SCHEMA_VERSION:
+            self._verify_current_schema(conn)
+            return
+        for migration_version in range(1, USAGE_BACKFILL_SCHEMA_VERSION):
+            self._verify_migration_checksum(conn, migration_version)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for statement in _split_sql_statements(_migration_v22_sql()):
+                self._fault_maybe_raise_migration(statement)
+                conn.execute(statement)
+            applied_at = encode_utc_instant(datetime.now(tz=UTC))
+            conn.execute(
+                """
+                INSERT INTO scheduler_schema_migrations(version, name, checksum, applied_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    USAGE_BACKFILL_SCHEMA_VERSION,
+                    MIGRATION_V22_NAME,
+                    migration_checksum(USAGE_BACKFILL_SCHEMA_VERSION),
+                    applied_at,
+                ),
+            )
+            conn.execute("PRAGMA user_version = 22")
             conn.commit()
         except Exception:
             conn.rollback()
@@ -1394,6 +1447,9 @@ class SqliteSchedulerStore:
         if target >= SCHEMA_VERSION:
             tables = REQUIRED_TABLES
             indexes = REQUIRED_INDEXES
+        elif target >= USAGE_STATISTICS_SCHEMA_VERSION:
+            tables = REQUIRED_TABLES_V21
+            indexes = REQUIRED_INDEXES_V21
         elif target >= 20:
             tables = REQUIRED_TABLES_V20
             indexes = REQUIRED_INDEXES_V20
@@ -1484,6 +1540,13 @@ class SqliteSchedulerStore:
             conn
         ) >= USAGE_STATISTICS_SCHEMA_VERSION and self.schema_has_table(
             conn, "scheduler_usage_attempt_facts"
+        )
+
+    def schema_supports_usage_backfill(self, conn: sqlite3.Connection) -> bool:
+        return self._user_version(
+            conn
+        ) >= USAGE_BACKFILL_SCHEMA_VERSION and self.schema_has_table(
+            conn, "scheduler_usage_backfill_jobs"
         )
 
     @staticmethod

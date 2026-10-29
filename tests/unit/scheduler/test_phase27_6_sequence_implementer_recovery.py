@@ -239,7 +239,7 @@ def test_schema_v16_intent_and_initial_recovery_continue_checkpoint_and_final_st
         record = load_implementer_recovery_record(tick.store, tick.artifacts, conn, result.run_id)
         assert tick.store.run_short_name(conn, blocked.run_id) == "Edited retry source"
         assert tick.store.run_short_name(conn, result.run_id) == "Edited retry source"
-    assert SCHEMA_VERSION == 21
+    assert SCHEMA_VERSION == 22
     assert row is not None and row["adopted_at"] is not None and row["cancelled_at"] is None
     assert [attempt.attempt_kind for attempt in lineage.phase_executions[0].attempts] == [
         "planned_run",
@@ -1410,6 +1410,8 @@ def test_v15_migration_adds_sequence_replacement_without_rewriting_runs(
         conn.execute(
             "DROP INDEX IF EXISTS idx_scheduler_sequence_implementer_replacements_sequence"
         )
+        conn.execute("DROP TABLE IF EXISTS scheduler_usage_backfill_items")
+        conn.execute("DROP TABLE IF EXISTS scheduler_usage_backfill_jobs")
         conn.execute("DROP TABLE IF EXISTS scheduler_usage_observations")
         conn.execute("DROP TABLE IF EXISTS scheduler_usage_attempt_facts")
         conn.execute("DELETE FROM scheduler_schema_migrations WHERE version >= 16")

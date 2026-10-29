@@ -264,6 +264,8 @@ def _downgrade_fixture_to_schema17(db_path: Path) -> None:
         conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_conversation_fences")
         conn.execute("DROP TABLE IF EXISTS scheduler_cursor_sdk_disposals")
         conn.execute("DROP TABLE scheduler_cursor_sdk_reconciliations")
+        conn.execute("DROP TABLE IF EXISTS scheduler_usage_backfill_items")
+        conn.execute("DROP TABLE IF EXISTS scheduler_usage_backfill_jobs")
         conn.execute("DROP TABLE IF EXISTS scheduler_usage_observations")
         conn.execute("DROP TABLE IF EXISTS scheduler_usage_attempt_facts")
         conn.execute("DELETE FROM scheduler_schema_migrations WHERE version >= 18")
@@ -278,7 +280,7 @@ def test_schema18_migration_adds_sdk_reconciliation_ledger(tmp_path: Path) -> No
 
     store = SqliteSchedulerStore(db_path)
 
-    assert SCHEMA_VERSION == 21
+    assert SCHEMA_VERSION == 22
     with store.begin_read() as conn:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert (
