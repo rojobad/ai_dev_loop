@@ -30,6 +30,7 @@ nav:
       - Timer del scheduler en WSL: operacion/timer-systemd-wsl.md
       - Estado, logs e inspección: operacion/observabilidad.md
       - Estado y artefactos: operacion/estado-artefactos.md
+      - Respaldo de estadísticas SQLite: operacion/respaldo-estadisticas-sqlite.md
       - Seguridad y privacidad: operacion/seguridad-privacidad.md
       - Troubleshooting: operacion/troubleshooting.md
       - Incidentes:

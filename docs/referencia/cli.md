@@ -366,7 +366,10 @@ en la cobertura del proveedor como `unknown` y queda contado aparte como deuda
 de materialización. Una deuda de asentamiento no es un desconocido ya asentado
 y deja `remaining` por encima de cero. Un desconocido asentado no bloquea la
 preparación. Una historia materializada puede seguir teniendo cobertura
-`unknown` si el proveedor no registró contadores.
+`unknown` si el proveedor no registró contadores. El procedimiento para
+hacer esa importación y un respaldo posterior de un solo archivo está en
+[Respaldo de estadísticas SQLite](../operacion/respaldo-estadisticas-sqlite.md).
+Documentarlo no autoriza ejecutarlo sobre el ledger de producción.
 
 ## `scheduler cursor-retry`
 

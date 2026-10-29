@@ -210,7 +210,10 @@ informa `backfill_required` y cobertura desconocida, sin caer a los archivos.
 Un ledger anterior permanece en solo lectura sobre artefactos. La validación
 hecha al importar no se repite al leer, y una fila estadística no autoriza
 reanudar un agente. Los alcances de cohorte, el filtro de modelo y el formato
-de fechas permanecen los de DUX-06/09.
+de fechas permanecen los de DUX-06/09. Una restauración de solo el archivo
+SQLite conserva esos alcances y estos números; no añade un control Apply ni
+reconstruye prompts. El procedimiento de operador está en
+[Respaldo de estadísticas SQLite](../operacion/respaldo-estadisticas-sqlite.md).
 
 `configuredModel` sale de la invocación autenticada de ese intento. Cursor usa
 el modelo del turno; el implementer Codex usa su modelo; el reviewer usa el

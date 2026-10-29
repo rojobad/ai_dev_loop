@@ -82,7 +82,9 @@ $XDG_STATE_HOME/ai_dev_loop/
   materialización (qué intentos tienen fila) es distinta de la cobertura del
   proveedor (cuántos contadores eran utilizables). La integridad numérica en
   SQLite no reautentica el contenido fuente ni autoriza recuperación, review
-  o Git.
+  o Git. El procedimiento de operador para importar, comparar y respaldar ese
+  archivo está en [Respaldo de estadísticas SQLite](respaldo-estadisticas-sqlite.md).
+  Esta fase no ejecuta ese procedimiento sobre el ledger vivo.
 - Schema 17 guarda aliases editables en `scheduler_run_presentation`,
   `scheduler_sequence_presentation` y `scheduler_planned_run_presentation`. La
   migración desde schema 16 rellena valores acotados sin tocar payloads/hashes y

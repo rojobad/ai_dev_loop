@@ -70,13 +70,16 @@ ai_dev_loop scheduler usage <run-id> --output text
 ai_dev_loop scheduler sequence usage <sequence-id> --output json
 ```
 
-Estas consultas autentican intentos y artefactos ya capturados; no llaman Cursor,
-Codex ni servicios de billing. El scope directo se distingue del linaje de
-recuperación y del linaje de fases. Los totales son cotas inferiores con cobertura
-explícita: una captura ausente o interrumpida permanece `unknown`/`partial`, nunca
-se convierte en cero. Los JSONL Codex históricos solo se proyectan cuando el
-outcome autenticado fija ruta y hash; la lectura no crea observaciones ni cambia
-los bytes originales.
+Estas consultas no llaman Cursor, Codex ni servicios de billing. En schema 21 o
+posterior leen hechos SQLite ya importados y no reabren artefactos para validar
+números. Un ledger anterior sigue autenticando la evidencia capturada, incluidos
+los JSONL Codex históricos cuando el outcome fija ruta y hash; esa lectura no crea
+observaciones ni cambia los bytes originales. El scope directo se distingue del
+linaje de recuperación y del linaje de fases. Los totales son cotas inferiores con
+cobertura explícita: una captura ausente o interrumpida permanece
+`unknown`/`partial`, nunca se convierte en cero. La importación y el respaldo de
+un solo archivo se documentan en
+[Respaldo de estadísticas SQLite](respaldo-estadisticas-sqlite.md).
 
 ## Controller status
 

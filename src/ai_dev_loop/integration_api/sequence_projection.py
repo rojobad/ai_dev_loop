@@ -323,19 +323,7 @@ def build_sequence_inspect_data(
         )
     counts = status_result.aggregate_counts
     assert counts is not None
-    checkpointed = sum(1 for phase in phases if phase.checkpoint.available)
-    counts_wire = _aggregate_counts_wire(
-        SequenceAggregateCounts(
-            planned=counts.planned,
-            materialized=counts.materialized,
-            accepted=counts.accepted,
-            residual_risk=counts.residual_risk,
-            checkpointed=checkpointed,
-            cancelled=counts.cancelled,
-            remaining=counts.remaining,
-            attempts=counts.attempts,
-        )
-    )
+    counts_wire = _aggregate_counts_wire(counts)
     cursor_wait_until: str | None = None
     implementer_retry_wait_until: str | None = None
     if status_result.current_run_id is not None:

@@ -148,8 +148,11 @@ ai_dev_loop integration run review-content RUN_ID --attempt ATTEMPT_ID --kind KI
 - `review` expone metadatos y la respuesta estructurada validada cuando existe;
   `resultState` distingue `valid`, `invalid`, `not_produced` y `pending`.
 - `review-content` devuelve bytes exactos por intento; los intentos anteriores a
-  21.4 pueden carecer de `prompt` (`not_recorded`). No se reconstruyen prompts
-  históricos.
+  21.4 pueden carecer de `prompt` (`not_recorded`). Una copia cuyo archivo de
+  invocación o cuyo root de artefactos no está presente también responde
+  `not_recorded` y no reconstruye bytes. Un archivo presente pero inválido sigue
+  siendo un error de integridad. `initial-prompt` ausente permanece como error de
+  integridad porque el ledger ata su digest.
 - El scheduler registra antes de cada lanzamiento Codex:
   `codex/reviews/NN.<attempt_id>.prompt.txt` y
   `codex/reviews/NN.<attempt_id>.prompt-evidence.json` (esquema
